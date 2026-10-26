@@ -23,8 +23,9 @@ ssh "$SERVER" "TARGET='$TARGET' bash -s" <<'ENDSSH'
   fi
   [ -n "$REL" ] && [ -d "$REL" ] || { echo "❌ no release snapshot found in .releases/"; exit 1; }
   echo "   restoring: $REL"
-  for p in src public prisma package.json package-lock.json next.config.ts tsconfig.json server.js ecosystem.config.cjs; do
-    [ -e "$REL/$p" ] && cp -a "$REL/$p" "./" || true
+  # Code only — NEVER restore a database file over the live dev.db.
+  for p in src public package.json package-lock.json next.config.ts tsconfig.json server.js ecosystem.config.cjs prisma/schema.prisma prisma/migrations prisma/seed.ts; do
+    if [ -e "$REL/$p" ]; then mkdir -p "$(dirname "$p")"; cp -a "$REL/$p" "$p"; fi
   done
   sed -i "s|/home/administrator/vochus-easysave|$HOME/vochus-easysave|g" ecosystem.config.cjs
   npm install --legacy-peer-deps

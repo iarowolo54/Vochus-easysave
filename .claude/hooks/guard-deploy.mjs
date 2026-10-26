@@ -3,34 +3,41 @@ import { block, readInput } from './lib.mjs';
 // Blocks commands that could tamper with PRODUCTION user data. Staging
 // (deploy-staging.sh, the -staging dir) and local dev (vochus-easysave-main)
 // are intentionally not matched. Defence in depth, not a boundary — a
-// determined operator can still run these outside Claude. The robust control
-// is the in-script gate inside deploy.sh (it refuses the destructive steps
-// without an explicit opt-in); this hook stops accidental prod data loss.
+// determined operator can still run these outside Claude, and the robust
+// control is the in-script gate inside deploy.sh (safe by default). This hook
+// stops accidental prod data loss and reflexive prod deploys.
 
 const raw = String(readInput().tool_input?.command ?? '');
 // Normalise for matching: drop quotes/backslashes so they can't split a token.
 const cmd = raw.replace(/['"\\]/g, '');
 
 // The production app directory — on the server only (~, $HOME, or the absolute
-// home), and exactly `vochus-easysave`: the boundary (?![-\w]) excludes
-// -staging, -main, and any other suffix, and the prefix excludes local paths
-// like /Users/.../vochus-easysave-main.
+// home), exactly `vochus-easysave` (the boundary excludes -staging / -main).
 const prodPath = /(?:\/home\/administrator|~|\$\{?HOME\}?)\/vochus-easysave(?![-\w])/;
 const prodTargeted = prodPath.test(cmd);
 
-// 1. EXECUTING the prod deploy script (not merely referencing it, so
-//    `git add`/`cat scripts/deploy.sh` is fine). Matches it in command
-//    position — at a command boundary, after optional env assignments and an
-//    optional bash/sh/source/. and path prefix — excluding deploy-staging.sh.
-const deployExec =
-  /(?:^|[;&|(])\s*(?:[A-Za-z_]\w*=\S*\s+)*(?:(?:bash|sh|source|\.)\s+)?(?:[\w./-]*\/)?deploy(?!-staging)[\w.-]*\.sh\b/;
-if (deployExec.test(cmd)) {
+// A. The destructive deploy opt-ins — wherever they appear, whatever the
+//    wrapper (ALLOW_SEED=1 ./deploy.sh, env ALLOW_DB_PUSH=1 ..., sudo ...).
+if (/\bALLOW_(?:DB_PUSH|SEED)\s*=\s*1\b/i.test(cmd)) {
   block(
-    'Blocked: production deploys are a deliberate human action. scripts/deploy.sh is now safe by default (backs up + downloads the prod DB, snapshots for rollback, code-only) — run it yourself in a terminal. It only touches the DB with ALLOW_DB_PUSH=1 / ALLOW_SEED=1. Rollback: ./scripts/rollback.sh. Staging: scripts/deploy-staging.sh.',
+    'Blocked: ALLOW_DB_PUSH / ALLOW_SEED would run the schema sync or the seed against PRODUCTION data. Run a prod deploy deliberately, in a terminal, with a fresh backup — never from here.',
   );
 }
 
-// 2. Seeding the production directory overwrites live data.
+// B. EXECUTING the prod deploy or rollback script (command position, after
+//    optional env assignments / wrappers / a shell), NOT merely referencing it
+//    (so git add / cat / grep on the file is fine). Excludes deploy-staging.sh.
+const wrapper = '(?:[A-Za-z_]\\w*=\\S*|sudo|env|nohup|exec|command|time|nice|ionice|bash|sh|source|\\.)(?:\\s+-\\S+)*\\s+';
+const scriptExec = new RegExp(
+  `(?:^|[;&|(\\n\`])\\s*(?:${wrapper})*(?:[\\w./-]*/)?(?:deploy(?!-staging)|rollback)[\\w.-]*\\.sh\\b`,
+);
+if (scriptExec.test(cmd)) {
+  block(
+    'Blocked: production deploys/rollbacks are a deliberate human action. scripts/deploy.sh is safe by default (backs up + downloads the prod DB, snapshots for rollback, code-only) — run it yourself in a terminal. DB steps need ALLOW_DB_PUSH=1 / ALLOW_SEED=1. Rollback: ./scripts/rollback.sh. Staging: scripts/deploy-staging.sh.',
+  );
+}
+
+// C. Seeding the production directory overwrites live data.
 const seed = /\b(prisma\s+db\s+seed|db:seed|tsx\s+prisma\/seed|prisma\/seed\.ts)\b/;
 if (prodTargeted && seed.test(cmd)) {
   block(
@@ -38,8 +45,7 @@ if (prodTargeted && seed.test(cmd)) {
   );
 }
 
-// 3. Other destructive operations aimed at the production directory. rm flag
-// order/spelling (-rf, -fr, -r ...) is matched loosely on purpose.
+// D. Other destructive operations aimed at the production directory.
 const destructive =
   /(?:\brm\s+-\w*[rR]\w*|\bprisma\s+migrate\s+reset\b|\bprisma\s+db\s+push\b|\bDROP\s+(?:TABLE|DATABASE|SCHEMA)\b|\bDELETE\s+FROM\b|\bTRUNCATE\b)/i;
 if (prodTargeted && destructive.test(cmd)) {

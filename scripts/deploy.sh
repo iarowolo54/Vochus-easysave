@@ -56,7 +56,7 @@ echo "✅ backup verified and saved: $LOCAL_BACKUP"
 
 # 3. Build the code package (no .env, no node_modules, no db files).
 echo "📁 Packaging code..."
-tar --exclude='node_modules' --exclude='.next' --exclude='prisma/dev.db' --exclude='prisma/prod.db' -czf easysave-deploy.tar.gz \
+tar --exclude='node_modules' --exclude='.next' --exclude='prisma/*.db*' -czf easysave-deploy.tar.gz \
   src public prisma package.json package-lock.json next.config.ts tsconfig.json server.js ecosystem.config.cjs nginx-easysave.conf
 scp easysave-deploy.tar.gz "$SERVER:/tmp/"
 rm easysave-deploy.tar.gz
@@ -71,8 +71,10 @@ ssh "$SERVER" "ALLOW_DB_PUSH='$ALLOW_DB_PUSH' ALLOW_SEED='$ALLOW_SEED' bash -s" 
   TS=$(date -u +%Y%m%d-%H%M%S)
   REL="$HOME/vochus-easysave/.releases/$TS"
   mkdir -p "$REL"
-  for p in src public prisma package.json package-lock.json next.config.ts tsconfig.json server.js ecosystem.config.cjs; do
-    [ -e "$p" ] && cp -a "$p" "$REL/" || true
+  # Code only — NEVER the database. prisma is snapshotted by its code parts so
+  # a rollback can never overwrite the live dev.db.
+  for p in src public package.json package-lock.json next.config.ts tsconfig.json server.js ecosystem.config.cjs prisma/schema.prisma prisma/migrations prisma/seed.ts; do
+    if [ -e "$p" ]; then mkdir -p "$REL/$(dirname "$p")"; cp -a "$p" "$REL/$p"; fi
   done
   ls -1dt "$HOME/vochus-easysave/.releases/"*/ 2>/dev/null | tail -n +4 | xargs -r rm -rf
   echo "   snapshot: $REL"
