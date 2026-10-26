@@ -1,6 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
+import Logo from './Logo'
 
 type Variant = 'customer' | 'agent'
 
@@ -47,11 +48,7 @@ export default function DownloadAppBanner({ variant: forced }: { variant?: Varia
       fontFamily: 'Inter, sans-serif', fontSize: 13,
       boxShadow: '0 2px 8px rgba(0,0,0,.15)',
     }}>
-      <div style={{
-        width: 36, height: 36, borderRadius: 9, background: 'rgba(255,255,255,.15)',
-        display: 'flex', alignItems: 'center', justifyContent: 'center',
-        fontFamily: 'Plus Jakarta Sans, sans-serif', fontWeight: 900, fontSize: 16, flexShrink: 0,
-      }}>{variant === 'agent' ? 'A' : 'V'}</div>
+      <Logo size={36} tile />
       <div style={{ flex: 1, minWidth: 0, lineHeight: 1.3 }}>
         <div style={{ fontWeight: 800 }}>Get the {label} app</div>
         <div style={{ opacity: .85, fontSize: 12 }}>Faster access, native experience.</div>

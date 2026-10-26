@@ -1,52 +1,37 @@
 'use client'
-import { useRouter, usePathname } from 'next/navigation'
-
-interface NavItem {
-  key: string
-  icon: string
-  label: string
-  href: string
-}
+import Link from 'next/link'
+import { usePathname } from 'next/navigation'
+import { Icons } from './ui/icons'
+import type { NavItem } from './nav-items'
 
 interface BottomNavProps {
   items: NavItem[]
 }
 
 export default function BottomNav({ items }: BottomNavProps) {
-  const router = useRouter()
   const pathname = usePathname()
+  // Longest matching href wins, so /dashboard doesn't stay lit on /dashboard/customers.
+  const active = items
+    .filter(i => pathname === i.href || pathname.startsWith(i.href + '/'))
+    .sort((a, b) => b.href.length - a.href.length)[0]
 
   return (
-    <>
-      <style>{`
-        @media (min-width: 769px) {
-          [data-bottom-nav] { display: none !important; }
-        }
-      `}</style>
-      <div data-bottom-nav style={{
-        position: 'fixed', bottom: 0, left: 0, right: 0, height: 64,
-        background: 'var(--card)', borderTop: '1px solid var(--br)',
-        display: 'flex', alignItems: 'stretch', zIndex: 100,
-        boxShadow: '0 -3px 14px rgba(0,0,0,.07)',
-      }}>
+    <nav className="ui-bottom-nav" aria-label="Main">
       {items.map(item => {
-        const isActive = pathname === item.href || pathname.startsWith(item.href + '/')
+        const isActive = item === active
+        const Icon = Icons[item.icon]
         return (
-          <button key={item.key} onClick={() => router.push(item.href)} style={{
-            flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center',
-            justifyContent: 'center', gap: 3, border: 'none', background: 'transparent',
-            cursor: 'pointer', position: 'relative', padding: '4px 2px',
-            color: isActive ? 'var(--g)' : '#aaa',
-            fontWeight: isActive ? 700 : 600,
-            fontSize: 9.5,
-          }}>
-            {isActive && <div style={{ position: 'absolute', top: 0, left: 14, right: 14, height: 3, background: 'var(--g)', borderRadius: '0 0 3px 3px' }} />}
-            <span style={{ fontSize: 20 }}>{item.icon}</span>
+          <Link
+            key={item.key}
+            href={item.href}
+            className="ui-bottom-nav-item"
+            aria-current={isActive ? 'page' : undefined}
+          >
+            <Icon size={22} strokeWidth={isActive ? 2.25 : 1.75} aria-hidden="true" />
             {item.label}
-          </button>
+          </Link>
         )
       })}
-      </div>
-    </>
+    </nav>
   )
 }

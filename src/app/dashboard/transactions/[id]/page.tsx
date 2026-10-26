@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useParams, useRouter } from 'next/navigation'
+import Logo from '@/components/Logo'
 
 interface Txn {
   id: string; ref: string; type: string; amount: number
@@ -95,7 +96,7 @@ export default function TransactionDetailPage() {
       <div className="receipt-wrap">
         <div className="receipt">
           <div className="receipt-header">
-            <div className="receipt-logo">VES</div>
+            <Logo size={48} />
             <div>
               <div className="receipt-company">Vochus Easy Save</div>
               <div className="receipt-tagline">Official Transaction Receipt</div>

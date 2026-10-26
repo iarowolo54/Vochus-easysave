@@ -2,6 +2,7 @@
 import { useState, useRef, useCallback, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { blockMinus, blockNonDigit, digitsOnly, nonNegativeString } from '@/lib/numeric'
+import Logo from '@/components/Logo'
 
 const LOADER_STEPS = [
   [0,  'Preparing your form…'],
@@ -269,7 +270,7 @@ function EnrollContent() {
           <div style={{ width: '100%', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.10)', borderRadius: 22, padding: '24px 20px', marginBottom: 20 }}>
             {/* Logo */}
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 10, marginBottom: 20 }}>
-              <div style={{ width: 64, height: 64, borderRadius: 18, background: 'linear-gradient(135deg,#0D6B3A,#1DC96A)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 30, fontWeight: 900, color: '#fff', boxShadow: '0 8px 32px rgba(29,201,106,.35)' }}>V</div>
+              <Logo size={64} tile />
               <div>
                 <div style={{ fontSize: 20, fontWeight: 800, color: '#fff' }}>Vochus Easy Save</div>
                 <div style={{ fontSize: 11, color: 'rgba(255,255,255,.45)', marginTop: 1 }}>Self-Enrollment Portal</div>
@@ -348,7 +349,7 @@ function EnrollContent() {
           <div style={{ position: 'relative', width: 76, height: 76, marginBottom: 30, flexShrink: 0 }}>
             <div style={{ position: 'absolute', width: 108, height: 108, top: -16, left: -16, borderRadius: '50%', border: '1px solid rgba(29,201,106,.2)', animation: 'ring 2.6s ease-out infinite' }} />
             <div style={{ position: 'absolute', width: 150, height: 150, top: -37, left: -37, borderRadius: '50%', border: '1px solid rgba(29,201,106,.2)', animation: 'ring 2.6s ease-out infinite', animationDelay: '.8s' }} />
-            <div style={{ position: 'absolute', inset: 0, borderRadius: 20, background: 'linear-gradient(135deg,#0D6B3A,#1DC96A)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 34, fontWeight: 900, color: '#fff', zIndex: 1 }}>V</div>
+            <Logo size={76} tile style={{ position: 'absolute', inset: 0 }} />
           </div>
 
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'rgba(245,185,40,.12)', border: '1px solid rgba(245,185,40,.26)', borderRadius: 26, padding: '4px 12px', fontSize: 9, fontWeight: 700, color: '#F5B928', letterSpacing: '.1em', textTransform: 'uppercase', marginBottom: 14 }}>✦ Welcome, Future Saver</div>
@@ -401,11 +402,7 @@ function EnrollContent() {
         display: 'flex', alignItems: 'center', padding: '0 16px', gap: 12,
         boxShadow: '0 2px 12px rgba(0,0,0,.3)',
       }}>
-        <div style={{
-          width: 34, height: 34, borderRadius: 9, background: 'linear-gradient(135deg,#2ecc71,#1a6b3a)',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          fontFamily: 'Plus Jakarta Sans', fontSize: 16, fontWeight: 900, color: '#fff',
-        }}>V</div>
+        <Logo size={34} tile />
         <div style={{ flex: 1 }}>
           <div style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 15, fontWeight: 800, color: '#fff' }}>Vochus Easy Save</div>
           <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.45)', marginTop: 2 }}>Self-Enrollment Portal</div>

@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import BottomNav from '@/components/BottomNav'
+import { CUSTOMER_NAV } from '@/components/nav-items'
 
 type Msg = {
   id: string; sender: string; senderName: string | null; message: string; imageUrl?: string | null; createdAt: string; read: boolean
@@ -164,13 +165,7 @@ export default function CustomerChatPage() {
         >{sending ? '⏳' : '➤'}</button>
       </div>
 
-      <BottomNav items={[
-        { key: 'home',     icon: '🏠', label: 'Home',     href: '/customer/dashboard' },
-        { key: 'save',     icon: '💳', label: 'Save',     href: '/customer/save' },
-        { key: 'history',  icon: '📊', label: 'History',  href: '/customer/transactions' },
-        { key: 'chat',     icon: '💬', label: 'Chat',     href: '/customer/chat' },
-        { key: 'settings', icon: '⚙️', label: 'Settings', href: '/customer/settings' },
-      ]} />
+      <BottomNav items={CUSTOMER_NAV} />
     </div>
   )
 }

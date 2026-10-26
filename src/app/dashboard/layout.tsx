@@ -4,8 +4,10 @@ import { useSession, signOut } from 'next-auth/react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
-import AgentBottomNav from '@/components/AgentBottomNav'
+import BottomNav from '@/components/BottomNav'
+import { AGENT_NAV } from '@/components/nav-items'
 import IdleTimeout from '@/components/IdleTimeout'
+import Logo from '@/components/Logo'
 
 const navItems = [
   { section: 'Main', items: [
@@ -145,7 +147,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
       <div className={`sidebar-backdrop${sidebarOpen ? ' open' : ''}`} onClick={() => setSidebarOpen(false)} />
       <aside className={`sidebar${sidebarOpen ? ' open' : ''}`}>
         <div className="sb-logo">
-          <div className="sb-logo-mark">V</div>
+          <Logo size={38} tile />
           <div>
             <div className="sb-brand-name">Vochus Easy Save</div>
             <div className="sb-brand-sub">Savings Platform</div>
@@ -227,12 +229,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {children}
         </div>
 
-        <AgentBottomNav items={[
-          { key: 'dashboard', icon: '🏠', label: 'Dashboard', href: '/dashboard' },
-          { key: 'customers', icon: '👥', label: 'Customers', href: '/dashboard/customers' },
-          { key: 'savings', icon: '💰', label: 'Savings', href: '/dashboard/savings' },
-          { key: 'chat', icon: '💬', label: 'Support', href: '/dashboard/chat' },
-        ]} />
+        <BottomNav items={AGENT_NAV} />
       </main>
 
       <style>{`

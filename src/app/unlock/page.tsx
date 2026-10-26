@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Logo from '@/components/Logo'
 
 type Step = 'identify' | 'verify' | 'reset' | 'done'
 
@@ -58,7 +59,7 @@ export default function UnlockPage() {
   return (
     <div className="login-page">
       <div className="login-wrap">
-        <div className="login-logo">V</div>
+        <Logo size={72} tile />
         <div className="login-brand">
           <h1>Vochus Easy Save</h1>
           <p>Account Unlock</p>

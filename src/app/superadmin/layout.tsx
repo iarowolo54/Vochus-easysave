@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useState } from 'react'
 import './admin.css'
+import Logo from '@/components/Logo'
 
 const navGroups = [
   {
@@ -132,7 +133,7 @@ function AdminLayoutInner({ children }: { children: React.ReactNode }) {
       <div className={`a-backdrop${sidebarOpen ? ' open' : ''}`} onClick={() => setSidebarOpen(false)} />
       <aside className={`a-sidebar${sidebarOpen ? ' open' : ''}`}>
         <div className="a-sb-header">
-          <div className="a-sb-mark">V</div>
+          <Logo size={40} tile />
           <div className="a-sb-brand">
             <span className="name">Vochus Easy Save</span>
             <span className="sub">Super Admin</span>

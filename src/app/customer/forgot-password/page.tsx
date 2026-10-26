@@ -2,6 +2,7 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { blockNonDigit, digitsOnly } from '@/lib/numeric'
+import Logo from '@/components/Logo'
 
 type Stage = 'phone' | 'reset' | 'done'
 
@@ -54,11 +55,7 @@ export default function ForgotPasswordPage() {
     <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
       <div style={{ width: '100%', maxWidth: 400 }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
-          <div style={{
-            width: 56, height: 56, borderRadius: 16, background: 'linear-gradient(135deg,#2ecc71,#1a6b3a)',
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            fontFamily: 'Plus Jakarta Sans', fontSize: 24, fontWeight: 900, color: '#fff', marginBottom: 12,
-          }}>V</div>
+          <Logo size={56} style={{ marginBottom: 12 }} />
           <div style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 22, fontWeight: 900 }}>Forgot Password</div>
           <div style={{ fontSize: 13, color: 'var(--mu)', marginTop: 4 }}>
             {stage === 'phone' && 'Enter your phone number to receive a reset code'}

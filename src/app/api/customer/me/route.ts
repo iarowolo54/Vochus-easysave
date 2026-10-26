@@ -35,23 +35,36 @@ export async function GET() {
 
   const plans = customer.savingsPlans
   const plan = plans[0] ?? null
+  const planIds = plans.map(p => p.id)
 
-  const [txs, pendingRedemption] = await Promise.all([
-    plan
+  // Every deposit on the customer's active plans, so the home screen can show per-plan history and
+  // which days are paid (bulk deposits are stamped with the day they cover). Scoped to this customer.
+  const [planTxs, pendingRedemptions] = await Promise.all([
+    planIds.length
       ? prisma.transaction.findMany({
-          where: { customerId: customer.id, type: 'saving' },
+          where: { customerId: customer.id, type: 'saving', planId: { in: planIds } },
           orderBy: { createdAt: 'desc' },
-          take: 30,
-          select: { id: true, amount: true, ref: true, createdAt: true, method: true },
+          take: 2000,
+          select: {
+            id: true, amount: true, ref: true, createdAt: true, method: true, planId: true,
+            agent: { select: { name: true } },
+          },
         })
       : Promise.resolve([]),
-    plan
-      ? prisma.earlyRedemption.findFirst({
-          where: { savingsPlanId: plan.id, status: { in: ['Pending', 'TokenValidated', 'AgentApproved'] } },
-          select: { ref: true, status: true },
+    planIds.length
+      ? prisma.earlyRedemption.findMany({
+          where: { savingsPlanId: { in: planIds }, status: { in: ['Pending', 'TokenValidated', 'AgentApproved'] } },
+          select: { ref: true, status: true, savingsPlanId: true },
         })
-      : Promise.resolve(null),
+      : Promise.resolve([]),
   ])
+
+  const transactions = planTxs.map(({ agent, ...t }) => ({ ...t, recordedBy: agent.name }))
+  // Kept for the save/redeem/settings pages, which read these older fields.
+  const txs = transactions.slice(0, 30)
+  const pendingRedemption = plan
+    ? pendingRedemptions.find(r => r.savingsPlanId === plan.id) ?? null
+    : null
 
   return NextResponse.json({
     id: customer.id,
@@ -64,6 +77,8 @@ export async function GET() {
     plan,
     plans,
     recentTransactions: txs,
-    pendingRedemption,
+    pendingRedemption: pendingRedemption && { ref: pendingRedemption.ref, status: pendingRedemption.status },
+    transactions,
+    pendingRedemptions,
   })
 }

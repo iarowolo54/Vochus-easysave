@@ -75,22 +75,6 @@
   flex-shrink: 0;
 }
 
-.admin-root .a-sb-mark {
-  width: 40px;
-  height: 40px;
-  border-radius: 12px;
-  flex-shrink: 0;
-  background: linear-gradient(135deg, #2ecc71, #1a6b3a);
-  border: 1px solid rgba(255,255,255,.15);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-family: 'IBM Plex Serif', serif;
-  font-weight: 700;
-  font-size: 18px;
-  color: #fff;
-  box-shadow: 0 4px 18px rgba(26,107,58,.5);
-}
 
 .admin-root .a-sb-brand { font-family: 'IBM Plex Serif', serif; }
 .admin-root .a-sb-brand .name { font-size: 17px; font-weight: 700; color: #fff; letter-spacing: -.2px; display: block; }

@@ -2,6 +2,7 @@
 import { useEffect, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import BottomNav from '@/components/BottomNav'
+import { CUSTOMER_NAV } from '@/components/nav-items'
 import { blockMinus, nonNegativeString } from '@/lib/numeric'
 
 const DAILY_DURATIONS = [
@@ -365,13 +366,7 @@ function SavePageInner() {
         )}
       </div>
 
-      <BottomNav items={[
-        { key: 'home',     icon: '🏠', label: 'Home',     href: '/customer/dashboard' },
-        { key: 'save',     icon: '💳', label: 'Save',     href: '/customer/save' },
-        { key: 'history',  icon: '📊', label: 'History',  href: '/customer/transactions' },
-        { key: 'chat',     icon: '💬', label: 'Chat',     href: '/customer/chat' },
-        { key: 'settings', icon: '⚙️', label: 'Settings', href: '/customer/settings' },
-      ]} />
+      <BottomNav items={CUSTOMER_NAV} />
     </div>
   )
 }

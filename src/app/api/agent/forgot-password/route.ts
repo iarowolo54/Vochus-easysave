@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { sendMail } from '@/lib/mail'
+import { emailLogo } from '@/lib/email-brand'
 
 function genOtp() {
   return String(Math.floor(100000 + Math.random() * 900000))
@@ -39,7 +40,7 @@ export async function POST(req: NextRequest) {
       <div style="font-family:sans-serif;max-width:420px;margin:0 auto;padding:28px 20px;background:#f3f6f3">
         <div style="background:#fff;border-radius:16px;padding:28px;border:1px solid #d8e8dd">
           <div style="text-align:center;margin-bottom:20px">
-            <div style="width:48px;height:48px;background:linear-gradient(135deg,#0D6B3A,#1DC96A);border-radius:12px;display:inline-flex;align-items:center;justify-content:center;font-size:20px;font-weight:900;color:#fff">V</div>
+            ${emailLogo()}
             <div style="font-size:18px;font-weight:900;margin-top:10px;color:#111">Agent Password Reset</div>
           </div>
           <p style="font-size:14px;color:#444;margin:0 0 16px">Your password reset code is:</p>

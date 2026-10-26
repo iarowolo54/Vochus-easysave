@@ -2,6 +2,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import BottomNav from '@/components/BottomNav'
+import { CUSTOMER_NAV } from '@/components/nav-items'
 
 type Tx = {
   id: string; ref: string; type: string; amount: number
@@ -381,13 +382,7 @@ export default function TransactionsPage() {
         </>
       )}
 
-      <BottomNav items={[
-        { key: 'home',     icon: '🏠', label: 'Home',     href: '/customer/dashboard' },
-        { key: 'save',     icon: '💳', label: 'Save',     href: '/customer/save' },
-        { key: 'history',  icon: '📊', label: 'History',  href: '/customer/transactions' },
-        { key: 'chat',     icon: '💬', label: 'Chat',     href: '/customer/chat' },
-        { key: 'settings', icon: '⚙️', label: 'Settings', href: '/customer/settings' },
-      ]} />
+      <BottomNav items={CUSTOMER_NAV} />
     </div>
   )
 }

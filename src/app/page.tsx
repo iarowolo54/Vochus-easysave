@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from 'react'
 import { signIn, signOut } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
+import Logo from '@/components/Logo'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -53,7 +54,7 @@ export default function LoginPage() {
   return (
     <div className="login-page">
       <div className="login-wrap">
-        <div className="login-logo">V</div>
+        <Logo size={72} tile />
         <div className="login-brand">
           <h1>Vochus Easy Save</h1>
           <p>Agent Portal &nbsp;·&nbsp; v2.1</p>

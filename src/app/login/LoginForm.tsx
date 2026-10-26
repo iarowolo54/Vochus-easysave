@@ -3,6 +3,7 @@ import { Suspense, useState } from 'react'
 import { signIn } from 'next-auth/react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect } from 'react'
+import Logo from '@/components/Logo'
 
 export default function LoginForm() {
   return (
@@ -132,11 +133,7 @@ function LoginPageInner() {
       <style>{`@media (max-width: 480px) { body { font-size: 14px; } }`}</style>
       <div style={{ width: '100%', maxWidth: 420, minWidth: 0 }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <div style={{
-            width: 56, height: 56, borderRadius: 14, background: 'linear-gradient(135deg,#0D6B3A,#1DC96A)',
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            fontFamily: 'Plus Jakarta Sans', fontSize: 28, fontWeight: 900, color: '#fff', marginBottom: 12, boxShadow: '0 12px 40px rgba(29,201,106,.3)',
-          }}>V</div>
+          <Logo size={56} tile style={{ marginBottom: 12 }} />
           <div style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 'clamp(20px, 5vw, 26px)', fontWeight: 900, color: '#fff', letterSpacing: -.5 }}>Vochus Easy Save</div>
           <div style={{ fontSize: 12, color: 'rgba(255,255,255,.55)', marginTop: 4 }}>Agent Portal</div>
         </div>

@@ -1,42 +1,55 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import BottomNav from '@/components/BottomNav'
+import { CUSTOMER_NAV } from '@/components/nav-items'
+import CollectionTracker from '@/components/customer/CollectionTracker'
+import SavingsCard from '@/components/customer/SavingsCard'
+import TodayStatus from '@/components/customer/TodayStatus'
+import { useCustomerMe } from '@/components/customer/useCustomerMe'
+import ActionButton from '@/components/ui/ActionButton'
+import BottomSheet from '@/components/ui/BottomSheet'
+import Amount from '@/components/ui/Amount'
+import EmptyState from '@/components/ui/EmptyState'
+import ListRow from '@/components/ui/ListRow'
+import { Icons } from '@/components/ui/icons'
+import { displayName, formatDate, formatNaira } from '@/lib/format'
+import { getHideBalance, setHideBalance } from '@/lib/preferences'
+import { dateKey, hasEnded, isWeekly } from '@/lib/savings-card'
 
 type Plan = {
   id: string; dailyAmount: number; periodDays: number; cadence?: string; goal: string
   startDate: string; maturityDate: string; balance: number; status: string
 }
-type Tx = { id: string; amount: number; ref: string; createdAt: string; method: string }
+type Tx = {
+  id: string; amount: number; ref: string; createdAt: string; method: string | null
+  planId: string | null; recordedBy: string
+}
 type CustomerData = {
   customerId: string; name: string; phone: string; email: string | null; photoUrl: string | null
   agent: { name: string; agentId: string; phone: string }
   plan: Plan | null
   plans: Plan[]
-  recentTransactions: Tx[]
-  pendingRedemption: { ref: string; status: string } | null
+  transactions: Tx[]
+  pendingRedemptions: { ref: string; status: string; savingsPlanId: string }[]
+}
+
+function capitalise(s: string) {
+  return s ? s[0].toUpperCase() + s.slice(1) : s
+}
+
+function daysUntil(iso: string) {
+  return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000))
 }
 
 export default function CustomerDashboard() {
   const router = useRouter()
-  const [data, setData] = useState<CustomerData | null>(null)
-  const [loading, setLoading] = useState(true)
+  const { data, loading, failed, reload } = useCustomerMe<CustomerData>()
   const [activePlanIdx, setActivePlanIdx] = useState(0)
+  const [hideBalance, setHide] = useState(false)
+  const [pickerOpen, setPickerOpen] = useState(false)
 
-  useEffect(() => {
-    fetch('/api/customer/me')
-      .then(async r => {
-        if (r.status === 401 || r.status === 404) {
-          // clear stale cookie server-side too
-          await fetch('/api/customer/auth/login', { method: 'DELETE' }).catch(() => {})
-          router.push('/customer/login')
-          return null
-        }
-        return r.json()
-      })
-      .then(d => { if (d) setData(d) })
-      .finally(() => setLoading(false))
-  }, [])
+  useEffect(() => { setHide(getHideBalance()) }, [])
 
   useEffect(() => {
     if (!data) return
@@ -61,213 +74,236 @@ export default function CustomerDashboard() {
     })()
   }, [data])
 
-  async function logout() {
-    await fetch('/api/customer/auth/login', { method: 'DELETE' })
-    router.push('/customer/login')
+  const plans = data ? data.plans ?? (data.plan ? [data.plan] : []) : []
+  const plan = plans[activePlanIdx] ?? null
+  const planTxs = useMemo(
+    () => (data && plan ? data.transactions.filter(t => t.planId === plan.id) : []),
+    [data, plan],
+  )
+  const depositDates = useMemo(() => planTxs.map(t => t.createdAt), [planTxs])
+
+  function toggleBalance() {
+    setHide(h => { setHideBalance(!h); return !h })
+  }
+
+  function choosePlan(i: number) {
+    setActivePlanIdx(i)
+    setPickerOpen(false)
   }
 
   if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', flexDirection: 'column', gap: 12, background: 'var(--bg)' }}>
-      <div style={{ width: 40, height: 40, border: '3px solid var(--gl)', borderTop: '3px solid var(--g)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    <div className="ui-screen ui-screen--center" role="status" aria-label="Loading your savings">
+      <div className="ui-spinner" />
+    </div>
+  )
+
+  if (failed) return (
+    <div className="ui-screen ui-screen--center">
+      <EmptyState
+        icon="error"
+        title="We couldn't load your savings"
+        text="Check your connection and try again."
+        action={
+          <button type="button" className="ui-btn ui-btn--primary" onClick={reload}>
+            <Icons.retry size={18} aria-hidden="true" /> Try again
+          </button>
+        }
+      />
     </div>
   )
 
   if (!data) return null
 
-  const plans = data.plans ?? (data.plan ? [data.plan] : [])
-  const plan = plans[activePlanIdx] ?? null
-  const pct = plan ? Math.min(100, Math.round((plan.balance / (plan.dailyAmount * plan.periodDays)) * 100)) : 0
-  const daysLeft = plan ? Math.max(0, Math.ceil((new Date(plan.maturityDate).getTime() - Date.now()) / 86400000)) : 0
-  const savedDays = plan ? Math.round(plan.balance / plan.dailyAmount) : 0
-  const pendingRedemption = data.pendingRedemption
+  const weekly = plan ? isWeekly(plan) : false
+  const ended = plan ? hasEnded(plan) : false
+  const pending = plan ? data.pendingRedemptions.find(r => r.savingsPlanId === plan.id) ?? null : null
+  const target = plan ? plan.dailyAmount * plan.periodDays : 0
+  const firstName = displayName(data.name).split(' ')[0]
+  const hour = new Date().getHours()
+  const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
+
+  // Deposits that count for "today" — or, on a weekly plan, the plan's current week (same window as the card).
+  const today = dateKey(new Date())
+  let windowStart = today
+  if (plan && weekly) {
+    const start = new Date(plan.startDate)
+    const startDay = new Date(start.getFullYear(), start.getMonth(), start.getDate())
+    const daysIn = Math.max(0, Math.floor((Date.now() - startDay.getTime()) / 86400000))
+    windowStart = dateKey(new Date(startDay.getFullYear(), startDay.getMonth(), startDay.getDate() + daysIn - (daysIn % 7)))
+  }
+  const recentForStatus = planTxs.filter(t => {
+    const k = dateKey(new Date(t.createdAt))
+    return k >= windowStart && k <= today
+  })
+
+  const rate = plan
+    ? weekly
+      ? `${formatNaira(plan.dailyAmount * 7, { minor: false })} weekly`
+      : `${formatNaira(plan.dailyAmount, { minor: false })} daily`
+    : ''
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg)', paddingBottom: 80 }}>
-      {/* Top bar */}
-      <div style={{
-        position: 'sticky', top: 0, height: 56, zIndex: 200,
-        background: 'linear-gradient(135deg,#071a0e,#0e4d24)',
-        display: 'flex', alignItems: 'center', padding: '0 16px', gap: 12,
-        boxShadow: '0 2px 12px rgba(0,0,0,.3)',
-      }}>
+    <div className="ui-screen">
+      <header className="ui-topbar">
         {data.photoUrl
-          ? <img src={data.photoUrl} style={{ width: 34, height: 34, borderRadius: 9, objectFit: 'cover', border: '2px solid rgba(255,255,255,.3)', flexShrink: 0 }} alt="" />
-          : <div style={{ width: 34, height: 34, borderRadius: 9, background: 'linear-gradient(135deg,#2ecc71,#1a6b3a)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: 'Plus Jakarta Sans', fontSize: 16, fontWeight: 900, color: '#fff', flexShrink: 0 }}>
-              {data.name[0]}
-            </div>
-        }
-        <div style={{ flex: 1 }}>
-          <div style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 15, fontWeight: 800, color: '#fff' }}>{data.name}</div>
-          <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.45)', marginTop: 2 }}>{data.customerId}</div>
+          ? <img src={data.photoUrl} className="ui-avatar" alt="" />
+          : <span className="ui-avatar" aria-hidden="true">{data.name[0]}</span>}
+        <div className="ui-topbar-main">
+          <div className="ui-topbar-title">{greeting}, {firstName}</div>
         </div>
-        <button onClick={logout} style={{ background: 'rgba(255,255,255,.12)', border: '1px solid rgba(255,255,255,.2)', borderRadius: 8, color: '#fff', fontSize: 11, fontWeight: 700, padding: '5px 10px', cursor: 'pointer' }}>Logout</button>
-      </div>
+      </header>
 
-      <div style={{ padding: 16 }}>
-        {/* Plan switcher tabs (if multiple plans) */}
-        {plans.length > 1 && (
-          <div style={{ display: 'flex', gap: 8, marginBottom: 12, overflowX: 'auto', paddingBottom: 2 }}>
-            {plans.map((p, i) => (
-              <button key={p.id} onClick={() => setActivePlanIdx(i)} style={{
-                flexShrink: 0, padding: '6px 14px', borderRadius: 20,
-                border: `1.5px solid ${i === activePlanIdx ? 'var(--g)' : 'var(--br)'}`,
-                background: i === activePlanIdx ? 'var(--gl)' : 'var(--card)',
-                color: i === activePlanIdx ? 'var(--g)' : 'var(--mu)',
-                fontSize: 12, fontWeight: 700, cursor: 'pointer',
-              }}>
-                {p.goal} · ₦{(p.cadence ?? 'daily') === 'weekly' ? (p.dailyAmount * 7).toLocaleString() : p.dailyAmount.toLocaleString()}/{(p.cadence ?? 'daily') === 'weekly' ? 'w' : 'd'}
+      <main className="ui-container">
+        <section className="ui-hero" aria-label="Savings balance">
+          <div className="ui-hero-top">
+            {plans.length > 1 ? (
+              <button
+                type="button"
+                className="ui-plan-picker"
+                onClick={() => setPickerOpen(true)}
+                aria-haspopup="dialog"
+                aria-label={`${plan?.goal ?? 'Plan'}. Change plan`}
+              >
+                {plan?.goal} <Icons.expand size={18} aria-hidden="true" />
               </button>
-            ))}
+            ) : (
+              <span className="ui-plan-name">{plan ? plan.goal : 'Savings balance'}</span>
+            )}
+            <button
+              type="button"
+              className="ui-icon-btn ui-icon-btn--plain"
+              onClick={toggleBalance}
+              aria-label={hideBalance ? 'Show balance' : 'Hide balance'}
+              aria-pressed={hideBalance}
+            >
+              {hideBalance ? <Icons.show size={18} aria-hidden="true" /> : <Icons.hide size={18} aria-hidden="true" />}
+            </button>
           </div>
+          {hideBalance
+            ? <span className="ui-amount ui-amount--hero" aria-label="Balance hidden">₦ ••••</span>
+            : <Amount value={plan?.balance ?? 0} size="hero" animate />}
+          <div className="ui-hero-sub">
+            {!plan && 'No active plan yet'}
+            {plan && ended && 'Plan complete'}
+            {plan && !ended && (
+              <>
+                {rate}
+                <br />
+                You collect on <strong>{formatDate(plan.maturityDate)}</strong> ({daysUntil(plan.maturityDate)} days)
+              </>
+            )}
+          </div>
+          {plan && !ended && !pending && <TodayStatus weekly={weekly} deposits={recentForStatus} />}
+        </section>
+
+        {plan && ended && !pending && (
+          <section className="ui-card ui-card--highlight" aria-label="Plan complete">
+            <h2 className="ui-card-title">Your plan is complete</h2>
+            <p className="ui-card-text">
+              {hideBalance ? 'Your savings are ready to collect.' : <>You can now collect <strong>{formatNaira(plan.balance)}</strong>.</>}
+            </p>
+            <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => router.push('/customer/redeem')}>
+              Collect money
+            </button>
+          </section>
         )}
 
-        {/* Balance hero */}
-        {plan ? (
-          <div style={{ background: 'linear-gradient(135deg,#071a0e,#0e4d24)', borderRadius: 18, padding: '20px 20px 16px', marginBottom: 16 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 4 }}>
-              <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', color: 'rgba(255,255,255,.45)' }}>Savings Balance</div>
-              {data.recentTransactions && data.recentTransactions.length > 0 && (
-                <button onClick={() => router.push('/customer/transactions')} style={{
-                  background: 'none', border: 'none', color: 'rgba(255,255,255,.45)', fontSize: 12, fontWeight: 700, cursor: 'pointer', padding: 0,
-                  display: 'flex', alignItems: 'center', gap: 4,
-                }}>
-                  Contribution History →
-                </button>
-              )}
-            </div>
-            <div style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 36, fontWeight: 900, color: '#fff' }}>₦{plan.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-            <div style={{ fontSize: 12, color: 'rgba(255,255,255,.5)', marginTop: 4 }}>
-              {(plan.cadence ?? 'daily') === 'weekly'
-                ? `₦${(plan.dailyAmount * 7).toLocaleString()}/week · ${plan.periodDays / 7} weeks · ${plan.goal}`
-                : `₦${plan.dailyAmount.toLocaleString()}/day · ${plan.periodDays} days · ${plan.goal}`
-              }
-            </div>
-            <div style={{ height: 8, background: 'rgba(255,255,255,.15)', borderRadius: 100, overflow: 'hidden', marginTop: 14 }}>
-              <div style={{ height: '100%', width: `${pct}%`, background: 'linear-gradient(90deg,#2ecc71,#6edfa0)', borderRadius: 100, transition: 'width 1s ease' }} />
-            </div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: 'rgba(255,255,255,.5)', marginTop: 5 }}>
-              <span>{pct}% complete</span>
-              <span>Matures {new Date(plan.maturityDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
-            </div>
-          </div>
-        ) : (
-          <div style={{ background: 'var(--card)', border: '1px solid var(--br)', borderRadius: 16, padding: 20, textAlign: 'center', marginBottom: 16 }}>
-            <div style={{ fontSize: 36, marginBottom: 8 }}>💰</div>
-            <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>No Active Plan</div>
-            <div style={{ fontSize: 13, color: 'var(--mu)' }}>Start a new savings plan below.</div>
-          </div>
-        )}
+        {pending && <CollectionTracker status={pending.status} onView={() => router.push('/customer/redeem')} />}
 
-        {/* Stats row */}
-        {plan && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 10, marginBottom: 14 }}>
-            {[
-              { icon: '🔥', val: savedDays, lbl: 'Days Saved', bg: 'var(--gdl)', col: 'var(--gd)' },
-              { icon: '📅', val: daysLeft, lbl: 'Days Left', bg: 'var(--bl)', col: 'var(--b)' },
-              { icon: '📊', val: `${pct}%`, lbl: 'Progress', bg: 'var(--gl)', col: 'var(--g)' },
-            ].map(s => (
-              <div key={s.lbl} style={{ background: s.bg, borderRadius: 13, padding: 12, textAlign: 'center' }}>
-                <div style={{ fontSize: 22, marginBottom: 4 }}>{s.icon}</div>
-                <div style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 20, fontWeight: 900, color: s.col }}>{s.val}</div>
-                <div style={{ fontSize: 10, color: 'var(--mu)', marginTop: 2 }}>{s.lbl}</div>
-              </div>
-            ))}
-          </div>
-        )}
-
-
-        {/* Redemption pending notice */}
-        {pendingRedemption && (
-          <div style={{
-            background: 'var(--rdl)', border: '1px solid rgba(192,57,43,.25)', borderRadius: 12,
-            padding: '11px 14px', marginBottom: 12, fontSize: 13, color: 'var(--rd)', lineHeight: 1.5,
-          }}>
-            🔒 <strong>Savings locked</strong> — You have a pending redemption request. New savings are disabled until it is resolved.{' '}
-            <span style={{ fontWeight: 700, cursor: 'pointer', textDecoration: 'underline' }} onClick={() => router.push('/customer/redeem')}>View request →</span>
-          </div>
-        )}
-
-        {/* Quick actions */}
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 10 }}>
-          <button
-            disabled={!!pendingRedemption}
-            onClick={() => !pendingRedemption && router.push(plan ? `/customer/save?planId=${plan.id}` : '/customer/save')}
-            style={{
-              padding: '14px 12px',
-              background: pendingRedemption ? 'var(--br)' : 'linear-gradient(135deg,#2ecc71,#1a6b3a)',
-              border: 'none', borderRadius: 13,
-              cursor: pendingRedemption ? 'not-allowed' : 'pointer',
-              color: pendingRedemption ? 'var(--mu)' : '#fff',
-              fontFamily: 'Plus Jakarta Sans', fontSize: 14, fontWeight: 800,
-              display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-              boxShadow: pendingRedemption ? 'none' : '0 4px 14px rgba(26,107,58,.3)',
-              opacity: pendingRedemption ? .6 : 1,
-            }}
-          >{pendingRedemption ? '🔒 Save Locked' : '💳 Save Now'}</button>
-          <button onClick={() => router.push('/customer/redeem')} style={{
-            padding: '14px 12px', background: 'var(--card)', border: '1.5px solid var(--br)',
-            borderRadius: 13, cursor: 'pointer', fontSize: 14, fontWeight: 700,
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-          }}>💸 Redeem</button>
+        <div className="ui-actions">
+          {!ended && (
+            <ActionButton
+              icon={pending ? 'locked' : 'add'}
+              label={pending ? 'Locked' : 'Save'}
+              disabled={!!pending}
+              onClick={() => router.push(plan ? `/customer/save?planId=${plan.id}` : '/customer/save')}
+            />
+          )}
+          {/* A finished plan already has a big "Collect money" button above. */}
+          {!ended && <ActionButton icon="withdraw" label="Collect" onClick={() => router.push('/customer/redeem')} />}
+          <ActionButton
+            icon="plan"
+            label="New plan"
+            disabled={!!pending}
+            onClick={() => router.push('/customer/save?new=1')}
+          />
         </div>
 
-        {/* New plan button (hidden when redemption pending) */}
-        {!pendingRedemption && (
-          <button onClick={() => router.push('/customer/save?new=1')} style={{
-            width: '100%', marginBottom: 16, padding: '12px', background: 'var(--card)',
-            border: '1.5px dashed var(--gm)', borderRadius: 13, cursor: 'pointer',
-            fontSize: 13.5, fontWeight: 700, color: 'var(--g)',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-          }}>➕ Start New Savings Plan</button>
-        )}
+        {plan && <SavingsCard plan={plan} depositDates={depositDates} hideAmounts={hideBalance} />}
 
-        {/* Recent transactions */}
-        {data.recentTransactions.length > 0 && (
-          <div style={{ background: 'var(--card)', border: '1px solid var(--br)', borderRadius: 14, padding: 16, marginBottom: 14 }}>
-            <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 12 }}>Recent Savings</div>
-            {data.recentTransactions.slice(0, 10).map(tx => (
-              <div key={tx.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 0', borderBottom: '1px solid var(--br)', fontSize: 13.5 }}>
-                <div>
-                  <div style={{ fontWeight: 700, color: 'var(--g)' }}>+₦{tx.amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                  <div style={{ fontSize: 11, color: 'var(--mu)', marginTop: 2 }}>{new Date(tx.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} · {tx.method}</div>
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--mu)', fontFamily: 'monospace' }}>{tx.ref.slice(0, 14)}…</div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        {/* Agent info */}
-        <div style={{ background: 'var(--card)', border: '1px solid var(--br)', borderRadius: 14, padding: 16 }}>
-          <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 12 }}>My Agent</div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13.5 }}>
-            <span style={{ color: 'var(--mu)' }}>Name</span>
-            <strong>{data.agent.name}</strong>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13.5, marginTop: 8 }}>
-            <span style={{ color: 'var(--mu)' }}>ID</span>
-            <strong style={{ fontFamily: 'monospace', color: 'var(--g)' }}>{data.agent.agentId}</strong>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13.5, marginTop: 8 }}>
-            <span style={{ color: 'var(--mu)' }}>Phone</span>
-            <a href={`tel:${data.agent.phone}`} style={{ fontWeight: 700, color: 'var(--b)' }}>{data.agent.phone}</a>
-          </div>
-          <button onClick={() => router.push('/customer/chat')} style={{
-            width: '100%', marginTop: 12, padding: 11, background: 'var(--gl)', border: '1px solid var(--gm)',
-            borderRadius: 10, cursor: 'pointer', fontSize: 13, fontWeight: 700, color: 'var(--g)',
-          }}>💬 Chat with Agent</button>
+        <div className="ui-section-head">
+          <h2>Recent savings</h2>
+          {planTxs.length > 0 && (
+            <button type="button" className="ui-link" onClick={() => router.push('/customer/transactions')}>
+              See all <Icons.next size={16} aria-hidden="true" />
+            </button>
+          )}
         </div>
-      </div>
+        <section className="ui-card ui-card--list">
+          {planTxs.length === 0 ? (
+            <EmptyState icon="history" title="No savings yet" text="Your deposits will show up here." />
+          ) : (
+            planTxs.slice(0, 5).map(tx => (
+              <ListRow
+                key={tx.id}
+                icon="deposit"
+                title="Savings deposit"
+                sub={`${formatDate(tx.createdAt)} · ${capitalise(tx.method ?? 'Cash')} · ${tx.recordedBy}`}
+                value={<Amount value={tx.amount} incoming />}
+              />
+            ))
+          )}
+        </section>
 
+        <div className="ui-section-head">
+          <h2>Your agent</h2>
+        </div>
+        <section className="ui-card ui-card--list">
+          <ListRow
+            leading={<span className="ui-avatar" aria-hidden="true">{data.agent.name[0]}</span>}
+            title={displayName(data.agent.name)}
+            sub={`Agent ID ${data.agent.agentId}`}
+          />
+          <div className="ui-btn-row">
+            <a className="ui-btn ui-btn--secondary" href={`tel:${data.agent.phone}`}>
+              <Icons.phone size={18} aria-hidden="true" /> Call
+            </a>
+            <button type="button" className="ui-btn ui-btn--secondary" onClick={() => router.push('/customer/chat')}>
+              <Icons.chat size={18} aria-hidden="true" /> Chat
+            </button>
+          </div>
+        </section>
+      </main>
 
-      <BottomNav items={[
-        { key: 'home',     icon: '🏠', label: 'Home',     href: '/customer/dashboard' },
-        { key: 'save',     icon: '💳', label: 'Save',     href: '/customer/save' },
-        { key: 'history',  icon: '📊', label: 'History',  href: '/customer/transactions' },
-        { key: 'chat',     icon: '💬', label: 'Chat',     href: '/customer/chat' },
-        { key: 'settings', icon: '⚙️', label: 'Settings', href: '/customer/settings' },
-      ]} />
+      <BottomSheet open={pickerOpen} onClose={() => setPickerOpen(false)} title="Your plans">
+        <div>
+          {plans.map((p, i) => (
+            <button
+              key={p.id}
+              type="button"
+              className="ui-option"
+              aria-current={i === activePlanIdx ? 'true' : undefined}
+              onClick={() => choosePlan(i)}
+            >
+              <span className="ui-row-icon" aria-hidden="true"><Icons.plan size={20} /></span>
+              <span className="ui-row-main">
+                <span className="ui-row-title" style={{ display: 'block' }}>{p.goal}</span>
+                <span className="ui-row-sub" style={{ display: 'block' }}>{hasEnded(p) ? 'Complete' : `Collect on ${formatDate(p.maturityDate)}`}</span>
+              </span>
+              <span className="ui-row-value">{hideBalance ? '₦ ••••' : formatNaira(p.balance)}</span>
+              <span className="ui-option-check" aria-hidden="true">{i === activePlanIdx && <Icons.check size={20} />}</span>
+            </button>
+          ))}
+          {!pending && (
+            <button type="button" className="ui-option" onClick={() => router.push('/customer/save?new=1')}>
+              <span className="ui-row-icon" aria-hidden="true"><Icons.add size={20} /></span>
+              <span className="ui-row-main"><span className="ui-row-title">Start a new plan</span></span>
+            </button>
+          )}
+        </div>
+      </BottomSheet>
+
+      <BottomNav items={CUSTOMER_NAV} />
     </div>
   )
 }

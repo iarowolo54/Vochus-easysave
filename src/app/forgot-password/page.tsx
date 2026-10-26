@@ -1,6 +1,7 @@
 'use client'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
+import Logo from '@/components/Logo'
 
 type Stage = 'identifier' | 'reset' | 'done'
 
@@ -51,11 +52,7 @@ export default function AgentForgotPasswordPage() {
     <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg,#051810 0%,#0A3520 50%,#0C4824 100%)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
       <div style={{ width: '100%', maxWidth: 420 }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
-          <div style={{
-            width: 56, height: 56, borderRadius: 14, background: 'linear-gradient(135deg,#0D6B3A,#1DC96A)',
-            display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-            fontFamily: 'Plus Jakarta Sans', fontSize: 28, fontWeight: 900, color: '#fff', marginBottom: 12, boxShadow: '0 12px 40px rgba(29,201,106,.3)',
-          }}>V</div>
+          <Logo size={56} tile style={{ marginBottom: 12 }} />
           <div style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 'clamp(20px, 5vw, 26px)', fontWeight: 900, color: '#fff' }}>Reset Password</div>
           <div style={{ fontSize: 12, color: 'rgba(255,255,255,.6)', marginTop: 4 }}>
             {stage === 'identifier' && 'Enter your Agent ID or phone to receive a reset code'}

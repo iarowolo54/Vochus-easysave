@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import Logo from '@/components/Logo'
 
 export default function SuperAdminLogin() {
   const router = useRouter()
@@ -60,21 +61,7 @@ export default function SuperAdminLogin() {
           boxShadow: '0 24px 60px rgba(0,0,0,0.35)',
         }}>
           <div style={{ textAlign: 'center', marginBottom: 32 }}>
-            <div style={{
-              width: 60,
-              height: 60,
-              borderRadius: 16,
-              background: 'linear-gradient(135deg, #2ecc71, #1a6b3a)',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              fontFamily: "'IBM Plex Serif', serif",
-              fontWeight: 700,
-              fontSize: 26,
-              color: '#fff',
-              margin: '0 auto 16px',
-              boxShadow: '0 6px 20px rgba(26,107,58,0.4)',
-            }}>V</div>
+            <Logo size={60} style={{ display: 'flex', width: 'fit-content', margin: '0 auto 16px' }} />
             <div style={{ fontFamily: "'IBM Plex Serif', serif", fontSize: 22, fontWeight: 700, color: '#111a14', letterSpacing: '-0.3px' }}>
               Vochus Easy Save
             </div>

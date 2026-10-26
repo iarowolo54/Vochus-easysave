@@ -2,6 +2,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { blockNonDigit, digitsOnly } from '@/lib/numeric'
+import Logo from '@/components/Logo'
 
 const STEPS = ['Personal', 'Photo', 'Verify Email', 'Password']
 
@@ -210,7 +211,7 @@ export default function AgentOnboardPage() {
           <div style={{ width: '100%', background: 'rgba(255,255,255,.05)', border: '1px solid rgba(255,255,255,.10)', borderRadius: 22, padding: '24px 20px', marginBottom: 20 }}>
             {/* Logo */}
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', gap: 10, marginBottom: 20 }}>
-              <div style={{ width: 52, height: 52, borderRadius: 14, background: 'linear-gradient(135deg,#0D6B3A,#1DC96A)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 24, fontWeight: 900, color: '#fff' }}>V</div>
+              <Logo size={52} tile />
               <div>
                 <div style={{ fontSize: 18, fontWeight: 800, color: '#fff' }}>Vochus Easy Save</div>
                 <div style={{ fontSize: 11, color: 'rgba(255,255,255,.45)', marginTop: 1 }}>Agent Onboarding Programme</div>
@@ -298,7 +299,7 @@ export default function AgentOnboardPage() {
           <div style={{ position: 'relative', width: 76, height: 76, marginBottom: 30, flexShrink: 0 }}>
             <div style={{ position: 'absolute', width: 108, height: 108, top: -16, left: -16, borderRadius: '50%', border: '1px solid rgba(29,201,106,.2)', animation: 'ring 2.6s ease-out infinite' }} />
             <div style={{ position: 'absolute', width: 150, height: 150, top: -37, left: -37, borderRadius: '50%', border: '1px solid rgba(29,201,106,.2)', animation: 'ring 2.6s ease-out infinite', animationDelay: '.8s' }} />
-            <div style={{ position: 'absolute', inset: 0, borderRadius: 20, background: 'linear-gradient(135deg,#0D6B3A,#1DC96A)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 34, fontWeight: 900, color: '#fff', zIndex: 1 }}>V</div>
+            <Logo size={76} tile style={{ position: 'absolute', inset: 0 }} />
           </div>
 
           <div style={{ display: 'inline-flex', alignItems: 'center', gap: 5, background: 'rgba(245,185,40,.12)', border: '1px solid rgba(245,185,40,.26)', borderRadius: 26, padding: '4px 12px', fontSize: 9, fontWeight: 700, color: '#F5B928', letterSpacing: '.1em', textTransform: 'uppercase', marginBottom: 14 }}>⭐ Welcome, Future Agent</div>
@@ -341,7 +342,7 @@ export default function AgentOnboardPage() {
       {/* Header */}
       <div style={{ width: '100%', maxWidth: 560, marginBottom: 28 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 6 }}>
-          <div style={{ width: 40, height: 40, borderRadius: 10, background: 'linear-gradient(135deg,#2ecc71,#1a5c35)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20, fontWeight: 900, color: '#fff' }}>V</div>
+          <Logo size={40} />
           <div>
             <div style={{ fontSize: 16, fontWeight: 900, color: '#1a1a1a' }}>Vochus Easy Save</div>
             <div style={{ fontSize: 12, color: '#888' }}>Agent Registration</div>
