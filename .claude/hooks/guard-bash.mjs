@@ -5,11 +5,13 @@ const isCommit = /\bgit\b[^|;&]*\bcommit\b/.test(cmd);
 
 const rules = [
   [
-    /\bgit\s+commit\b[^|;&]*--no-verify\b/,
-    'Blocked: do not commit with --no-verify. Fix what the checks flag instead of skipping them.',
+    // --no-verify or its short form -n (also inside a combined short cluster like -nm)
+    /\bgit\s+commit\b[^|;&]*(\s--no-verify\b|\s-[A-Za-z]*n[A-Za-z]*\b)/,
+    'Blocked: do not commit with --no-verify / -n. Fix what the checks flag instead of skipping them.',
   ],
   [
-    /\bgit\s+push\b[^|;&]*(\s--force(?!-with-lease)\b|\s-f\b)/,
+    // --force, -f, a combined short cluster containing f (e.g. -fv), or a +refspec push
+    /\bgit\s+push\b[^|;&]*(\s--force(?!-with-lease)\b|\s-[A-Za-z]*f[A-Za-z]*\b|\s\+[^\s|;&]+)/,
     'Blocked: force push is not allowed. Use --force-with-lease on your own feature branch only, and only if the user asked.',
   ],
   [
@@ -17,8 +19,15 @@ const rules = [
     'Blocked: never force-push main.',
   ],
   [
-    /\b(cat|less|more|head|tail|bat|grep|rg|sed|awk|source|cp|mv|scp|curl)\b[^|;&]*(^|[\s'"/=])\.env(\.(?!example\b)[\w.-]+)?(?=$|[\s'";|&])/,
-    'Blocked: reading or copying real .env files exposes live Paystack/SMTP/SMS secrets. Use the variable names only; ask the user for values.',
+    // Any reference to a real .env (read, copy, redirect, interpreter) in any command,
+    // case-insensitive; .env.example is allowed. Not a hard boundary — defence in depth.
+    /(^|[\s'"/=>])\.env(\.(?!example\b)[\w.-]+)?(?=$|[\s'";|&>])/i,
+    'Blocked: this touches a real .env file (live Paystack/SMTP/SMS secrets). Use the variable names only; ask the user for values. .env.example is fine.',
+  ],
+  [
+    // Writing/redirecting into a database file via the shell
+    /(>>?|\btee\b)\s*[^\s|;&]*\.(db|sqlite3?)\b/i,
+    'Blocked: do not write to a database file through the shell. Use Prisma.',
   ],
   [
     /\bprisma\s+migrate\s+reset\b/,

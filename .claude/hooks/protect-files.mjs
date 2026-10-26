@@ -5,7 +5,10 @@ import { block, projectDir, readInput, rel } from './lib.mjs';
 const input = readInput();
 const file = rel(input.tool_input?.file_path ?? input.tool_input?.notebook_path);
 if (!file) process.exit(0);
-const base = path.posix.basename(file);
+// Match case-insensitively: the dev filesystem (macOS) is case-insensitive,
+// so .ENV resolves to the same file as .env. Keep `file` for git/messages.
+const lower = file.toLowerCase();
+const base = path.posix.basename(lower);
 
 if (/^\.env(\..+)?$/.test(base) && base !== '.env.example') {
   block(
@@ -23,7 +26,7 @@ if (/\.db$|\.db\.(bak|journal)$|\.sqlite3?$/.test(base)) {
   block(`Blocked: ${file} is a database file (real/seeded data). Never write to it directly; use Prisma.`);
 }
 
-if (/^prisma\/migrations\/.+\.sql$/.test(file)) {
+if (/^prisma\/migrations\/.+\.sql$/.test(lower)) {
   let committed = false;
   try {
     execFileSync('git', ['cat-file', '-e', `HEAD:${file}`], { cwd: projectDir, stdio: 'ignore' });
