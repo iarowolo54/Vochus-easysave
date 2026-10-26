@@ -523,3 +523,16 @@ model AgentReward {
 
   @@index([agentId])
 }
+
+// Brute-force throttle state for the customer login path. One row per throttle
+// key: "phone:<normalised phone>" (per-account escalation) or "ip:<addr>"
+// (loose per-IP spray rule). Managed by src/lib/login-attempt.ts; the decision
+// logic lives in src/lib/login-throttle.ts.
+model LoginAttempt {
+  id          String    @id @default(cuid())
+  key         String    @unique
+  failCount   Int       @default(0)
+  lastFailAt  DateTime?
+  lockedUntil DateTime?
+  updatedAt   DateTime  @updatedAt
+}

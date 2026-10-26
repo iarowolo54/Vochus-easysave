@@ -5,17 +5,36 @@ import { prisma } from '@/lib/prisma'
 import { signCustomerToken, customerCookieOptions } from '@/lib/customer-auth'
 import { recordDeviceSession } from '@/lib/device-session'
 import { logAudit } from '@/lib/audit'
+import {
+  checkLoginThrottle,
+  recordLoginFailure,
+  clearLoginThrottle,
+} from '@/lib/login-attempt'
+import { formatRetryAfter } from '@/lib/login-throttle'
 
 export async function POST(req: NextRequest) {
   const { phone, password, app, deviceId, biometricToken, device } = await req.json()
   if (!phone) return NextResponse.json({ error: 'Missing credentials' }, { status: 400 })
   if (!password && !biometricToken) return NextResponse.json({ error: 'Missing credentials' }, { status: 400 })
 
+  const ip = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null
+
+  // Brute-force throttle gate — generic, time-based message that does not reveal
+  // whether the account exists.
+  const throttle = await checkLoginThrottle({ phone, ip })
+  if (throttle.blocked) {
+    return NextResponse.json(
+      { error: `Too many attempts. Try again in ${formatRetryAfter(throttle.retryAfterSeconds)}.` },
+      { status: 429, headers: { 'Retry-After': String(throttle.retryAfterSeconds) } },
+    )
+  }
+
   const customer = await prisma.customer.findFirst({
     where: { phone: phone.trim() },
   })
 
   if (!customer || !customer.password) {
+    await recordLoginFailure({ phone, ip })
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
 
@@ -33,7 +52,14 @@ export async function POST(req: NextRequest) {
     valid = await bcrypt.compare(password, customer.password)
   }
 
-  if (!valid) return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
+  if (!valid) {
+    await recordLoginFailure({ phone, ip })
+    return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
+  }
+
+  // Correct credentials: the throttle's job (protecting the password) is done,
+  // so clear the account counter even if a later gate (status/device) blocks.
+  await clearLoginThrottle({ phone })
 
   if (customer.status && customer.status.toLowerCase() !== 'active') {
     return NextResponse.json({ error: 'Your account has been locked by the administrator. Please contact support.' }, { status: 403 })
