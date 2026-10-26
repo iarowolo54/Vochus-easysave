@@ -1,26 +1,31 @@
 import { block, readInput } from './lib.mjs';
 
 // Blocks commands that could tamper with PRODUCTION user data. Staging
-// (deploy-staging.sh, the -staging dir) and local dev are intentionally not
-// matched. Defence in depth, not a boundary — a determined operator can still
-// run these outside Claude; this stops accidental prod data loss.
+// (deploy-staging.sh, the -staging dir) and local dev (vochus-easysave-main)
+// are intentionally not matched. Defence in depth, not a boundary — a
+// determined operator can still run these outside Claude. The robust control
+// is the in-script gate inside deploy.sh (it refuses the destructive steps
+// without an explicit opt-in); this hook stops accidental prod data loss.
 
-const cmd = String(readInput().tool_input?.command ?? '');
+const raw = String(readInput().tool_input?.command ?? '');
+// Normalise for matching: drop quotes/backslashes so they can't split a token.
+const cmd = raw.replace(/['"\\]/g, '');
 
-// Production app directory — NOT ~/vochus-easysave-staging. The SSH host alone
-// can't tell prod from staging (same box), so we key on the prod path.
-const prodPath = /(?:\/home\/administrator|~)\/vochus-easysave(?!-staging)(?=\/|$|\s|['"`])/;
+// The production app directory — on the server only (~, $HOME, or the absolute
+// home), and exactly `vochus-easysave`: the boundary (?![-\w]) excludes
+// -staging, -main, and any other suffix, and the prefix excludes local paths
+// like /Users/.../vochus-easysave-main.
+const prodPath = /(?:\/home\/administrator|~|\$\{?HOME\}?)\/vochus-easysave(?![-\w])/;
 const prodTargeted = prodPath.test(cmd);
 
-// 1. The production deploy script bundles `prisma db push --accept-data-loss`
-//    and the seed, both of which mutate live data.
-if (/(?:^|[\s;&|/])(?:bash\s+|sh\s+)?(?:\.\/)?scripts\/deploy\.sh\b/.test(cmd)) {
+// 1. Any deploy.sh (by basename, any path/quoting) that is NOT deploy-staging.
+if (/\bdeploy(?!-staging)[\w.-]*\.sh\b/.test(cmd)) {
   block(
     'Blocked: scripts/deploy.sh runs `prisma db push --accept-data-loss` and the seed against PRODUCTION (resets the admin PIN, recreates the demo agent, forces the promo on). Before any prod deploy: back up and download the prod DB, then use a code-only deploy (no db push, no seed). Ask to harden deploy.sh with a --code-only mode first. Staging: use scripts/deploy-staging.sh.',
   );
 }
 
-// 2. Seeding production mutates live data.
+// 2. Seeding the production directory overwrites live data.
 const seed = /\b(prisma\s+db\s+seed|db:seed|tsx\s+prisma\/seed|prisma\/seed\.ts)\b/;
 if (prodTargeted && seed.test(cmd)) {
   block(
@@ -28,9 +33,10 @@ if (prodTargeted && seed.test(cmd)) {
   );
 }
 
-// 3. Other destructive operations aimed at the production directory.
+// 3. Other destructive operations aimed at the production directory. rm flag
+// order/spelling (-rf, -fr, -r ...) is matched loosely on purpose.
 const destructive =
-  /\b(rm\s+-rf|prisma\s+migrate\s+reset|prisma\s+db\s+push|DROP\s+(TABLE|DATABASE|SCHEMA)|DELETE\s+FROM|TRUNCATE)\b/i;
+  /(?:\brm\s+-\w*[rR]\w*|\bprisma\s+migrate\s+reset\b|\bprisma\s+db\s+push\b|\bDROP\s+(?:TABLE|DATABASE|SCHEMA)\b|\bDELETE\s+FROM\b|\bTRUNCATE\b)/i;
 if (prodTargeted && destructive.test(cmd)) {
   block(
     'Blocked: destructive command aimed at the production directory. Take and download a backup, and run it deliberately outside Claude if you truly intend it.',
