@@ -8,7 +8,9 @@ import {
   checkLoginThrottle,
   recordLoginFailure,
   clearLoginThrottle,
+  sweepStaleLoginAttempts,
 } from '../src/lib/login-attempt'
+import { THROTTLE } from '../src/lib/login-throttle'
 
 const rid = Math.random().toString(36).slice(2, 10)
 const phone = `+234999${rid}`
@@ -44,6 +46,53 @@ test('success clears the account throttle', async () => {
   assert.equal(r.blocked, false)
   const row = await prisma.loginAttempt.findUnique({ where: { key: `phone:${phone}` } })
   assert.equal(row, null)
+})
+
+test('concurrent failures are counted atomically (no lost updates)', async () => {
+  const cphone = `+234911${rid}`
+  const key = `phone:${cphone}`
+  try {
+    // Seed one failure so the row exists and later calls take the atomic path.
+    await recordLoginFailure({ phone: cphone }, t0)
+    // Fire nine more in parallel — a burst an attacker could send.
+    await Promise.all(
+      Array.from({ length: 9 }, () => recordLoginFailure({ phone: cphone }, t0 + 1000)),
+    )
+    const row = await prisma.loginAttempt.findUnique({ where: { key } })
+    assert.equal(row?.failCount, 10, 'all 10 failures must be counted')
+  } finally {
+    await prisma.loginAttempt.deleteMany({ where: { key } })
+  }
+})
+
+test('sweep deletes stale rows but keeps active locks', async () => {
+  const now = t0 + 100 * 60_000
+  const staleKey = `phone:stale-${rid}`
+  const activeKey = `phone:active-${rid}`
+  try {
+    await prisma.loginAttempt.create({
+      data: {
+        key: staleKey,
+        failCount: 3,
+        lastFailAt: new Date(now - THROTTLE.resetAfterMs - 1), // window long expired
+        lockedUntil: null, // not locked
+      },
+    })
+    await prisma.loginAttempt.create({
+      data: {
+        key: activeKey,
+        failCount: 10,
+        lastFailAt: new Date(now - 1000),
+        lockedUntil: new Date(now + 60_000), // still locked
+      },
+    })
+    const deleted = await sweepStaleLoginAttempts(now)
+    assert.ok(deleted >= 1)
+    assert.equal(await prisma.loginAttempt.findUnique({ where: { key: staleKey } }), null)
+    assert.notEqual(await prisma.loginAttempt.findUnique({ where: { key: activeKey } }), null)
+  } finally {
+    await prisma.loginAttempt.deleteMany({ where: { key: { in: [staleKey, activeKey] } } })
+  }
 })
 
 test('IP throttle is independent of account and only trips on spraying', async () => {

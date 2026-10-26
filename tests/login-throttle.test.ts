@@ -77,6 +77,33 @@ test('counter keeps climbing while attempts stay within the reset window', () =>
   assert.equal(s.lockedUntil, now + 15 * 60_000)
 })
 
+test('reset window is shorter than the max lock (anti-DoS invariant)', () => {
+  // If the reset window were >= the max lock, a lone attacker could re-arm the
+  // 15m lock forever by failing once each time it expires, permanently locking
+  // out the real owner. The reset must be shorter so the window clears first.
+  assert.ok(
+    THROTTLE.resetAfterMs < lockDurationMs(10),
+    `resetAfterMs (${THROTTLE.resetAfterMs}) must be < max lock (${lockDurationMs(10)})`,
+  )
+})
+
+test('a paced attacker cannot keep renewing the max lock', () => {
+  let s = fresh
+  let now = t0
+  for (let i = 0; i < 10; i++) {
+    now += 1000
+    s = registerFailure(s, now)
+  }
+  assert.equal(s.lockedUntil, now + 15 * 60_000)
+  // The next failure can only land AFTER the lock expires (blocked attempts are
+  // never recorded). By then > resetAfterMs has passed, so it resets to a fresh
+  // 30s window rather than re-arming the 15m lock.
+  now = s.lockedUntil! + 1
+  s = registerFailure(s, now)
+  assert.equal(s.failCount, 1)
+  assert.equal(s.lockedUntil, null)
+})
+
 test('inactivity past the reset window starts a fresh window', () => {
   let s = fresh
   let now = t0

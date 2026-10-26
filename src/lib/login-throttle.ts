@@ -5,11 +5,16 @@
 // the LoginAttempt table) and supplies `now`; this module only decides.
 //
 // Design (see the escalating schedule below):
-//  - Escalating DELAY, never a permanent lock — a real customer who forgets
-//    their password just waits; an attacker cannot lock a victim out for good.
-//  - The counter keeps climbing as long as attempts keep coming inside the
-//    reset window, so a sustained attack stays locked at 15m. After a quiet
-//    `resetAfterMs` the window starts fresh, giving honest users a clean slate.
+//  - Escalating DELAY, not a permanent lock. The reset window is deliberately
+//    SHORTER than the maximum lock (see the invariant test): once an account
+//    hits the 15m ceiling, the next failure can only land after the lock
+//    expires, by which point the window has already reset to a fresh 30s. So a
+//    lone attacker who paces one failure per lock-expiry CANNOT hold the
+//    account locked — that was the account-lockout DoS this guards against.
+//  - A genuinely concentrated attack (failures faster than the reset window)
+//    still escalates to 15m, locking the guessing path while the attack runs.
+//    An owner who has enrolled biometric/device login bypasses the throttle
+//    entirely (handled in the route) and is never caught by it.
 
 export interface AttemptState {
   failCount: number
@@ -19,7 +24,9 @@ export interface AttemptState {
 
 export const THROTTLE = {
   // After this much quiet (no failures), the next failure starts a new window.
-  resetAfterMs: 30 * 60_000,
+  // MUST stay below the max lock duration (lockDurationMs at the top tier) — see
+  // the anti-DoS invariant test.
+  resetAfterMs: 10 * 60_000,
 }
 
 /** Lock duration for the Nth consecutive failure in the current window. */
