@@ -18,10 +18,15 @@ const cmd = raw.replace(/['"\\]/g, '');
 const prodPath = /(?:\/home\/administrator|~|\$\{?HOME\}?)\/vochus-easysave(?![-\w])/;
 const prodTargeted = prodPath.test(cmd);
 
-// 1. Any deploy.sh (by basename, any path/quoting) that is NOT deploy-staging.
-if (/\bdeploy(?!-staging)[\w.-]*\.sh\b/.test(cmd)) {
+// 1. EXECUTING the prod deploy script (not merely referencing it, so
+//    `git add`/`cat scripts/deploy.sh` is fine). Matches it in command
+//    position — at a command boundary, after optional env assignments and an
+//    optional bash/sh/source/. and path prefix — excluding deploy-staging.sh.
+const deployExec =
+  /(?:^|[;&|(])\s*(?:[A-Za-z_]\w*=\S*\s+)*(?:(?:bash|sh|source|\.)\s+)?(?:[\w./-]*\/)?deploy(?!-staging)[\w.-]*\.sh\b/;
+if (deployExec.test(cmd)) {
   block(
-    'Blocked: scripts/deploy.sh runs `prisma db push --accept-data-loss` and the seed against PRODUCTION (resets the admin PIN, recreates the demo agent, forces the promo on). Before any prod deploy: back up and download the prod DB, then use a code-only deploy (no db push, no seed). Ask to harden deploy.sh with a --code-only mode first. Staging: use scripts/deploy-staging.sh.',
+    'Blocked: production deploys are a deliberate human action. scripts/deploy.sh is now safe by default (backs up + downloads the prod DB, snapshots for rollback, code-only) — run it yourself in a terminal. It only touches the DB with ALLOW_DB_PUSH=1 / ALLOW_SEED=1. Rollback: ./scripts/rollback.sh. Staging: scripts/deploy-staging.sh.',
   );
 }
 
