@@ -8,7 +8,12 @@ const ADMIN_SECRET = process.env.NEXTAUTH_SECRET ?? 'vochus-easy-save-secret-dev
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
-  if (pathname.startsWith('/api/admin') || pathname.startsWith('/api/superadmin')) {
+  if (
+    pathname.startsWith('/api/admin/') ||
+    pathname === '/api/admin' ||
+    pathname.startsWith('/api/superadmin/') ||
+    pathname === '/api/superadmin'
+  ) {
     const token = await getToken({
       req: request,
       secret: ADMIN_SECRET,
