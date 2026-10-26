@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { adminAuthOptions } from '@/lib/auth-admin'
+import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { finalizeTransfer } from '@/lib/paystack'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
@@ -8,8 +7,9 @@ import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
 
 export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
-  const session = await getServerSession(adminAuthOptions)
-  if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const guard = await requireSuperAdmin()
+  if (!guard.ok) return guard.response
+  const session = guard.session
 
   const { id } = await context.params
   const { otp } = await req.json()

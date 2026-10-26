@@ -8,6 +8,18 @@ const ADMIN_SECRET = process.env.NEXTAUTH_SECRET ?? 'vochus-easy-save-secret-dev
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
 
+  if (pathname.startsWith('/api/admin') || pathname.startsWith('/api/superadmin')) {
+    const token = await getToken({
+      req: request,
+      secret: ADMIN_SECRET,
+      cookieName: 'next-admin-auth.session-token',
+    })
+    if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    if ((token as any).role !== 'superadmin')
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    return NextResponse.next()
+  }
+
   if (pathname.startsWith('/superadmin')) {
     if (pathname.startsWith('/superadmin/login')) {
       return NextResponse.next()
@@ -43,5 +55,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ['/dashboard/:path*', '/superadmin/:path*'],
+  matcher: ['/dashboard/:path*', '/superadmin/:path*', '/api/admin/:path*', '/api/superadmin/:path*'],
 }

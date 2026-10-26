@@ -1,6 +1,5 @@
 import { NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { adminAuthOptions } from '@/lib/auth-admin'
+import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
@@ -10,8 +9,9 @@ function genRef() {
 }
 
 export async function GET() {
-  const session = await getServerSession(adminAuthOptions)
-  if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const guard = await requireSuperAdmin()
+  if (!guard.ok) return guard.response
+  const session = guard.session
 
   const records = await prisma.earlyRedemption.findMany({
     include: {
@@ -72,8 +72,9 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const session = await getServerSession(adminAuthOptions)
-  if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const guard = await requireSuperAdmin()
+  if (!guard.ok) return guard.response
+  const session = guard.session
 
   const { savingsPlanId, type, reason, note, payoutMethod } = await req.json()
   if (!savingsPlanId || !reason) return NextResponse.json({ error: 'Missing fields' }, { status: 400 })

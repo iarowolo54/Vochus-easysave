@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { adminAuthOptions } from '@/lib/auth-admin'
+import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import bcrypt from 'bcryptjs'
 import { randomBytes } from 'crypto'
@@ -8,8 +7,9 @@ import { sendMail } from '@/lib/mail'
 import { logAudit } from '@/lib/audit'
 
 export async function GET(req: NextRequest) {
-  const session = await getServerSession(adminAuthOptions)
-  if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const guard = await requireSuperAdmin()
+  if (!guard.ok) return guard.response
+  const session = guard.session
 
   const { searchParams } = new URL(req.url)
   const search = searchParams.get('search') ?? ''
@@ -69,8 +69,9 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-  const session = await getServerSession(adminAuthOptions)
-  if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const guard = await requireSuperAdmin()
+  if (!guard.ok) return guard.response
+  const session = guard.session
 
   const { name, phone, email, location, password, dob, gender, bvn, nin, nokName, nokPhone, address, photoUrl, floatLimit, status: reqStatus, requiredDocs } = await req.json()
   if (!name || !phone || !email || !location || !password || !nokName || !nokPhone) {

@@ -1,13 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { adminAuthOptions } from '@/lib/auth-admin'
+import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import bcrypt from 'bcryptjs'
 import { logAudit } from '@/lib/audit'
 
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(adminAuthOptions)
-  if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const guard = await requireSuperAdmin()
+  if (!guard.ok) return guard.response
+  const session = guard.session
 
   const { pin, currentPassword } = await req.json()
   if (!pin || String(pin).length < 4) return NextResponse.json({ error: 'PIN must be at least 4 digits' }, { status: 400 })
