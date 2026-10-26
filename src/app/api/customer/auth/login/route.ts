@@ -29,16 +29,22 @@ function clientIp(req: NextRequest): string | null {
   return ip
 }
 
-// The throttle must never take down login: if its DB writes fail (e.g. a transient
-// SQLite "database is locked"), fail OPEN rather than 500 the customer out.
+// The throttle must never take down login: if its DB access fails, fail OPEN
+// rather than 500 the customer out. Rationale: this is one SQLite file — if it's
+// truly unreachable the customer lookup below fails too, so the login is already
+// broken and failing open opens no window that isn't already a full outage. A
+// transient "database is locked" shouldn't reject a legitimate user. We log so
+// the failure is never silent (the review's minimum ask).
 async function safeCheck(ids: { phone?: string | null; ip?: string | null }) {
   try {
     return await checkLoginThrottle(ids)
-  } catch {
+  } catch (e) {
+    console.error('[login-throttle] check failed — failing open:', e)
     return { blocked: false, retryAfterSeconds: 0 }
   }
 }
-const swallow = (p: Promise<unknown>) => p.catch(() => {})
+const swallow = (p: Promise<unknown>) =>
+  p.catch((e) => console.error('[login-throttle] record/clear failed:', e))
 
 export async function POST(req: NextRequest) {
   const { phone, password, app, deviceId, biometricToken, device } = await req.json()
