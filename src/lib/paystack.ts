@@ -1,0 +1,115 @@
+const BASE = 'https://api.paystack.co'
+
+function headers() {
+  return {
+    Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+    'Content-Type': 'application/json',
+  }
+}
+
+async function call(method: string, path: string, body?: object) {
+  const res = await fetch(`${BASE}${path}`, {
+    method,
+    headers: headers(),
+    body: body ? JSON.stringify(body) : undefined,
+    signal: AbortSignal.timeout(15000),
+  })
+  return res.json()
+}
+
+export async function listBanks(): Promise<{ code: string; name: string }[]> {
+  const data = await call('GET', '/bank?currency=NGN&perPage=200&use_cursor=false')
+  if (!data.status) throw new Error(data.message ?? 'Failed to fetch banks')
+  return (data.data as any[]).map(b => ({ code: b.code, name: b.name }))
+}
+
+export async function resolveAccount(accountNumber: string, bankCode: string) {
+  if (bankCode === '001') {
+    return { accountName: 'Test Account', accountNumber }
+  }
+  const data = await call('GET', `/bank/resolve?account_number=${accountNumber}&bank_code=${bankCode}`)
+  if (!data.status) throw new Error(data.message ?? 'Could not resolve account')
+  return { accountName: data.data.account_name as string, accountNumber: data.data.account_number as string }
+}
+
+function isTestMode() {
+  return process.env.PAYSTACK_SECRET_KEY?.startsWith('sk_test_')
+}
+
+export async function createRecipient(name: string, accountNumber: string, bankCode: string): Promise<string> {
+  if (isTestMode()) return `RCP_test_${Date.now()}`
+  const data = await call('POST', '/transferrecipient', {
+    type: 'nuban',
+    name,
+    account_number: accountNumber,
+    bank_code: bankCode,
+    currency: 'NGN',
+  })
+  if (!data.status) throw new Error(data.message ?? 'Failed to create transfer recipient')
+  return data.data.recipient_code as string
+}
+
+export interface BvnResolution {
+  bvn: string
+  firstName: string
+  lastName: string
+  middleName?: string | null
+  dob?: string | null
+  phone?: string | null
+  gender?: string | null
+}
+
+export async function resolveBvn(bvn: string): Promise<BvnResolution> {
+  if (isTestMode()) {
+    // Paystack test mode doesn't validate real BVNs — return a deterministic dummy
+    return { bvn, firstName: 'TEST', lastName: 'CUSTOMER', dob: '1990-01-01', phone: null, gender: 'M' }
+  }
+  const data = await call('GET', `/bank/resolve_bvn/${bvn}`)
+  if (!data.status) throw new Error(data.message ?? 'Could not verify BVN')
+  const d = data.data ?? {}
+  return {
+    bvn: d.bvn ?? bvn,
+    firstName: (d.first_name ?? '').toString(),
+    lastName: (d.last_name ?? '').toString(),
+    middleName: d.middle_name ?? null,
+    dob: d.formatted_dob ?? d.dob ?? null,
+    phone: d.mobile ?? null,
+    gender: d.gender ?? null,
+  }
+}
+
+export async function initiateTransfer(amountNaira: number, recipientCode: string, reason: string, reference: string) {
+  if (isTestMode()) {
+    return { transferCode: `TRF_test_${Date.now()}`, status: 'success' as string, raw: null as any }
+  }
+  const data = await call('POST', '/transfer', {
+    source: 'balance',
+    reason,
+    amount: Math.round(amountNaira * 100),
+    recipient: recipientCode,
+    reference,
+  })
+  if (!data.status) throw new Error(data.message ?? 'Transfer initiation failed')
+  return {
+    transferCode: data.data.transfer_code as string,
+    status: data.data.status as string, // 'success' | 'pending' | 'otp' | 'reversed' | 'failed'
+    raw: data.data,
+  }
+}
+
+export async function verifyTransfer(reference: string) {
+  if (isTestMode()) return { status: 'success' as string, raw: null as any }
+  const data = await call('GET', `/transfer/verify/${reference}`)
+  if (!data.status) throw new Error(data.message ?? 'Transfer verification failed')
+  return { status: data.data.status as string, raw: data.data }
+}
+
+export async function finalizeTransfer(transferCode: string, otp: string) {
+  if (isTestMode()) return { status: 'success' as string }
+  const data = await call('POST', '/transfer/finalize_transfer', {
+    transfer_code: transferCode,
+    otp,
+  })
+  if (!data.status) throw new Error(data.message ?? 'OTP finalization failed')
+  return { status: (data.data?.status ?? 'success') as string }
+}

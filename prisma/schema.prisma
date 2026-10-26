@@ -1,0 +1,525 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model Agent {
+  id            String       @id @default(cuid())
+  agentId       String       @unique
+  phone         String       @unique
+  email              String?      @unique
+  emailVerified      Boolean      @default(false)
+  emailVerifyToken   String?      @unique
+  name          String
+  location      String
+  address       String?
+  dob           String?
+  gender        String?
+  bvn           String?
+  nin           String?
+  nokName       String?
+  nokPhone      String?
+  photoUrl      String?
+  nfcCard       String?
+  floatLimit    Float?
+  password      String
+  walletBalance      Float        @default(0)
+  commissionBalance  Float        @default(0)
+  requiredDocs       String       @default("[]")
+  status             String       @default("Active")
+  loginAttempts      Int          @default(0)
+  lockedAt           DateTime?
+  profileUnlocked    Boolean      @default(false)
+  transactionPin     String?
+  unlockToken        String?
+  unlockTokenExpiry  DateTime?
+  boundDeviceId      String?
+  bankCode           String?
+  bankName           String?
+  accountNumber      String?
+  accountName        String?
+  createdAt          DateTime     @default(now())
+  customers     Customer[]
+  transactions  Transaction[]
+  loans         Loan[]
+  subAgents     SubAgent[]
+  reports       IssueReport[]
+  commissions   Commission[]
+  documents     AgentDocument[]
+  memberCards   MemberCard[]
+  customerInvites CustomerInvite[]
+  agentRewards    AgentReward[]
+}
+
+model AgentDocument {
+  id                 String   @id @default(cuid())
+  agentId            String
+  agent              Agent    @relation(fields: [agentId], references: [id])
+  docType            String
+  fileName           String
+  fileData           String
+  uploadedAt         DateTime @default(now())
+  docApprovalStatus  String   @default("pending")
+  docApprovedAt      DateTime?
+  docRejectionReason String?
+
+  @@unique([agentId, docType])
+}
+
+model Customer {
+  id           String       @id @default(cuid())
+  customerId   String       @unique
+  agentId      String
+  agent        Agent        @relation(fields: [agentId], references: [id])
+  referredBy   String?
+  referrer     Customer?    @relation("Referrals", fields: [referredBy], references: [id])
+  referrals    Customer[]   @relation("Referrals")
+  kind         String       @default("Savings")
+  firstName    String
+  lastName     String
+  phone        String
+  email        String?
+  dob          DateTime?
+  address      String
+  language     String       @default("English")
+  bvn          String?
+  nokName      String
+  nokRelation  String
+  nokPhone     String
+  photoUrl     String?
+  status       String       @default("Active")
+  walletBalance Float       @default(0)
+  password     String?
+  inviteToken  String?      @unique
+  boundDeviceId String?
+  createdAt    DateTime     @default(now())
+  savingsPlans SavingsPlan[]
+  transactions Transaction[]
+  loans        Loan[]
+  memberCards  MemberCard[]
+  chatMessages CustomerChatMessage[]
+  customerPayments CustomerPayment[]
+  giftCardOrders   GiftCardOrder[]
+  redeemedGiftCards GiftCard[]  @relation("RedeemedBy")
+  agentReward       AgentReward?
+}
+
+model SavingsPlan {
+  id           String       @id @default(cuid())
+  customerId   String
+  customer     Customer     @relation(fields: [customerId], references: [id])
+  dailyAmount  Float
+  periodDays   Int
+  cadence      String       @default("daily")
+  source       String       @default("agent")
+  goal         String
+  startDate    DateTime
+  maturityDate DateTime
+  balance           Float              @default(0)
+  status            String             @default("Active")
+  maturityNotified  Boolean            @default(false)
+  notes             String?
+  transactions      Transaction[]
+  earlyRedemptions  EarlyRedemption[]
+
+  @@unique([customerId, startDate], name: "uniq_plan_per_start")
+}
+
+model Transaction {
+  id          String       @id @default(cuid())
+  ref         String       @unique
+  agentId     String
+  agent       Agent        @relation(fields: [agentId], references: [id])
+  customerId  String?
+  customer    Customer?    @relation(fields: [customerId], references: [id])
+  planId      String?
+  plan        SavingsPlan? @relation(fields: [planId], references: [id])
+  type        String
+  amount      Float
+  method      String?      @default("Cash")
+  status      String       @default("Done")
+  note        String?
+  walletAfter Float?
+  createdAt   DateTime     @default(now())
+}
+
+model Loan {
+  id            String         @id @default(cuid())
+  ref           String         @unique
+  agentId       String
+  agent         Agent          @relation(fields: [agentId], references: [id])
+  customerId    String?
+  customer      Customer?      @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  principal     Float
+  interestRate  Float
+  interestAmount Float
+  totalAmount   Float
+  durationDays  Int
+  dueDate       DateTime
+  status        String         @default("Pending")
+  approvedBy    String?
+  repayments    LoanRepayment[]
+  createdAt     DateTime       @default(now())
+}
+
+model LoanRepayment {
+  id        String   @id @default(cuid())
+  loanId    String
+  loan      Loan     @relation(fields: [loanId], references: [id])
+  amount    Float
+  method    String   @default("Cash")
+  createdAt DateTime @default(now())
+}
+
+model InterestRate {
+  id           String @id @default(cuid())
+  durationDays Int    @unique
+  label        String
+  rate         Float
+}
+
+model SubAgent {
+  id            String   @id @default(cuid())
+  parentAgentId String
+  parent        Agent    @relation(fields: [parentAgentId], references: [id])
+  name          String
+  phone         String   @unique
+  location      String
+  walletBalance Float    @default(0)
+  createdAt     DateTime @default(now())
+}
+
+model Commission {
+  id        String   @id @default(cuid())
+  agentId   String
+  agent     Agent    @relation(fields: [agentId], references: [id])
+  month     Int
+  year      Int
+  amount    Float
+  breakdown String?
+  createdAt DateTime @default(now())
+
+  @@unique([agentId, month, year])
+}
+
+model PlatformSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
+model PlatformWallet {
+  id        String   @id @default(cuid())
+  type      String   @unique
+  balance   Float    @default(0)
+  updatedAt DateTime @updatedAt
+}
+
+model SuperAdmin {
+  id        String   @id @default(cuid())
+  email     String   @unique
+  password  String
+  name      String
+  approvalPin String?
+  createdAt DateTime @default(now())
+}
+
+model IssueReport {
+  id          String   @id @default(cuid())
+  agentId     String
+  agent       Agent    @relation(fields: [agentId], references: [id])
+  category    String
+  title       String
+  description String
+  status      String   @default("Open")
+  createdAt   DateTime @default(now())
+}
+
+model PhoneOTP {
+  id        String   @id @default(cuid())
+  phone     String
+  code      String
+  expiresAt DateTime
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model EmailOTP {
+  id        String   @id @default(cuid())
+  email     String
+  code      String
+  expiresAt DateTime
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  action    String
+  entity    String
+  entityId  String?
+  details   String?
+  actorType String   @default("agent")
+  actorId   String?
+  actorName String?
+  createdAt DateTime @default(now())
+}
+
+model StaffUser {
+  id           String    @id @default(cuid())
+  name         String
+  email        String    @unique
+  password     String
+  role         String    @default("Support")
+  permissions  String    @default("[]")
+  status       String    @default("Active")
+  lastActiveAt DateTime?
+  createdAt    DateTime  @default(now())
+}
+
+model EarlyRedemption {
+  id            String    @id @default(cuid())
+  ref           String    @unique
+  savingsPlanId String
+  savingsPlan   SavingsPlan @relation(fields: [savingsPlanId], references: [id])
+  type          String    @default("early")
+  reason        String
+  note          String?
+  status        String    @default("Pending")
+  balance       Float
+  penalty       Float     @default(0)
+  netPayout     Float
+  token         String?   @unique
+  tokenExpiry   DateTime?
+  agentApprovedAt        DateTime?
+  agentApprovedBy        String?
+  payoutMethod           String    @default("Cash")
+  accountNumber          String?
+  accountName            String?
+  bankCode               String?
+  bankName               String?
+  paystackRecipientCode  String?
+  paystackTransferCode   String?
+  bankTransferStatus     String?
+  requestedAt            DateTime  @default(now())
+  decidedAt              DateTime?
+  decidedBy              String?
+}
+
+model MemberCard {
+  id         String    @id @default(cuid())
+  serial     String    @unique
+  batchName  String
+  batchId    String
+  expiryDate DateTime
+  status     String    @default("Unlinked")
+  customerId String?
+  customer   Customer? @relation(fields: [customerId], references: [id])
+  agentId    String?
+  agent      Agent?    @relation(fields: [agentId], references: [id])
+  linkedAt   DateTime?
+  createdAt  DateTime  @default(now())
+}
+
+model CustomerInvite {
+  id         String    @id @default(cuid())
+  token      String    @unique
+  agentId    String
+  agent      Agent     @relation(fields: [agentId], references: [id])
+  plan       String?
+  usedAt     DateTime?
+  customerId String?
+  createdAt  DateTime  @default(now())
+}
+
+model CustomerPayment {
+  id         String   @id @default(cuid())
+  ref        String   @unique
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+  planId     String?
+  amount     Float
+  status     String   @default("Pending")
+  channel    String?
+  createdAt  DateTime @default(now())
+}
+
+model CustomerChatMessage {
+  id         String   @id @default(cuid())
+  customerId String
+  customer   Customer @relation(fields: [customerId], references: [id])
+  sender     String
+  senderId   String?
+  senderName String?
+  message    String
+  imageUrl   String?
+  read       Boolean  @default(false)
+  createdAt  DateTime @default(now())
+}
+
+model BiometricToken {
+  id          String   @id @default(cuid())
+  agentId     String?
+  customerId  String?
+  deviceId    String
+  tokenHash   String
+  createdAt   DateTime @default(now())
+  lastUsedAt  DateTime?
+  revokedAt   DateTime?
+
+  @@index([agentId, deviceId])
+  @@index([customerId, deviceId])
+  @@index([tokenHash])
+}
+
+model DeviceSession {
+  id            String   @id @default(cuid())
+  deviceId      String
+  app           String   // 'agent' | 'customer'
+  agentId       String?
+  customerId    String?
+  platform      String?  // 'android' | 'ios'
+  model         String?
+  manufacturer  String?
+  osVersion     String?
+  appVersion    String?
+  ipAddress     String?
+  firstSeenAt   DateTime @default(now())
+  lastSeenAt    DateTime @default(now())
+  loginCount    Int      @default(1)
+
+  @@unique([deviceId, app])
+  @@index([agentId])
+  @@index([customerId])
+  @@index([lastSeenAt])
+}
+
+model AgentInvite {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  email     String
+  status    String   @default("Pending")
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+}
+
+model GiftCardCategory {
+  id             String   @id @default(cuid())
+  name           String   @unique
+  description    String?
+  denominations  String   @default("[]")
+  productionCost Float
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  orders         GiftCardOrder[]
+}
+
+model GiftCardOrder {
+  id             String   @id @default(cuid())
+  ref            String   @unique
+  customerId     String
+  customer       Customer @relation(fields: [customerId], references: [id])
+  categoryId     String
+  category       GiftCardCategory @relation(fields: [categoryId], references: [id])
+  loadedAmount   Float
+  productionCost Float
+  totalPaid      Float
+  quantity       Int      @default(1)
+  status         String   @default("PendingPayment")
+  paystackRef    String?  @unique
+  paidAt         DateTime?
+  producedAt     DateTime?
+  producedBy     String?
+  shippedAt      DateTime?
+  createdAt      DateTime @default(now())
+  cards          GiftCard[]
+
+  @@index([status])
+  @@index([customerId])
+}
+
+model GiftCard {
+  id                 String   @id @default(cuid())
+  serial             String   @unique
+  qrToken            String   @unique
+  orderId            String
+  order              GiftCardOrder @relation(fields: [orderId], references: [id])
+  issuerCustomerId   String
+  loadedAmount       Float
+  balance            Float
+  status             String   @default("Produced")
+  redeemedByCustomerId String?
+  redeemedBy         Customer? @relation("RedeemedBy", fields: [redeemedByCustomerId], references: [id])
+  redeemedAt         DateTime?
+  createdAt          DateTime @default(now())
+
+  @@index([status])
+  @@index([issuerCustomerId])
+}
+
+model GiftCardInvite {
+  id        String   @id @default(cuid())
+  token     String   @unique
+  email     String
+  name      String?
+  status    String   @default("Pending")
+  customerId String?
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+}
+
+model AgentWithdrawal {
+  id                    String    @id @default(cuid())
+  ref                   String    @unique
+  agentId               String
+  amount                Float
+  note                  String?
+  status                String    @default("Pending")
+  payoutMethod          String    @default("BankTransfer")
+  bankCode              String?
+  bankName              String?
+  accountNumber         String?
+  accountName           String?
+  paystackRecipientCode String?
+  paystackTransferCode  String?
+  bankTransferStatus    String?
+  adminNote             String?
+  requestedAt           DateTime  @default(now())
+  decidedAt             DateTime?
+  decidedBy             String?
+
+  @@index([agentId])
+  @@index([status])
+}
+
+model RewardPromo {
+  id                  String        @id @default(cuid())
+  name                String        @default("Registration Reward")
+  startDate           DateTime
+  endDate             DateTime
+  offlineRewardAmount Float         @default(200)
+  onlineRewardAmount  Float         @default(500)
+  isActive            Boolean       @default(true)
+  createdAt           DateTime      @default(now())
+  rewards             AgentReward[]
+}
+
+model AgentReward {
+  id         String      @id @default(cuid())
+  agentId    String
+  agent      Agent       @relation(fields: [agentId], references: [id])
+  customerId String      @unique
+  customer   Customer    @relation(fields: [customerId], references: [id])
+  promoId    String
+  promo      RewardPromo @relation(fields: [promoId], references: [id])
+  type       String
+  amount     Float
+  narration  String      @default("Reward fee")
+  createdAt  DateTime    @default(now())
+
+  @@index([agentId])
+}

@@ -1,0 +1,5 @@
+package com.vochus.easysave_agent
+
+import io.flutter.embedding.android.FlutterFragmentActivity
+
+class MainActivity : FlutterFragmentActivity()

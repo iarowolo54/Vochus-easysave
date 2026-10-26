@@ -1,0 +1,1 @@
+ALTER TABLE "SavingsPlan" ADD COLUMN "source" TEXT NOT NULL DEFAULT 'agent';

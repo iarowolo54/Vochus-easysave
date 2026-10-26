@@ -1,0 +1,1 @@
+ALTER TABLE "Customer" ADD COLUMN "walletBalance" REAL NOT NULL DEFAULT 0;

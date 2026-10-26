@@ -1,0 +1,40 @@
+{
+  "name": "vochus-easysave",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently --names \"next,ngrok\" --prefix-colors \"cyan,yellow\" \"next dev --webpack\" \"ngrok http --log=stdout 3000\"",
+    "build": "next build",
+    "start": "next start"
+  },
+  "prisma": {
+    "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "@types/better-sqlite3": "^7.6.13",
+    "@types/nodemailer": "^8.0.0",
+    "@types/qrcode": "^1.5.6",
+    "bcryptjs": "^3.0.3",
+    "better-sqlite3": "^12.10.0",
+    "jspdf": "^4.2.1",
+    "jsqr": "^1.4.0",
+    "next": "16.2.6",
+    "next-auth": "^4.24.14",
+    "nodemailer": "^7.0.13",
+    "pdfkit": "^0.19.1",
+    "prisma": "^5.22.0",
+    "qrcode": "^1.5.4",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "20.19.43",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "^19",
+    "concurrently": "^9.2.1",
+    "ts-node": "^10.9.2",
+    "typescript": "5.9.3"
+  }
+}
