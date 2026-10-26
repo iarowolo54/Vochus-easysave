@@ -27,10 +27,17 @@ if (/\.db$|\.db\.(bak|journal)$|\.sqlite3?$/.test(base)) {
 }
 
 if (/^prisma\/migrations\/.+\.sql$/.test(lower)) {
+  // Compare case-insensitively against the committed tree (the FS is case-insensitive,
+  // but git's tree is not). Fail open: this is a forward-only hygiene rule, not a
+  // security boundary, and a fresh repo with no HEAD must still allow a first migration.
   let committed = false;
   try {
-    execFileSync('git', ['cat-file', '-e', `HEAD:${file}`], { cwd: projectDir, stdio: 'ignore' });
-    committed = true;
+    const tree = execFileSync(
+      'git',
+      ['ls-tree', '-r', '--name-only', 'HEAD', '--', 'prisma/migrations'],
+      { cwd: projectDir, encoding: 'utf8' },
+    );
+    committed = tree.split('\n').some((p) => p.toLowerCase() === lower);
   } catch {
     committed = false;
   }

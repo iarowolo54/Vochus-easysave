@@ -5,8 +5,9 @@ const isCommit = /\bgit\b[^|;&]*\bcommit\b/.test(cmd);
 
 const rules = [
   [
-    // --no-verify or its short form -n (also inside a combined short cluster like -nm)
-    /\bgit\s+commit\b[^|;&]*(\s--no-verify\b|\s-[A-Za-z]*n[A-Za-z]*\b)/,
+    // --no-verify (incl. abbreviations --no-v…) or short -n (incl. combined clusters
+    // like -nm); allow global options between `git` and `commit`, e.g. git -c x=y commit.
+    /\bgit\b[^|;&]*?\bcommit\b[^|;&]*(\s--no-v[a-z]*\b|\s-[A-Za-z]*n[A-Za-z]*\b)/,
     'Blocked: do not commit with --no-verify / -n. Fix what the checks flag instead of skipping them.',
   ],
   [
@@ -19,9 +20,9 @@ const rules = [
     'Blocked: never force-push main.',
   ],
   [
-    // Any reference to a real .env (read, copy, redirect, interpreter) in any command,
-    // case-insensitive; .env.example is allowed. Not a hard boundary — defence in depth.
-    /(^|[\s'"/=>])\.env(\.(?!example\b)[\w.-]+)?(?=$|[\s'";|&>])/i,
+    // Any reference to a real .env (read, copy, redirect, interpreter, glob) in any
+    // command; any non-word char is a boundary. .env.example is allowed. Defence in depth.
+    /(^|[^\w.-])\.env(\.(?!example\b)[\w.-]+)?(?![\w.-])/i,
     'Blocked: this touches a real .env file (live Paystack/SMTP/SMS secrets). Use the variable names only; ask the user for values. .env.example is fine.',
   ],
   [
