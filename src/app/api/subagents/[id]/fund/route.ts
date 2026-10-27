@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { debitAgentBalance } from '@/lib/wallet-debit'
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -18,12 +19,20 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const body = await req.json()
   const amount = parseFloat(body.amount)
   if (!amount || amount <= 0) return NextResponse.json({ error: 'Invalid amount' }, { status: 400 })
-  if (agent.walletBalance < amount) return NextResponse.json({ error: 'Insufficient wallet balance' }, { status: 400 })
 
-  await prisma.$transaction([
-    prisma.subAgent.update({ where: { id: subAgent.id }, data: { walletBalance: { increment: amount } } }),
-    prisma.agent.update({ where: { id: agent.id }, data: { walletBalance: { decrement: amount } } }),
-  ])
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Atomically debit the parent agent; concurrent funds can't overdraw.
+      const debited = await debitAgentBalance(tx, agent.id, 'walletBalance', amount)
+      if (!debited) throw new Error('INSUFFICIENT')
+      await tx.subAgent.update({ where: { id: subAgent.id }, data: { walletBalance: { increment: amount } } })
+    })
+  } catch (e) {
+    if (e instanceof Error && e.message === 'INSUFFICIENT') {
+      return NextResponse.json({ error: 'Insufficient wallet balance' }, { status: 400 })
+    }
+    throw e
+  }
 
   logAudit({
     action: 'subagent_fund',

@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { assertSufficient, insufficientResponse, InsufficientFundsError, money } from '@/lib/wallet-guard'
+import { debitAgentBalance } from '@/lib/wallet-debit'
 
 const MIN_WITHDRAWAL = 1
 
@@ -65,29 +66,31 @@ export async function POST(req: NextRequest) {
   const count = await prisma.agentWithdrawal.count()
   const ref = `AWD-${String(count + 1).padStart(5, '0')}`
 
-  const withdrawingAll = amount >= balance
-  const [record] = await prisma.$transaction([
-    prisma.agentWithdrawal.create({
-      data: {
-        ref,
-        agentId: agent.id,
-        amount,
-        note: note || null,
-        status: 'Pending',
-        payoutMethod: 'BankTransfer',
-        bankCode: agent.bankCode,
-        bankName: agent.bankName,
-        accountNumber: agent.accountNumber,
-        accountName: agent.accountName,
-      },
-    }),
-    prisma.agent.update({
-      where: { id: agent.id },
-      data: withdrawingAll
-        ? { commissionBalance: 0 }
-        : { commissionBalance: { decrement: amount } },
-    }),
-  ])
+  let record
+  try {
+    record = await prisma.$transaction(async (tx) => {
+      // Atomically hold the commission; concurrent requests can't overdraw it.
+      const debited = await debitAgentBalance(tx, agent.id, 'commissionBalance', amount)
+      if (!debited) throw new InsufficientFundsError('Commission balance', balance, amount)
+      return tx.agentWithdrawal.create({
+        data: {
+          ref,
+          agentId: agent.id,
+          amount,
+          note: note || null,
+          status: 'Pending',
+          payoutMethod: 'BankTransfer',
+          bankCode: agent.bankCode,
+          bankName: agent.bankName,
+          accountNumber: agent.accountNumber,
+          accountName: agent.accountName,
+        },
+      })
+    })
+  } catch (e) {
+    if (e instanceof InsufficientFundsError) return insufficientResponse(e)
+    throw e
+  }
 
   logAudit({
     action: 'agent_withdrawal_request',
