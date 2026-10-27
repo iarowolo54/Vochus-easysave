@@ -10,10 +10,11 @@ type Props = {
   value: Bank | null
   onChange: (bank: Bank) => void
   loading?: boolean
+  placeholder?: string
 }
 
 /** Bank field that opens a searchable list in a sheet — easier than a long dropdown on a phone. */
-export default function BankSelect({ banks, value, onChange, loading }: Props) {
+export default function BankSelect({ banks, value, onChange, loading, placeholder = 'Choose the customer’s bank' }: Props) {
   const [open, setOpen] = useState(false)
   const [q, setQ] = useState('')
   const list = useMemo(() => {
@@ -25,7 +26,7 @@ export default function BankSelect({ banks, value, onChange, loading }: Props) {
     <>
       <button type="button" className="ag-tf ag-tf-button" onClick={() => setOpen(true)} aria-haspopup="dialog">
         <span className="ag-tf-label">Bank</span>
-        <span className={`ag-tf-value${value ? '' : ' is-empty'}`}>{value ? value.name : 'Choose the customer’s bank'}</span>
+        <span className={`ag-tf-value${value ? '' : ' is-empty'}`}>{value ? value.name : placeholder}</span>
         <Icons.expand size={18} aria-hidden="true" className="ag-tf-chevron" />
       </button>
 

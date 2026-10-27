@@ -1,7 +1,16 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import BankPicker from '@/components/BankPicker'
+import BottomNav from '@/components/BottomNav'
+import { CUSTOMER_NAV } from '@/components/nav-items'
+import BankSelect from '@/components/ui/BankSelect'
+import CodeBoxes from '@/components/ui/CodeBoxes'
+import EmptyState from '@/components/ui/EmptyState'
+import { FormError } from '@/components/ui/FormErrors'
+import ListRow from '@/components/ui/ListRow'
+import { HomeSkeleton } from '@/components/ui/Skeleton'
+import { Icons } from '@/components/ui/icons'
+import { formatDate, formatNaira } from '@/lib/format'
 
 type Bank = { code: string; name: string }
 type Redemption = {
@@ -9,10 +18,30 @@ type Redemption = {
   netPayout: number; requestedAt: string; token?: string; tokenExpiry?: string
   reason: string; type: string
 }
+type Plan = { balance: number; dailyAmount: number; cadence?: string; maturityDate: string; hasCashDeposit?: boolean; goal?: string }
+type Result = { balance?: number; netPayout?: number }
+
+const REASONS = ['Plan matured', 'Medical emergency', 'School fees', 'Business need', 'Personal emergency', 'Other']
+
+// Where a request is, in order. The customer confirms their code, then the agent and Vochus approve.
+const STEPS = ['Request sent', 'Code confirmed', 'Agent approval', 'Final approval and payment']
+const CURRENT_STEP: Record<string, number> = { Pending: 1, TokenValidated: 2, AgentApproved: 3, Approved: 4 }
+
+function statusTone(s: string): 'success' | 'danger' | 'warn' {
+  return s === 'Approved' ? 'success' : s === 'Rejected' ? 'danger' : 'warn'
+}
+function statusLabel(s: string) {
+  if (s === 'Pending') return 'Needs your code'
+  if (s === 'TokenValidated') return 'With your agent'
+  if (s === 'AgentApproved') return 'Final approval'
+  if (s === 'Approved') return 'Paid'
+  if (s === 'Rejected') return 'Declined'
+  return s
+}
 
 export default function CustomerRedeemPage() {
   const router = useRouter()
-  const [plan, setPlan] = useState<any>(null)
+  const [plan, setPlan] = useState<Plan | null>(null)
   const [redemptions, setRedemptions] = useState<Redemption[]>([])
   const [loading, setLoading] = useState(true)
   const [step, setStep] = useState<'idle' | 'form' | 'token' | 'done' | 'resume-token' | 'awaiting'>('idle')
@@ -24,11 +53,12 @@ export default function CustomerRedeemPage() {
   const [accountName, setAccountName] = useState('')
   const [bankName, setBankName] = useState('')
   const [resolving, setResolving] = useState(false)
+  const [resolveFailed, setResolveFailed] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [token, setToken] = useState('')
   const [tokenInput, setTokenInput] = useState('')
   const [currentRef, setCurrentRef] = useState('')
-  const [result, setResult] = useState<any>(null)
+  const [result, setResult] = useState<Result | null>(null)
   const [error, setError] = useState('')
   const [selectedRedemption, setSelectedRedemption] = useState<Redemption | null>(null)
 
@@ -36,36 +66,45 @@ export default function CustomerRedeemPage() {
     fetch('/api/customer/me')
       .then(r => { if (r.status === 401) { router.push('/customer/login'); return null } return r.json() })
       .then(d => { if (d) setPlan(d.plan) })
+      .catch(() => {})
 
     fetch('/api/customer/redeem')
       .then(r => r.json())
       .then(d => { if (d.redemptions) setRedemptions(d.redemptions) })
+      .catch(() => {})
       .finally(() => setLoading(false))
 
     fetch('/api/paystack/banks')
       .then(r => r.json())
       .then(d => { if (d.banks) setBanks(d.banks) })
-  }, [])
+      .catch(() => {})
+  }, [router])
 
-  async function resolveAccount(acctNum = accountNumber) {
-    if (!acctNum || acctNum.length < 10 || !bankCode) return
+  async function resolveAccount(acctNum = accountNumber, code = bankCode) {
+    if (!acctNum || acctNum.length < 10 || !code) return
     setResolving(true)
     setAccountName('')
+    setResolveFailed(false)
     try {
-      const res = await fetch(`/api/paystack/resolve-account?accountNumber=${acctNum}&bankCode=${bankCode}`)
+      const res = await fetch(`/api/paystack/resolve-account?accountNumber=${acctNum}&bankCode=${code}`)
       const data = await res.json()
       if (data.accountName) {
         setAccountName(data.accountName)
-        const b = banks.find(b => b.code === bankCode)
+        const b = banks.find(b => b.code === code)
         setBankName(b?.name ?? '')
+      } else {
+        setResolveFailed(true)
       }
-    } catch {}
+    } catch {
+      setResolveFailed(true)
+    }
     finally { setResolving(false) }
   }
 
   async function submitRequest() {
     setError('')
-    if (!reason) { setError('Enter a reason for redemption'); return }
+    if (!reason) { setError('Choose why you’re collecting.'); return }
+    if (useBankTransfer && !accountName) { setError('Add your bank account, or choose cash from your agent.'); return }
     setSubmitting(true)
     try {
       const res = await fetch('/api/customer/redeem', {
@@ -77,12 +116,13 @@ export default function CustomerRedeemPage() {
         }),
       })
       const data = await res.json()
-      if (!res.ok) { setError(data.error ?? 'Failed'); return }
+      if (!res.ok) { setError(data.error ?? 'Your request didn’t go through. Please try again.'); return }
       setToken(data.token)
       setCurrentRef(data.ref)
       setResult(data)
+      setTokenInput('')
       setStep('token')
-    } catch { setError('Network error') }
+    } catch { setError('No connection. Check your internet and try again.') }
     finally { setSubmitting(false) }
   }
 
@@ -96,11 +136,11 @@ export default function CustomerRedeemPage() {
         body: JSON.stringify({ ref: currentRef, token: tokenInput }),
       })
       const data = await res.json()
-      if (!res.ok) { setError(data.error ?? 'Invalid token'); return }
+      if (!res.ok) { setError(data.error ?? 'That code didn’t work. Check it and try again.'); return }
       setStep('done')
       const updated = redemptions.map(r => r.ref === currentRef ? { ...r, status: 'TokenValidated' } : r)
       setRedemptions(updated)
-    } catch { setError('Network error') }
+    } catch { setError('No connection. Check your internet and try again.') }
     finally { setSubmitting(false) }
   }
 
@@ -117,12 +157,12 @@ export default function CustomerRedeemPage() {
     }
   }
 
-  if (loading) return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh', background: 'var(--bg)' }}>
-      <div style={{ width: 36, height: 36, border: '3px solid var(--gl)', borderTop: '3px solid var(--g)', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-    </div>
-  )
+  function back() {
+    if (step !== 'idle') { setStep('idle'); setError(''); setTokenInput(''); setSelectedRedemption(null) }
+    else router.push('/customer/dashboard')
+  }
+
+  if (loading) return <HomeSkeleton />
 
   const hasCash = !!plan?.hasCashDeposit
   const isEarly = plan ? new Date() < new Date(plan.maturityDate) : false
@@ -138,266 +178,209 @@ export default function CustomerRedeemPage() {
     }
   }
   const netPayout = plan ? plan.balance - savingsFee : 0
+  const inProgress = redemptions.find(r => ['Pending', 'TokenValidated', 'AgentApproved'].includes(r.status)) ?? null
 
-  const statusColor = (s: string) => {
-    if (s === 'Approved') return { bg: 'var(--gl)', col: 'var(--g)' }
-    if (s === 'Rejected') return { bg: 'var(--rdl)', col: 'var(--rd)' }
-    if (s === 'TokenValidated' || s === 'AgentApproved') return { bg: 'var(--bl)', col: 'var(--b)' }
-    return { bg: 'var(--gdl)', col: 'var(--gd)' }
-  }
-
-  const statusLabel = (s: string) => {
-    if (s === 'TokenValidated') return 'Pending Review'
-    if (s === 'AgentApproved') return 'Agent Approved'
-    return s
-  }
+  const title = step === 'form' ? 'Collect savings' : step === 'token' || step === 'resume-token' ? 'Confirm your request' : step === 'awaiting' ? 'Your request' : step === 'done' ? 'Request sent' : 'Collect'
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg)', paddingBottom: 80 }}>
-      <div style={{
-        position: 'sticky', top: 0, height: 56, zIndex: 200,
-        background: 'linear-gradient(135deg,#071a0e,#0e4d24)',
-        display: 'flex', alignItems: 'center', padding: '0 16px', gap: 12,
-      }}>
-        <button onClick={() => {
-          if (step !== 'idle') { setStep('idle'); setError(''); setTokenInput('') }
-          else router.push('/customer/dashboard')
-        }} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 22, cursor: 'pointer', padding: 0 }}>←</button>
-        <div style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 15, fontWeight: 800, color: '#fff' }}>Redeem Savings</div>
-      </div>
+    <div className="ui-screen">
+      <header className="ui-topbar">
+        <button type="button" className="ui-icon-btn" onClick={back} aria-label={step === 'idle' ? 'Back to home' : 'Back'}>
+          <Icons.back size={22} aria-hidden="true" />
+        </button>
+        <div className="ui-topbar-main"><h1 className="ui-topbar-title">{title}</h1></div>
+      </header>
 
-      <div style={{ padding: 16 }}>
+      <main className="ui-container">
         {step === 'done' ? (
-          <div style={{ background: 'var(--card)', border: '1px solid var(--gm)', borderRadius: 18, padding: 24, textAlign: 'center' }}>
-            <div style={{ fontSize: 56, marginBottom: 12 }}>✅</div>
-            <div style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 20, fontWeight: 900, color: 'var(--g)', marginBottom: 8 }}>Request Submitted!</div>
-            <div style={{ fontSize: 13, color: 'var(--mu)', lineHeight: 1.6, marginBottom: 16 }}>
-              Your token has been validated. Your agent will review and approve your request, followed by final admin approval. You will be notified once the transfer is initiated.
-            </div>
+          <section className="ui-card ag-done">
+            <span className="ag-sent-icon" aria-hidden="true"><Icons.check size={30} /></span>
+            <h2 className="ag-q">Request sent</h2>
+            <p className="ag-q-lead">Your agent will check it, then Vochus gives final approval and sends your money. We’ll let you know at each step.</p>
             {result && (
-              <div style={{ background: 'var(--gl)', borderRadius: 10, padding: '12px 14px', marginBottom: 16, textAlign: 'left' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13.5, marginBottom: 6 }}>
-                  <span style={{ color: 'var(--mu)' }}>Balance</span>
-                  <strong>₦{result.balance?.toLocaleString()}</strong>
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, fontWeight: 800 }}>
-                  <span style={{ color: 'var(--g)' }}>You Receive</span>
-                  <span style={{ color: 'var(--g)' }}>₦{result.netPayout?.toLocaleString()}</span>
-                </div>
-              </div>
+              <dl className="ag-breakdown ag-breakdown--flush">
+                <div><dt>Saved</dt><dd>{formatNaira(result.balance ?? 0)}</dd></div>
+                <div className="ag-breakdown-total"><dt>You’ll receive</dt><dd>{formatNaira(result.netPayout ?? 0)}</dd></div>
+              </dl>
             )}
-            <button onClick={() => router.push('/customer/dashboard')} style={{ width: '100%', padding: 14, background: 'linear-gradient(135deg,#2ecc71,#1a6b3a)', border: 'none', borderRadius: 12, cursor: 'pointer', fontFamily: 'Plus Jakarta Sans', fontSize: 14, fontWeight: 800, color: '#fff' }}>
-              Back to Dashboard
-            </button>
-          </div>
+            <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => router.push('/customer/dashboard')}>Back to home</button>
+          </section>
 
         ) : step === 'awaiting' && selectedRedemption ? (
-          <div style={{ background: 'var(--card)', border: '1px solid var(--br)', borderRadius: 16, padding: 20 }}>
-            <div style={{ textAlign: 'center', padding: '12px 0 20px' }}>
-              <div style={{ fontSize: 52, marginBottom: 10 }}>⏳</div>
-              <div style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 18, fontWeight: 900, marginBottom: 6 }}>
-                {selectedRedemption.status === 'AgentApproved' ? 'Awaiting Admin Approval' : 'Awaiting Confirmation'}
-              </div>
-              <div style={{ fontSize: 13, color: 'var(--mu)', lineHeight: 1.6 }}>
-                {selectedRedemption.status === 'AgentApproved'
-                  ? 'Your agent has approved this request. It is now pending final admin confirmation before payout.'
-                  : 'Your redemption request has been received and is being reviewed by your agent. You will be notified once approved.'}
-              </div>
-            </div>
-            <div style={{ background: 'var(--gl)', borderRadius: 12, padding: '12px 14px', marginBottom: 16 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6 }}>
-                <span style={{ color: 'var(--mu)' }}>Reference</span>
-                <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--mu)' }}>{selectedRedemption.ref}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 6 }}>
-                <span style={{ color: 'var(--mu)' }}>Amount</span>
-                <strong>₦{selectedRedemption.netPayout?.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                <span style={{ color: 'var(--mu)' }}>Requested</span>
-                <span>{new Date(selectedRedemption.requestedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span>
-              </div>
-            </div>
-            {(() => {
-              const { bg, col } = statusColor(selectedRedemption.status)
-              return (
-                <div style={{ background: bg, borderRadius: 10, padding: '10px 14px', textAlign: 'center', fontSize: 13, fontWeight: 700, color: col }}>
-                  {statusLabel(selectedRedemption.status)}
-                </div>
-              )
-            })()}
-            <button onClick={() => { setStep('idle'); setSelectedRedemption(null) }} style={{
-              width: '100%', marginTop: 14, padding: 13, background: 'var(--card)',
-              border: '1.5px solid var(--br)', borderRadius: 12, cursor: 'pointer',
-              fontSize: 14, fontWeight: 700,
-            }}>← Back</button>
-          </div>
+          <>
+            <section className="ui-card ag-status-card">
+              <span className={`ui-status ui-status--${statusTone(selectedRedemption.status)}`}>{statusLabel(selectedRedemption.status)}</span>
+              <p className="ag-status-amount">{formatNaira(selectedRedemption.netPayout ?? 0)}</p>
+              <p className="ui-row-sub">Requested {formatDate(selectedRedemption.requestedAt)}</p>
+              <ol className="ui-steps">
+                {STEPS.map((label, i) => {
+                  const current = CURRENT_STEP[selectedRedemption.status] ?? 1
+                  const state = i < current ? 'done' : i === current ? 'current' : 'todo'
+                  return (
+                    <li key={label} className={`ui-step ui-step--${state}`} aria-current={state === 'current' ? 'step' : undefined}>
+                      <span className="ui-step-dot" aria-hidden="true">{state === 'done' && <Icons.check size={14} />}</span>
+                      <span className="ui-step-label">{label}</span>
+                    </li>
+                  )
+                })}
+              </ol>
+            </section>
+            <dl className="ui-card ag-breakdown ag-breakdown--card">
+              <div><dt>Reference</dt><dd className="ag-mono">{selectedRedemption.ref}</dd></div>
+              <div><dt>Reason</dt><dd>{selectedRedemption.reason}</dd></div>
+            </dl>
+          </>
 
         ) : (step === 'token' || step === 'resume-token') ? (
-          <div style={{ background: 'var(--card)', border: '1px solid var(--br)', borderRadius: 16, padding: 16 }}>
-            <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 12 }}>🔐 Enter Your Token</div>
-            <div style={{ background: 'var(--gdl)', border: '1px solid rgba(200,132,26,.2)', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: 'var(--gd)', marginBottom: 14, lineHeight: 1.5 }}>
-              Your 6-digit token is: <strong style={{ fontSize: 20, fontFamily: 'monospace', letterSpacing: 2 }}>{token}</strong><br />
-              <span style={{ fontSize: 11, opacity: .8 }}>In production, this would be sent via SMS to your phone.</span>
-            </div>
-            {error && <div style={{ background: 'var(--rdl)', color: 'var(--rd)', borderRadius: 10, padding: '10px 14px', fontSize: 13, marginBottom: 14 }}>{error}</div>}
-            <label style={{ display: 'block', fontSize: 11.5, fontWeight: 700, color: 'var(--mu)', marginBottom: 6 }}>6-Digit Token</label>
-            <input
-              value={tokenInput} onChange={e => setTokenInput(e.target.value.replace(/\D/g, '').slice(0, 6))}
-              type="tel" maxLength={6} placeholder="000000"
-              style={{ fontSize: 28, fontWeight: 900, textAlign: 'center', fontFamily: 'monospace', letterSpacing: 4 }}
-            />
-            <button onClick={validateToken} disabled={submitting || tokenInput.length !== 6} style={{
-              width: '100%', padding: 15, background: 'linear-gradient(135deg,#2ecc71,#1a6b3a)',
-              border: 'none', borderRadius: 13, cursor: 'pointer',
-              fontFamily: 'Plus Jakarta Sans', fontSize: 15, fontWeight: 800, color: '#fff',
-              opacity: (submitting || tokenInput.length !== 6) ? .45 : 1,
-            }}>{submitting ? 'Validating…' : 'Validate Token'}</button>
-          </div>
-
-        ) : step === 'form' ? (
-          <div style={{ background: 'var(--card)', border: '1px solid var(--br)', borderRadius: 16, padding: 16 }}>
-            <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 12 }}>📋 Redemption Request</div>
-            <div style={{ background: 'var(--gl)', border: '1px solid var(--gm)', borderRadius: 10, padding: '12px 14px', marginBottom: 14, fontSize: 13 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                <span style={{ color: 'var(--mu)' }}>Gross balance</span>
-                <strong>₦{plan?.balance.toLocaleString(undefined, { minimumFractionDigits: 2 })}</strong>
+          <section className="ui-card ag-confirm">
+            <h2 className="ag-q">Enter your code to confirm</h2>
+            <p className="ag-q-lead">This confirms the request is really from you.</p>
+            {token && (
+              <div className="ag-code-show">
+                <span className="ui-row-sub">Your code</span>
+                <strong>{token}</strong>
               </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 6 }}>
-                <span style={{ color: 'var(--mu)' }}>Deduction</span>
-                <span style={{ color: 'var(--rd)' }}>-₦{savingsFee.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-              </div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 800, fontSize: 14, borderTop: '1px solid var(--gm)', paddingTop: 8, marginTop: 4 }}>
-                <span style={{ color: 'var(--g)' }}>You will receive</span>
-                <span style={{ color: 'var(--g)' }}>₦{netPayout.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-              </div>
-            </div>
-            {error && <div style={{ background: 'var(--rdl)', color: 'var(--rd)', borderRadius: 10, padding: '10px 14px', fontSize: 13, marginBottom: 14 }}>{error}</div>}
-            <label style={{ display: 'block', fontSize: 11.5, fontWeight: 700, color: 'var(--mu)', marginBottom: 6 }}>Reason for Redemption *</label>
-            <select value={reason} onChange={e => setReason(e.target.value)}>
-              <option value="">Select reason</option>
-              <option>Plan matured</option>
-              <option>Medical emergency</option>
-              <option>School fees</option>
-              <option>Business need</option>
-              <option>Personal emergency</option>
-              <option>Other</option>
-            </select>
-
-            <div style={{ display: 'flex', gap: 10, alignItems: 'center', cursor: 'pointer', marginBottom: 14 }} onClick={() => setUseBankTransfer(v => !v)}>
-              <div style={{ width: 22, height: 22, borderRadius: 6, flexShrink: 0, border: `2px solid ${useBankTransfer ? 'var(--g)' : 'var(--br)'}`, background: useBankTransfer ? 'var(--g)' : 'var(--card)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all .2s' }}>
-                {useBankTransfer && <span style={{ color: '#fff', fontSize: 14, fontWeight: 900, lineHeight: 1 }}>✓</span>}
-              </div>
-              <span style={{ fontSize: 13.5, fontWeight: 600 }}>Transfer to my bank account</span>
-            </div>
-
-            {useBankTransfer && (
-              <>
-                <label style={{ display: 'block', fontSize: 11.5, fontWeight: 700, color: 'var(--mu)', marginBottom: 6 }}>Bank</label>
-                <BankPicker
-                  banks={banks}
-                  value={bankCode}
-                  onChange={(code, name) => { setBankCode(code); setBankName(name); setAccountName('') }}
-                />
-                <label style={{ display: 'block', fontSize: 11.5, fontWeight: 700, color: 'var(--mu)', marginBottom: 6 }}>Account Number</label>
-                <input
-                  value={accountNumber} onChange={e => {
-                    const v = e.target.value.replace(/\D/g, '').slice(0, 10)
-                    setAccountNumber(v)
-                    setAccountName('')
-                    if (v.length === 10 && bankCode) resolveAccount(v)
-                  }}
-                  type="tel" maxLength={10} placeholder="10-digit account number"
-                />
-                {resolving && <div style={{ fontSize: 12, color: 'var(--mu)', marginTop: -8, marginBottom: 8 }}>Resolving account…</div>}
-                {accountName && (
-                  <div style={{ background: 'var(--gl)', border: '1px solid var(--gm)', borderRadius: 10, padding: '10px 14px', fontSize: 13, fontWeight: 700, color: 'var(--g)', marginBottom: 10 }}>
-                    ✅ {accountName}
-                  </div>
-                )}
-              </>
             )}
-
-            <button onClick={submitRequest} disabled={submitting} style={{
-              width: '100%', padding: 15, background: 'linear-gradient(135deg,#2ecc71,#1a6b3a)',
-              border: 'none', borderRadius: 13, cursor: 'pointer',
-              fontFamily: 'Plus Jakarta Sans', fontSize: 15, fontWeight: 800, color: '#fff',
-              opacity: submitting ? .6 : 1, marginTop: 4,
-            }}>{submitting ? 'Submitting…' : 'Submit Request & Get Token'}</button>
-            <button onClick={() => setStep('idle')} style={{ width: '100%', padding: 13, background: 'var(--card)', border: '1.5px solid var(--br)', borderRadius: 13, cursor: 'pointer', fontSize: 14, fontWeight: 600, marginTop: 8 }}>
-              Cancel
+            <FormError message={error} />
+            <CodeBoxes value={tokenInput} onChange={v => { setTokenInput(v); setError('') }} onComplete={validateToken} label="Confirmation code" error={!!error} autoFocus />
+            <button type="button" className="ui-btn ui-btn--primary ui-btn--block ag-confirm-btn" disabled={submitting || tokenInput.length !== 6} onClick={validateToken}>
+              {submitting ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Checking…</> : 'Confirm request'}
             </button>
-          </div>
+          </section>
+
+        ) : step === 'form' && plan ? (
+          <>
+            <section className="ui-card">
+              <h2 className="ag-q ag-q--amount"><span className="ag-q-kicker">You’ll receive</span>{formatNaira(netPayout)}</h2>
+              {isEarly && <p className="ag-early"><Icons.pending size={16} aria-hidden="true" /> Your plan ends {formatDate(plan.maturityDate)}, so this is an early collection.</p>}
+              <dl className="ag-breakdown">
+                <div><dt>Saved</dt><dd>{formatNaira(plan.balance)}</dd></div>
+                <div><dt>Platform fee</dt><dd className="ag-neg">−{formatNaira(savingsFee)}</dd></div>
+                <div className="ag-breakdown-total"><dt>You’ll receive</dt><dd>{formatNaira(netPayout)}</dd></div>
+              </dl>
+
+              <p className="ag-label">Why are you collecting?</p>
+              <div className="ag-goal-chips" role="group" aria-label="Reason">
+                {REASONS.map(r => (
+                  <button key={r} type="button" className="ag-chip" aria-pressed={reason === r} onClick={() => { setReason(r); setError('') }}>{r}</button>
+                ))}
+              </div>
+
+              <p className="ag-label">How do you want it?</p>
+              <div className="ag-radio-group">
+                {[
+                  { bank: false, t: 'Cash from my agent', s: 'Your agent hands it to you', icon: 'cash' as const },
+                  { bank: true, t: 'Bank transfer', s: 'Sent to your bank account', icon: 'loan' as const },
+                ].map(o => {
+                  const Icon = Icons[o.icon]
+                  return (
+                    <button key={o.t} type="button" role="radio" aria-checked={useBankTransfer === o.bank} className="ag-radio" onClick={() => { setUseBankTransfer(o.bank); setError('') }}>
+                      <span className="ag-radio-icon" aria-hidden="true"><Icon size={20} /></span>
+                      <span className="ag-payee-main">
+                        <span className="ui-row-title ui-block">{o.t}</span>
+                        <span className="ui-row-sub ui-block">{o.s}</span>
+                      </span>
+                      <span className="ui-radio" aria-hidden="true" />
+                    </button>
+                  )
+                })}
+              </div>
+
+              {useBankTransfer && (
+                <div className="ag-bank-fields">
+                  <BankSelect banks={banks} loading={banks.length === 0} placeholder="Choose your bank" value={bankCode ? { code: bankCode, name: bankName || banks.find(b => b.code === bankCode)?.name || '' } : null}
+                    onChange={b => { setBankCode(b.code); setBankName(b.name); setAccountName(''); if (accountNumber.length === 10) resolveAccount(accountNumber, b.code) }} />
+                  <div className="ag-tf-wrap">
+                    <div className={`ag-tf${resolveFailed ? ' is-invalid' : ''}${!bankCode ? ' is-disabled' : ''}`}>
+                      <label className="ag-tf-label" htmlFor="acct">Account number</label>
+                      <input id="acct" className="ag-tf-input ag-tf-num" type="tel" inputMode="numeric" maxLength={10} placeholder="10 digits" disabled={!bankCode}
+                        value={accountNumber} aria-invalid={resolveFailed || undefined}
+                        onChange={e => {
+                          const v = e.target.value.replace(/\D/g, '').slice(0, 10)
+                          setAccountNumber(v)
+                          setAccountName('')
+                          setResolveFailed(false)
+                          if (v.length === 10 && bankCode) resolveAccount(v)
+                        }} />
+                    </div>
+                    {resolving && <p className="ag-fineprint"><span className="ui-spinner ui-spinner--sm ag-spin-dark ag-inline-spin" aria-hidden="true" /> Checking the account…</p>}
+                    {resolveFailed && !resolving && <p className="ui-field-error"><Icons.error size={16} aria-hidden="true" /> We couldn’t find this account. Check the number and bank.</p>}
+                  </div>
+                  {accountName && !resolving && (
+                    <div className="ag-verified ag-verified--sm">
+                      <span className="ag-verified-icon" aria-hidden="true"><Icons.check size={18} /></span>
+                      <div>
+                        <p className="ui-row-sub">Account name</p>
+                        <p className="ui-row-title">{accountName}</p>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              <FormError message={error} />
+              <button type="button" className="ui-btn ui-btn--primary ui-btn--block ag-confirm-btn" disabled={submitting} onClick={submitRequest}>
+                {submitting ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Sending…</> : 'Request collection'}
+              </button>
+            </section>
+            <p className="ui-safety"><Icons.locked size={16} aria-hidden="true" /> Your agent and Vochus both approve every collection before money is paid.</p>
+          </>
 
         ) : (
           <>
             {plan ? (
-              <div style={{ background: 'linear-gradient(135deg,#071a0e,#0e4d24)', borderRadius: 16, padding: 18, textAlign: 'center', marginBottom: 16 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, letterSpacing: 2, textTransform: 'uppercase', color: 'rgba(255,255,255,.45)', marginBottom: 4 }}>Available to Redeem</div>
-                <div style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 32, fontWeight: 900, color: '#fff' }}>₦{plan.balance.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
-                <div style={{ fontSize: 11, color: 'rgba(255,255,255,.45)', marginTop: 4 }}>
-                  You receive ₦{netPayout.toLocaleString(undefined, { minimumFractionDigits: 2 })} after deduction
-                </div>
-                <div style={{ fontSize: 12, color: '#6edfa0', marginTop: 4 }}>A deduction will apply at withdrawal</div>
-              </div>
+              <section className="ui-card ag-collect-hero">
+                <span className="ui-row-sub">{plan.goal ? `${plan.goal} · ` : ''}Available to collect</span>
+                <p className="ag-status-amount">{formatNaira(plan.balance)}</p>
+                {plan.balance > 0
+                  ? <p className="ui-row-sub">You receive <strong className="ag-strong">{formatNaira(netPayout)}</strong> after the platform fee</p>
+                  : <p className="ui-row-sub">Nothing saved in this plan yet. Save first, then you can collect.</p>}
+                {isEarly && plan.balance > 0 && <p className="ag-early"><Icons.pending size={16} aria-hidden="true" /> Ends {formatDate(plan.maturityDate)}. Collecting now is an early collection.</p>}
+                {inProgress ? (
+                  <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => openRedemption(inProgress)}>
+                    {inProgress.status === 'Pending' ? 'Enter your code to confirm' : 'See your request'}
+                  </button>
+                ) : plan.balance > 0 ? (
+                  <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => { setError(''); setStep('form') }}>Collect my savings</button>
+                ) : null}
+              </section>
             ) : (
-              <div style={{ background: 'var(--card)', border: '1px solid var(--br)', borderRadius: 16, padding: 20, textAlign: 'center', marginBottom: 16 }}>
-                <div style={{ fontSize: 13, color: 'var(--mu)' }}>No active savings plan to redeem.</div>
-              </div>
+              <section className="ui-card">
+                <EmptyState icon="plan" title="Nothing to collect" text="You don’t have an active savings plan right now." />
+              </section>
             )}
 
             {redemptions.length > 0 && (
-              <div style={{ background: 'var(--card)', border: '1px solid var(--br)', borderRadius: 14, padding: 16, marginBottom: 14 }}>
-                <div style={{ fontSize: 14, fontWeight: 800, marginBottom: 12 }}>Past Requests</div>
-                {redemptions.map(r => {
-                  const { bg, col } = statusColor(r.status)
-                  const clickable = r.status === 'Pending' || r.status === 'TokenValidated' || r.status === 'AgentApproved'
-                  return (
-                    <div key={r.id}
-                      onClick={() => clickable ? openRedemption(r) : undefined}
-                      style={{
-                        padding: '12px 0', borderBottom: '1px solid var(--br)', fontSize: 13.5,
-                        cursor: clickable ? 'pointer' : 'default',
-                      }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--mu)' }}>{r.ref}</span>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 8px', borderRadius: 100, background: bg, color: col }}>
-                            {statusLabel(r.status)}
-                          </span>
-                          {clickable && <span style={{ fontSize: 14, color: 'var(--mu)' }}>›</span>}
-                        </div>
-                      </div>
-                      <div style={{ color: 'var(--mu)', fontSize: 12, marginTop: 4 }}>
-                        ₦{r.netPayout?.toLocaleString(undefined, { minimumFractionDigits: 2 })} · {new Date(r.requestedAt).toLocaleDateString('en-GB')}
-                      </div>
-                      {r.status === 'Pending' && (
-                        <div style={{ fontSize: 11, color: 'var(--gd)', marginTop: 4, fontWeight: 600 }}>
-                          Tap to enter your verification token →
-                        </div>
-                      )}
-                      {(r.status === 'TokenValidated' || r.status === 'AgentApproved') && (
-                        <div style={{ fontSize: 11, color: 'var(--b)', marginTop: 4, fontWeight: 600 }}>
-                          Tap to see status →
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            )}
-
-            {plan && plan.balance > 0 && (
-              <button onClick={() => setStep('form')} style={{
-                width: '100%', padding: 15, background: 'linear-gradient(135deg,#2ecc71,#1a6b3a)',
-                border: 'none', borderRadius: 13, cursor: 'pointer',
-                fontFamily: 'Plus Jakarta Sans', fontSize: 15, fontWeight: 800, color: '#fff',
-                boxShadow: '0 6px 20px rgba(26,107,58,.35)',
-              }}>💸 Request Redemption</button>
+              <>
+                <div className="ui-section-head"><h2>Your requests</h2></div>
+                <section className="ui-card ui-card--list">
+                  {redemptions.map(r => {
+                    const clickable = r.status === 'Pending' || r.status === 'TokenValidated' || r.status === 'AgentApproved'
+                    const value = (
+                      <span className="ui-value-stack ag-txn-value">
+                        <span>{formatNaira(r.netPayout ?? 0)}</span>
+                        <span className={`ui-status ui-status--sm ui-status--${statusTone(r.status)}`}>{statusLabel(r.status)}</span>
+                      </span>
+                    )
+                    return (
+                      <ListRow
+                        key={r.id}
+                        icon="withdraw"
+                        title={r.reason || 'Collection'}
+                        sub={formatDate(r.requestedAt)}
+                        value={value}
+                        onClick={clickable ? () => openRedemption(r) : undefined}
+                      />
+                    )
+                  })}
+                </section>
+              </>
             )}
           </>
         )}
-      </div>
+      </main>
+
+      <BottomNav items={CUSTOMER_NAV} />
     </div>
   )
 }
