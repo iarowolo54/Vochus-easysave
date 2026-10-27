@@ -1,13 +1,17 @@
-// DB-backed persistence for the customer login throttle. Stores one row per
-// throttle key in the LoginAttempt table; the decision logic is the pure module
-// in ./login-throttle. SQLite serialises writes, so the read-modify-write below
-// is safe enough for a throttle (a rare lost increment only undercounts, and the
-// window keeps climbing anyway).
+// DB-backed persistence for the customer login throttle (one row per key in the
+// LoginAttempt table). Decision logic is the pure module in ./login-throttle.
+//
+// Two key kinds:
+//  - "phone:<phone>"  — per-account HARD LOCK. Locked once failCount reaches the
+//    limit; cleared only by unlockAccount() (OTP) or a successful login. No time
+//    expiry. lockedUntil is unused for these rows.
+//  - "ip:<addr>"      — per-IP spray rule, a loose TIME lock via lockedUntil.
 import { prisma } from './prisma'
 import {
   checkThrottle,
-  lockDurationMs,
   ipLockDurationMs,
+  isAccountLocked,
+  ACCOUNT_FAIL_LIMIT,
   THROTTLE,
   type AttemptState,
 } from './login-throttle'
@@ -19,8 +23,9 @@ const ipKey = (ip: string) => `ip:${ip}`
 const toDate = (n: number | null) => (n == null ? null : new Date(n))
 
 export interface ThrottleResult {
-  blocked: boolean
-  retryAfterSeconds: number
+  blocked: boolean // any lock active (account hard lock OR ip spray lock)
+  accountLocked: boolean // the per-account hard lock — needs an OTP unlock
+  retryAfterSeconds: number // for the IP time lock
 }
 
 async function loadState(key: string): Promise<AttemptState> {
@@ -33,36 +38,59 @@ async function loadState(key: string): Promise<AttemptState> {
   }
 }
 
-/** Set a key to a fresh (first-failure) window with absolute values. Used only
- *  when no active window exists; a lost increment here is immaterial (far from
- *  any lock), so it needs no atomicity. */
-async function startWindow(key: string, now: number, dur: number): Promise<void> {
-  const data = {
-    failCount: 1,
-    lastFailAt: toDate(now),
-    lockedUntil: dur > 0 ? toDate(now + dur) : null,
-  }
+/** Reset a key to a fresh first-failure window (absolute values). */
+async function startWindow(key: string, now: number, lockedUntil: number | null): Promise<void> {
+  const data = { failCount: 1, lastFailAt: toDate(now), lockedUntil: toDate(lockedUntil) }
   await prisma.loginAttempt.upsert({ where: { key }, create: { key, ...data }, update: data })
 }
 
-/** Record one failure against a key, escalating per `schedule`. The increment is
- *  atomic (`increment: 1`) so a burst of concurrent failures can't be lost — the
- *  TOCTOU gap in a read-modify-write would otherwise hand an attacker many free
- *  guesses per window. */
-async function bumpFailure(
-  key: string,
-  now: number,
-  schedule: (failCount: number) => number,
-): Promise<void> {
+// -------- Per-account hard lock --------
+
+/** Record a failed password attempt against an account. Once the account is
+ *  locked (failCount >= limit) further failures are ignored — it stays locked
+ *  until an OTP unlock. The increment is atomic so a concurrent burst can't be
+ *  lost. Account rows never set lockedUntil. */
+async function accountBump(key: string, now: number): Promise<void> {
+  const prior = await prisma.loginAttempt.findUnique({ where: { key } })
+  if (prior && isAccountLocked(prior.failCount)) return // already locked; nothing to do
+
+  const windowExpired =
+    prior?.lastFailAt != null && now - prior.lastFailAt.getTime() > THROTTLE.resetAfterMs
+  if (!prior || prior.failCount === 0 || windowExpired) {
+    await startWindow(key, now, null)
+    return
+  }
+  try {
+    await prisma.loginAttempt.update({
+      where: { key },
+      data: { failCount: { increment: 1 }, lastFailAt: toDate(now) },
+    })
+  } catch {
+    await startWindow(key, now, null) // row vanished (concurrent success/unlock)
+  }
+}
+
+/** Clear an account's lock + counter — on a successful login or a verified OTP. */
+export async function unlockAccount(phone: string): Promise<void> {
+  await prisma.loginAttempt.deleteMany({ where: { key: phoneKey(phone) } })
+}
+
+/** Is this account currently hard-locked? (Used by the OTP-request endpoint.) */
+export async function isPhoneLocked(phone: string): Promise<boolean> {
+  const s = await loadState(phoneKey(phone))
+  return isAccountLocked(s.failCount)
+}
+
+// -------- Per-IP spray rule (time based) --------
+
+async function ipBump(key: string, now: number): Promise<void> {
   const prior = await prisma.loginAttempt.findUnique({ where: { key } })
   const windowExpired =
     prior?.lastFailAt != null && now - prior.lastFailAt.getTime() > THROTTLE.resetAfterMs
-
   if (!prior || prior.failCount === 0 || windowExpired) {
-    await startWindow(key, now, schedule(1))
+    await startWindow(key, now, ipLockDurationMs(1) > 0 ? now + ipLockDurationMs(1) : null)
     return
   }
-
   let failCount: number
   try {
     const row = await prisma.loginAttempt.update({
@@ -71,65 +99,62 @@ async function bumpFailure(
     })
     failCount = row.failCount
   } catch {
-    // Row vanished between read and write (e.g. cleared by a concurrent success).
-    await startWindow(key, now, schedule(1))
+    await startWindow(key, now, null)
     return
   }
-
-  const dur = schedule(failCount)
+  const dur = ipLockDurationMs(failCount)
   await prisma.loginAttempt
     .update({ where: { key }, data: { lockedUntil: dur > 0 ? toDate(now + dur) : null } })
     .catch(() => {})
 }
 
-/** Is this login currently throttled? Blocked if the account OR the IP is locked. */
+// -------- Public API --------
+
+/** Blocked if the account is hard-locked OR the IP is spray-locked. */
 export async function checkLoginThrottle(
   { phone, ip }: { phone?: string | null; ip?: string | null },
   now: number = Date.now(),
 ): Promise<ThrottleResult> {
-  let blocked = false
+  let accountLocked = false
   let retryAfterSeconds = 0
-  const keys = [phone ? phoneKey(phone) : null, ip ? ipKey(ip) : null].filter(
-    (k): k is string => k != null,
-  )
-  for (const key of keys) {
-    const r = checkThrottle(await loadState(key), now)
-    if (r.blocked) {
-      blocked = true
-      retryAfterSeconds = Math.max(retryAfterSeconds, r.retryAfterSeconds)
-    }
+  if (phone) {
+    const s = await loadState(phoneKey(phone))
+    accountLocked = isAccountLocked(s.failCount)
   }
-  return { blocked, retryAfterSeconds }
+  if (ip) {
+    const r = checkThrottle(await loadState(ipKey(ip)), now)
+    if (r.blocked) retryAfterSeconds = r.retryAfterSeconds
+  }
+  return { blocked: accountLocked || retryAfterSeconds > 0, accountLocked, retryAfterSeconds }
 }
 
-/** Record a failed login against both the account (escalating) and IP (spray) keys. */
+/** Record a failed login against the account (hard-lock) and IP (spray) keys. */
 export async function recordLoginFailure(
   { phone, ip }: { phone?: string | null; ip?: string | null },
   now: number = Date.now(),
 ): Promise<void> {
-  if (phone) await bumpFailure(phoneKey(phone), now, lockDurationMs)
-  if (ip) await bumpFailure(ipKey(ip), now, ipLockDurationMs)
-  // Opportunistic, fire-and-forget cleanup so the table self-maintains without a
-  // cron job. Rare enough to add negligible write contention.
+  if (phone) await accountBump(phoneKey(phone), now)
+  if (ip) await ipBump(ipKey(ip), now)
   if (Math.random() < 0.02) void sweepStaleLoginAttempts(now).catch(() => {})
 }
 
-/** Clear the account throttle on a successful login. The IP key is left alone so
- *  a legitimate login can't be used to reset an IP-wide spray counter. */
+/** Clear the account lock on a successful login. The IP key is left alone so a
+ *  legitimate login can't reset an IP-wide spray counter. */
 export async function clearLoginThrottle({ phone }: { phone?: string | null }): Promise<void> {
-  if (phone) await prisma.loginAttempt.deleteMany({ where: { key: phoneKey(phone) } })
+  if (phone) await unlockAccount(phone)
 }
 
-/** Delete rows that are no longer locked AND whose window has fully expired —
- *  they would reset on the next failure anyway. Keeps the table from growing
- *  unbounded under spraying (failures against random/forged phones + IPs).
- *  Call from a cron/maintenance task, or rely on the opportunistic sweep below. */
+/** Delete abandoned rows (time-stale and not currently locked) so the table
+ *  doesn't grow unbounded under spraying. A LOCKED account is never swept — it
+ *  must persist until its OTP unlock. */
 export async function sweepStaleLoginAttempts(now: number = Date.now()): Promise<number> {
   const res = await prisma.loginAttempt.deleteMany({
     where: {
       AND: [
         { OR: [{ lockedUntil: null }, { lockedUntil: { lt: toDate(now)! } }] },
         { OR: [{ lastFailAt: null }, { lastFailAt: { lt: toDate(now - THROTTLE.resetAfterMs)! } }] },
+        // never sweep a hard-locked account
+        { NOT: { AND: [{ key: { startsWith: 'phone:' } }, { failCount: { gte: ACCOUNT_FAIL_LIMIT } }] } },
       ],
     },
   })

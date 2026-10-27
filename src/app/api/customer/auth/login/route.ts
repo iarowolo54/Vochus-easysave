@@ -34,17 +34,29 @@ function clientIp(req: NextRequest): string | null {
 // truly unreachable the customer lookup below fails too, so the login is already
 // broken and failing open opens no window that isn't already a full outage. A
 // transient "database is locked" shouldn't reject a legitimate user. We log so
-// the failure is never silent (the review's minimum ask).
+// the failure is never silent.
 async function safeCheck(ids: { phone?: string | null; ip?: string | null }) {
   try {
     return await checkLoginThrottle(ids)
   } catch (e) {
     console.error('[login-throttle] check failed — failing open:', e)
-    return { blocked: false, retryAfterSeconds: 0 }
+    return { blocked: false, accountLocked: false, retryAfterSeconds: 0 }
   }
 }
 const swallow = (p: Promise<unknown>) =>
   p.catch((e) => console.error('[login-throttle] record/clear failed:', e))
+
+// Account is hard-locked after too many failures — the client must run the OTP
+// unlock flow (POST /api/customer/auth/unlock/request then /verify). 423 Locked.
+function lockedResponse() {
+  return NextResponse.json(
+    {
+      error: 'Your account is locked after too many failed attempts. Unlock it with a verification code to continue.',
+      locked: true,
+    },
+    { status: 423 },
+  )
+}
 
 export async function POST(req: NextRequest) {
   const { phone, password, app, deviceId, biometricToken, device } = await req.json()
@@ -54,19 +66,29 @@ export async function POST(req: NextRequest) {
   if (!password && !biometricToken) return NextResponse.json({ error: 'Missing credentials' }, { status: 400 })
 
   const ip = clientIp(req)
-  // Only the password path is brute-forceable, so only it is throttled. A
-  // biometric/possession proof bypasses the throttle entirely — that is how the
-  // real owner always gets in even while an attacker is spraying their phone.
   const isPasswordAttempt = !biometricToken && typeof password === 'string' && password.length > 0
 
-  if (isPasswordAttempt) {
-    const throttle = await safeCheck({ phone, ip })
-    if (throttle.blocked) {
-      return NextResponse.json(
-        { error: `Too many attempts. Try again in ${formatRetryAfter(throttle.retryAfterSeconds)}.` },
-        { status: 429, headers: { 'Retry-After': String(throttle.retryAfterSeconds) } },
-      )
-    }
+  // Full freeze: once the account is hard-locked, EVERY method is refused
+  // (password and biometric alike) until an OTP unlock. The IP spray rule is a
+  // separate, time-based 429.
+  const throttle = await safeCheck({ phone, ip })
+  if (throttle.accountLocked) return lockedResponse()
+  if (throttle.blocked) {
+    return NextResponse.json(
+      { error: `Too many attempts. Try again in ${formatRetryAfter(throttle.retryAfterSeconds)}.` },
+      { status: 429, headers: { 'Retry-After': String(throttle.retryAfterSeconds) } },
+    )
+  }
+
+  // Record a failed password attempt, then return 423 if it just caused the lock
+  // (so the client can jump to the unlock flow) or 401 otherwise. Applied
+  // uniformly whether or not the account exists, so behaviour can't be used to
+  // enumerate real phones.
+  async function failPassword(): Promise<NextResponse> {
+    await swallow(recordLoginFailure({ phone, ip }))
+    const after = await safeCheck({ phone, ip })
+    if (after.accountLocked) return lockedResponse()
+    return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
 
   const customer = await prisma.customer.findFirst({
@@ -76,7 +98,7 @@ export async function POST(req: NextRequest) {
   if (!customer || !customer.password) {
     if (isPasswordAttempt) {
       await bcrypt.compare(password, DUMMY_HASH) // equalise timing vs. a real account
-      await swallow(recordLoginFailure({ phone, ip }))
+      return failPassword()
     }
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
@@ -96,7 +118,7 @@ export async function POST(req: NextRequest) {
   }
 
   if (!valid) {
-    if (isPasswordAttempt) await swallow(recordLoginFailure({ phone, ip }))
+    if (isPasswordAttempt) return failPassword()
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
 
@@ -145,7 +167,7 @@ export async function POST(req: NextRequest) {
       app,
       customerId: customer.id,
       meta: device ?? undefined,
-      ipAddress: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+      ipAddress: ip,
     })
   }
   return res

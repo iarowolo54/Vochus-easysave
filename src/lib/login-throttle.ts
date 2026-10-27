@@ -1,20 +1,19 @@
-// Brute-force throttle for the customer login path (phone + password).
+// Brute-force protection for the customer login path (phone + password).
 //
 // Pure decision logic — no DB, no clock, no I/O — so it is deterministic and
-// unit-testable. The route layer owns persistence (one row per throttle key in
-// the LoginAttempt table) and supplies `now`; this module only decides.
+// unit-testable. The route/DB layers own persistence and supply `now`.
 //
-// Design (see the escalating schedule below):
-//  - Escalating DELAY, not a permanent lock. The reset window is deliberately
-//    SHORTER than the maximum lock (see the invariant test): once an account
-//    hits the 15m ceiling, the next failure can only land after the lock
-//    expires, by which point the window has already reset to a fresh 30s. So a
-//    lone attacker who paces one failure per lock-expiry CANNOT hold the
-//    account locked — that was the account-lockout DoS this guards against.
-//  - A genuinely concentrated attack (failures faster than the reset window)
-//    still escalates to 15m, locking the guessing path while the attack runs.
-//    An owner who has enrolled biometric/device login bypasses the throttle
-//    entirely (handled in the route) and is never caught by it.
+// Two independent concerns:
+//
+//  1. Per-account HARD LOCK (the client's rule): after ACCOUNT_FAIL_LIMIT failed
+//     password attempts the account is locked. There is NO time-based unlock —
+//     the only way back in is an email/SMS OTP (see login-attempt.unlockAccount).
+//     While unlocked, the failure counter resets after a quiet window so a few
+//     scattered typos over a long day don't accumulate into a lock.
+//
+//  2. Per-IP spray rule (defence in depth): a loose, TIME-based lock that only
+//     trips after many failures across accounts from one IP — deliberately high
+//     so shared carrier IPs (CGNAT) aren't caught. This still uses lockedUntil.
 
 export interface AttemptState {
   failCount: number
@@ -23,31 +22,41 @@ export interface AttemptState {
 }
 
 export const THROTTLE = {
-  // After this much quiet (no failures), the next failure starts a new window.
-  // MUST stay below the max lock duration (lockDurationMs at the top tier) — see
-  // the anti-DoS invariant test.
-  resetAfterMs: 10 * 60_000,
+  // While an account is still UNLOCKED, a failure after this much quiet starts a
+  // fresh count — so unrelated typos hours apart don't stack up to a lock.
+  resetAfterMs: 30 * 60_000,
 }
 
-/** Lock duration for the Nth consecutive failure in the current window. */
-export function lockDurationMs(failCount: number): number {
-  if (failCount < 5) return 0
-  if (failCount <= 7) return failCount === 5 ? 30_000 : 60_000 // 5 -> 30s, 6-7 -> 1m
-  if (failCount <= 9) return 5 * 60_000 // 8-9 -> 5m
-  return 15 * 60_000 // 10+ -> 15m
+// -------- Per-account hard lock --------
+
+export const ACCOUNT_FAIL_LIMIT = 4
+
+/** An account is locked once it has reached the failure limit. Cleared only by a
+ *  successful OTP unlock (or a successful login), never by the passage of time. */
+export function isAccountLocked(failCount: number): boolean {
+  return failCount >= ACCOUNT_FAIL_LIMIT
 }
+
+/** The failure count after one more failed password attempt, resetting the
+ *  window after `resetAfterMs` of quiet. Used only while still unlocked. */
+export function nextFailCount(state: AttemptState, now: number): number {
+  const windowExpired =
+    state.lastFailAt == null || now - state.lastFailAt > THROTTLE.resetAfterMs
+  return windowExpired ? 1 : state.failCount + 1
+}
+
+// -------- Per-IP spray rule (time based) --------
 
 /**
  * Lock duration for the Nth failure seen from a single IP across ALL accounts.
  * Deliberately loose: many legitimate users share one carrier IP (CGNAT), so
- * this only fires on egregious spraying, and never on the handful of failures a
- * few honest users behind the same IP would produce.
+ * this only fires on egregious spraying.
  */
 export function ipLockDurationMs(failCount: number): number {
   return failCount < 20 ? 0 : 15 * 60_000
 }
 
-/** Pure read: is this key currently locked, and for how much longer? */
+/** Pure read of a TIME-based lock (the IP rule): is it currently locked? */
 export function checkThrottle(
   state: AttemptState,
   now: number,
@@ -58,30 +67,22 @@ export function checkThrottle(
   return { blocked: false, retryAfterSeconds: 0 }
 }
 
-/** Human-friendly Retry-After text for a login error message. */
-export function formatRetryAfter(seconds: number): string {
-  if (seconds < 60) return `${seconds} second${seconds === 1 ? '' : 's'}`
-  const minutes = Math.ceil(seconds / 60)
-  return `${minutes} minute${minutes === 1 ? '' : 's'}`
-}
-
-/**
- * Compute the next state after a failed login attempt. `schedule` maps the
- * running failure count to a lock duration — defaults to the per-account
- * escalation; pass `ipLockDurationMs` for the per-IP spray rule.
- */
+/** Next state after a failed attempt for a TIME-based key (the IP rule). */
 export function registerFailure(
   state: AttemptState,
   now: number,
-  schedule: (failCount: number) => number = lockDurationMs,
+  schedule: (failCount: number) => number,
 ): AttemptState {
   const windowExpired =
     state.lastFailAt == null || now - state.lastFailAt > THROTTLE.resetAfterMs
   const failCount = windowExpired ? 1 : state.failCount + 1
   const dur = schedule(failCount)
-  return {
-    failCount,
-    lastFailAt: now,
-    lockedUntil: dur > 0 ? now + dur : null,
-  }
+  return { failCount, lastFailAt: now, lockedUntil: dur > 0 ? now + dur : null }
+}
+
+/** Human-friendly Retry-After text (used for the IP-rule message). */
+export function formatRetryAfter(seconds: number): string {
+  if (seconds < 60) return `${seconds} second${seconds === 1 ? '' : 's'}`
+  const minutes = Math.ceil(seconds / 60)
+  return `${minutes} minute${minutes === 1 ? '' : 's'}`
 }

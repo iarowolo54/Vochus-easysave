@@ -10,6 +10,7 @@ export default function LoginForm() {
   const [showPass, setShowPass] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
 
   const [canBio, setCanBio] = useState(false)
 
@@ -23,6 +24,9 @@ export default function LoginForm() {
     }
     const refresh = () => setCanBio(!!(w.__vochusCanBiometric && w.__vochusBiometricEnrolled))
     refresh()
+    if (new URLSearchParams(window.location.search).get('unlocked')) {
+      setNotice('Account unlocked — please sign in.')
+    }
     const t1 = setTimeout(refresh, 300)
     const t2 = setTimeout(refresh, 1000)
     window.addEventListener('vochus:flags-ready', refresh)
@@ -42,6 +46,7 @@ export default function LoginForm() {
           }),
         })
         if (res.ok) { router.push('/customer/dashboard'); return }
+        if (res.status === 423) { router.push(`/customer/unlock?phone=${encodeURIComponent(creds.identifier)}`); return }
         setError('Biometric sign-in failed — please log in with your password')
       } catch {
         setError('Biometric sign-in failed — please log in with your password')
@@ -75,7 +80,10 @@ export default function LoginForm() {
         body: JSON.stringify({ phone: phone.trim(), password, app: w.__vochusApp ?? '', deviceId: w.__vochusDeviceId ?? '', device: w.__vochusDevice }),
       })
       const data = await res.json()
-      if (!res.ok) { setError(data.error ?? 'Login failed'); return }
+      if (!res.ok) {
+        if (res.status === 423) { router.push(`/customer/unlock?phone=${encodeURIComponent(phone.trim())}`); return }
+        setError(data.error ?? 'Login failed'); return
+      }
       router.push('/customer/dashboard')
     } catch { setError('Network error') }
     finally { setLoading(false) }
@@ -95,6 +103,11 @@ export default function LoginForm() {
         </div>
 
         <div style={{ background: 'var(--card)', border: '1px solid var(--br)', borderRadius: 16, padding: 20, boxShadow: '0 2px 12px rgba(0,0,0,.06)' }}>
+          {notice && !error && (
+            <div style={{ background: 'var(--gl)', color: 'var(--g)', border: '1px solid rgba(46,204,113,.25)', borderRadius: 10, padding: '10px 14px', fontSize: 13, marginBottom: 14 }}>
+              {notice}
+            </div>
+          )}
           {error && (
             <div style={{ background: 'var(--rdl)', color: 'var(--rd)', border: '1px solid rgba(192,57,43,.2)', borderRadius: 10, padding: '10px 14px', fontSize: 13, marginBottom: 14 }}>
               {error}

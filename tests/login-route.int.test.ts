@@ -1,6 +1,6 @@
 // Acceptance test: drive the real customer-login POST handler against the local
-// dev.db and prove the throttle returns 429 + Retry-After after repeated failures.
-// The failure path needs no seeded customer and no secrets.
+// dev.db. Proves the account hard-locks (423) after 4 failures and that a locked
+// account freezes biometric too. The failure path needs no seeded customer.
 import { test, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { prisma } from '../src/lib/prisma'
@@ -8,6 +8,7 @@ import { POST } from '../src/app/api/customer/auth/login/route'
 
 const rid = Math.random().toString(36).slice(2, 10)
 const phone = `+234900${rid}`
+const bioPhone = `+234901${rid}`
 const ip = `192.0.2.${Math.floor(Math.random() * 254) + 1}`
 
 function mockReq(body: unknown, xff: string | null) {
@@ -17,42 +18,34 @@ function mockReq(body: unknown, xff: string | null) {
   } as unknown as Parameters<typeof POST>[0]
 }
 
-const bioPhone = `+234901${rid}`
-
 after(async () => {
   await prisma.loginAttempt.deleteMany({
-    where: { OR: [{ key: `phone:${phone}` }, { key: `ip:${ip}` }, { key: `phone:${bioPhone}` }] },
+    where: { OR: [{ key: `phone:${phone}` }, { key: `phone:${bioPhone}` }, { key: `ip:${ip}` }] },
   })
   await prisma.$disconnect()
 })
 
-test('repeated wrong passwords get 401s, then a 429 with Retry-After', async () => {
-  for (let i = 0; i < 5; i++) {
-    const res = await POST(mockReq({ phone, password: 'wrong-guess' }, ip))
+test('3 wrong passwords return 401; the 4th locks the account with 423', async () => {
+  for (let i = 0; i < 3; i++) {
+    const res = await POST(mockReq({ phone, password: 'wrong' }, ip))
     assert.equal(res.status, 401, `attempt ${i + 1} should be 401`)
   }
+  const fourth = await POST(mockReq({ phone, password: 'wrong' }, ip))
+  assert.equal(fourth.status, 423, '4th failure should lock (423)')
+  const body = (await fourth.json()) as { locked?: boolean }
+  assert.equal(body.locked, true)
 
-  const blocked = await POST(mockReq({ phone, password: 'wrong-guess' }, ip))
-  assert.equal(blocked.status, 429)
-  const retryAfter = blocked.headers.get('Retry-After')
-  assert.ok(retryAfter && Number(retryAfter) > 0, `Retry-After header present: ${retryAfter}`)
-  const body = (await blocked.json()) as { error: string }
-  assert.match(body.error, /too many attempts/i)
+  // Subsequent attempts stay 423 (no time expiry).
+  const next = await POST(mockReq({ phone, password: 'wrong' }, ip))
+  assert.equal(next.status, 423)
 })
 
-test('biometric login bypasses the password throttle (owner is never locked out)', async () => {
-  // Lock the account via wrong passwords.
-  for (let i = 0; i < 6; i++) {
-    await POST(mockReq({ phone: bioPhone, password: 'wrong-guess' }, ip))
+test('a locked account freezes biometric too (full freeze)', async () => {
+  for (let i = 0; i < 4; i++) {
+    await POST(mockReq({ phone: bioPhone, password: 'wrong' }, ip))
   }
-  const pw = await POST(mockReq({ phone: bioPhone, password: 'wrong-guess' }, ip))
-  assert.equal(pw.status, 429, 'password path should now be throttled')
-
-  // A biometric (possession) attempt must NOT be throttled — it skips the gate.
-  // With no matching token it falls through to 401, but crucially not 429.
   const bio = await POST(mockReq({ phone: bioPhone, biometricToken: 'tok', deviceId: 'dev-1' }, ip))
-  assert.notEqual(bio.status, 429, 'biometric path must bypass the throttle')
-  assert.equal(bio.status, 401)
+  assert.equal(bio.status, 423, 'biometric must be refused while locked')
 })
 
 test('a non-string phone is rejected with 400, not a 500', async () => {

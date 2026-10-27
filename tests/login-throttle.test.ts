@@ -2,7 +2,9 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   THROTTLE,
-  lockDurationMs,
+  ACCOUNT_FAIL_LIMIT,
+  isAccountLocked,
+  nextFailCount,
   ipLockDurationMs,
   checkThrottle,
   registerFailure,
@@ -10,150 +12,70 @@ import {
   type AttemptState,
 } from '../src/lib/login-throttle'
 
+const t0 = 1_000_000_000_000
+const fresh: AttemptState = { failCount: 0, lastFailAt: null, lockedUntil: null }
+
+// --- Account hard lock (per-phone) ---
+
+test('account locks at exactly the 4th failure, not before', () => {
+  assert.equal(ACCOUNT_FAIL_LIMIT, 4)
+  assert.equal(isAccountLocked(0), false)
+  assert.equal(isAccountLocked(3), false)
+  assert.equal(isAccountLocked(4), true)
+  assert.equal(isAccountLocked(9), true)
+})
+
+test('nextFailCount climbs within the window and resets after inactivity', () => {
+  let count = 0
+  let state: AttemptState = { ...fresh }
+  let now = t0
+  for (let i = 0; i < 4; i++) {
+    now += 1000
+    count = nextFailCount(state, now)
+    state = { failCount: count, lastFailAt: now, lockedUntil: null }
+  }
+  assert.equal(count, 4)
+  assert.equal(isAccountLocked(count), true)
+
+  // A failure after a long quiet period starts a fresh window at 1.
+  const later = now + THROTTLE.resetAfterMs + 1
+  assert.equal(nextFailCount(state, later), 1)
+})
+
+test('four scattered typos within the window still lock', () => {
+  let state: AttemptState = { ...fresh }
+  let now = t0
+  for (let i = 0; i < 4; i++) {
+    now += 60_000 // one typo a minute — inside the reset window
+    const c = nextFailCount(state, now)
+    state = { failCount: c, lastFailAt: now, lockedUntil: null }
+  }
+  assert.equal(isAccountLocked(state.failCount), true)
+})
+
+// --- IP spray rule (per-IP, time based) — unchanged ---
+
+test('IP rule stays quiet until 20 failures, then 15m', () => {
+  assert.equal(ipLockDurationMs(4), 0)
+  assert.equal(ipLockDurationMs(19), 0)
+  assert.equal(ipLockDurationMs(20), 15 * 60_000)
+})
+
+test('registerFailure drives the IP time-lock and checkThrottle reads it', () => {
+  let s = fresh
+  let now = t0
+  for (let i = 0; i < 20; i++) {
+    now += 1000
+    s = registerFailure(s, now, ipLockDurationMs)
+  }
+  assert.equal(s.lockedUntil, now + 15 * 60_000)
+  assert.equal(checkThrottle(s, now + 1000).blocked, true)
+  assert.equal(checkThrottle(s, now + 15 * 60_000 + 1).blocked, false)
+})
+
 test('formatRetryAfter renders friendly, pluralised durations', () => {
   assert.equal(formatRetryAfter(1), '1 second')
   assert.equal(formatRetryAfter(30), '30 seconds')
   assert.equal(formatRetryAfter(60), '1 minute')
   assert.equal(formatRetryAfter(90), '2 minutes')
-  assert.equal(formatRetryAfter(300), '5 minutes')
-})
-
-const t0 = 1_000_000_000_000 // fixed "now" for determinism
-const fresh: AttemptState = { failCount: 0, lastFailAt: null, lockedUntil: null }
-
-test('no lock below the threshold', () => {
-  assert.equal(lockDurationMs(0), 0)
-  assert.equal(lockDurationMs(4), 0)
-})
-
-test('escalating schedule: 5->30s, 6-7->1m, 8-9->5m, 10+->15m', () => {
-  assert.equal(lockDurationMs(5), 30_000)
-  assert.equal(lockDurationMs(6), 60_000)
-  assert.equal(lockDurationMs(7), 60_000)
-  assert.equal(lockDurationMs(8), 5 * 60_000)
-  assert.equal(lockDurationMs(9), 5 * 60_000)
-  assert.equal(lockDurationMs(10), 15 * 60_000)
-  assert.equal(lockDurationMs(50), 15 * 60_000)
-})
-
-test('four failures in a row do not lock', () => {
-  let s = fresh
-  let now = t0
-  for (let i = 0; i < 4; i++) {
-    now += 1000
-    s = registerFailure(s, now)
-  }
-  assert.equal(s.failCount, 4)
-  assert.equal(s.lockedUntil, null)
-  assert.equal(checkThrottle(s, now).blocked, false)
-})
-
-test('fifth failure locks for 30s and checkThrottle reports Retry-After', () => {
-  let s = fresh
-  let now = t0
-  for (let i = 0; i < 5; i++) {
-    now += 1000
-    s = registerFailure(s, now)
-  }
-  assert.equal(s.failCount, 5)
-  assert.equal(s.lockedUntil, now + 30_000)
-
-  const during = checkThrottle(s, now + 10_000)
-  assert.equal(during.blocked, true)
-  assert.equal(during.retryAfterSeconds, 20) // 30s lock, 10s elapsed
-
-  const after = checkThrottle(s, now + 30_001)
-  assert.equal(after.blocked, false)
-})
-
-test('counter keeps climbing while attempts stay within the reset window', () => {
-  let s = fresh
-  let now = t0
-  for (let i = 0; i < 10; i++) {
-    now += 1000
-    s = registerFailure(s, now)
-  }
-  assert.equal(s.failCount, 10)
-  assert.equal(s.lockedUntil, now + 15 * 60_000)
-})
-
-test('reset window is shorter than the max lock (anti-DoS invariant)', () => {
-  // If the reset window were >= the max lock, a lone attacker could re-arm the
-  // 15m lock forever by failing once each time it expires, permanently locking
-  // out the real owner. The reset must be shorter so the window clears first.
-  assert.ok(
-    THROTTLE.resetAfterMs < lockDurationMs(10),
-    `resetAfterMs (${THROTTLE.resetAfterMs}) must be < max lock (${lockDurationMs(10)})`,
-  )
-})
-
-test('a paced attacker cannot keep renewing the max lock', () => {
-  let s = fresh
-  let now = t0
-  for (let i = 0; i < 10; i++) {
-    now += 1000
-    s = registerFailure(s, now)
-  }
-  assert.equal(s.lockedUntil, now + 15 * 60_000)
-  // The next failure can only land AFTER the lock expires (blocked attempts are
-  // never recorded). By then > resetAfterMs has passed, so it resets to a fresh
-  // 30s window rather than re-arming the 15m lock.
-  now = s.lockedUntil! + 1
-  s = registerFailure(s, now)
-  assert.equal(s.failCount, 1)
-  assert.equal(s.lockedUntil, null)
-})
-
-test('inactivity past the reset window starts a fresh window', () => {
-  let s = fresh
-  let now = t0
-  for (let i = 0; i < 6; i++) {
-    now += 1000
-    s = registerFailure(s, now)
-  }
-  assert.equal(s.failCount, 6)
-  // come back after the reset window of quiet
-  now += THROTTLE.resetAfterMs + 1
-  s = registerFailure(s, now)
-  assert.equal(s.failCount, 1)
-  assert.equal(s.lockedUntil, null)
-})
-
-test('IP schedule stays quiet well past the per-account threshold', () => {
-  // Shared carrier IPs / CGNAT: many real users behind one IP. The IP rule must
-  // not trip at a handful of failures the way the per-account rule does.
-  assert.equal(ipLockDurationMs(5), 0)
-  assert.equal(ipLockDurationMs(10), 0)
-  assert.equal(ipLockDurationMs(19), 0)
-  assert.equal(ipLockDurationMs(20), 15 * 60_000)
-  assert.equal(ipLockDurationMs(100), 15 * 60_000)
-})
-
-test('registerFailure accepts a custom schedule (IP spray)', () => {
-  let s: AttemptState = { failCount: 0, lastFailAt: null, lockedUntil: null }
-  let now = t0
-  for (let i = 0; i < 19; i++) {
-    now += 1000
-    s = registerFailure(s, now, ipLockDurationMs)
-  }
-  assert.equal(s.failCount, 19)
-  assert.equal(s.lockedUntil, null)
-  now += 1000
-  s = registerFailure(s, now, ipLockDurationMs)
-  assert.equal(s.failCount, 20)
-  assert.equal(s.lockedUntil, now + 15 * 60_000)
-})
-
-test('a blocked state does not count the blocked attempt as a new failure', () => {
-  // checkThrottle is a pure read; it must never mutate or escalate.
-  let s = fresh
-  let now = t0
-  for (let i = 0; i < 5; i++) {
-    now += 1000
-    s = registerFailure(s, now)
-  }
-  const before = s.failCount
-  checkThrottle(s, now + 5_000)
-  checkThrottle(s, now + 5_000)
-  assert.equal(s.failCount, before)
 })

@@ -536,3 +536,19 @@ model LoginAttempt {
   lockedUntil DateTime?
   updatedAt   DateTime  @updatedAt
 }
+
+// One-time codes for unlocking a hard-locked customer account. The code itself
+// is never stored or returned — only a SHA-256 hash. Sent on the customer's
+// registration channel: email (link-registered) or SMS (agent-registered).
+model AccountUnlockOtp {
+  id         String    @id @default(cuid())
+  customerId String
+  channel    String // 'email' | 'sms'
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([customerId])
+}
