@@ -60,14 +60,22 @@ export async function POST(req: NextRequest) {
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
 
   const body = await req.json()
-  const { customerId, principal, durationDays, interestRate } = body
+  const { customerId, principal, durationDays } = body
   const p = parseFloat(principal)
   const days = parseInt(durationDays)
-  const rate = parseFloat(interestRate)
 
   if (!isFinite(p) || p <= 0) return NextResponse.json({ error: 'Principal must be a positive amount' }, { status: 400 })
   if (!isFinite(days) || days <= 0) return NextResponse.json({ error: 'Duration must be a positive number of days' }, { status: 400 })
-  if (!isFinite(rate) || rate < 0) return NextResponse.json({ error: 'Interest rate cannot be negative' }, { status: 400 })
+
+  // Customer must belong to the acting agent (closes the cross-agent IDOR).
+  const customer = await prisma.customer.findFirst({ where: { id: customerId, agentId: agent.id } })
+  if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
+
+  // Interest rate is server-authoritative — the admin-configured rate for this
+  // duration, never a rate chosen by the requesting agent.
+  const rateConfig = await prisma.interestRate.findUnique({ where: { durationDays: days } })
+  if (!rateConfig) return NextResponse.json({ error: 'No interest rate is configured for this loan duration' }, { status: 400 })
+  const rate = rateConfig.rate
 
   const interest = (p * rate) / 100
   const total = p + interest
