@@ -14,7 +14,7 @@ import BottomSheet from '@/components/ui/BottomSheet'
 import Toast from '@/components/ui/Toast'
 import { HomeSkeleton } from '@/components/ui/Skeleton'
 import { takeJustPaid } from '@/lib/payment-flash'
-import Amount from '@/components/ui/Amount'
+import Amount, { useCountUp } from '@/components/ui/Amount'
 import EmptyState from '@/components/ui/EmptyState'
 import ListRow from '@/components/ui/ListRow'
 import { Icons } from '@/components/ui/icons'
@@ -96,6 +96,8 @@ export default function CustomerDashboard() {
     [data, plan],
   )
   const depositDates = useMemo(() => planTxs.map(t => t.createdAt), [planTxs])
+  // The goal bar fills with the same counter as the balance, so they land together.
+  const shownBalance = useCountUp(plan?.balance ?? 0, !hideBalance)
 
   function toggleBalance() {
     setHide(h => { setHideBalance(!h); return !h })
@@ -150,11 +152,34 @@ export default function CustomerDashboard() {
     return k >= windowStart && k <= today
   })
 
-  const rate = plan
-    ? weekly
-      ? `${formatNaira(plan.dailyAmount * 7, { minor: false })} weekly`
-      : `${formatNaira(plan.dailyAmount, { minor: false })} daily`
-    : ''
+  const goalPct = plan && target > 0 ? Math.min(100, (plan.balance / target) * 100) : 0
+  const shownPct = plan && target > 0 ? Math.min(100, (shownBalance / target) * 100) : 0
+
+  const planSwitch = plans.length > 1 ? (
+    <button
+      type="button"
+      className="ui-plan-picker"
+      onClick={() => setPickerOpen(true)}
+      aria-haspopup="dialog"
+      aria-label={`${plan?.goal ?? 'Plan'}. Change plan`}
+    >
+      <span className="ui-plan-picker-label">{plan?.goal}</span>
+      <Icons.expand size={18} aria-hidden="true" />
+    </button>
+  ) : (
+    <span className="ui-plan-name">{plan ? plan.goal : 'Savings balance'}</span>
+  )
+  const eyeButton = (
+    <button
+      type="button"
+      className="ui-icon-btn ui-icon-btn--plain ui-hero-eye"
+      onClick={toggleBalance}
+      aria-label={hideBalance ? 'Show balance' : 'Hide balance'}
+      aria-pressed={hideBalance}
+    >
+      {hideBalance ? <Icons.show size={18} aria-hidden="true" /> : <Icons.hide size={18} aria-hidden="true" />}
+    </button>
+  )
 
   return (
     <div className="ui-screen">
@@ -163,67 +188,87 @@ export default function CustomerDashboard() {
           ? <img src={data.photoUrl} className="ui-avatar" alt="" />
           : <span className="ui-avatar" aria-hidden="true">{data.name[0]}</span>}
         <div className="ui-topbar-main">
-          <div className="ui-topbar-title">{greeting}, {firstName}</div>
+          <div className="ui-topbar-sub ui-topbar-sub--above">{greeting}</div>
+          <div className="ui-topbar-title">{firstName}</div>
         </div>
+        <button
+          type="button"
+          className="ui-icon-btn"
+          onClick={() => router.push('/customer/chat')}
+          aria-label={`Message your agent, ${displayName(data.agent.name)}`}
+        >
+          <Icons.chat size={20} aria-hidden="true" />
+        </button>
       </header>
 
       <main className="ui-container">
-        <section className="ui-hero" aria-label="Savings balance">
-          {/* The pill is centred on its own; the eye hangs off its right edge so it doesn't shift the pill. */}
-          <div className="ui-hero-top">
-            <div className="ui-hero-top-inner">
-              {plans.length > 1 ? (
-                <button
-                  type="button"
-                  className="ui-plan-picker"
-                  onClick={() => setPickerOpen(true)}
-                  aria-haspopup="dialog"
-                  aria-label={`${plan?.goal ?? 'Plan'}. Change plan`}
-                >
-                  <span className="ui-plan-picker-label">{plan?.goal}</span>
-                  <Icons.expand size={18} aria-hidden="true" />
-                </button>
-              ) : (
-                <span className="ui-plan-name">{plan ? plan.goal : 'Savings balance'}</span>
-              )}
-              <button
-                type="button"
-                className="ui-icon-btn ui-icon-btn--plain ui-hero-eye"
-                onClick={toggleBalance}
-                aria-label={hideBalance ? 'Show balance' : 'Hide balance'}
-                aria-pressed={hideBalance}
-              >
-                {hideBalance ? <Icons.show size={18} aria-hidden="true" /> : <Icons.hide size={18} aria-hidden="true" />}
-              </button>
+        {plan && finished ? (
+          <section className="ui-hero" aria-label="Savings balance">
+            {/* The pill is centred on its own; the eye hangs off its right edge so it doesn't shift the pill. */}
+            <div className="ui-hero-top">
+              <div className="ui-hero-top-inner">
+                {planSwitch}
+                {eyeButton}
+              </div>
             </div>
-          </div>
-          {plan && finished ? (
             <PlanEnded
               plan={plan}
               hideAmounts={hideBalance}
               onCollect={() => router.push('/customer/redeem')}
               onNewPlan={() => router.push('/customer/save?new=1')}
             />
-          ) : (
-          <>
-          {hideBalance
-            ? <span className="ui-amount ui-amount--hero" aria-label="Balance hidden">₦ ••••</span>
-            : <Amount value={plan?.balance ?? 0} size="hero" animate />}
-          <div className="ui-hero-sub">
-            {!plan && 'No active plan yet'}
-            {plan && ended && `Plan ended ${formatDate(plan.maturityDate)}`}
+          </section>
+        ) : (
+          <section className="ui-card ui-balance" aria-label="Savings balance">
+            <div className="ui-balance-head">
+              {planSwitch}
+              {eyeButton}
+            </div>
+            <p className="ui-balance-label">Saved so far</p>
+            {hideBalance
+              ? <span className="ui-amount ui-amount--hero" aria-label="Balance hidden">₦ ••••</span>
+              : <Amount value={plan?.balance ?? 0} size="hero" animate />}
+
+            {!plan && <p className="ui-balance-note">No active plan yet. Start one to begin saving.</p>}
+            {plan && ended && <p className="ui-balance-note">Plan ended {formatDate(plan.maturityDate)}</p>}
             {plan && !ended && (
               <>
-                {rate}
-                <br />
-                You collect on <strong>{formatDate(plan.maturityDate)}</strong> ({daysUntil(plan.maturityDate)} days)
+                {!hideBalance && target > 0 && (
+                  <>
+                    <div
+                      className="ui-progress ui-balance-bar"
+                      role="progressbar"
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={Math.round(goalPct)}
+                      aria-label={`${formatNaira(plan.balance)} of ${formatNaira(target)} goal`}
+                    >
+                      <span style={{ width: `${shownPct}%` }} />
+                    </div>
+                    <p className="ui-balance-goal" aria-hidden="true">
+                      <span>of {formatNaira(target, { minor: false })} goal</span>
+                      <span>{Math.floor(shownPct)}%</span>
+                    </p>
+                  </>
+                )}
+                <dl className="ui-balance-facts">
+                  <div>
+                    <dt>{weekly ? 'You save weekly' : 'You save daily'}</dt>
+                    <dd>{formatNaira(weekly ? plan.dailyAmount * 7 : plan.dailyAmount, { minor: false })}</dd>
+                  </div>
+                  <div>
+                    <dt>You collect on</dt>
+                    <dd>{formatDate(plan.maturityDate)}</dd>
+                    <dd className="ui-balance-fact-sub">
+                      {daysUntil(plan.maturityDate) === 0 ? 'Today' : daysUntil(plan.maturityDate) === 1 ? 'Tomorrow' : `In ${daysUntil(plan.maturityDate)} days`}
+                    </dd>
+                  </div>
+                </dl>
               </>
             )}
-          </div>
-          {plan && !ended && !pending && <TodayStatus weekly={weekly} deposits={recentForStatus} />}
-          </>
-          )}
-        </section>
+            {plan && !ended && !pending && <TodayStatus weekly={weekly} deposits={recentForStatus} />}
+          </section>
+        )}
 
         {pending && <CollectionTracker status={pending.status} onView={() => router.push('/customer/redeem')} />}
 

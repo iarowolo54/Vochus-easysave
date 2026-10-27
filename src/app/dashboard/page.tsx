@@ -138,43 +138,45 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   return (
     <div className="ag-home">
       <section className="ag-hello">
-        <h2 className="ui-page-title">{greeting}, {displayName(firstName)}</h2>
-        <p className="ui-row-sub">{dateStr}</p>
+        <div>
+          <h2 className="ui-page-title">{greeting}, {displayName(firstName)}</h2>
+          <p className="ui-row-sub">{dateStr}</p>
+        </div>
+        <nav className="ag-hello-actions" aria-label="Main actions">
+          <Link href="/dashboard/savings" className="ui-btn ui-btn--primary"><Icons.plan size={18} aria-hidden="true" /> Record saving</Link>
+          <Link href="/dashboard/enrol" className="ui-btn ui-btn--secondary"><Icons.enrol size={18} aria-hidden="true" /> Enrol customer</Link>
+          <Link href="/dashboard/redeem" className="ui-btn ui-btn--secondary"><Icons.collect size={18} aria-hidden="true" /> Collections</Link>
+        </nav>
       </section>
 
-      <div className="ag-home-grid">
-        <div className="ag-col">
-          <section className="ui-card ag-wallet-card" aria-label="Agent wallet">
-            <span className="ui-row-sub">Agent wallet</span>
-            <Amount value={agent.walletBalance} size="hero" animate />
+      <div className="ag-kpis">
+        <section className="ui-card ag-wallet-card" aria-label="Agent wallet">
+          <span className="ui-row-sub">Agent wallet</span>
+          <Amount value={agent.walletBalance} size="hero" animate />
+          <div className="ag-wallet-foot">
             <p className="ui-row-sub">Recording a cash saving takes the amount from this wallet.</p>
             <Link href="/dashboard/wallet" className="ui-btn ui-btn--secondary ag-wallet-btn">
               <Icons.add size={18} aria-hidden="true" /> Fund wallet
             </Link>
-          </section>
+          </div>
+        </section>
+        <nav className="ui-actions ag-actions" aria-label="Main actions">
+          <Link href="/dashboard/savings" className="ui-action">
+            <span className="ui-action-circle" aria-hidden="true"><Icons.plan size={24} /></span>Record saving
+          </Link>
+          <Link href="/dashboard/enrol" className="ui-action">
+            <span className="ui-action-circle" aria-hidden="true"><Icons.enrol size={24} /></span>Enrol
+          </Link>
+          <Link href="/dashboard/redeem" className="ui-action">
+            <span className="ui-action-circle" aria-hidden="true"><Icons.collect size={24} /></span>Collections
+          </Link>
+        </nav>
+        <Collected label="Collected today" cash={cashToday} online={onlineToday} />
+        <Collected label="Collected this week" cash={cashWeek} online={onlineWeek} />
+      </div>
 
-          <nav className="ui-actions ag-actions" aria-label="Main actions">
-            <Link href="/dashboard/savings" className="ui-action">
-              <span className="ui-action-circle" aria-hidden="true"><Icons.plan size={24} /></span>Record saving
-            </Link>
-            <Link href="/dashboard/enrol" className="ui-action">
-              <span className="ui-action-circle" aria-hidden="true"><Icons.enrol size={24} /></span>Enrol
-            </Link>
-            <Link href="/dashboard/redeem" className="ui-action">
-              <span className="ui-action-circle" aria-hidden="true"><Icons.collect size={24} /></span>Collections
-            </Link>
-          </nav>
-
-          <section className="ui-card" aria-label="Savings collected">
-            <div className="ui-card-head"><h2 className="ui-card-title">Collected</h2></div>
-            <dl className="ag-stats">
-              <div><dt>Cash today</dt><dd className="ui-amount">{formatNaira(cashToday, { minor: false })}</dd></div>
-              <div><dt>Online today</dt><dd className="ui-amount">{formatNaira(onlineToday, { minor: false })}</dd></div>
-              <div><dt>Cash this week</dt><dd className="ui-amount">{formatNaira(cashWeek, { minor: false })}</dd></div>
-              <div><dt>Online this week</dt><dd className="ui-amount">{formatNaira(onlineWeek, { minor: false })}</dd></div>
-            </dl>
-          </section>
-
+      <div className="ag-home-grid">
+        <div className="ag-block ag-block--recent">
           <div className="ui-section-head">
             <h2>Recent transactions</h2>
             <Link href="/dashboard/transactions" className="ui-link">See all <Icons.next size={16} aria-hidden="true" /></Link>
@@ -206,18 +208,21 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             })}
           </section>
         </div>
-
-        <div className="ag-col">
-          <section className="ui-card ui-card--list" aria-label="Summary">
-            <Link href="/dashboard/customers" className="ui-row ui-row--button">
+        <div className="ag-block ag-block--overview">
+          <div className="ui-section-head"><h2>Overview</h2></div>
+          <section className="ui-card ui-card--list" aria-label="Overview">
+            <Link href="/dashboard/customers" className="ui-row ui-row--button ag-overview-row">
+              <span className="ui-row-icon" aria-hidden="true"><Icons.customers size={20} /></span>
               <span className="ui-row-main"><span className="ui-row-sub ui-block">Customers</span><span className="ui-row-title ui-block">{customerCount}</span></span>
               <Icons.next size={18} className="ui-row-chevron" aria-hidden="true" />
             </Link>
-            <Link href="/dashboard/commission" className="ui-row ui-row--button">
+            <Link href="/dashboard/commission" className="ui-row ui-row--button ag-overview-row">
+              <span className="ui-row-icon" aria-hidden="true"><Icons.commission size={20} /></span>
               <span className="ui-row-main"><span className="ui-row-sub ui-block">Commission · {monthLabel}</span><span className="ui-row-title ui-block">{formatNaira(commissionAmount)}</span></span>
               <Icons.next size={18} className="ui-row-chevron" aria-hidden="true" />
             </Link>
-            <Link href="/dashboard/loan-repay" className="ui-row ui-row--button">
+            <Link href="/dashboard/loan-repay" className="ui-row ui-row--button ag-overview-row">
+              <span className="ui-row-icon" aria-hidden="true"><Icons.loan size={20} /></span>
               <span className="ui-row-main">
                 <span className="ui-row-sub ui-block">Active loans</span>
                 <span className="ui-row-title ui-block">{activeLoansCount} · {formatNaira(loanPortfolio._sum.principal ?? 0, { minor: false })} lent</span>
@@ -225,23 +230,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
               <Icons.next size={18} className="ui-row-chevron" aria-hidden="true" />
             </Link>
           </section>
-
-          <section className="ui-card" aria-label={`Savings collected per week, last four weeks`}>
-            <div className="ui-card-head"><h2 className="ui-card-title">Last 4 weeks</h2><span className="ui-card-meta">Savings collected</span></div>
-            <ol className="ag-bars">
-              {weeklyCollections.map((w, i) => {
-                const current = i === weeklyCollections.length - 1
-                return (
-                  <li key={w.label} className={current ? 'is-current' : undefined}>
-                    <span className="ag-bar-value">{fmtAmt(w.total)}</span>
-                    <span className="ag-bar-track"><span className="ag-bar" style={{ height: `${Math.max(4, Math.round((w.total / maxWeekly) * 100))}%` }} /></span>
-                    <span className="ag-bar-label">{current ? 'This week' : `${weeklyCollections.length - 1 - i} wk ago`}</span>
-                  </li>
-                )
-              })}
-            </ol>
-          </section>
-
+        </div>
+        <div className="ag-block ag-block--maturing">
           <div className="ui-section-head">
             <h2>Maturing this week</h2>
             {maturingTotal > 0 && <span className="ui-card-meta">{maturingTotal} plan{maturingTotal > 1 ? 's' : ''}</span>}
@@ -274,7 +264,43 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             )}
           </section>
         </div>
+        <div className="ag-block ag-block--chart">
+          <div className="ui-section-head"><h2>Last 4 weeks</h2><span className="ui-card-meta">Savings collected</span></div>
+          <section className="ui-card ag-chart-card" aria-label="Savings collected per week, last four weeks">
+            <ol className="ag-bars">
+              {weeklyCollections.map((w, i) => {
+                const current = i === weeklyCollections.length - 1
+                return (
+                  <li key={w.label} className={current ? 'is-current' : undefined}>
+                    <span className="ag-bar-value">{fmtAmt(w.total)}</span>
+                    <span className="ag-bar-track"><span className="ag-bar" style={{ height: `${Math.max(4, Math.round((w.total / maxWeekly) * 100))}%` }} /></span>
+                    <span className="ag-bar-label">{current ? 'This week' : `${weeklyCollections.length - 1 - i} wk ago`}</span>
+                  </li>
+                )
+              })}
+            </ol>
+          </section>
+        </div>
       </div>
     </div>
+  )
+}
+
+/** Today / this week: the total, then how it splits between cash and online. */
+function Collected({ label, cash, online }: { label: string; cash: number; online: number }) {
+  const total = cash + online
+  const cashPct = total > 0 ? Math.round((cash / total) * 100) : 0
+  return (
+    <section className="ui-card ag-kpi" aria-label={label}>
+      <span className="ui-row-sub">{label}</span>
+      <p className="ui-amount ag-kpi-value">{formatNaira(total, { minor: false })}</p>
+      <span className="ag-split-bar" aria-hidden="true">
+        {total > 0 && <span style={{ width: `${cashPct}%` }} />}
+      </span>
+      <dl className="ag-split">
+        <div><dt><span className="ag-dot ag-dot--cash" aria-hidden="true" />Cash</dt><dd>{formatNaira(cash, { minor: false })}</dd></div>
+        <div><dt><span className="ag-dot ag-dot--online" aria-hidden="true" />Online</dt><dd>{formatNaira(online, { minor: false })}</dd></div>
+      </dl>
+    </section>
   )
 }
