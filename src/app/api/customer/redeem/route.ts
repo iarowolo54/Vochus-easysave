@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
+import { resolveAccount } from '@/lib/paystack'
 import crypto from 'crypto'
 
 export async function GET() {
@@ -55,12 +56,29 @@ export async function POST(req: NextRequest) {
   const now = new Date()
   const isEarly = now < plan.maturityDate
   const payoutMethod = accountNumber ? 'BankTransfer' : 'Cash'
+
+  // Verify the bank account server-side and store the RESOLVED name, so a payout
+  // can't be redirected via a spoofed account name (finding #5).
+  let resolvedAccountName: string | null = accountName || null
+  if (payoutMethod === 'BankTransfer') {
+    if (!accountNumber || !bankCode) {
+      return NextResponse.json({ error: 'Bank code and account number are required' }, { status: 400 })
+    }
+    try {
+      const resolved = await resolveAccount(String(accountNumber), String(bankCode))
+      resolvedAccountName = resolved.accountName
+    } catch {
+      return NextResponse.json({ error: 'Could not verify that bank account. Check the account number and bank.' }, { status: 400 })
+    }
+  }
+
   const hasCashDeposit = await planHasCashDeposit(prisma, plan.id)
   const rates = redemptionDeduction({ balance: plan.balance, dailyAmount: plan.dailyAmount, cadence: plan.cadence, hasCashDeposit, initiator: 'customer', source: (plan as any).source })
   const deduction = money(rates.total)
   const netPayout = money(plan.balance - deduction)
 
-  const token = String(Math.floor(100000 + Math.random() * 900000))
+  // Crypto-random token (finding #6 — not Math.random).
+  const token = crypto.randomInt(100000, 1000000).toString()
   const tokenExpiry = new Date(now.getTime() + 30 * 60 * 1000)
   const ref = `RED-${customer.customerId}-${Date.now()}`
 
@@ -78,7 +96,7 @@ export async function POST(req: NextRequest) {
       tokenExpiry,
       payoutMethod,
       accountNumber: accountNumber || null,
-      accountName: accountName || null,
+      accountName: resolvedAccountName,
       bankCode: bankCode || null,
       bankName: bankName || null,
     },
@@ -104,8 +122,14 @@ export async function PATCH(req: NextRequest) {
   const { ref, token } = await req.json()
   if (!ref || !token) return NextResponse.json({ error: 'Missing ref or token' }, { status: 400 })
 
-  const redemption = await prisma.earlyRedemption.findUnique({ where: { ref } })
-  if (!redemption) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  const redemption = await prisma.earlyRedemption.findUnique({
+    where: { ref },
+    include: { savingsPlan: { select: { customer: { select: { id: true } } } } },
+  })
+  // Ownership: a customer may only validate their OWN redemption's token (finding #6).
+  if (!redemption || redemption.savingsPlan.customer.id !== session.id) {
+    return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
   if (redemption.status !== 'Pending') return NextResponse.json({ error: 'Already processed' }, { status: 409 })
 
   if (redemption.token !== token) return NextResponse.json({ error: 'Invalid token' }, { status: 400 })

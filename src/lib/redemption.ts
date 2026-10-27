@@ -18,6 +18,11 @@ export function loadOwnedRedeemablePlan(agentDbId: string, customerId: string, p
       balance: { gt: 0 },
       status: { not: 'Redeemed' },
       customer: { agentId: agentDbId },
+      // Mutual exclusion with the customer early-redemption pipeline: a plan with
+      // an in-flight EarlyRedemption must not also be redeemed via the agent path.
+      earlyRedemptions: {
+        none: { status: { in: ['Pending', 'TokenValidated', 'AgentApproved', 'AwaitingOTP', 'Approved'] } },
+      },
     },
   })
 }
