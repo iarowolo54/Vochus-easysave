@@ -1023,3 +1023,14 @@ body:has(.ui-auth) { background: var(--ui-canvas) !important; }
 }
 .ui-status--neutral { background: var(--ui-surface); color: var(--ui-ink-2); }
 .ui-status--lg { margin-bottom: var(--ui-s4); padding: 6px var(--ui-s3); }
+
+/* History */
+.ui-month-summary { display: flex; flex-direction: column; gap: 2px; }
+.ui-month-amount { font-size: var(--ui-fs-xl); font-weight: 800; }
+.ui-filter-bar { display: flex; align-items: center; gap: var(--ui-s2); margin: var(--ui-s4) 0 var(--ui-s2); }
+.ui-filter-bar .ui-chips { flex: 1; min-width: 0; }
+.ui-filter-plan { flex-shrink: 1; max-width: 45%; min-height: 36px; padding: 0 var(--ui-s2) 0 var(--ui-s3); font-size: var(--ui-fs-sm); }
+.ui-date-head { margin: var(--ui-s4) 0 var(--ui-s2); font-size: var(--ui-fs-sm); font-weight: 600; color: var(--ui-ink-2); }
+.ui-value-stack { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
+.ui-status--sm { padding: 1px 8px; font-size: var(--ui-fs-xs); }
+.ui-receipt-amount--plain { color: var(--ui-ink); }
