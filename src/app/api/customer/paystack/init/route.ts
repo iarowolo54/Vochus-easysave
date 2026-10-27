@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { randomBytes } from 'crypto'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { createPaymentIntent } from '@/lib/payment-intent'
 
 export async function POST(req: NextRequest) {
   const session = await getCustomerSession()
@@ -30,7 +32,7 @@ export async function POST(req: NextRequest) {
   if (!amount || amount < 100) return NextResponse.json({ error: 'Minimum ₦100' }, { status: 400 })
 
   const email = customer.email ?? `${customer.customerId.toLowerCase()}@vochus.ng`
-  const rand = Math.random().toString(36).slice(2, 8).toUpperCase()
+  const rand = randomBytes(9).toString('base64url').toUpperCase()
   const ref = `VCHS-CST-${customer.customerId}-${Date.now()}-${rand}`
 
   const res = await fetch('https://api.paystack.co/transaction/initialize', {
@@ -55,6 +57,9 @@ export async function POST(req: NextRequest) {
 
   const data = await res.json()
   if (!data.status) return NextResponse.json({ error: data.message ?? 'Paystack init failed' }, { status: 502 })
+
+  // Bind this reference to the customer + plan + amount server-side; verify requires it.
+  await createPaymentIntent({ ref, actorType: 'customer', customerId: customer.id, planId: plan.id, amount })
 
   logAudit({
     action: 'payment_initiated',

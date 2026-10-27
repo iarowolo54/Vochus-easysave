@@ -552,3 +552,23 @@ model AccountUnlockOtp {
 
   @@index([customerId])
 }
+
+// Server-side payment intent created at Paystack init, consumed at verify. Binds
+// a payment reference to the actor, plan and amount it was initiated for, so a
+// verify cannot claim an arbitrary reference or credit a mismatched amount.
+model PaymentIntent {
+  id         String    @id @default(cuid())
+  ref        String    @unique
+  actorType  String // 'agent' | 'customer'
+  agentId    String?
+  customerId String?
+  planId     String?
+  amount     Float
+  currency   String    @default("NGN")
+  status     String    @default("Pending") // Pending | Done
+  createdAt  DateTime  @default(now())
+  consumedAt DateTime?
+
+  @@index([customerId])
+  @@index([agentId])
+}
