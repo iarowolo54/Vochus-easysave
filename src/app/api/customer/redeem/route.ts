@@ -26,9 +26,12 @@ export async function GET() {
     where: { savingsPlanId: plan.id },
     orderBy: { requestedAt: 'desc' },
   })
+  // Never expose the confirmation code (or its expiry) via a read path — it is
+  // delivered out-of-band (SMS/email) and only ever submitted back via PATCH.
+  const safeRedemptions = redemptions.map(({ token, tokenExpiry, ...r }) => r)
 
   const hasCashDeposit = await planHasCashDeposit(prisma, plan.id)
-  return NextResponse.json({ plan: { ...plan, hasCashDeposit }, redemptions })
+  return NextResponse.json({ plan: { ...plan, hasCashDeposit }, redemptions: safeRedemptions })
 }
 
 export async function POST(req: NextRequest) {
