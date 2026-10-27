@@ -1,19 +1,26 @@
 'use client'
 
-import { useState, useRef, useEffect, useCallback } from 'react'
+import { useState, useRef, useEffect, useCallback, type ReactNode } from 'react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { blockMinus, blockNonDigit, digitsOnly, nonNegativeString } from '@/lib/numeric'
+import { displayName, formatNaira } from '@/lib/format'
+import EmptyState from '@/components/ui/EmptyState'
+import { FieldError, FormError } from '@/components/ui/FormErrors'
+import { Icons } from '@/components/ui/icons'
+
+type Cadence = 'daily' | 'weekly' | 'monthly'
 
 interface PlanDraft {
-  dailyAmount: string; periodDays: string; goal: string; startDate: string; notes: string; cadence: 'daily' | 'weekly' | 'monthly'
+  dailyAmount: string; periodDays: string; goal: string; startDate: string; notes: string; cadence: Cadence
 }
 
 interface FormData {
   firstName: string; lastName: string; phone: string; email: string; dob: string
   address: string; state: string; language: string; bvn: string
   nokName: string; nokRelation: string; nokPhone: string
-  dailyAmount: string; periodDays: string; goal: string; startDate: string; notes: string; cadence: 'daily' | 'weekly' | 'monthly'
+  dailyAmount: string; periodDays: string; goal: string; startDate: string; notes: string; cadence: Cadence
   plans: PlanDraft[]
   agreed: boolean
   nfcCard: string; registrationFee: string; feeMethod: string
@@ -29,16 +36,46 @@ const empty: FormData = {
   nfcCard: '', registrationFee: '500', feeMethod: 'cash',
 }
 
+const STEPS = ['Personal details', 'Verify phone', 'Photo', 'Savings plan', 'Card and fee', 'Review']
+const STATES = ['Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno', 'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'FCT', 'Gombe', 'Imo', 'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara', 'Lagos', 'Nasarawa', 'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto', 'Taraba', 'Yobe', 'Zamfara']
+const GOALS = ['School Fees', 'Business Capital', 'House Rent', 'Medical Expenses', 'Wedding / Event', 'Other']
+const PERIODS: Record<Cadence, [string, string][]> = {
+  daily: [['31', '31 days'], ['62', '62 days'], ['93', '93 days'], ['186', '186 days'], ['365', '365 days']],
+  weekly: [['28', '4 weeks'], ['56', '8 weeks'], ['84', '12 weeks'], ['168', '24 weeks'], ['364', '52 weeks']],
+  monthly: [['30', '1 month'], ['60', '2 months'], ['90', '3 months'], ['180', '6 months'], ['365', '12 months']],
+}
+const UNIT: Record<Cadence, string> = { daily: 'a day', weekly: 'a week', monthly: 'a month' }
+
+/** Plans are entered per day / week / month; the API stores the daily equivalent. */
+function dailyEquiv(amount: string, cadence: Cadence) {
+  const ra = parseFloat(amount || '0')
+  return cadence === 'weekly' ? ra / 7 : cadence === 'monthly' ? ra / 30 : ra
+}
+function planTarget(p: Pick<PlanDraft, 'dailyAmount' | 'periodDays' | 'cadence'>) {
+  return Math.round(dailyEquiv(p.dailyAmount, p.cadence) * parseInt(p.periodDays || '0'))
+}
+function periodLabel(p: Pick<PlanDraft, 'periodDays' | 'cadence'>) {
+  const days = parseInt(p.periodDays || '0')
+  return p.cadence === 'weekly' ? `${days / 7} weeks` : p.cadence === 'monthly' ? `${Math.round(days / 30)} months` : `${days} days`
+}
+function maturity(p: Pick<PlanDraft, 'startDate' | 'periodDays'>) {
+  if (!p.periodDays) return ''
+  const d = p.startDate ? new Date(p.startDate) : new Date()
+  d.setDate(d.getDate() + parseInt(p.periodDays))
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
+}
+
 export default function EnrolPage() {
   const router = useRouter()
-  const { data: session } = useSession()
-  const walletBalance = (session?.user as any)?.walletBalance ?? 0
+  const { data: session, status: sessionStatus } = useSession()
+  const walletBalance = (session?.user as { walletBalance?: number } | undefined)?.walletBalance ?? 0
   const [step, setStep] = useState(1)
   const [form, setForm] = useState<FormData>(empty)
   const [loading, setLoading] = useState(false)
   const submittingRef = useRef(false)
-  const [toast, setToast] = useState('')
+  const [created, setCreated] = useState<{ customerId: string; name: string } | null>(null)
   const [error, setError] = useState('')
+  const [showMissing, setShowMissing] = useState(false)
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null)
   const [cameraActive, setCameraActive] = useState(false)
   const [cameraError, setCameraError] = useState('')
@@ -55,6 +92,8 @@ export default function EnrolPage() {
   const qrStreamRef = useRef<MediaStream | null>(null)
   const qrAnimRef = useRef<number>(0)
 
+  const set = <K extends keyof FormData>(k: K, v: FormData[K]) => setForm(f => ({ ...f, [k]: v }))
+
   async function startQrScan() {
     setQrError('')
     setQrStreamReady(false)
@@ -66,7 +105,7 @@ export default function EnrolPage() {
       qrStreamRef.current = stream
       setQrStreamReady(true)
     } catch {
-      setQrError('Camera access denied')
+      setQrError('The camera couldn’t be opened. Type the card serial instead.')
       setQrScanActive(false)
     }
   }
@@ -110,6 +149,7 @@ export default function EnrolPage() {
     }
     qrAnimRef.current = requestAnimationFrame(tick)
     return () => { running = false; cancelAnimationFrame(qrAnimRef.current) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [qrStreamReady])
 
   useEffect(() => () => { qrStreamRef.current?.getTracks().forEach(t => t.stop()) }, [])
@@ -130,7 +170,7 @@ export default function EnrolPage() {
   }, [otpCooldown])
 
   useEffect(() => {
-    if (step !== 2 || otpSent || otpLoading) return
+    if (step !== 2 || otpSent || otpLoading || phoneVerified) return
     setOtpLoading(true)
     fetch('/api/otp/send', {
       method: 'POST',
@@ -140,9 +180,9 @@ export default function EnrolPage() {
       .then(r => r.json())
       .then(data => {
         if (data.ok) { setOtpSent(true); setOtpCooldown(60); if (data._devCode) setDevCode(data._devCode) }
-        else setOtpError(data.error ?? 'Failed to send OTP')
+        else setOtpError(data.error ?? 'The code couldn’t be sent. Try again.')
       })
-      .catch(() => setOtpError('Network error sending OTP'))
+      .catch(() => setOtpError('No connection. Check your internet and resend the code.'))
       .finally(() => setOtpLoading(false))
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [step])
@@ -170,7 +210,7 @@ export default function EnrolPage() {
       streamRef.current = stream
       setCameraActive(true)
     } catch {
-      setCameraError('Camera access denied or not available. Please upload from gallery instead.')
+      setCameraError('The camera couldn’t be opened. Upload a photo from the gallery instead.')
     }
   }
 
@@ -194,11 +234,9 @@ export default function EnrolPage() {
     const file = e.target.files?.[0]
     if (!file) return
     const reader = new FileReader()
-    reader.onload = ev => setPhotoDataUrl(ev.target?.result as string)
+    reader.onload = ev => { setPhotoDataUrl(ev.target?.result as string); setCameraError('') }
     reader.readAsDataURL(file)
   }
-
-  const set = (k: keyof FormData, v: any) => setForm(f => ({ ...f, [k]: v }))
 
   function onPhoneChange(val: string) {
     set('phone', digitsOnly(val).slice(0, 11))
@@ -208,51 +246,65 @@ export default function EnrolPage() {
   async function sendOTP() {
     setOtpError('')
     setOtpLoading(true)
-    const res = await fetch('/api/otp/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone: form.phone.replace(/\s/g, '') }),
-    })
-    const data = await res.json()
-    setOtpLoading(false)
-    if (!res.ok) { setOtpError(data.error); return }
-    setOtpSent(true)
-    setOtpCooldown(60)
-    if (data._devCode) setDevCode(data._devCode)
+    try {
+      const res = await fetch('/api/otp/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: form.phone.replace(/\s/g, '') }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setOtpError(data.error ?? 'The code couldn’t be sent. Try again.'); return }
+      setOtpSent(true)
+      setOtpCooldown(60)
+      if (data._devCode) setDevCode(data._devCode)
+    } catch {
+      setOtpError('No connection. Check your internet and try again.')
+    } finally {
+      setOtpLoading(false)
+    }
   }
 
   async function verifyOTP() {
     setOtpError('')
     setOtpLoading(true)
-    const res = await fetch('/api/otp/verify', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone: form.phone.replace(/\s/g, ''), code: otpCode }),
-    })
-    const data = await res.json()
-    setOtpLoading(false)
-    if (!res.ok) { setOtpError(data.error); return }
-    setPhoneVerified(true)
-    setOtpSent(false)
+    try {
+      const res = await fetch('/api/otp/verify', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ phone: form.phone.replace(/\s/g, ''), code: otpCode }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setOtpError(data.error ?? 'That code didn’t work. Check it and try again.'); return }
+      setPhoneVerified(true)
+      setOtpSent(false)
+      go(3)
+    } catch {
+      setOtpError('No connection. Check your internet and try again.')
+    } finally {
+      setOtpLoading(false)
+    }
   }
 
-  const maturityDate = () => {
-    if (!form.startDate || !form.periodDays) return ''
-    const d = new Date(form.startDate)
-    d.setDate(d.getDate() + parseInt(form.periodDays))
-    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })
+  function go(n: number) {
+    setError('')
+    setStep(n)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
-  const target = () => {
-    if (!form.dailyAmount || !form.periodDays) return 0
-    const rawAmt = parseFloat(form.dailyAmount)
-    const dailyEquiv = form.cadence === 'weekly' ? rawAmt / 7 : form.cadence === 'monthly' ? rawAmt / 30 : rawAmt
-    return Math.round(dailyEquiv * parseInt(form.periodDays))
+  const draftHasAny = !!(form.dailyAmount || form.periodDays || form.goal)
+  const draftValid = !!(form.dailyAmount && form.periodDays && form.goal)
+
+  function addDraftPlan() {
+    setForm(f => ({
+      ...f,
+      plans: [...f.plans, { dailyAmount: f.dailyAmount, periodDays: f.periodDays, goal: f.goal, startDate: f.startDate || new Date().toISOString().split('T')[0], notes: f.notes, cadence: f.cadence }],
+      dailyAmount: '', periodDays: '', goal: '', startDate: '', notes: '', cadence: 'daily',
+    }))
   }
 
   async function submit() {
     if (submittingRef.current) return
-    if (!form.agreed) { setError('Tick the terms & conditions box to continue.'); return }
+    if (!form.agreed) { setError('Tick the box to confirm the customer agreed to the terms.'); return }
     submittingRef.current = true
     setLoading(true)
     setError('')
@@ -264,13 +316,9 @@ export default function EnrolPage() {
         body: JSON.stringify({
           ...form,
           photoUrl: photoDataUrl,
-          plans: form.plans.map(p => {
-            const ra = parseFloat(p.dailyAmount || '0')
-            const de = p.cadence === 'weekly' ? ra / 7 : p.cadence === 'monthly' ? ra / 30 : ra
-            return { ...p, dailyAmount: String(de) }
-          }),
+          plans: form.plans.map(p => ({ ...p, dailyAmount: String(dailyEquiv(p.dailyAmount, p.cadence)) })),
           // legacy single-plan fields — populated from first plan for API back-compat
-          dailyAmount: (() => { const ra = parseFloat((first?.dailyAmount ?? form.dailyAmount) || '0'); const c = first?.cadence ?? form.cadence; return String(c === 'weekly' ? ra / 7 : c === 'monthly' ? ra / 30 : ra) })(),
+          dailyAmount: String(dailyEquiv((first?.dailyAmount ?? form.dailyAmount) || '0', first?.cadence ?? form.cadence)),
           periodDays: first?.periodDays ?? form.periodDays,
           goal: first?.goal ?? form.goal,
           startDate: first?.startDate ?? form.startDate,
@@ -278,598 +326,534 @@ export default function EnrolPage() {
           cadence: first?.cadence ?? form.cadence,
         }),
       })
-      let data: any = null
+      let data: { error?: string; customer?: { customerId: string } } | null = null
       try { data = await res.json() } catch { data = null }
-      if (!res.ok) {
-        const msg = data?.error || `Server responded ${res.status} ${res.statusText}`.trim()
-        setError(msg || 'Failed to create customer')
+      if (!res.ok || !data?.customer) {
+        setError(data?.error || 'The account couldn’t be created. Please try again.')
         submittingRef.current = false
         setLoading(false)
         return
       }
-      setToast(`Customer ${form.firstName} ${form.lastName} enrolled successfully! ID: ${data.customer.customerId}`)
-      setTimeout(() => router.push('/dashboard/customers'), 2000)
-      // leave loading=true so button stays disabled through the redirect delay
-    } catch (e: any) {
-      setError(e?.message ? `Network error: ${e.message}` : 'Network error. Please try again.')
+      setCreated({ customerId: data.customer.customerId, name: displayName(`${form.firstName} ${form.lastName}`) })
+      setLoading(false)
+      window.scrollTo({ top: 0, behavior: 'smooth' })
+    } catch {
+      setError('We lost the connection. Check Customers before trying again, so the customer isn’t enrolled twice.')
       submittingRef.current = false
       setLoading(false)
     }
   }
 
+  const fullName = displayName(`${form.firstName} ${form.lastName}`.trim())
+  const req1 = { firstName: form.firstName, lastName: form.lastName, phone: form.phone, address: form.address, state: form.state }
+  const missing = (k: keyof typeof req1) => showMissing && !req1[k]
+  const phoneShort = showMissing && form.phone.length > 0 && form.phone.length < 11
+
+  // ── Blocking states ──
+
+  if (sessionStatus === 'authenticated' && walletBalance <= 0 && !created) {
+    return (
+      <div className="ag-page">
+        <section className="ui-card ag-flow-block">
+          <EmptyState icon="wallet" title="Fund your wallet first"
+            text="Enrolling a customer needs money in your agent wallet. Top up, then come back to enrol."
+            action={
+              <div className="ui-stack ag-flow-block-actions">
+                <Link href={`/dashboard/wallet?return=${encodeURIComponent('/dashboard/enrol')}`} className="ui-btn ui-btn--primary">Fund wallet</Link>
+                <button type="button" className="ui-btn ui-btn--plain" onClick={() => router.back()}>Go back</button>
+              </div>
+            } />
+        </section>
+      </div>
+    )
+  }
+
+  if (created) {
+    return (
+      <div className="ag-page">
+        <section className="ui-card ag-done ag-flow-done" aria-live="polite">
+          {photoDataUrl
+            ? <img src={photoDataUrl} alt="" className="ag-flow-done-photo" />
+            : <span className="ag-topup-icon" aria-hidden="true"><Icons.check size={22} /></span>}
+          <span className="ui-status ui-status--success ui-status--lg"><Icons.check size={16} aria-hidden="true" /> Customer enrolled</span>
+          <p className="ag-flow-done-name">{created.name}</p>
+          <p className="ui-row-sub">Customer ID <strong className="ag-mono">{created.customerId}</strong></p>
+          <p className="ui-row-sub">A welcome SMS is on its way to {form.phone}.</p>
+          <div className="ag-done-actions">
+            <Link href={`/dashboard/savings?cid=${encodeURIComponent(created.customerId)}`} className="ui-btn ui-btn--primary ui-btn--block">
+              <Icons.plan size={18} aria-hidden="true" /> Record their first saving
+            </Link>
+            <Link href="/dashboard/customers" className="ui-btn ui-btn--secondary ui-btn--block">View customers</Link>
+            <button type="button" className="ui-btn ui-btn--plain ui-btn--block" onClick={() => {
+              setForm(empty); setPhotoDataUrl(null); setPhoneVerified(false); setOtpSent(false); setOtpCode('')
+              setDevCode(''); setShowMissing(false); setCreated(null); submittingRef.current = false; setStep(1)
+            }}>Enrol another customer</button>
+          </div>
+        </section>
+      </div>
+    )
+  }
+
+  // ── Flow ──
+
+  const question: Record<number, string> = {
+    1: 'Who are you enrolling?',
+    2: 'Enter the code we sent',
+    3: 'Take their photo',
+    4: form.plans.length > 0 ? 'Add another plan, or continue' : 'Set up their savings plan',
+    5: 'Card and registration fee',
+    6: 'Check before you create the account',
+  }
+  const lead: Record<number, ReactNode> = {
+    1: 'Use their legal name and the phone number they use every day.',
+    2: <>A 6-digit code went to <strong>{form.phone}</strong>. Ask the customer to read it out.</>,
+    3: 'A clear photo of their face. It’s how you and the customer recognise the account.',
+    4: 'How much they save, how often, and for how long.',
+    5: 'Link their savings card now or later, and choose how the fee is paid.',
+    6: 'Make sure everything is right. You can edit any part.',
+  }
+  const dirty = !!(form.firstName || form.lastName || form.phone || photoDataUrl || form.plans.length)
+
+  function back() {
+    if (step === 3) stopCamera()
+    go(step - 1)
+  }
+
   return (
-    <>
-      {walletBalance <= 0 && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(0,0,0,.55)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 24 }}>
-          <div style={{ background: '#fff', borderRadius: 18, padding: 32, maxWidth: 380, width: '100%', textAlign: 'center', boxShadow: '0 8px 40px rgba(0,0,0,.18)' }}>
-            <div style={{ fontSize: 48, marginBottom: 12 }}>💼</div>
-            <div style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", fontSize: 20, fontWeight: 800, marginBottom: 10, color: '#111' }}>Fund Your Wallet</div>
-            <p style={{ fontSize: 14, color: '#666', marginBottom: 24, lineHeight: 1.6 }}>
-              To use this service you must fund your agent wallet.
-            </p>
-            <button
-              className="btn btn-g"
-              style={{ width: '100%', padding: '13px 0', fontSize: 15, fontWeight: 700, marginBottom: 12 }}
-              onClick={() => router.push('/dashboard/wallet')}
-            >
-              💼 Fund Wallet
-            </button>
-            <button
-              style={{ background: 'none', border: 'none', color: '#999', fontSize: 13, cursor: 'pointer' }}
-              onClick={() => router.back()}
-            >
-              Go back
-            </button>
-          </div>
-        </div>
-      )}
-      <div className="page-header">
-        <h2>Enrol Customer</h2>
-        <p>Register a new customer into the Vochus Easy Save platform</p>
-      </div>
-
-      {toast && (
-        <div className="alert alert-g" style={{ marginBottom: 16, fontWeight: 600 }}>✅ {toast}</div>
-      )}
-      {error && (
-        <div className="alert alert-rd" style={{ marginBottom: 16 }}>🔴 {error}</div>
-      )}
-
-      <div className="steps-h">
-        {[1,2,3,4,5,6].map((n, i) => (
-          <div key={n} style={{ display: 'flex', alignItems: 'center', flex: n < 6 ? 1 : undefined }}>
-            <div className="step-node">
-              <div className={`step-circle${n < step ? ' done' : n === step ? ' current' : ''}`} style={n > step ? { opacity: 0.5 } : undefined}>
-                {n < step ? '✓' : n}
-              </div>
-              <div className={`step-lbl${n === step ? ' active' : ''}`} style={n > step ? { opacity: 0.5 } : undefined}>
-                {['Profile','Verify Phone','Photo','Savings Plan','Card & Fee','Confirm'][i]}
-              </div>
+    <div className="ag-page">
+      <div className="ag-flow">
+        <div className="ag-flow-main">
+          <header className="ag-flow-head">
+            <div className="ag-flow-nav">
+              {step > 1
+                ? <button type="button" className="ui-icon-btn ui-icon-btn--soft" onClick={back} aria-label="Back"><Icons.back size={20} aria-hidden="true" /></button>
+                : <span className="ag-flow-nav-gap" />}
+              <span className="ag-flow-count">Step {step} of {STEPS.length} · {STEPS[step - 1]}</span>
+              <button type="button" className="ui-icon-btn ui-icon-btn--soft" aria-label="Stop enrolling"
+                onClick={() => { if (!dirty || window.confirm('Stop enrolling? What you’ve entered will be lost.')) router.push('/dashboard/customers') }}>
+                <Icons.close size={20} aria-hidden="true" />
+              </button>
             </div>
-            {n < 6 && <div className={`step-line${n < step ? ' done' : ''}`} />}
-          </div>
-        ))}
-      </div>
+            <div className="ag-flow-line" role="progressbar" aria-valuemin={1} aria-valuemax={STEPS.length} aria-valuenow={step} aria-label={`Step ${step} of ${STEPS.length}`}>
+              <span style={{ width: `${(step / STEPS.length) * 100}%` }} />
+            </div>
+          </header>
 
-      {step === 1 && (
-        <div>
-          <div className="grid g-2-1">
-            <div>
-              <div className="card" style={{ marginBottom: 16 }}>
-                <div className="card-title">Personal Details</div>
-                <div className="form-row fr2">
-                  <div><label className="flabel">First Name *</label><input className="finput" placeholder="Ngozi" value={form.firstName} onChange={e => set('firstName', e.target.value)} /></div>
-                  <div><label className="flabel">Last Name *</label><input className="finput" placeholder="Eze" value={form.lastName} onChange={e => set('lastName', e.target.value)} /></div>
-                </div>
+          <div className="ag-flow-body">
+            <h2 className="ag-q">{question[step]}</h2>
+            <p className="ag-q-lead">{lead[step]}</p>
 
-                <div className="form-row">
-                  <label className="flabel">Phone Number *</label>
-                  <input
-                    className="finput"
-                    type="tel"
-                    inputMode="numeric"
-                    maxLength={11}
-                    placeholder="080XXXXXXXX"
-                    value={form.phone}
-                    onKeyDown={blockNonDigit}
-                    onChange={e => onPhoneChange(e.target.value)}
-                  />
-                </div>
+            <FormError message={error} />
 
-                <div className="form-row fr2" style={{ marginTop: 4 }}>
-                  <div><label className="flabel">Date of Birth</label><input className="finput" type="date" value={form.dob} onChange={e => set('dob', e.target.value)} /></div>
-                  <div><label className="flabel">Email Address</label><input className="finput" type="email" placeholder="ngozi@email.com" value={form.email} onChange={e => set('email', e.target.value)} /></div>
+            {/* 1 — Personal details */}
+            {step === 1 && (
+              <>
+                <div className="ag-grid-2">
+                  <Field id="fn" label="First name" required error={missing('firstName') ? 'Enter their first name' : ''}>
+                    <input id="fn" className="ag-tf-input" autoComplete="off" value={form.firstName}
+                      aria-invalid={missing('firstName') || undefined} onChange={e => set('firstName', e.target.value)} />
+                  </Field>
+                  <Field id="ln" label="Last name" required error={missing('lastName') ? 'Enter their last name' : ''}>
+                    <input id="ln" className="ag-tf-input" autoComplete="off" value={form.lastName}
+                      aria-invalid={missing('lastName') || undefined} onChange={e => set('lastName', e.target.value)} />
+                  </Field>
                 </div>
-                <div className="form-row fr2">
-                  <div><label className="flabel">Home Address *</label><input className="finput" placeholder="Street, City" value={form.address} onChange={e => set('address', e.target.value)} /></div>
-                  <div><label className="flabel">State *</label>
-                    <select className="finput" value={form.state} onChange={e => set('state', e.target.value)}>
-                      <option value="">Select state…</option>
-                      {['Abia','Adamawa','Akwa Ibom','Anambra','Bauchi','Bayelsa','Benue','Borno','Cross River','Delta','Ebonyi','Edo','Ekiti','Enugu','FCT','Gombe','Imo','Jigawa','Kaduna','Kano','Katsina','Kebbi','Kogi','Kwara','Lagos','Nasarawa','Niger','Ogun','Ondo','Osun','Oyo','Plateau','Rivers','Sokoto','Taraba','Yobe','Zamfara'].map(s => (
-                        <option key={s}>{s}</option>
-                      ))}
+                <Field id="ph" label="Phone number" required hint="We’ll text a code to this number next."
+                  error={missing('phone') ? 'Enter their phone number' : phoneShort ? 'Phone numbers have 11 digits' : ''}>
+                  <input id="ph" className="ag-tf-input ag-tf-num" type="tel" inputMode="numeric" maxLength={11} placeholder="080 0000 0000"
+                    value={form.phone} aria-invalid={missing('phone') || phoneShort || undefined} onKeyDown={blockNonDigit} onChange={e => onPhoneChange(e.target.value)} />
+                </Field>
+                <Field id="addr" label="Home address" required error={missing('address') ? 'Enter their address' : ''}>
+                  <input id="addr" className="ag-tf-input" placeholder="Street, area, city" value={form.address}
+                    aria-invalid={missing('address') || undefined} onChange={e => set('address', e.target.value)} />
+                </Field>
+                <div className="ag-grid-2">
+                  <Field id="st" label="State" required error={missing('state') ? 'Choose a state' : ''}>
+                    <select id="st" className="ag-tf-input ag-tf-select" value={form.state} aria-invalid={missing('state') || undefined} onChange={e => set('state', e.target.value)}>
+                      <option value="">Choose</option>
+                      {STATES.map(s => <option key={s}>{s}</option>)}
                     </select>
-                  </div>
-                </div>
-                <div className="form-row fr2">
-                  <div><label className="flabel">Language</label>
-                    <select className="finput" value={form.language} onChange={e => set('language', e.target.value)}>
+                  </Field>
+                  <Field id="lang" label="Language">
+                    <select id="lang" className="ag-tf-input ag-tf-select" value={form.language} onChange={e => set('language', e.target.value)}>
                       <option>English</option><option>Yoruba</option><option>Igbo</option><option>Hausa</option>
                     </select>
-                  </div>
-                  <div><label className="flabel">BVN (optional)</label><input className="finput" placeholder="11-digit BVN" value={form.bvn} onChange={e => set('bvn', e.target.value)} /></div>
+                  </Field>
                 </div>
-              </div>
-              <div className="card">
-                <div className="card-title">Next of Kin</div>
-                <div className="form-row fr3">
-                  <div><label className="flabel">Full Name *</label><input className="finput" placeholder="Full name" value={form.nokName} onChange={e => set('nokName', e.target.value)} /></div>
-                  <div><label className="flabel">Relationship</label>
-                    <select className="finput" value={form.nokRelation} onChange={e => set('nokRelation', e.target.value)}>
+
+                <h3 className="ag-sub">Next of kin <span>Optional</span></h3>
+                <Field id="nok" label="Full name">
+                  <input id="nok" className="ag-tf-input" value={form.nokName} onChange={e => set('nokName', e.target.value)} />
+                </Field>
+                <div className="ag-grid-2">
+                  <Field id="nokr" label="Relationship">
+                    <select id="nokr" className="ag-tf-input ag-tf-select" value={form.nokRelation} onChange={e => set('nokRelation', e.target.value)}>
                       <option>Spouse</option><option>Parent</option><option>Sibling</option><option>Friend</option>
                     </select>
-                  </div>
-                  <div><label className="flabel">Phone</label><input className="finput" type="tel" inputMode="numeric" maxLength={11} placeholder="080XXXXXXXX" value={form.nokPhone} onKeyDown={blockNonDigit} onChange={e => set('nokPhone', digitsOnly(e.target.value).slice(0, 11))} /></div>
+                  </Field>
+                  <Field id="nokp" label="Phone">
+                    <input id="nokp" className="ag-tf-input ag-tf-num" type="tel" inputMode="numeric" maxLength={11}
+                      value={form.nokPhone} onKeyDown={blockNonDigit} onChange={e => set('nokPhone', digitsOnly(e.target.value).slice(0, 11))} />
+                  </Field>
                 </div>
-              </div>
-            </div>
-            <div>
-              <div className="card">
-                <div className="card-title">Enrolment Checklist</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 13 }}>
-                  <div style={{ color: 'var(--mu)' }}>☐ Valid government ID verified</div>
-                  <div style={{ color: 'var(--mu)' }}>☐ Phone OTP verification — next step</div>
-                  <div style={{ color: 'var(--mu)' }}>☐ Address verified</div>
-                  <div style={{ color: 'var(--mu)' }}>☐ Next of kin captured (optional)</div>
-                  <div style={{ color: 'var(--mu)' }}>☐ Customer agreed to terms</div>
-                </div>
-                <div className="divider" />
-                <div className="alert alert-b">ℹ️ OTP verification will happen on the next step.</div>
-              </div>
-            </div>
-          </div>
-          <div className="btn-row" style={{ marginTop: 4 }}>
-            <button type="button" className="btn btn-g" onClick={() => {
-              if (!form.firstName || !form.lastName || !form.phone || !form.address || !form.state) {
-                setError('Please fill all required fields including State.')
-                window.scrollTo({ top: 0, behavior: 'smooth' })
-                return
-              }
-              setError('')
-              setOtpSent(false); setOtpCode(''); setOtpError('')
-              setStep(2)
-            }}>Continue →</button>
-          </div>
-        </div>
-      )}
 
-      {step === 2 && (
-        <div>
-          <div className="grid g-2-1">
-            <div className="card">
-              <div className="card-title">Verify Phone Number</div>
-              <div style={{ marginBottom: 16 }}>
-                <label className="flabel">Phone Number</label>
-                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <input className="finput" value={form.phone} readOnly style={{ flex: 1, background: '#f5f9f6' }} />
-                  {phoneVerified && <span style={{ color: 'var(--g)', fontWeight: 700, whiteSpace: 'nowrap' }}>✓ Verified</span>}
-                </div>
-              </div>
-              {!phoneVerified && (
-                <div style={{ padding: '14px 16px', background: '#f0faf4', borderRadius: 10, border: '1.5px solid #b6e8c8', marginBottom: 16 }}>
-                  <div style={{ fontSize: 13, color: '#2e7d4f', marginBottom: 10 }}>
-                    {otpLoading && !otpSent ? 'Sending OTP…' : `A 6-digit code was sent to `}<strong>{form.phone}</strong>
+                <details className="ag-more" open={!!(form.dob || form.email || form.bvn)}>
+                  <summary>More details <span>Optional</span><Icons.expand size={18} aria-hidden="true" /></summary>
+                  <div className="ag-grid-2">
+                    <Field id="dob" label="Date of birth">
+                      <input id="dob" className="ag-tf-input" type="date" value={form.dob} onChange={e => set('dob', e.target.value)} />
+                    </Field>
+                    <Field id="em" label="Email">
+                      <input id="em" className="ag-tf-input" type="email" inputMode="email" value={form.email} onChange={e => set('email', e.target.value)} />
+                    </Field>
                   </div>
-                  <input
-                    className="finput"
-                    placeholder="Enter 6-digit code"
-                    value={otpCode}
-                    onChange={e => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    style={{ letterSpacing: 6, fontWeight: 700, fontSize: 20, textAlign: 'center' }}
-                    maxLength={6}
-                  />
-                  {otpError && <div style={{ marginTop: 8, fontSize: 12.5, color: 'var(--rd)' }}>⚠️ {otpError}</div>}
-                  {devCode && <div style={{ marginTop: 8, padding: '6px 10px', background: '#fffbe6', border: '1px dashed #f59e0b', borderRadius: 6, fontSize: 12, color: '#92400e' }}>🛠 Dev — OTP: <strong style={{ letterSpacing: 3 }}>{devCode}</strong></div>}
-                  <button
-                    className="btn btn-out"
-                    style={{ marginTop: 10, fontSize: 12, padding: '5px 12px' }}
-                    disabled={otpLoading || otpCooldown > 0}
-                    onClick={sendOTP}
-                  >
-                    {otpCooldown > 0 ? `Resend in ${otpCooldown}s` : 'Resend OTP'}
-                  </button>
-                </div>
-              )}
-              {phoneVerified && (
-                <div className="alert alert-g">✅ Phone number verified successfully. You may proceed.</div>
-              )}
-            </div>
-            <div className="card">
-              <div className="card-title">Why We Verify</div>
-              <div style={{ fontSize: 13, color: 'var(--mu)', lineHeight: 1.8 }}>
-                • Confirms the customer owns the phone<br />
-                • Required for KYC compliance<br />
-                • OTP expires in 10 minutes<br />
-                • Check SMS inbox or DND status if not received
-              </div>
-            </div>
-          </div>
-          <div className="btn-row" style={{ marginTop: 4 }}>
-            <button className="btn btn-out" onClick={() => { setStep(1); setPhoneVerified(false); setOtpSent(false) }}>← Back</button>
-            {phoneVerified ? (
-              <button className="btn btn-g" onClick={() => setStep(3)}>Continue to Photo →</button>
-            ) : (
-              <button
-                className="btn btn-g"
-                disabled={otpLoading || otpCode.length !== 6}
-                onClick={async () => {
-                  setOtpError('')
-                  setOtpLoading(true)
-                  const res = await fetch('/api/otp/verify', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ phone: form.phone.replace(/\s/g, ''), code: otpCode }),
-                  })
-                  const data = await res.json()
-                  setOtpLoading(false)
-                  if (!res.ok) { setOtpError(data.error); return }
-                  setPhoneVerified(true)
-                  setOtpSent(false)
-                  setStep(3)
-                }}
-              >
-                {otpLoading ? 'Verifying…' : 'Verify & Continue →'}
-              </button>
+                  <Field id="bvn" label="BVN">
+                    <input id="bvn" className="ag-tf-input ag-tf-num" inputMode="numeric" maxLength={11} value={form.bvn} onChange={e => set('bvn', e.target.value)} />
+                  </Field>
+                </details>
+
+                <FlowActions primary={<button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={() => {
+                  if (!form.firstName || !form.lastName || !form.phone || form.phone.length < 11 || !form.address || !form.state) {
+                    setShowMissing(true)
+                    setError('Some details are missing. Check the fields marked in red.')
+                    return
+                  }
+                  setShowMissing(false)
+                  if (!phoneVerified) { setOtpSent(false); setOtpCode(''); setOtpError('') }
+                  go(2)
+                }}>Continue</button>} />
+              </>
             )}
-          </div>
-        </div>
-      )}
 
-      {step === 3 && (
-        <div>
-          <div className="grid g-2-1">
-            <div className="card">
-              <div className="card-title">Customer Photo</div>
-
-              <div style={{ background: '#111', borderRadius: 10, height: 240, marginBottom: 14, overflow: 'hidden', position: 'relative' }}>
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  style={{ width: '100%', height: '100%', objectFit: 'cover', display: cameraActive && !photoDataUrl ? 'block' : 'none' }}
-                />
-                {photoDataUrl && (
-                  <img src={photoDataUrl} alt="Captured" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                )}
-                {!cameraActive && !photoDataUrl && (
-                  <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 10, color: 'rgba(255,255,255,.5)' }}>
-                    <div style={{ fontSize: 48 }}>📷</div>
-                    <div style={{ fontSize: 13 }}>Camera preview will appear here</div>
+            {/* 2 — Verify phone */}
+            {step === 2 && (
+              <>
+                {phoneVerified ? (
+                  <div className="ag-verified">
+                    <span className="ag-verified-icon" aria-hidden="true"><Icons.check size={22} /></span>
+                    <div>
+                      <p className="ui-row-title">{form.phone} is verified</p>
+                      <p className="ui-row-sub">Carry on to the photo.</p>
+                    </div>
                   </div>
-                )}
-              </div>
-
-              <canvas ref={canvasRef} style={{ display: 'none' }} />
-              <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileUpload} />
-
-              {cameraError && <div className="alert alert-rd" style={{ marginBottom: 10 }}>⚠️ {cameraError}</div>}
-
-              <div className="btn-row">
-                {photoDataUrl ? (
-                  <>
-                    <button className="btn btn-out" onClick={retake}>🔄 Retake</button>
-                    <span style={{ fontSize: 13, color: 'var(--g)', fontWeight: 600, alignSelf: 'center' }}>✓ Photo captured</span>
-                  </>
-                ) : cameraActive ? (
-                  <>
-                    <button className="btn btn-g" onClick={capturePhoto}>📸 Capture</button>
-                    <button className="btn btn-out" onClick={stopCamera}>✕ Cancel</button>
-                  </>
                 ) : (
                   <>
-                    <button className="btn btn-g" onClick={startCamera}>📷 Open Camera</button>
-                    <button className="btn btn-out" onClick={() => fileInputRef.current?.click()}>🖼️ Upload from Gallery</button>
+                    <label className="ag-otp-boxes">
+                      <span className="ag-sr">Verification code</span>
+                      <input className="ag-otp-real" inputMode="numeric" autoComplete="one-time-code" maxLength={6} autoFocus
+                        value={otpCode} aria-invalid={!!otpError || undefined} aria-describedby={otpError ? 'otp-error' : undefined}
+                        onChange={e => { setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setOtpError('') }}
+                        onKeyDown={e => { if (e.key === 'Enter' && otpCode.length === 6) verifyOTP() }} />
+                      {Array.from({ length: 6 }, (_, i) => (
+                        <span key={i} aria-hidden="true" className={`ag-otp-box${otpCode[i] ? ' is-filled' : ''}${i === otpCode.length ? ' is-next' : ''}${otpError ? ' is-error' : ''}`}>
+                          {otpCode[i] ?? ''}
+                        </span>
+                      ))}
+                    </label>
+                    <FieldError id="otp-error" message={otpError} />
+                    <div className="ag-otp-meta">
+                      {otpLoading && !otpSent
+                        ? <span className="ui-row-sub">Sending the code…</span>
+                        : <button type="button" className="ui-link" disabled={otpLoading || otpCooldown > 0} onClick={sendOTP}>
+                            {otpCooldown > 0 ? `Resend code in 0:${String(otpCooldown).padStart(2, '0')}` : 'Resend code'}
+                          </button>}
+                      <button type="button" className="ui-link ui-link--muted" onClick={() => go(1)}>Change number</button>
+                    </div>
+                    {devCode && <p className="ag-dev-code">Test mode code: <strong>{devCode}</strong></p>}
+                    <p className="ag-fineprint">Codes expire after 10 minutes. If it doesn’t arrive, check the line isn’t on DND.</p>
                   </>
                 )}
-              </div>
-              <div style={{ marginTop: 10, fontSize: 12.5, color: 'var(--mu)' }}>
-                {photoDataUrl ? 'Photo saved — ready to continue.' : '⚠️ Photo is mandatory — please capture or upload.'}
-              </div>
-            </div>
-            <div className="card">
-              <div className="card-title">Photo Guidelines</div>
-              <div style={{ fontSize: 13, color: 'var(--mu)', lineHeight: 1.8 }}>
-                • Clear, front-facing photo<br />• Good lighting, no shadows<br />• Face must fill 70% of frame<br />• No sunglasses or head covering<br />• White or plain background preferred
-              </div>
-              <div className="divider" />
-              <div className="alert alert-gd">⚠️ Photo recommended for KYC compliance.</div>
-            </div>
-          </div>
-          <div className="btn-row" style={{ marginTop: 4 }}>
-            <button className="btn btn-out" onClick={() => { stopCamera(); setStep(2) }}>← Back</button>
-            <button className="btn btn-g" onClick={() => {
-              if (!photoDataUrl) { setCameraError('Photo is mandatory. Please capture or upload a photo.'); return }
-              stopCamera(); setStep(4)
-            }}>Continue to Savings Plan →</button>
-          </div>
-        </div>
-      )}
 
-      {step === 4 && (
-        <div>
-          {form.plans.length > 0 && (
-            <div className="card" style={{ marginBottom: 12 }}>
-              <div className="card-title">Added Plans ({form.plans.length})</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                {form.plans.map((p, i) => (
-                  <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 12px', background: 'var(--gl)', border: '1px solid var(--br)', borderRadius: 10 }}>
-                    <div style={{ flex: 1, fontSize: 13 }}>
-                      <div style={{ fontWeight: 700 }}>{p.goal} · ₦{parseFloat(p.dailyAmount || '0').toLocaleString()}/{p.cadence === 'weekly' ? 'wk' : p.cadence === 'monthly' ? 'mo' : 'day'}</div>
-                      <div style={{ fontSize: 12, color: 'var(--mu)' }}>{p.cadence === 'weekly' ? parseInt(p.periodDays)/7 + ' weeks' : p.cadence === 'monthly' ? Math.round(parseInt(p.periodDays)/30) + ' months' : p.periodDays + ' days'} · Target ₦{Math.round((p.cadence === 'weekly' ? parseFloat(p.dailyAmount||'0')/7 : p.cadence === 'monthly' ? parseFloat(p.dailyAmount||'0')/30 : parseFloat(p.dailyAmount||'0')) * parseInt(p.periodDays||'0')).toLocaleString()}</div>
-                    </div>
-                    <button className="btn btn-out" style={{ padding: '4px 10px', fontSize: 12 }} onClick={() => setForm(f => ({ ...f, plans: f.plans.filter((_, j) => j !== i) }))}>✕</button>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-          <div className="grid g-2-1">
-            <div className="card">
-              <div className="card-title">{form.plans.length > 0 ? 'Add Another Plan' : 'Savings Plan Setup'}</div>
-              <div style={{ marginBottom: 12 }}>
-                <label className="flabel">Saving Frequency *</label>
-                <div style={{ display: 'flex', gap: 8 }}>
-                  <button onClick={() => set('cadence', 'daily')} style={{ padding: '8px 16px', borderRadius: 8, border: `2px solid ${form.cadence === 'daily' ? 'var(--g)' : 'var(--br)'}`, background: form.cadence === 'daily' ? 'var(--gl)' : 'var(--card)', color: form.cadence === 'daily' ? 'var(--g)' : 'var(--txt)', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>📅 Daily</button>
-                  <button onClick={() => set('cadence', 'weekly')} style={{ padding: '8px 16px', borderRadius: 8, border: `2px solid ${form.cadence === 'weekly' ? 'var(--g)' : 'var(--br)'}`, background: form.cadence === 'weekly' ? 'var(--gl)' : 'var(--card)', color: form.cadence === 'weekly' ? 'var(--g)' : 'var(--txt)', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>📆 Weekly</button>
-                  <button onClick={() => set('cadence', 'monthly')} style={{ padding: '8px 16px', borderRadius: 8, border: `2px solid ${form.cadence === 'monthly' ? 'var(--g)' : 'var(--br)'}`, background: form.cadence === 'monthly' ? 'var(--gl)' : 'var(--card)', color: form.cadence === 'monthly' ? 'var(--g)' : 'var(--txt)', fontWeight: 700, cursor: 'pointer', fontSize: 13 }}>🗓️ Monthly</button>
-                </div>
-              </div>
-              <div className="form-row fr2">
-                <div><label className="flabel">{form.cadence === 'weekly' ? 'Weekly' : form.cadence === 'monthly' ? 'Monthly' : 'Daily'} Saving Amount (₦) *</label><input className="finput" type="tel" inputMode="decimal" onKeyDown={blockMinus} placeholder={form.cadence === 'weekly' ? '3500' : form.cadence === 'monthly' ? '15000' : '500'} value={form.dailyAmount} onChange={e => set('dailyAmount', nonNegativeString(e.target.value))} /></div>
-                <div><label className="flabel">Saving Period {form.cadence === 'weekly' ? '(Weeks)' : form.cadence === 'monthly' ? '(Months)' : '(Days)'} *</label>
-                  <select className="finput" value={form.periodDays} onChange={e => set('periodDays', e.target.value)}>
-                    <option value="">Select…</option>
-                    {form.cadence === 'weekly' ? (
-                      <>
-                        <option value="28">4 Weeks</option><option value="56">8 Weeks</option>
-                        <option value="84">12 Weeks</option><option value="168">24 Weeks</option><option value="364">52 Weeks</option>
-                      </>
-                    ) : form.cadence === 'monthly' ? (
-                      <>
-                        <option value="30">1 Month</option><option value="60">2 Months</option>
-                        <option value="90">3 Months</option><option value="180">6 Months</option><option value="365">12 Months</option>
-                      </>
-                    ) : (
-                      <>
-                        <option value="31">31 Days</option><option value="62">62 Days</option>
-                        <option value="93">93 Days</option><option value="186">186 Days</option><option value="365">365 Days</option>
-                      </>
-                    )}
-                  </select>
-                </div>
-              </div>
-              <div className="form-row fr2">
-                <div><label className="flabel">Saving Goal *</label>
-                  <select className="finput" value={form.goal} onChange={e => set('goal', e.target.value)}>
-                    <option value="">Select goal…</option>
-                    <option>School Fees</option><option>Business Capital</option><option>House Rent</option>
-                    <option>Medical Expenses</option><option>Wedding / Event</option><option>Other</option>
-                  </select>
-                </div>
-                <div><label className="flabel">Start Date</label><input className="finput" type="date" value={form.startDate} onChange={e => set('startDate', e.target.value)} /></div>
-              </div>
-              <label className="flabel">Notes (optional)</label>
-              <input className="finput" placeholder="e.g. For daughter's school fees" value={form.notes} onChange={e => set('notes', e.target.value)} />
-            </div>
-            <div className="card">
-              <div className="card-title">Terms &amp; Agreement</div>
-              <div style={{ fontSize: 12.5, color: 'var(--mu)', lineHeight: 1.8, marginBottom: 14 }}>
-                By creating this account, the customer agrees to:<br /><br />
-                • Save the specified daily amount<br />• Comply with the plan duration<br />• Allow deductions on maturity date<br />• Agent is responsible for collection<br />• A platform fee will be deducted at withdrawal
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }} onClick={() => set('agreed', !form.agreed)}>
-                <div style={{ width: 20, height: 20, borderRadius: 5, flexShrink: 0, border: `2px solid ${form.agreed ? 'var(--g)' : 'var(--br)'}`, background: form.agreed ? 'var(--g)' : 'var(--card)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all .2s' }}>
-                  {form.agreed && <span style={{ color: '#fff', fontSize: 13, fontWeight: 900, lineHeight: 1 }}>✓</span>}
-                </div>
-                <label style={{ cursor: 'pointer' }}>Customer has verbally agreed to terms</label>
-              </div>
-            </div>
-          </div>
-          <div className="btn-row" style={{ marginTop: 4 }}>
-            <button className="btn btn-out" onClick={() => setStep(3)}>← Back</button>
-            <button
-              className="btn btn-out"
-              type="button"
-              onClick={() => {
-                if (!form.dailyAmount || !form.periodDays || !form.goal) { setError('Fill the plan fields to add it.'); return }
-                setForm(f => ({
-                  ...f,
-                  plans: [...f.plans, { dailyAmount: f.dailyAmount, periodDays: f.periodDays, goal: f.goal, startDate: f.startDate || new Date().toISOString().split('T')[0], notes: f.notes, cadence: f.cadence }],
-                  dailyAmount: '', periodDays: '', goal: '', startDate: '', notes: '', cadence: 'daily',
-                }))
-                setError('')
-              }}
-            >➕ Add Another Plan</button>
-            <button className="btn btn-g" onClick={() => {
-              const draftHasAny = form.dailyAmount || form.periodDays || form.goal
-              const draftValid = form.dailyAmount && form.periodDays && form.goal
-              if (draftHasAny && !draftValid) { setError('Complete the plan fields, or clear them to continue.'); return }
-              if (!draftValid && form.plans.length === 0) { setError('Add at least one plan.'); return }
-              if (draftValid) {
-                setForm(f => ({
-                  ...f,
-                  plans: [...f.plans, { dailyAmount: f.dailyAmount, periodDays: f.periodDays, goal: f.goal, startDate: f.startDate || new Date().toISOString().split('T')[0], notes: f.notes, cadence: f.cadence }],
-                  dailyAmount: '', periodDays: '', goal: '', startDate: '', notes: '', cadence: 'daily',
-                }))
-              }
-              setError(''); setStep(5)
-            }}>Continue →</button>
-          </div>
-        </div>
-      )}
+                <FlowActions primary={phoneVerified
+                  ? <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={() => go(3)}>Continue</button>
+                  : <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" disabled={otpLoading || otpCode.length !== 6} onClick={verifyOTP}>
+                      {otpLoading && otpSent ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Checking…</> : 'Verify number'}
+                    </button>} />
+              </>
+            )}
 
-      {step === 5 && (
-        <div>
-          <div className="grid g-2-1">
-            <div>
-              <div className="card" style={{ marginBottom: 16 }}>
-                <div className="card-title">NFC Card Assignment</div>
-                <div className="form-row">
-                  <label className="flabel">Card Serial</label>
-                  <div style={{ display: 'flex', gap: 8 }}>
-                    <input className="finput" placeholder="e.g. VES-NFC-00841" value={form.nfcCard} onChange={e => set('nfcCard', e.target.value)} style={{ flex: 1 }} />
-                    <button type="button" onClick={startQrScan} style={{ padding: '0 16px', background: 'var(--primary)', color: '#fff', border: 'none', borderRadius: 8, fontSize: 20, cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }} title="Scan QR Code">📷</button>
+            {/* 3 — Photo */}
+            {step === 3 && (
+              <>
+                <div className={`ag-oval${cameraActive ? ' is-live' : ''}${photoDataUrl ? ' has-photo' : ''}`}>
+                  <video ref={videoRef} autoPlay playsInline muted style={{ display: cameraActive && !photoDataUrl ? 'block' : 'none' }} />
+                  {photoDataUrl && <img src={photoDataUrl} alt="Customer photo" />}
+                  {!cameraActive && !photoDataUrl && <Icons.customers size={56} aria-hidden="true" />}
+                  {photoDataUrl && <span className="ag-oval-ok" aria-hidden="true"><Icons.check size={18} /></span>}
+                </div>
+                <p className="ag-oval-caption">
+                  {photoDataUrl ? 'Looks good. Retake it if the face isn’t clear.' : cameraActive ? 'Fit their face inside the oval' : 'Face the camera, good light, no sunglasses'}
+                </p>
+                <canvas ref={canvasRef} hidden />
+                <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={handleFileUpload} />
+                {cameraError && <p className="ui-field-error ag-center" role="alert"><Icons.error size={16} aria-hidden="true" /> {cameraError}</p>}
+
+                <div className="ag-cam-actions">
+                  {photoDataUrl ? (
+                    <>
+                      <button type="button" className="ui-btn ui-btn--secondary" onClick={retake}><Icons.retry size={18} aria-hidden="true" /> Retake</button>
+                      <button type="button" className="ui-btn ui-btn--plain" onClick={() => fileInputRef.current?.click()}>Choose from gallery</button>
+                    </>
+                  ) : cameraActive ? (
+                    <>
+                      <button type="button" className="ag-shutter" onClick={capturePhoto} aria-label="Take photo"><span /></button>
+                      <button type="button" className="ui-btn ui-btn--plain" onClick={stopCamera}>Cancel</button>
+                    </>
+                  ) : (
+                    <button type="button" className="ui-btn ui-btn--plain" onClick={() => fileInputRef.current?.click()}>Upload from gallery instead</button>
+                  )}
+                </div>
+
+                <FlowActions primary={photoDataUrl
+                  ? <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={() => { stopCamera(); go(4) }}>Continue</button>
+                  : cameraActive
+                    ? <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={capturePhoto}>Take photo</button>
+                    : <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={startCamera}><Icons.image size={18} aria-hidden="true" /> Open camera</button>} />
+              </>
+            )}
+
+            {/* 4 — Savings plan */}
+            {step === 4 && (
+              <>
+                {form.plans.length > 0 && (
+                  <ul className="ag-added" aria-label="Plans added">
+                    {form.plans.map((p, i) => (
+                      <li key={i}>
+                        <span className="ag-added-icon" aria-hidden="true"><Icons.plan size={20} /></span>
+                        <span className="ag-payee-main">
+                          <span className="ui-row-title ui-block">{p.goal}</span>
+                          <span className="ui-row-sub ui-block">{formatNaira(parseFloat(p.dailyAmount || '0'), { minor: false })} {UNIT[p.cadence]} · {periodLabel(p)} · {formatNaira(planTarget(p), { minor: false })} target</span>
+                        </span>
+                        <button type="button" className="ui-icon-btn ui-icon-btn--soft" aria-label={`Remove ${p.goal} plan`}
+                          onClick={() => setForm(f => ({ ...f, plans: f.plans.filter((_, j) => j !== i) }))}>
+                          <Icons.close size={18} aria-hidden="true" />
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+
+                <p className="ag-label" id="goal">What are they saving for?</p>
+                <div className="ag-goal-chips" role="group" aria-labelledby="goal">
+                  {GOALS.map(g => (
+                    <button key={g} type="button" className="ag-chip" aria-pressed={form.goal === g} onClick={() => set('goal', g)}>{g}</button>
+                  ))}
+                </div>
+
+                <p className="ag-label" id="cad">How often?</p>
+                <div className="ui-segment ag-seg" role="group" aria-labelledby="cad">
+                  {(['daily', 'weekly', 'monthly'] as const).map(c => (
+                    <button key={c} type="button" aria-pressed={form.cadence === c} onClick={() => setForm(f => ({ ...f, cadence: c, periodDays: '' }))}>
+                      {c === 'daily' ? 'Daily' : c === 'weekly' ? 'Weekly' : 'Monthly'}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="ag-grid-2">
+                  <Field id="amt" label={`Amount ${UNIT[form.cadence]}`}>
+                    <span className="ag-tf-money">
+                      <span aria-hidden="true">₦</span>
+                      <input id="amt" className="ag-tf-input ag-tf-num" type="tel" inputMode="decimal" onKeyDown={blockMinus}
+                        placeholder={form.cadence === 'weekly' ? '3,500' : form.cadence === 'monthly' ? '15,000' : '500'}
+                        value={form.dailyAmount} onChange={e => set('dailyAmount', nonNegativeString(e.target.value))} />
+                    </span>
+                  </Field>
+                  <Field id="per" label="For how long">
+                    <select id="per" className="ag-tf-input ag-tf-select" value={form.periodDays} onChange={e => set('periodDays', e.target.value)}>
+                      <option value="">Choose</option>
+                      {PERIODS[form.cadence].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                    </select>
+                  </Field>
+                </div>
+                <div className="ag-grid-2">
+                  <Field id="sd" label="Start date" hint="Leave empty to start today.">
+                    <input id="sd" className="ag-tf-input" type="date" value={form.startDate} onChange={e => set('startDate', e.target.value)} />
+                  </Field>
+                  <Field id="nt" label="Note (optional)">
+                    <input id="nt" className="ag-tf-input" placeholder="e.g. Daughter’s school fees" value={form.notes} onChange={e => set('notes', e.target.value)} />
+                  </Field>
+                </div>
+
+                {draftValid && (
+                  <div className="ag-target">
+                    <span className="ui-row-sub ui-block">They’ll have saved</span>
+                    <span className="ag-target-amount">{formatNaira(planTarget(form), { minor: false })}</span>
+                    <span className="ui-row-sub ui-block">by {maturity(form)}</span>
                   </div>
-                  {qrError && <div style={{ fontSize: 12, color: '#c0392b', marginTop: 4 }}>⚠️ {qrError}</div>}
+                )}
+
+                <button type="button" className="ui-btn ui-btn--plain ag-add-plan" disabled={!draftValid} onClick={() => { addDraftPlan(); setError('') }}>
+                  <Icons.add size={18} aria-hidden="true" /> Save this plan and add another
+                </button>
+
+                <FlowActions primary={<button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={() => {
+                  if (draftHasAny && !draftValid) { setError('Finish this plan (goal, amount and length), or clear it to continue.'); return }
+                  if (!draftValid && form.plans.length === 0) { setError('Add at least one savings plan.'); return }
+                  if (draftValid) addDraftPlan()
+                  go(5)
+                }}>Continue</button>} />
+              </>
+            )}
+
+            {/* 5 — Card and fee */}
+            {step === 5 && (
+              <>
+                <h3 className="ag-sub">Savings card <span>Optional</span></h3>
+                <div className="ag-card-row">
+                  <Field id="card" label="Card serial">
+                    <input id="card" className="ag-tf-input" placeholder="VES-NFC-00841" value={form.nfcCard} onChange={e => set('nfcCard', e.target.value)} />
+                  </Field>
+                  <button type="button" className="ui-btn ui-btn--secondary ag-scan-btn" onClick={startQrScan}><Icons.image size={18} aria-hidden="true" /> Scan</button>
+                </div>
+                {qrError && <p className="ui-field-error" role="alert"><Icons.error size={16} aria-hidden="true" /> {qrError}</p>}
+                <p className="ag-fineprint">{form.nfcCard ? 'Standard NFC card. It links to the account when activated.' : 'Scan the QR on the card or type its serial. You can also link one later.'}</p>
+
+                <h3 className="ag-sub">Registration fee</h3>
+                <div className="ag-fee">
+                  <span>One-off fee</span>
+                  <strong>{formatNaira(parseFloat(form.registrationFee || '0'), { minor: false })}</strong>
+                </div>
+                <div className="ag-radio-group" role="radiogroup" aria-label="How the fee is paid">
+                  {[
+                    { v: 'cash', t: 'Customer pays in cash', s: 'You collect it now' },
+                    { v: 'wallet', t: 'Take it from my wallet', s: `Wallet balance ${formatNaira(walletBalance)}` },
+                  ].map(o => (
+                    <button key={o.v} type="button" role="radio" aria-checked={form.feeMethod === o.v} className="ag-radio" onClick={() => set('feeMethod', o.v)}>
+                      <span className="ag-payee-main">
+                        <span className="ui-row-title ui-block">{o.t}</span>
+                        <span className="ui-row-sub ui-block">{o.s}</span>
+                      </span>
+                      <span className="ui-radio" aria-hidden="true" />
+                    </button>
+                  ))}
                 </div>
 
                 {qrScanActive && (
-                  <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.92)', zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-                    <div style={{ color: '#fff', fontSize: 16, fontWeight: 700, marginBottom: 16 }}>📷 Point camera at card QR code</div>
-                    <div style={{ position: 'relative', width: '100%', maxWidth: 360, borderRadius: 12, overflow: 'hidden', background: '#000' }}>
-                      <video ref={qrVideoRef} playsInline muted style={{ width: '100%', display: 'block' }} />
-                      {/* Scan frame overlay */}
-                      <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
-                        <div style={{ width: 200, height: 200, position: 'relative' }}>
-                          {[['0','0'],['0','auto'],['auto','0'],['auto','auto']].map(([t,b], i) => (
-                            <div key={i} style={{ position: 'absolute', width: 30, height: 30, top: t === '0' ? 0 : undefined, bottom: b === '0' ? 0 : undefined, left: i < 2 ? 0 : undefined, right: i >= 2 ? 0 : undefined, borderTop: t === '0' ? '3px solid #00e676' : undefined, borderBottom: b === '0' ? '3px solid #00e676' : undefined, borderLeft: i < 2 ? '3px solid #00e676' : undefined, borderRight: i >= 2 ? '3px solid #00e676' : undefined }} />
-                          ))}
-                        </div>
-                      </div>
+                  <div className="ag-qr" role="dialog" aria-modal="true" aria-label="Scan card QR code">
+                    <p className="ag-qr-title">Point the camera at the card’s QR code</p>
+                    <div className="ag-qr-frame">
+                      <video ref={qrVideoRef} playsInline muted />
+                      <span className="ag-qr-target" aria-hidden="true" />
                     </div>
-                    <div style={{ color: '#aaa', fontSize: 13, marginTop: 12, textAlign: 'center' }}>Scanning automatically…</div>
-                    <button onClick={stopQrScan} style={{ marginTop: 20, padding: '12px 32px', background: '#fff', color: '#111', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 15, cursor: 'pointer' }}>Cancel</button>
+                    <p className="ag-qr-hint">{qrStreamReady ? 'Scanning…' : 'Opening camera…'}</p>
+                    <button type="button" className="ui-btn ui-btn--secondary ag-qr-cancel" onClick={stopQrScan}>Cancel</button>
                   </div>
                 )}
-                <div className="form-row">
-                  <label className="flabel">Card Type</label>
-                  <input className="finput" value="Agent NFC Card (Standard)" readOnly style={{ background: '#f5f9f6' }} />
-                </div>
-                <div className="alert alert-b" style={{ marginTop: 8 }}>💳 NFC card will be linked to customer account upon activation</div>
-              </div>
-              <div className="card">
-                <div className="card-title">Registration Fee</div>
-                <div className="form-row fr2">
-                  <div>
-                    <label className="flabel">Registration Fee (₦)</label>
-                    <input className="finput" type="tel" inputMode="decimal" value={form.registrationFee} readOnly style={{ background: 'var(--surface2)', cursor: 'not-allowed' }} />
-                  </div>
-                  <div>
-                    <label className="flabel">Fee Collection Method</label>
-                    <select className="finput" value={form.feeMethod} onChange={e => set('feeMethod', e.target.value)}>
-                      <option value="cash">Cash Collected from Customer</option>
-                      <option value="wallet">Deduct from Agent Wallet</option>
-                    </select>
-                  </div>
-                </div>
-                <div style={{ marginTop: 12, padding: '12px 14px', background: '#f0faf4', borderRadius: 10, border: '1.5px solid #b6e8c8', fontSize: 13 }}>
-                  <div className="conf-row"><span className="conf-lbl">Registration Fee</span><strong style={{ color: 'var(--g)' }}>₦{parseFloat(form.registrationFee || '0').toLocaleString()}</strong></div>
-                  <div className="conf-row" style={{ marginTop: 6 }}><span className="conf-lbl">Collection</span><span className="conf-val">{form.feeMethod === 'wallet' ? 'Deduct from Agent Wallet' : 'Cash Collected from Customer'}</span></div>
-                  <div style={{ marginTop: 8, fontSize: 12, color: 'var(--mu)' }}>Note: Fee will be recorded as a transaction</div>
-                </div>
-              </div>
-            </div>
-            <div className="card">
-              <div className="card-title">Card &amp; Fee Info</div>
-              <div style={{ fontSize: 13, color: 'var(--mu)', lineHeight: 1.8 }}>
-                • NFC card serial is optional at enrolment<br />
-                • Card can be assigned later from customer profile<br />
-                • Registration fee default is ₦500<br />
-                • Wallet deduction requires sufficient balance
-              </div>
-            </div>
-          </div>
-          <div className="btn-row" style={{ marginTop: 4 }}>
-            <button className="btn btn-out" onClick={() => setStep(4)}>← Back</button>
-            <button
-              className="btn btn-out"
-              type="button"
-              onClick={() => { setError(''); set('nfcCard', ''); setStep(6) }}
-              title="Skip card assignment — link a card later from Configure Card"
-            >Skip Card →</button>
-            <button className="btn btn-g" onClick={() => { setError(''); setStep(6) }}>Continue →</button>
-          </div>
-        </div>
-      )}
 
-      {step === 6 && (
-        <div>
-          <div className="grid g-2-1">
-            <div>
-              <div className="card" style={{ marginBottom: 16 }}>
-                <div className="card-title">Review — Customer Details</div>
-                <div className="alert alert-g">✅ All details captured. Review carefully before submitting.</div>
-                <div className="conf-table">
-                  <div className="conf-row"><span className="conf-lbl">Full Name</span><span className="conf-val">{form.firstName} {form.lastName}</span></div>
-                  <div className="conf-row"><span className="conf-lbl">Phone</span><span className="conf-val">{form.phone} ✓ Verified</span></div>
-                  <div className="conf-row"><span className="conf-lbl">Address</span><span className="conf-val">{form.address}</span></div>
-                  <div className="conf-row"><span className="conf-lbl">Next of Kin</span><span className="conf-val">{form.nokName} ({form.nokRelation})</span></div>
+                <FlowActions primary={<button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={() => go(6)}>
+                  {form.nfcCard ? 'Continue' : 'Continue without a card'}
+                </button>} />
+              </>
+            )}
+
+            {/* 6 — Review */}
+            {step === 6 && (
+              <>
+                <div className="ag-rv-person">
+                  {photoDataUrl ? <img src={photoDataUrl} alt="" /> : <span className="ui-avatar" aria-hidden="true">{form.firstName[0]}{form.lastName[0]}</span>}
+                  <div>
+                    <p className="ag-rv-name">{fullName}</p>
+                    <p className="ui-row-sub ag-rv-phone">{form.phone} {phoneVerified && <span className="ui-status ui-status--success ui-status--sm"><Icons.check size={12} aria-hidden="true" /> Verified</span>}</p>
+                  </div>
                 </div>
-              </div>
-              <div className="card">
-                <div className="card-title">Review — Savings Plans ({form.plans.length})</div>
-                {form.plans.map((p, i) => {
-                  const amt = parseFloat(p.dailyAmount || '0')
-                  const days = parseInt(p.periodDays || '0')
-                  const dailyEquiv = p.cadence === 'weekly' ? amt / 7 : p.cadence === 'monthly' ? amt / 30 : amt
-                  const totalP = Math.round(dailyEquiv * days)
-                  const durationLabel = p.cadence === 'weekly' ? `${days/7} Weeks` : p.cadence === 'monthly' ? `${Math.round(days/30)} Months` : `${days} Days`
-                  const mat = p.startDate ? (() => { const d = new Date(p.startDate); d.setDate(d.getDate() + days); return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' }) })() : ''
-                  return (
-                    <div key={i} className="conf-table" style={{ marginBottom: i < form.plans.length - 1 ? 12 : 0, paddingBottom: i < form.plans.length - 1 ? 12 : 0, borderBottom: i < form.plans.length - 1 ? '1px dashed var(--br)' : 'none' }}>
-                      <div className="conf-row"><span className="conf-lbl">Plan {i + 1}</span><strong>{p.goal}</strong></div>
-                      <div className="conf-row"><span className="conf-lbl">{p.cadence === 'weekly' ? 'Weekly' : p.cadence === 'monthly' ? 'Monthly' : 'Daily'} Amount</span><strong style={{ color: 'var(--g)' }}>₦{amt.toLocaleString()}</strong></div>
-                      <div className="conf-row"><span className="conf-lbl">Period</span><span className="conf-val">{durationLabel}</span></div>
-                      <div className="conf-row"><span className="conf-lbl">Target Total</span><strong style={{ color: 'var(--g)', fontFamily: "'Plus Jakarta Sans',sans-serif", fontSize: 16 }}>₦{totalP.toLocaleString()}</strong></div>
-                      <div className="conf-row"><span className="conf-lbl">Maturity Date</span><span className="conf-val">{mat}</span></div>
+
+                <ReviewSection title="Personal details" onEdit={() => go(1)}>
+                  <Row k="Address" v={`${form.address}, ${form.state}`} />
+                  <Row k="Language" v={form.language} />
+                  {form.nokName && <Row k="Next of kin" v={`${form.nokName} (${form.nokRelation})`} />}
+                </ReviewSection>
+
+                <ReviewSection title={form.plans.length > 1 ? `Savings plans (${form.plans.length})` : 'Savings plan'} onEdit={() => go(4)}>
+                  {form.plans.map((p, i) => (
+                    <div key={i} className="ag-rv-plan">
+                      <div>
+                        <span className="ui-row-title ui-block">{p.goal}</span>
+                        <span className="ui-row-sub ui-block">{formatNaira(parseFloat(p.dailyAmount || '0'), { minor: false })} {UNIT[p.cadence]} · {periodLabel(p)} · ends {maturity(p)}</span>
+                      </div>
+                      <span className="ag-rv-target">{formatNaira(planTarget(p), { minor: false })}</span>
                     </div>
-                  )
-                })}
-              </div>
-            </div>
-            <div className="card">
-              <div className="card-title">Final Checklist</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 10, fontSize: 13, marginBottom: 16 }}>
-                <div style={{ color: 'var(--g)' }}>✅ Profile details captured</div>
-                <div style={{ color: 'var(--g)' }}>✅ Phone number verified</div>
-                {photoDataUrl
-                  ? <img src={photoDataUrl} alt="Customer" style={{ width: 72, height: 72, borderRadius: 8, objectFit: 'cover', border: '2px solid var(--g)' }} />
-                  : <div style={{ color: 'var(--mu)' }}>No photo — will be skipped</div>
-                }
-                <div style={{ color: 'var(--g)' }}>✅ Savings plan set</div>
-                <div style={{ color: form.agreed ? 'var(--g)' : 'var(--rd)' }}>{form.agreed ? '✅' : '❌'} Customer agreed to terms</div>
-              </div>
-              <div className="alert alert-b">ℹ️ A welcome SMS will be sent to the customer&apos;s phone upon account creation.</div>
-            </div>
-          </div>
-          <div style={{ marginTop: 4, background: 'var(--card)', border: `1.5px solid ${form.agreed ? 'var(--g)' : 'var(--br)'}`, borderRadius: 12, padding: 14 }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }} onClick={() => set('agreed', !form.agreed)}>
-              <div style={{ width: 22, height: 22, borderRadius: 6, flexShrink: 0, marginTop: 1, border: `2px solid ${form.agreed ? 'var(--g)' : 'var(--br)'}`, background: form.agreed ? 'var(--g)' : 'var(--card)', display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all .15s' }}>
-                {form.agreed && <span style={{ color: '#fff', fontSize: 14, fontWeight: 900, lineHeight: 1 }}>✓</span>}
-              </div>
-              <div style={{ fontSize: 13.5, lineHeight: 1.45 }}>
-                <strong>Customer has agreed to terms &amp; conditions.</strong> They understand the daily savings amount, the fixed period, the maturity date and the withdrawal rules for this plan.
-              </div>
-            </div>
-          </div>
-          {error && (
-            <div className="alert alert-rd" style={{ marginTop: 12 }}>🔴 {error}</div>
-          )}
-          <div className="btn-row" style={{ marginTop: 12 }}>
-            <button className="btn btn-out" disabled={loading} onClick={() => setStep(5)}>← Edit</button>
-            <button
-              className="btn btn-g"
-              disabled={loading || !form.agreed}
-              style={{ opacity: (loading || !form.agreed) ? .55 : 1, cursor: (loading || !form.agreed) ? 'not-allowed' : 'pointer' }}
-              onClick={submit}
-              title={!form.agreed ? 'Tick the terms box to continue' : ''}
-            >
-              {loading ? '⏳ Creating…' : '✓ Create Account'}
-            </button>
+                  ))}
+                </ReviewSection>
+
+                <ReviewSection title="Card and fee" onEdit={() => go(5)}>
+                  <Row k="Card" v={form.nfcCard || 'Link later'} />
+                  <Row k="Registration fee" v={`${formatNaira(parseFloat(form.registrationFee || '0'), { minor: false })}, ${form.feeMethod === 'wallet' ? 'from your wallet' : 'cash'}`} />
+                </ReviewSection>
+
+                <button type="button" role="checkbox" aria-checked={form.agreed} className={`ag-agree${form.agreed ? ' is-on' : ''}`} onClick={() => { set('agreed', !form.agreed); setError('') }}>
+                  <span className="ag-agree-box" aria-hidden="true">{form.agreed && <Icons.check size={16} />}</span>
+                  <span>The customer agrees to the terms. They understand how much they save, for how long, when the plan ends, the withdrawal rules, and that a platform fee is taken at withdrawal.</span>
+                </button>
+
+                <FlowActions primary={<button type="button" className="ui-btn ui-btn--primary ag-flow-cta" disabled={loading || !form.agreed} onClick={submit}>
+                  {loading ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Creating account…</> : 'Create account'}
+                </button>} />
+              </>
+            )}
           </div>
         </div>
-      )}
-    </>
+
+        <aside className="ag-flow-steps" aria-label="Enrolment steps">
+          <div className="ag-rv-person ag-steps-person">
+            {photoDataUrl
+              ? <img src={photoDataUrl} alt="" />
+              : <span className="ui-avatar" aria-hidden="true">{form.firstName || form.lastName ? `${form.firstName[0] ?? ''}${form.lastName[0] ?? ''}` : <Icons.customers size={22} />}</span>}
+            <div className="ag-payee-main">
+              <p className="ui-row-sub">Enrolling</p>
+              <p className="ui-row-title">{fullName || 'New customer'}</p>
+            </div>
+          </div>
+          <ol className="ag-steplist">
+            {STEPS.map((s, i) => {
+              const n = i + 1
+              const state = n < step ? 'done' : n === step ? 'current' : 'todo'
+              return (
+                <li key={s} className={`is-${state}`} aria-current={state === 'current' ? 'step' : undefined}>
+                  <span className="ag-steplist-dot" aria-hidden="true">{state === 'done' ? <Icons.check size={14} /> : n}</span>
+                  <span className="ag-steplist-text">
+                    <span className="ag-steplist-title">{s}</span>
+                    {state === 'current' && <span className="ag-steplist-hint">{question[n]}</span>}
+                  </span>
+                </li>
+              )
+            })}
+          </ol>
+        </aside>
+      </div>
+    </div>
   )
+}
+
+/** Text field with its label inside the border (Cleo / Booking style); the input is a bare child. */
+function Field({ id, label, required, hint, error, children }: { id: string; label: string; required?: boolean; hint?: string; error?: string; children: ReactNode }) {
+  return (
+    <div className="ag-tf-wrap">
+      <div className={`ag-tf${error ? ' is-invalid' : ''}`}>
+        <label className="ag-tf-label" htmlFor={id}>{label}{required && <span className="ag-req" aria-hidden="true"> *</span>}</label>
+        {children}
+      </div>
+      {error ? <FieldError id={`${id}-error`} message={error} /> : hint ? <p className="ag-fineprint">{hint}</p> : null}
+    </div>
+  )
+}
+
+/** The step's one main button, pinned to the bottom of the screen. */
+function FlowActions({ primary }: { primary: ReactNode }) {
+  return <div className="ag-flow-actions">{primary}</div>
+}
+
+function ReviewSection({ title, onEdit, children }: { title: string; onEdit: () => void; children: ReactNode }) {
+  return (
+    <section className="ag-rv">
+      <div className="ag-rv-head">
+        <h3>{title}</h3>
+        <button type="button" className="ui-link" onClick={onEdit}>Edit</button>
+      </div>
+      {children}
+    </section>
+  )
+}
+
+function Row({ k, v }: { k: string; v: string }) {
+  return <div className="ag-rv-row"><span>{k}</span><span>{v}</span></div>
 }
