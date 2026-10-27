@@ -3,6 +3,7 @@ import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } f
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useCustomerMe } from '@/components/customer/useCustomerMe'
 import EmptyState from '@/components/ui/EmptyState'
+import LogoLoader from '@/components/ui/LogoLoader'
 import { Bone } from '@/components/ui/Skeleton'
 import { Icons } from '@/components/ui/icons'
 import { displayName, formatTime } from '@/lib/format'
@@ -249,7 +250,7 @@ function ChatInner() {
 
 export default function CustomerChatPage() {
   return (
-    <Suspense fallback={<div className="ui-screen ui-screen--center"><div className="ui-spinner" /></div>}>
+    <Suspense fallback={<div className="ui-screen ui-screen--center"><LogoLoader delayed /></div>}>
       <ChatInner />
     </Suspense>
   )

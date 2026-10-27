@@ -1078,3 +1078,149 @@ body:has(.ui-auth) { background: var(--ui-canvas) !important; }
 .ui-composer-error { display: flex; align-items: center; gap: 6px; margin-bottom: var(--ui-s2); font-size: var(--ui-fs-sm); font-weight: 500; color: var(--ui-danger); }
 .ui-composer-preview { display: flex; align-items: flex-start; gap: var(--ui-s2); margin-bottom: var(--ui-s2); }
 .ui-composer-preview img { height: 72px; border-radius: var(--ui-r-sm); }
+
+/* ═══ Agent shell (Wise-web style: light sidebar, white content) ═══ */
+.ag-shell { display: grid; grid-template-columns: 264px minmax(0, 1fr); min-height: 100dvh; background: var(--ui-canvas); color: var(--ui-ink); }
+.ag-sidebar {
+  position: sticky; top: 0; height: 100dvh; display: flex; flex-direction: column; gap: var(--ui-s3);
+  padding: var(--ui-s4) var(--ui-s3); background: var(--ui-surface); border-right: 1px solid var(--ui-line); overflow-y: auto;
+}
+.ag-brand { display: flex; align-items: center; gap: var(--ui-s2); padding: 0 var(--ui-s2); font-family: var(--ui-font-display); font-weight: 700; }
+.ag-brand > span:not(.ui-logo) { flex: 1; }
+.ag-close { display: none; }
+.ag-agent { display: flex; align-items: center; gap: var(--ui-s3); padding: var(--ui-s2); }
+.ag-agent-main { display: flex; flex-direction: column; min-width: 0; }
+.ag-agent-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ag-agent-sub { font-size: var(--ui-fs-xs); color: var(--ui-ink-2); }
+.ag-agent .ui-avatar { overflow: hidden; }
+.ag-wallet {
+  display: flex; flex-direction: column; gap: 2px; padding: var(--ui-s3); border-radius: var(--ui-r-sm);
+  background: var(--ui-canvas); color: var(--ui-ink); text-decoration: none;
+}
+.ag-wallet-amount { font-size: var(--ui-fs-lg); font-weight: 800; }
+.ag-nav { flex: 1; display: flex; flex-direction: column; gap: var(--ui-s2); }
+.ag-nav-section { padding: var(--ui-s2) var(--ui-s2) 4px; font-size: var(--ui-fs-xs); font-weight: 600; color: var(--ui-ink-2); }
+.ag-nav-item {
+  display: flex; align-items: center; gap: var(--ui-s3); width: 100%; min-height: 44px; padding: 0 var(--ui-s3);
+  border: none; border-radius: var(--ui-r-sm); background: none; cursor: pointer; text-decoration: none; text-align: left;
+  font-family: inherit; font-size: var(--ui-fs-sm); font-weight: 500; color: var(--ui-ink);
+}
+.ag-nav-item svg { color: var(--ui-ink-2); flex-shrink: 0; }
+.ag-nav-item span { flex: 1; }
+@media (hover: hover) { .ag-nav-item:hover { background: var(--ui-canvas); } }
+.ag-nav-item[aria-current="page"] { background: var(--ui-brand-tint); color: var(--ui-brand-ink); font-weight: 600; }
+.ag-nav-item[aria-current="page"] svg { color: var(--ui-brand-ink); }
+.ag-badge { flex: 0 0 auto !important; min-width: 22px; padding: 1px 7px; border-radius: var(--ui-r-pill); background: var(--ui-danger); color: #fff; font-size: var(--ui-fs-xs); font-weight: 700; text-align: center; }
+.ag-signout { color: var(--ui-danger); }
+.ag-signout svg { color: var(--ui-danger); }
+.ag-backdrop { display: none; }
+
+.ag-main { min-width: 0; display: flex; flex-direction: column; }
+.ag-topbar {
+  position: sticky; top: 0; z-index: 40; display: flex; align-items: center; gap: var(--ui-s3);
+  min-height: 60px; padding: 0 var(--ui-s5); background: var(--ui-surface); border-bottom: 1px solid var(--ui-line);
+}
+.ag-title { flex: 1; font-family: var(--ui-font-display); font-size: var(--ui-fs-lg); font-weight: 700; }
+.ag-menu-btn { display: none; background: var(--ui-canvas); }
+.ag-topbar-av { width: 36px; height: 36px; font-size: var(--ui-fs-sm); text-decoration: none; overflow: hidden; }
+.ag-content.content-area { flex: 1; overflow: visible; width: 100%; max-width: 1120px; margin: 0 auto; padding: var(--ui-s5); }
+.ag-content a:focus-visible, .ag-sidebar a:focus-visible, .ag-sidebar button:focus-visible, .ag-topbar :is(a, button):focus-visible {
+  outline: 2px solid var(--ui-brand-ink); outline-offset: 2px;
+}
+
+@media (max-width: 768px) {
+  .ag-shell { grid-template-columns: minmax(0, 1fr); }
+  .ag-sidebar {
+    position: fixed; z-index: 270; top: 0; bottom: 0; left: 0; width: min(300px, 86vw); height: auto;
+    padding-top: calc(var(--ui-s4) + env(safe-area-inset-top)); padding-bottom: calc(var(--ui-s4) + env(safe-area-inset-bottom));
+    transform: translateX(-102%); transition: transform .22s ease-out; box-shadow: 8px 0 24px rgba(0,0,0,.12);
+  }
+  .ag-sidebar.is-open { transform: none; }
+  .ag-close { display: flex; }
+  .ag-backdrop { display: block; position: fixed; inset: 0; z-index: 265; background: rgba(15,42,29,.45); opacity: 0; pointer-events: none; transition: opacity .2s; }
+  .ag-backdrop.is-open { opacity: 1; pointer-events: auto; }
+  .ag-menu-btn { display: flex; }
+  .ag-topbar { padding: 0 var(--ui-s4); }
+  .ag-content.content-area { padding: var(--ui-s4) var(--ui-s4) calc(var(--ui-nav-h) + env(safe-area-inset-bottom) + var(--ui-s5)); }
+}
+@media (prefers-reduced-motion: reduce) { .ag-sidebar, .ag-backdrop { transition: none; } }
+@media print { .ag-sidebar, .ag-topbar, .ag-backdrop, .ui-bottom-nav { display: none !important; } .ag-shell { display: block; } }
+
+/* Agent home */
+.ag-home { color: var(--ui-ink); font-size: var(--ui-fs-md); }
+.ag-hello { margin-bottom: var(--ui-s5); }
+.ag-hello p { margin-top: 2px; }
+.ag-home-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--ui-s5); align-items: start; }
+.ag-col { min-width: 0; }
+.ag-col > .ui-section-head:first-child { margin-top: 0; }
+.ag-wallet-card { display: flex; flex-direction: column; align-items: flex-start; gap: var(--ui-s1); padding: var(--ui-s5); }
+.ag-wallet-card p { margin-top: var(--ui-s1); }
+.ag-wallet-btn { margin-top: var(--ui-s3); min-height: 44px; font-size: var(--ui-fs-sm); }
+.ag-actions { justify-content: flex-start; gap: var(--ui-s5); margin: var(--ui-s5) 0; }
+.ag-actions .ui-action { text-decoration: none; font-size: var(--ui-fs-sm); }
+.ag-stats { display: grid; grid-template-columns: 1fr 1fr; gap: var(--ui-s4) var(--ui-s3); margin: var(--ui-s2) 0 0; }
+.ag-stats dt { font-size: var(--ui-fs-sm); color: var(--ui-ink-2); }
+.ag-stats dd { margin: 2px 0 0; font-size: var(--ui-fs-lg); font-weight: 700; }
+.ag-bars { display: grid; grid-template-columns: repeat(4, 1fr); gap: var(--ui-s3); list-style: none; padding: 0; margin: var(--ui-s3) 0 0; }
+.ag-bars li { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.ag-bar-value { font-size: var(--ui-fs-xs); font-weight: 600; color: var(--ui-ink-2); font-variant-numeric: tabular-nums; }
+.ag-bar-track { display: flex; align-items: flex-end; width: 100%; max-width: 48px; height: 96px; }
+.ag-bar { display: block; width: 100%; border-radius: 6px 6px 2px 2px; background: var(--ui-line); }
+.ag-bar-label { font-size: var(--ui-fs-xs); color: var(--ui-ink-2); white-space: nowrap; }
+.ag-bars .is-current .ag-bar { background: var(--ui-brand); }
+.ag-bars .is-current .ag-bar-value, .ag-bars .is-current .ag-bar-label { color: var(--ui-brand-ink); font-weight: 700; }
+.ag-pager { display: flex; align-items: center; justify-content: space-between; padding: var(--ui-s2) 0; border-top: 1px solid var(--ui-line); }
+.ui-row--button { text-decoration: none; }
+@media (max-width: 900px) { .ag-home-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 768px) { .ag-actions { justify-content: space-around; gap: var(--ui-s2); } }
+/* Money is never truncated: amounts keep their full width; the title shrinks instead. */
+.ui-value-stack { flex-shrink: 0; }
+.ui-value-stack .ui-row-value, .ui-value-stack > span:first-child { max-width: none; overflow: visible; }
+
+/* ═══ Logo loader ═══ */
+.ui-logo-loader { display: flex; flex-direction: column; align-items: center; gap: var(--ui-s4); }
+.ui-logo-loader svg { overflow: visible; }
+.ui-logo-loader path, .ui-logo-loader g { transform-box: fill-box; }
+.ui-logo-loader-caption { font-size: var(--ui-fs-md); font-weight: 600; color: var(--ui-ink-2); text-align: center; }
+
+/* Intro (once): the V's two strokes meet, the wallet settles in. */
+.ll-blue   { animation: ll-drop .5s cubic-bezier(.2, .8, .2, 1) both; }
+.ll-green  { animation: ll-rise .5s cubic-bezier(.2, .8, .2, 1) .1s both; }
+.ll-wallet {
+  transform-origin: 50% 60%;
+  /* Settle in once, then a small "receive" bump each time the notes tuck in (same 1.8s loop, peak ≈ note tuck). */
+  animation: ll-settle .5s cubic-bezier(.2, .8, .2, 1.15) .22s both, ll-take 1.8s ease-in-out .55s infinite;
+}
+
+/* Loop: notes rise out of the wallet one after another, hold, then tuck back in. */
+.ll-note { transform-origin: 0% 100%; animation: ll-note 1.8s cubic-bezier(.45, 0, .2, 1) infinite both; }
+.ll-note-1 { animation-delay: .55s; }
+.ll-note-2 { animation-delay: .67s; }
+.ll-note-3 { animation-delay: .79s; }
+
+@keyframes ll-drop   { from { opacity: 0; transform: translateY(-12%); } to { opacity: 1; transform: none; } }
+@keyframes ll-rise   { from { opacity: 0; transform: translateY(12%); } to { opacity: 1; transform: none; } }
+@keyframes ll-settle { from { opacity: 0; transform: scale(.82); } to { opacity: 1; transform: none; } }
+@keyframes ll-take { 0%, 84% { transform: none; } 93% { transform: scale(1.04); } 100% { transform: none; } }
+@keyframes ll-note {
+  0%   { opacity: 0; transform: translate(-18%, 60%) rotate(8deg); }
+  28%  { opacity: 1; transform: none; }
+  66%  { opacity: 1; transform: none; }
+  92%, 100% { opacity: 0; transform: translate(-18%, 60%) rotate(8deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ll-blue, .ll-green, .ll-wallet, .ll-note { animation: none; }
+}
+.ui-logo-loader--delayed { animation: ui-skel-in .2s ease-out .25s both; }
+.ag-loading { display: flex; align-items: center; justify-content: center; min-height: 50dvh; }
+
+/* Opening screen (once per launch; see components/Splash.tsx) */
+.ves-splash-screen { display: none; }
+html.ves-splash .ves-splash-screen {
+  position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--ui-s4);
+  background: var(--ui-canvas); transition: opacity .3s ease-out;
+}
+html.ves-splash { overflow: hidden; }
+html.ves-splash-out .ves-splash-screen { opacity: 0; }
+.ves-splash-name { font-family: var(--ui-font-display); font-size: var(--ui-fs-lg); font-weight: 700; color: var(--ui-ink); animation: ui-skel-in .4s ease-out .35s both; }

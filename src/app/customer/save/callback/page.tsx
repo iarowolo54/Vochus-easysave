@@ -2,6 +2,7 @@
 import { useCallback, useEffect, useState, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import EmptyState from '@/components/ui/EmptyState'
+import LogoLoader from '@/components/ui/LogoLoader'
 import { Icons } from '@/components/ui/icons'
 import { formatNaira } from '@/lib/format'
 import { postJson } from '@/lib/http'
@@ -53,10 +54,10 @@ function CallbackContent() {
   )
 
   if (state.kind === 'confirming') return (
-    <div className="ui-screen ui-screen--center" role="status">
+    <div className="ui-screen ui-screen--center">
       <div className="ui-empty">
-        <div className="ui-spinner" style={{ margin: '0 auto var(--ui-s4)' }} />
-        <p className="ui-empty-title">Confirming your payment…</p>
+        <LogoLoader size={96} label="Confirming your payment…" />
+        <p className="ui-empty-title ui-gap-top">Confirming your payment…</p>
         <p className="ui-empty-text">This takes a few seconds. Please don’t close the app or pay again.</p>
       </div>
     </div>
@@ -120,7 +121,7 @@ function CallbackContent() {
 
 export default function CallbackPage() {
   return (
-    <Suspense fallback={<div className="ui-screen ui-screen--center"><div className="ui-spinner" /></div>}>
+    <Suspense fallback={<div className="ui-screen ui-screen--center"><LogoLoader delayed /></div>}>
       <CallbackContent />
     </Suspense>
   )

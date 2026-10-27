@@ -1,4 +1,8 @@
 import Link from 'next/link'
+import Amount from '@/components/ui/Amount'
+import EmptyState from '@/components/ui/EmptyState'
+import { Icons, type IconName } from '@/components/ui/icons'
+import { displayName, formatDate, formatNaira, formatTime } from '@/lib/format'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
@@ -17,25 +21,23 @@ function daysDiff(date: Date): number {
   return Math.ceil(diff / (1000 * 60 * 60 * 24))
 }
 
-function txnIcon(type: string) {
-  switch (type) {
-    case 'saving': return '💰'
-    case 'redemption': return '🎯'
-    case 'repayment': return '🔄'
-    case 'disbursement': return '💸'
-    case 'enrolment': return '📋'
-    case 'loan': return '🏦'
-    case 'wallet_funding': return '💼'
-    default: return '📊'
-  }
+const TXN: Record<string, { label: string; icon: IconName; sign: '+' | '−' | '' }> = {
+  saving:         { label: 'Saving',          icon: 'deposit',  sign: '+' },
+  redemption:     { label: 'Collection paid', icon: 'collect',  sign: '−' },
+  repayment:      { label: 'Loan repayment',  icon: 'repay',    sign: '' },
+  disbursement:   { label: 'Loan disbursed',  icon: 'loan',     sign: '' },
+  enrolment:      { label: 'New customer',    icon: 'enrol',    sign: '' },
+  registration:   { label: 'Registration fee', icon: 'enrol',   sign: '' },
+  wallet_funding: { label: 'Wallet top-up',   icon: 'wallet',   sign: '+' },
 }
 
-function txnLabel(type: string) {
-  const map: Record<string, string> = {
-    saving: 'Saving', redemption: 'Redemption', repayment: 'Repayment',
-    disbursement: 'Disburse', enrolment: 'Enrolled', loan: 'Loan App', wallet_funding: 'Wallet Top-up',
-  }
-  return map[type] ?? type
+function txn(type: string) {
+  return TXN[type] ?? { label: type.replace(/_/g, ' '), icon: 'history' as IconName, sign: '' as const }
+}
+
+function txnIcon(type: string, method: string | null): IconName {
+  if (type === 'saving') return (method ?? '').toLowerCase() === 'paystack' ? 'card' : 'cash'
+  return txn(type).icon
 }
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
@@ -127,237 +129,152 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
 
   const maxWeekly = Math.max(...weeklyCollections.map(w => w.total), 1)
 
-  const initials = (name: string) => name.split(' ').map(w => w[0]).join('').slice(0, 2)
-  const avColors = ['av-g', 'av-b', 'av-gd', 'av-rd', 'av-pu']
+  const cashToday = cashSavingDay._sum.amount ?? 0
+  const onlineToday = onlineSavingDay._sum.amount ?? 0
+  const cashWeek = cashSavingWeek._sum.amount ?? 0
+  const onlineWeek = onlineSavingWeek._sum.amount ?? 0
+  const monthLabel = now.toLocaleString('en-GB', { month: 'long' })
 
   return (
-    <>
-      <div className="page-header">
-        <h2>{greeting}, {firstName} 👋</h2>
-        <p>Here&apos;s your activity summary for today — {dateStr}</p>
-      </div>
+    <div className="ag-home">
+      <section className="ag-hello">
+        <h2 className="ui-page-title">{greeting}, {displayName(firstName)}</h2>
+        <p className="ui-row-sub">{dateStr}</p>
+      </section>
 
-      <div className="grid g4 stats-grid" style={{ marginBottom: 18 }}>
-        <div className="stat-card green">
-          <div className="stat-icon" style={{ background: 'var(--gl)' }}>💰</div>
-          <div className="stat-lbl">Agent Wallet</div>
-          <div className="stat-val">₦{agent.walletBalance.toLocaleString()}</div>
-          <div className="stat-trend trend-up">Live balance</div>
-        </div>
-        <div className="stat-card blue">
-          <div className="stat-icon" style={{ background: 'var(--bl)' }}>👥</div>
-          <div className="stat-lbl">Active Customers</div>
-          <div className="stat-val">{customerCount}</div>
-          <div className="stat-trend trend-up">Enrolled</div>
-        </div>
-        <div className="stat-card gold">
-          <div className="stat-icon" style={{ background: 'var(--gdl)' }}>🏅</div>
-          <div className="stat-lbl">Commission ({now.toLocaleString('default', { month: 'short' })})</div>
-          <div className="stat-val">₦{commissionAmount.toLocaleString('en-NG', { minimumFractionDigits: 0, maximumFractionDigits: 2 })}</div>
-          <div className="stat-trend trend-up">This month</div>
-        </div>
-        <div className="stat-card purple">
-          <div className="stat-icon" style={{ background: 'var(--pul)' }}>🏦</div>
-          <div className="stat-lbl">Active Loans</div>
-          <div className="stat-val">{activeLoansCount}</div>
-          <div className="stat-sub">Portfolio: {fmtAmt(loanPortfolio._sum.principal ?? 0)}</div>
-        </div>
-        <div className="stat-card blue">
-          <div className="stat-icon" style={{ background: 'var(--bl)' }}>🌐</div>
-          <div className="stat-lbl">Online Savings / Day</div>
-          <div className="stat-val">₦{(onlineSavingDay._sum.amount ?? 0).toLocaleString()}</div>
-          <div className="stat-trend trend-up">Today</div>
-        </div>
-        <div className="stat-card green">
-          <div className="stat-icon" style={{ background: 'var(--gl)' }}>🌐</div>
-          <div className="stat-lbl">Online Savings / Week</div>
-          <div className="stat-val">₦{(onlineSavingWeek._sum.amount ?? 0).toLocaleString()}</div>
-          <div className="stat-trend trend-up">This week</div>
-        </div>
-        <div className="stat-card gold">
-          <div className="stat-icon" style={{ background: 'var(--gdl)' }}>💵</div>
-          <div className="stat-lbl">Cash Collection / Day</div>
-          <div className="stat-val">₦{(cashSavingDay._sum.amount ?? 0).toLocaleString()}</div>
-          <div className="stat-trend trend-up">Today</div>
-        </div>
-        <div className="stat-card purple">
-          <div className="stat-icon" style={{ background: 'var(--pul)' }}>💵</div>
-          <div className="stat-lbl">Cash Collection / Week</div>
-          <div className="stat-val">₦{(cashSavingWeek._sum.amount ?? 0).toLocaleString()}</div>
-          <div className="stat-trend trend-up">This week</div>
-        </div>
-      </div>
+      <div className="ag-home-grid">
+        <div className="ag-col">
+          <section className="ui-card ag-wallet-card" aria-label="Agent wallet">
+            <span className="ui-row-sub">Agent wallet</span>
+            <Amount value={agent.walletBalance} size="hero" animate />
+            <p className="ui-row-sub">Recording a cash saving takes the amount from this wallet.</p>
+            <Link href="/dashboard/wallet" className="ui-btn ui-btn--secondary ag-wallet-btn">
+              <Icons.add size={18} aria-hidden="true" /> Fund wallet
+            </Link>
+          </section>
 
-      <div className="grid g-3-2">
-        <div>
-          <div className="sec-label" style={{ marginTop: 0 }}>Quick Actions</div>
-          <div className="grid g3" style={{ marginBottom: 0 }}>
-            <Link href="/dashboard/enrol" className="quick-btn">
-              <div className="qb-ic" style={{ background: 'var(--gl)' }}>📋</div>
-              <div><div className="qb-title">Enrol</div><div className="qb-desc">Register customer</div></div>
+          <nav className="ui-actions ag-actions" aria-label="Main actions">
+            <Link href="/dashboard/savings" className="ui-action">
+              <span className="ui-action-circle" aria-hidden="true"><Icons.plan size={24} /></span>Record saving
             </Link>
-            <Link href="/dashboard/savings" className="quick-btn">
-              <div className="qb-ic" style={{ background: 'var(--gdl)' }}>💰</div>
-              <div><div className="qb-title">Save</div><div className="qb-desc">Credit savings</div></div>
+            <Link href="/dashboard/enrol" className="ui-action">
+              <span className="ui-action-circle" aria-hidden="true"><Icons.enrol size={24} /></span>Enrol
             </Link>
-            <Link href="/dashboard/redeem" className="quick-btn">
-              <div className="qb-ic" style={{ background: 'var(--bl)' }}>🎯</div>
-              <div><div className="qb-title">Redeem</div><div className="qb-desc">Pay out savings</div></div>
+            <Link href="/dashboard/redeem" className="ui-action">
+              <span className="ui-action-circle" aria-hidden="true"><Icons.collect size={24} /></span>Collections
             </Link>
-            <Link href="/dashboard/loan-request" className="quick-btn">
-              <div className="qb-ic" style={{ background: 'var(--pul)' }}>🏦</div>
-              <div><div className="qb-title">Loan Request</div><div className="qb-desc">New application</div></div>
-            </Link>
-            <Link href="/dashboard/loan-disburse" className="quick-btn">
-              <div className="qb-ic" style={{ background: '#e8f0ff' }}>💸</div>
-              <div><div className="qb-title">Disburse</div><div className="qb-desc">Release funds</div></div>
-            </Link>
-            <Link href="/dashboard/loan-repay" className="quick-btn">
-              <div className="qb-ic" style={{ background: 'var(--gl)' }}>🔄</div>
-              <div><div className="qb-title">Repayment</div><div className="qb-desc">Record payment</div></div>
-            </Link>
+          </nav>
+
+          <section className="ui-card" aria-label="Savings collected">
+            <div className="ui-card-head"><h2 className="ui-card-title">Collected</h2></div>
+            <dl className="ag-stats">
+              <div><dt>Cash today</dt><dd className="ui-amount">{formatNaira(cashToday, { minor: false })}</dd></div>
+              <div><dt>Online today</dt><dd className="ui-amount">{formatNaira(onlineToday, { minor: false })}</dd></div>
+              <div><dt>Cash this week</dt><dd className="ui-amount">{formatNaira(cashWeek, { minor: false })}</dd></div>
+              <div><dt>Online this week</dt><dd className="ui-amount">{formatNaira(onlineWeek, { minor: false })}</dd></div>
+            </dl>
+          </section>
+
+          <div className="ui-section-head">
+            <h2>Recent transactions</h2>
+            <Link href="/dashboard/transactions" className="ui-link">See all <Icons.next size={16} aria-hidden="true" /></Link>
           </div>
-
-          <div className="sec-label">Recent Transactions</div>
-          <div className="card card-sm">
-            <div className="table-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Customer</th><th>Type</th><th>Amount</th><th>Time</th><th>Status</th><th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {recentTxns.map((t, i) => (
-                    <tr key={t.id}>
-                      <td>
-                        {t.customer ? (
-                          <>
-                            <div className="td-name">{t.customer.firstName} {t.customer.lastName}</div>
-                            <div className="td-sub">{t.customer.customerId}</div>
-                          </>
-                        ) : (
-                          <div className="td-name">—</div>
-                        )}
-                      </td>
-                      <td>{txnIcon(t.type)} {txnLabel(t.type)}</td>
-                      <td className="td-mono" style={{
-                        color: t.type === 'saving' ? 'var(--g)' : t.type === 'redemption' ? 'var(--rd)' : 'var(--b)'
-                      }}>
-                        {t.type === 'enrolment' ? 'New' : `${t.type === 'saving' ? '+' : t.type === 'redemption' ? '−' : ''}₦${t.amount.toLocaleString()}`}
-                      </td>
-                      <td style={{ color: 'var(--mu)' }}>
-                        {new Date(t.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
-                      </td>
-                      <td>
-                        <span className={`bdg ${t.type === 'enrolment' ? 'bdg-gd' : 'bdg-ok'}`}>
-                          {t.type === 'enrolment' ? 'New' : t.status}
-                        </span>
-                      </td>
-                      <td>
-                        <Link href={`/dashboard/transactions/${t.id}`} className="btn btn-out btn-sm" style={{ whiteSpace: 'nowrap' }}>→</Link>
-                      </td>
-                    </tr>
-                  ))}
-                  {recentTxns.length === 0 && (
-                    <tr><td colSpan={6} style={{ textAlign: 'center', color: 'var(--mu)', padding: 16 }}>No transactions yet</td></tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
-
-        <div>
-          <div className="sec-label" style={{ marginTop: 0 }}>Monthly Performance</div>
-          <div className="card" style={{ marginBottom: 18 }}>
-            <div className="card-title">Collections — {now.toLocaleString('default', { month: 'long', year: 'numeric' })}</div>
-            <div className="bar-chart">
-              {weeklyCollections.map((w, i) => (
-                <div key={w.label} className="bar-col">
-                  <div
-                    className={`bar${i === weeklyCollections.length - 1 ? ' active' : ''}`}
-                    style={{ height: `${Math.max(4, Math.round((w.total / maxWeekly) * 100))}%` }}
-                  />
-                </div>
-              ))}
-            </div>
-            <div className="bar-labels">
-              {weeklyCollections.map((w, i) => (
-                <span key={w.label} className="bar-lbl" style={i === weeklyCollections.length - 1 ? { color: 'var(--g)', fontWeight: 700 } : {}}>
-                  {w.label}
-                </span>
-              ))}
-            </div>
-            <div style={{ display: 'flex', gap: 6, fontSize: 11.5, color: 'var(--mu)', marginTop: 2 }}>
-              {weeklyCollections.map((w, i) => (
-                <span key={w.label} style={{ flex: 1, textAlign: 'center', ...(i === weeklyCollections.length - 1 ? { color: 'var(--g)', fontWeight: 700 } : {}) }}>
-                  {fmtAmt(w.total)}
-                </span>
-              ))}
-            </div>
-          </div>
-
-          <div className="sec-label">
-            Maturing Soon
-            {maturingTotal > 0 && (
-              <span style={{ float: 'right', fontSize: 11.5, color: 'var(--mu)', fontWeight: 400 }}>
-                {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, maturingTotal)} of {maturingTotal}
-              </span>
-            )}
-          </div>
-          <div className="card card-sm">
-            {maturingSoon.length === 0 && (
-              <div style={{ textAlign: 'center', color: 'var(--mu)', padding: 16, fontSize: 13 }}>
-                No plans maturing in the next 7 days
-              </div>
-            )}
-            {maturingSoon.map((p, i) => {
-              const days = daysDiff(new Date(p.maturityDate))
-              const name = `${p.customer.firstName} ${p.customer.lastName}`
-              const ini = initials(name)
-              const avColor = avColors[i % avColors.length]
+          <section className="ui-card ui-card--list">
+            {recentTxns.length === 0 ? (
+              <EmptyState icon="history" title="No transactions yet" text="Savings you record will show up here." />
+            ) : recentTxns.map(t => {
+              const m = txn(t.type)
+              const Icon = Icons[txnIcon(t.type, t.method)]
+              const who = t.customer ? displayName(`${t.customer.firstName} ${t.customer.lastName}`) : '—'
+              const done = t.status === 'Done'
               return (
-                <div key={p.id} className="cust-row" style={{ padding: '9px 0', borderBottom: i < maturingSoon.length - 1 ? undefined : 'none' }}>
-                  <div className={`av ${avColor}`}>{ini}</div>
-                  <div>
-                    <div className="cust-name">{name}</div>
-                    <div className="cust-sub">{new Date(p.maturityDate).toLocaleDateString('en-GB', { month: 'short', day: 'numeric' })} · ₦{p.balance.toLocaleString()}</div>
-                  </div>
-                  <span className={`bdg ${days <= 1 ? 'bdg-rd' : 'bdg-gd'}`} style={{ marginLeft: 'auto' }}>
+                <Link key={t.id} href={`/dashboard/transactions/${t.id}`} className="ui-row ui-row--button">
+                  <span className="ui-row-icon" aria-hidden="true"><Icon size={20} /></span>
+                  <span className="ui-row-main">
+                    <span className="ui-row-title ui-block">{who}</span>
+                    <span className="ui-row-sub ui-block">{m.label} · {formatTime(t.createdAt)}</span>
+                  </span>
+                  <span className="ui-value-stack">
+                    <span className={`ui-row-value${m.sign === '+' ? ' ui-amount--positive' : ''}`}>
+                      {t.type === 'enrolment' ? 'New' : `${m.sign}${formatNaira(t.amount)}`}
+                    </span>
+                    {!done && <span className="ui-status ui-status--warn ui-status--sm">{t.status}</span>}
+                  </span>
+                  <Icons.next size={18} className="ui-row-chevron" aria-hidden="true" />
+                </Link>
+              )
+            })}
+          </section>
+        </div>
+
+        <div className="ag-col">
+          <section className="ui-card ui-card--list" aria-label="Summary">
+            <Link href="/dashboard/customers" className="ui-row ui-row--button">
+              <span className="ui-row-main"><span className="ui-row-sub ui-block">Customers</span><span className="ui-row-title ui-block">{customerCount}</span></span>
+              <Icons.next size={18} className="ui-row-chevron" aria-hidden="true" />
+            </Link>
+            <Link href="/dashboard/commission" className="ui-row ui-row--button">
+              <span className="ui-row-main"><span className="ui-row-sub ui-block">Commission · {monthLabel}</span><span className="ui-row-title ui-block">{formatNaira(commissionAmount)}</span></span>
+              <Icons.next size={18} className="ui-row-chevron" aria-hidden="true" />
+            </Link>
+            <Link href="/dashboard/loan-repay" className="ui-row ui-row--button">
+              <span className="ui-row-main">
+                <span className="ui-row-sub ui-block">Active loans</span>
+                <span className="ui-row-title ui-block">{activeLoansCount} · {formatNaira(loanPortfolio._sum.principal ?? 0, { minor: false })} lent</span>
+              </span>
+              <Icons.next size={18} className="ui-row-chevron" aria-hidden="true" />
+            </Link>
+          </section>
+
+          <section className="ui-card" aria-label={`Savings collected per week, last four weeks`}>
+            <div className="ui-card-head"><h2 className="ui-card-title">Last 4 weeks</h2><span className="ui-card-meta">Savings collected</span></div>
+            <ol className="ag-bars">
+              {weeklyCollections.map((w, i) => {
+                const current = i === weeklyCollections.length - 1
+                return (
+                  <li key={w.label} className={current ? 'is-current' : undefined}>
+                    <span className="ag-bar-value">{fmtAmt(w.total)}</span>
+                    <span className="ag-bar-track"><span className="ag-bar" style={{ height: `${Math.max(4, Math.round((w.total / maxWeekly) * 100))}%` }} /></span>
+                    <span className="ag-bar-label">{current ? 'This week' : `${weeklyCollections.length - 1 - i} wk ago`}</span>
+                  </li>
+                )
+              })}
+            </ol>
+          </section>
+
+          <div className="ui-section-head">
+            <h2>Maturing this week</h2>
+            {maturingTotal > 0 && <span className="ui-card-meta">{maturingTotal} plan{maturingTotal > 1 ? 's' : ''}</span>}
+          </div>
+          <section className="ui-card ui-card--list">
+            {maturingSoon.length === 0 ? (
+              <EmptyState icon="calendar" title="Nothing maturing this week" text="Plans ending in the next 7 days will show here." />
+            ) : maturingSoon.map(p => {
+              const days = daysDiff(new Date(p.maturityDate))
+              const name = displayName(`${p.customer.firstName} ${p.customer.lastName}`)
+              return (
+                <div key={p.id} className="ui-row">
+                  <span className="ui-avatar" aria-hidden="true">{name[0]}</span>
+                  <span className="ui-row-main">
+                    <span className="ui-row-title ui-block">{name}</span>
+                    <span className="ui-row-sub ui-block">{formatNaira(p.balance)} · ends {formatDate(p.maturityDate)}</span>
+                  </span>
+                  <span className={`ui-status ui-status--sm ${days <= 1 ? 'ui-status--danger' : 'ui-status--warn'}`}>
                     {days <= 0 ? 'Today' : days === 1 ? 'Tomorrow' : `${days} days`}
                   </span>
                 </div>
               )
             })}
             {totalPages > 1 && (
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: 12, borderTop: '1px solid var(--br)', marginTop: 4 }}>
-                <Link
-                  href={`/dashboard?mpage=${page - 1}`}
-                  style={{
-                    fontSize: 12.5, color: page > 1 ? 'var(--g)' : 'var(--mu)',
-                    pointerEvents: page > 1 ? undefined : 'none',
-                    textDecoration: 'none', fontWeight: 600,
-                  }}
-                >
-                  ← Prev
-                </Link>
-                <span style={{ fontSize: 12, color: 'var(--mu)' }}>Page {page} of {totalPages}</span>
-                <Link
-                  href={`/dashboard?mpage=${page + 1}`}
-                  style={{
-                    fontSize: 12.5, color: page < totalPages ? 'var(--g)' : 'var(--mu)',
-                    pointerEvents: page < totalPages ? undefined : 'none',
-                    textDecoration: 'none', fontWeight: 600,
-                  }}
-                >
-                  Next →
-                </Link>
+              <div className="ag-pager">
+                {page > 1 ? <Link href={`/dashboard?mpage=${page - 1}`} className="ui-link"><Icons.back size={16} aria-hidden="true" /> Previous</Link> : <span />}
+                <span className="ui-row-sub">Page {page} of {totalPages}</span>
+                {page < totalPages ? <Link href={`/dashboard?mpage=${page + 1}`} className="ui-link">Next <Icons.next size={16} aria-hidden="true" /></Link> : <span />}
               </div>
             )}
-          </div>
+          </section>
         </div>
       </div>
-    </>
+    </div>
   )
 }

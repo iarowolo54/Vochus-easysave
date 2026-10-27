@@ -16,8 +16,8 @@ export const CUSTOMER_NAV: NavItem[] = [
 ]
 
 export const AGENT_NAV: NavItem[] = [
-  { key: 'dashboard', icon: 'home',      label: 'Dashboard', href: '/dashboard' },
+  { key: 'dashboard', icon: 'home',      label: 'Home',      href: '/dashboard' },
   { key: 'customers', icon: 'customers', label: 'Customers', href: '/dashboard/customers' },
   { key: 'savings',   icon: 'plan',      label: 'Savings',   href: '/dashboard/savings' },
-  { key: 'chat',      icon: 'support',   label: 'Support',   href: '/dashboard/chat' },
+  { key: 'chat',      icon: 'chat',      label: 'Chat',      href: '/dashboard/chat' },
 ]

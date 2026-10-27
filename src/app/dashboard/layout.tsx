@@ -8,64 +8,66 @@ import BottomNav from '@/components/BottomNav'
 import { AGENT_NAV } from '@/components/nav-items'
 import IdleTimeout from '@/components/IdleTimeout'
 import Logo from '@/components/Logo'
+import { Icons, type IconName } from '@/components/ui/icons'
+import { displayName, formatNaira } from '@/lib/format'
 
-const navItems = [
+const navItems: { section: string; items: { label: string; icon: IconName; href: string }[] }[] = [
   { section: 'Main', items: [
-    { label: 'Dashboard', icon: '🏠', href: '/dashboard' },
-    { label: 'Customers', icon: '👥', href: '/dashboard/customers' },
-    { label: 'Transactions', icon: '📊', href: '/dashboard/transactions' },
+    { label: 'Home', icon: 'home', href: '/dashboard' },
+    { label: 'Customers', icon: 'customers', href: '/dashboard/customers' },
+    { label: 'Transactions', icon: 'history', href: '/dashboard/transactions' },
   ]},
-  { section: 'Operations', items: [
-    { label: 'Enrol Customer', icon: '📋', href: '/dashboard/enrol' },
-    { label: 'Record Saving', icon: '💰', href: '/dashboard/savings' },
-    { label: 'Savings Calendar', icon: '📅', href: '/dashboard/calendar' },
-    { label: 'Redemption', icon: '🎯', href: '/dashboard/redeem' },
+  { section: 'Daily work', items: [
+    { label: 'Record saving', icon: 'plan', href: '/dashboard/savings' },
+    { label: 'Enrol customer', icon: 'enrol', href: '/dashboard/enrol' },
+    { label: 'Savings calendar', icon: 'calendar', href: '/dashboard/calendar' },
+    { label: 'Collections', icon: 'collect', href: '/dashboard/redeem' },
   ]},
   { section: 'Loans', items: [
-    { label: 'Loan Request', icon: '🏦', href: '/dashboard/loan-request' },
-    { label: 'Disbursement', icon: '💸', href: '/dashboard/loan-disburse' },
-    { label: 'Repayment', icon: '🔄', href: '/dashboard/loan-repay' },
-    { label: 'Interest Rates', icon: '📈', href: '/dashboard/interest-rates' },
+    { label: 'Loan request', icon: 'loan', href: '/dashboard/loan-request' },
+    { label: 'Disburse loan', icon: 'withdraw', href: '/dashboard/loan-disburse' },
+    { label: 'Loan repayment', icon: 'repay', href: '/dashboard/loan-repay' },
+    { label: 'Interest rates', icon: 'rate', href: '/dashboard/interest-rates' },
   ]},
-  { section: 'Finance', items: [
-    { label: 'Wallet Funding', icon: '💼', href: '/dashboard/wallet' },
-    { label: 'Commission', icon: '🏅', href: '/dashboard/commission' },
-    { label: 'Withdraw', icon: '💸', href: '/dashboard/withdraw' },
-    { label: 'Sub-Agents', icon: '🤝', href: '/dashboard/subagents' },
+  { section: 'Money', items: [
+    { label: 'Fund wallet', icon: 'wallet', href: '/dashboard/wallet' },
+    { label: 'Commission', icon: 'commission', href: '/dashboard/commission' },
+    { label: 'Withdraw', icon: 'withdraw', href: '/dashboard/withdraw' },
+    { label: 'Sub-agents', icon: 'team', href: '/dashboard/subagents' },
   ]},
   { section: 'Account', items: [
-    { label: 'Support Chat', icon: '💬', href: '/dashboard/chat' },
-    { label: 'Settings', icon: '⚙️', href: '/dashboard/settings' },
-    { label: 'Report Issue', icon: '🚨', href: '/dashboard/report', badge: '2' },
+    { label: 'Customer chat', icon: 'chat', href: '/dashboard/chat' },
+    { label: 'Settings', icon: 'settings', href: '/dashboard/settings' },
+    { label: 'Report an issue', icon: 'report', href: '/dashboard/report' },
   ]},
 ]
 
 const pageTitles: Record<string, string> = {
-  '/dashboard': 'Dashboard',
+  '/dashboard': 'Home',
   '/dashboard/customers': 'Customers',
-  '/dashboard/transactions': 'Transaction History',
-  '/dashboard/enrol': 'Enrol Customer',
-  '/dashboard/savings': 'Record Saving',
-  '/dashboard/calendar': 'Savings Calendar',
-  '/dashboard/redeem': 'Redemption',
-  '/dashboard/loan-request': 'Loan Request',
-  '/dashboard/loan-disburse': 'Loan Disbursement',
-  '/dashboard/loan-repay': 'Loan Repayment',
-  '/dashboard/interest-rates': 'Interest Rates',
-  '/dashboard/wallet': 'Wallet Funding',
+  '/dashboard/transactions': 'Transactions',
+  '/dashboard/enrol': 'Enrol customer',
+  '/dashboard/savings': 'Record saving',
+  '/dashboard/calendar': 'Savings calendar',
+  '/dashboard/redeem': 'Collections',
+  '/dashboard/loan-request': 'Loan request',
+  '/dashboard/loan-disburse': 'Disburse loan',
+  '/dashboard/loan-repay': 'Loan repayment',
+  '/dashboard/interest-rates': 'Interest rates',
+  '/dashboard/wallet': 'Fund wallet',
   '/dashboard/commission': 'Commission',
-  '/dashboard/withdraw': 'Withdraw Commission',
-  '/dashboard/subagents': 'Sub-Agents',
-  '/dashboard/chat': 'Support Chat',
+  '/dashboard/withdraw': 'Withdraw commission',
+  '/dashboard/subagents': 'Sub-agents',
+  '/dashboard/chat': 'Customer chat',
   '/dashboard/settings': 'Settings',
-  '/dashboard/report': 'Report Issue',
+  '/dashboard/report': 'Report an issue',
+  '/dashboard/documents': 'Documents',
 }
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const { data: session } = useSession()
   const pathname = usePathname()
   const router = useRouter()
-  const [clock, setClock] = useState('')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [chatUnread, setChatUnread] = useState(0)
 
@@ -122,68 +124,69 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const location: string = agent?.location ?? '—'
   const walletBalance: number = agent?.walletBalance ?? 0
   const photoUrl: string | null = agent?.photoUrl ?? null
-  const initials = name.split(' ').map((w: string) => w[0]).join('').slice(0, 2)
+  const initials = name.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase()
+  const allHrefs = navItems.flatMap(g => g.items.map(i => i.href))
+  const activeHref = allHrefs
+    .filter(h => pathname === h || pathname.startsWith(h + '/'))
+    .sort((a, b) => b.length - a.length)[0]
   const avatarNode = photoUrl
     ? <img src={photoUrl} alt={name} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }} />
     : initials
 
-  const pageTitle = pageTitles[pathname] ?? 'Dashboard'
+  const pageTitle = pageTitles[pathname] ?? (pathname.startsWith('/dashboard/transactions/') ? 'Receipt' : 'Home')
 
+  // Close the mobile menu with Escape, and whenever the page changes.
   useEffect(() => {
-    function tick() {
-      const now = new Date()
-      const t = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
-      const d = now.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short' })
-      setClock(`${t} · ${d}`)
-    }
-    tick()
-    const id = setInterval(tick, 30000)
-    return () => clearInterval(id)
-  }, [])
+    if (!sidebarOpen) return
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setSidebarOpen(false) }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [sidebarOpen])
+  useEffect(() => { setSidebarOpen(false) }, [pathname])
+
 
   return (
-    <div className="app-layout">
+    <div className="ag-shell">
       {session?.user && <IdleTimeout onLogout={() => signOut({ callbackUrl: '/login' })} />}
-      <div className={`sidebar-backdrop${sidebarOpen ? ' open' : ''}`} onClick={() => setSidebarOpen(false)} />
-      <aside className={`sidebar${sidebarOpen ? ' open' : ''}`}>
-        <div className="sb-logo">
-          <Logo size={38} tile />
-          <div>
-            <div className="sb-brand-name">Vochus Easy Save</div>
-            <div className="sb-brand-sub">Savings Platform</div>
-          </div>
+      <div className={`ag-backdrop${sidebarOpen ? ' is-open' : ''}`} onClick={() => setSidebarOpen(false)} aria-hidden="true" />
+      <aside className={`ag-sidebar${sidebarOpen ? ' is-open' : ''}`} aria-label="Main menu">
+        <div className="ag-brand">
+          <Logo size={32} />
+          <span>Vochus Easy Save</span>
+          <button type="button" className="ui-icon-btn ui-icon-btn--soft ag-close" onClick={() => setSidebarOpen(false)} aria-label="Close menu">
+            <Icons.close size={20} aria-hidden="true" />
+          </button>
         </div>
 
-        <div className="sb-agent">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 9, marginBottom: 8 }}>
-            <div className="sb-agent-av" style={{ overflow: 'hidden', padding: 0 }}>{avatarNode}</div>
-            <div>
-              <div className="sb-agent-name">{name}</div>
-              <div className="sb-agent-id">{agentId} · {location}</div>
-            </div>
-          </div>
-          <div className="sb-wallet-lbl">Agent Wallet</div>
-          <div className="sb-wallet">₦{walletBalance.toLocaleString()}</div>
+        <div className="ag-agent">
+          <span className="ui-avatar" aria-hidden="true">{avatarNode}</span>
+          <span className="ag-agent-main">
+            <span className="ag-agent-name">{displayName(name)}</span>
+            <span className="ag-agent-sub">{agentId}{location !== '—' ? ` · ${location}` : ''}</span>
+          </span>
         </div>
+        <Link href="/dashboard/wallet" className="ag-wallet">
+          <span className="ui-row-sub">Agent wallet</span>
+          <span className="ui-amount ag-wallet-amount">{formatNaira(walletBalance)}</span>
+        </Link>
 
-        <nav className="sb-nav">
+        <nav className="ag-nav">
           {navItems.map(group => (
-            <div key={group.section}>
-              <div className="sb-section">{group.section}</div>
+            <div key={group.section} className="ag-nav-group">
+              <p className="ag-nav-section">{group.section}</p>
               {group.items.map(item => {
-                const badge = item.href === '/dashboard/chat' && chatUnread > 0
-                  ? String(chatUnread)
-                  : item.badge
+                const Icon = Icons[item.icon]
+                const badge = item.href === '/dashboard/chat' && chatUnread > 0 ? chatUnread : 0
                 return (
                   <Link
                     key={item.href}
                     href={item.href}
-                    className={`nav-item${pathname === item.href ? ' active' : ''}`}
-                    onClick={() => setSidebarOpen(false)}
+                    className="ag-nav-item"
+                    aria-current={item.href === activeHref ? 'page' : undefined}
                   >
-                    <div className="nav-ic">{item.icon}</div>
-                    <span className="nav-label">{item.label}</span>
-                    {badge && <span className="nav-badge">{badge}</span>}
+                    <Icon size={20} aria-hidden="true" />
+                    <span>{item.label}</span>
+                    {badge > 0 && <span className="ag-badge" aria-label={`${badge} unread`}>{badge}</span>}
                   </Link>
                 )
               })}
@@ -191,54 +194,27 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           ))}
         </nav>
 
-        <div className="sb-bottom">
-          <button
-            className="nav-item"
-            onClick={() => signOut({ callbackUrl: '/login' })}
-            style={{ color: 'rgba(255,255,255,.5)' }}
-          >
-            <div className="nav-ic" style={{ background: 'rgba(220,50,50,.15)' }}>🚪</div>
-            <span className="nav-label" style={{ color: 'rgba(192,57,43,.8)' }}>Sign Out</span>
-          </button>
-        </div>
+        <button type="button" className="ag-nav-item ag-signout" onClick={() => signOut({ callbackUrl: '/login' })}>
+          <Icons.logout size={20} aria-hidden="true" />
+          <span>Sign out</span>
+        </button>
       </aside>
 
-      <main className="main">
-        <div className="topbar">
-          <button className="mob-menu-btn" onClick={() => setSidebarOpen(o => !o)} aria-label="Menu">
-            ☰
+      <div className="ag-main">
+        <header className="ag-topbar">
+          <button type="button" className="ui-icon-btn ag-menu-btn" onClick={() => setSidebarOpen(true)} aria-label="Open menu" aria-expanded={sidebarOpen}>
+            <Icons.menu size={22} aria-hidden="true" />
           </button>
-          <div>
-            <div className="topbar-title">{pageTitle}</div>
-            <div className="topbar-breadcrumb">Vochus Easy Save › {pageTitle}</div>
-          </div>
-          <div className="topbar-spacer" />
-          <div className="search-bar">
-            <span>🔍</span>
-            <input type="text" placeholder="Search customers, refs…" />
-          </div>
-          <div className="topbar-icon">
-            <span>🔔</span>
-            <div className="notif-dot" />
-          </div>
-          <div className="topbar-av" title={name} style={{ overflow: 'hidden', padding: 0 }}>{avatarNode}</div>
-          <div className="time-badge">{clock}</div>
-        </div>
+          <h1 className="ag-title">{pageTitle}</h1>
+          <Link href="/dashboard/settings" className="ui-avatar ag-topbar-av" aria-label="Your settings">{avatarNode}</Link>
+        </header>
 
-        <div className="content-area">
+        <div className="content-area ag-content">
           {children}
         </div>
 
         <BottomNav items={AGENT_NAV} />
-      </main>
-
-      <style>{`
-        @media (max-width: 768px) {
-          .content-area {
-            padding-bottom: 80px;
-          }
-        }
-      `}</style>
+      </div>
     </div>
   )
 }
