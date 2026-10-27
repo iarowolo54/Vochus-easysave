@@ -10,6 +10,7 @@ import {
   verifyUnlockOtp,
   requestUnlockOtp,
   MAX_VERIFY_ATTEMPTS,
+  MAX_SENDS_PER_DAY,
 } from '../src/lib/unlock-otp'
 
 const rid = Math.random().toString(36).slice(2, 10)
@@ -42,6 +43,50 @@ test('too many wrong attempts locks out the code', async () => {
   // Even the correct code no longer works once attempts are exhausted.
   const r = await verifyUnlockOtp(customerId, '333333', t0 + 10_000)
   assert.equal(r.ok, false)
+})
+
+test('only one of many parallel verifies of the correct code succeeds', async () => {
+  const cid = `${customerId}-par`
+  try {
+    await createUnlockOtp(cid, 'sms', '555555', t0)
+    const results = await Promise.all(
+      Array.from({ length: 8 }, () => verifyUnlockOtp(cid, '555555', t0 + 1000)),
+    )
+    assert.equal(results.filter((r) => r.ok).length, 1)
+  } finally {
+    await prisma.accountUnlockOtp.deleteMany({ where: { customerId: cid } })
+  }
+})
+
+test('attempt cap is not bypassable by a parallel burst', async () => {
+  const cid = `${customerId}-burst`
+  try {
+    await createUnlockOtp(cid, 'sms', '777777', t0)
+    await Promise.all(
+      Array.from({ length: MAX_VERIFY_ATTEMPTS + 7 }, (_, i) =>
+        verifyUnlockOtp(cid, String(100000 + i), t0 + 1000),
+      ),
+    )
+    const row = await prisma.accountUnlockOtp.findFirst({ where: { customerId: cid } })
+    assert.equal(row?.attempts, MAX_VERIFY_ATTEMPTS) // capped, not bypassed
+    assert.equal((await verifyUnlockOtp(cid, '777777', t0 + 2000)).ok, false) // cap exhausted
+  } finally {
+    await prisma.accountUnlockOtp.deleteMany({ where: { customerId: cid } })
+  }
+})
+
+test('a per-account daily send cap stops OTP bombing', async () => {
+  const customer = { id: `${customerId}-cap`, email: null, phone: '08011112222', firstName: 'Ada' }
+  try {
+    let now = t0
+    for (let i = 0; i < MAX_SENDS_PER_DAY; i++) {
+      assert.equal((await requestUnlockOtp(customer, now)).sent, true, `send ${i + 1}`)
+      now += 61_000 // past the 60s cooldown each time
+    }
+    assert.equal((await requestUnlockOtp(customer, now)).sent, false) // daily cap hit
+  } finally {
+    await prisma.accountUnlockOtp.deleteMany({ where: { customerId: customer.id } })
+  }
 })
 
 test('requestUnlockOtp sends, stores a hashed code, and rate-limits resends', async () => {

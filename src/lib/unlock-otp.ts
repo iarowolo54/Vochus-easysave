@@ -15,6 +15,7 @@ import { sendSMS } from './kudisms'
 export const OTP_TTL_MS = 10 * 60_000
 export const MAX_VERIFY_ATTEMPTS = 5
 export const RESEND_COOLDOWN_MS = 60_000
+export const MAX_SENDS_PER_DAY = 10
 
 type Channel = 'email' | 'sms'
 
@@ -63,6 +64,7 @@ export async function createUnlockOtp(
       channel,
       codeHash: hashCode(code),
       expiresAt: new Date(now + OTP_TTL_MS),
+      createdAt: new Date(now), // explicit so cooldown/daily-cap math is testable
     },
   })
 }
@@ -116,6 +118,14 @@ export async function requestUnlockOtp(
     }
   }
 
+  // Per-account daily cap — bounds SMS cost and OTP bombing of a single victim.
+  const sentToday = await prisma.accountUnlockOtp.count({
+    where: { customerId: customer.id, createdAt: { gt: new Date(now - 24 * 60 * 60_000) } },
+  })
+  if (sentToday >= MAX_SENDS_PER_DAY) {
+    return { sent: false, retryAfterSeconds: 24 * 60 * 60 }
+  }
+
   const { channel, target } = pickChannel(customer)
   const code = generateCode()
   await createUnlockOtp(customer.id, channel, code, now)
@@ -137,19 +147,21 @@ export async function verifyUnlockOtp(
     orderBy: { createdAt: 'desc' },
   })
   if (!otp) return { ok: false }
-  if (otp.attempts >= MAX_VERIFY_ATTEMPTS) return { ok: false }
 
-  if (!hashesEqual(otp.codeHash, hashCode(code))) {
-    await prisma.accountUnlockOtp.update({
-      where: { id: otp.id },
-      data: { attempts: { increment: 1 } },
-    })
-    return { ok: false }
-  }
+  // Reserve an attempt ATOMICALLY and enforce the cap in the same statement, so
+  // a concurrent burst can't all slip past the check and get free guesses.
+  const reserved = await prisma.accountUnlockOtp.updateMany({
+    where: { id: otp.id, consumedAt: null, attempts: { lt: MAX_VERIFY_ATTEMPTS }, expiresAt: { gt: new Date(now) } },
+    data: { attempts: { increment: 1 } },
+  })
+  if (reserved.count === 0) return { ok: false } // cap reached, consumed, or expired
 
-  await prisma.accountUnlockOtp.update({
-    where: { id: otp.id },
+  if (!hashesEqual(otp.codeHash, hashCode(code))) return { ok: false }
+
+  // Consume atomically so the code is single-use even under concurrent verifies.
+  const consumed = await prisma.accountUnlockOtp.updateMany({
+    where: { id: otp.id, consumedAt: null },
     data: { consumedAt: new Date(now) },
   })
-  return { ok: true }
+  return { ok: consumed.count === 1 }
 }
