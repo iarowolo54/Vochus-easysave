@@ -8,10 +8,16 @@ import { creditRegistrationReward } from '@/lib/reward'
 export async function POST(req: NextRequest) {
   const body = await req.text()
   const sig = req.headers.get('x-paystack-signature') ?? ''
-  const secret = process.env.PAYSTACK_WEBHOOK_SECRET ?? ''
+  const secret = process.env.PAYSTACK_WEBHOOK_SECRET
+  // Fail closed: never verify against an empty secret (an empty HMAC key is forgeable).
+  if (!secret) return NextResponse.json({ error: 'Webhook not configured' }, { status: 500 })
 
   const expected = crypto.createHmac('sha512', secret).update(body).digest('hex')
-  if (sig !== expected) return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
+  const sigBuf = Buffer.from(sig)
+  const expBuf = Buffer.from(expected)
+  if (sigBuf.length !== expBuf.length || !crypto.timingSafeEqual(sigBuf, expBuf)) {
+    return NextResponse.json({ error: 'Invalid signature' }, { status: 401 })
+  }
 
   const event = JSON.parse(body)
 
