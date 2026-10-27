@@ -75,6 +75,23 @@ test('attempt cap is not bypassable by a parallel burst', async () => {
   }
 })
 
+test('a failed delivery persists nothing and burns no quota', async () => {
+  const customer = { id: `${customerId}-faildel`, email: null, phone: '08022223333', firstName: 'Ada' }
+  try {
+    const failSend = async () => false // simulate SMS/email gateway failure
+    const r = await requestUnlockOtp(customer, t0, failSend)
+    assert.equal(r.sent, false)
+    const rows = await prisma.accountUnlockOtp.count({ where: { customerId: customer.id } })
+    assert.equal(rows, 0, 'no row should be stored when delivery fails')
+
+    // And the next attempt is NOT blocked by a cooldown (nothing was sent).
+    const ok = await requestUnlockOtp(customer, t0 + 1000) // default (SMS) sender succeeds
+    assert.equal(ok.sent, true)
+  } finally {
+    await prisma.accountUnlockOtp.deleteMany({ where: { customerId: customer.id } })
+  }
+})
+
 test('a per-account daily send cap stops OTP bombing', async () => {
   const customer = { id: `${customerId}-cap`, email: null, phone: '08011112222', firstName: 'Ada' }
   try {

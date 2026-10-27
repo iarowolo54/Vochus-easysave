@@ -106,7 +106,12 @@ export interface RequestResult {
 export async function requestUnlockOtp(
   customer: { id: string; email?: string | null; phone: string; firstName: string },
   now: number = Date.now(),
+  send: typeof deliver = deliver, // injectable for tests
 ): Promise<RequestResult> {
+  // Only successfully-sent codes are ever persisted (see below), so both the
+  // cooldown and the daily cap count real sends — a failed delivery never burns
+  // the victim's recovery quota.
+  const DAY_MS = 24 * 60 * 60_000
   const last = await prisma.accountUnlockOtp.findFirst({
     where: { customerId: customer.id },
     orderBy: { createdAt: 'desc' },
@@ -119,20 +124,24 @@ export async function requestUnlockOtp(
   }
 
   // Per-account daily cap — bounds SMS cost and OTP bombing of a single victim.
-  const sentToday = await prisma.accountUnlockOtp.count({
-    where: { customerId: customer.id, createdAt: { gt: new Date(now - 24 * 60 * 60_000) } },
+  const inWindow = await prisma.accountUnlockOtp.findMany({
+    where: { customerId: customer.id, createdAt: { gt: new Date(now - DAY_MS) } },
+    orderBy: { createdAt: 'asc' },
+    select: { createdAt: true },
   })
-  if (sentToday >= MAX_SENDS_PER_DAY) {
-    return { sent: false, retryAfterSeconds: 24 * 60 * 60 }
+  if (inWindow.length >= MAX_SENDS_PER_DAY) {
+    const oldest = inWindow[0].createdAt.getTime()
+    return { sent: false, retryAfterSeconds: Math.max(1, Math.ceil((oldest + DAY_MS - now) / 1000)) }
   }
 
   const { channel, target } = pickChannel(customer)
   const code = generateCode()
+  // Deliver first; persist only on success so a failed send costs the victim
+  // neither a cooldown nor a daily-quota slot.
+  const ok = await send(channel, target, customer.firstName, code)
+  if (!ok) return { sent: false }
   await createUnlockOtp(customer.id, channel, code, now)
-  const ok = await deliver(channel, target, customer.firstName, code)
-  return ok
-    ? { sent: true, channel, maskedTarget: maskTarget(channel, target) }
-    : { sent: false }
+  return { sent: true, channel, maskedTarget: maskTarget(channel, target) }
 }
 
 /** Verify a code: latest unconsumed, unexpired, under the attempt cap, matching
