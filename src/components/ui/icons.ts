@@ -2,7 +2,7 @@
 // so "save" or "withdraw" looks the same on every screen.
 import {
   ArrowDownLeft, Banknote, ArrowUpRight, Check, ChevronDown, CreditCard, ChevronLeft, ChevronRight, CircleAlert, Clock, Download, Eye, EyeOff, Fingerprint,
-  Headset, House, LayoutGrid, Lock, LogOut, MessageCircle, Phone, PiggyBank, Plus, Receipt, RefreshCw, Settings, Share2, Users, X,
+  Headset, House, ImagePlus, LayoutGrid, Lock, LogOut, MessageCircle, Phone, PiggyBank, Plus, Receipt, RefreshCw, SendHorizontal, Settings, Share2, Users, X,
 } from 'lucide-react'
 
 export const Icons = {
@@ -31,6 +31,8 @@ export const Icons = {
   hide: EyeOff,
   download: Download,
   share: Share2,
+  image: ImagePlus,
+  send: SendHorizontal,
   card: CreditCard,
   cash: Banknote,
   error: CircleAlert,

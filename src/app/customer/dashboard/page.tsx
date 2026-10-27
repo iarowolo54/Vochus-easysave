@@ -352,7 +352,7 @@ export default function CustomerDashboard() {
             tx={receiptTx}
             planName={plans.find(p => p.id === receiptTx.planId)?.goal ?? 'Savings'}
             hideAmounts={hideBalance}
-            onHelp={() => router.push('/customer/chat')}
+            onHelp={() => router.push(`/customer/chat?ref=${encodeURIComponent(receiptTx.ref)}`)}
           />
         )}
       </BottomSheet>

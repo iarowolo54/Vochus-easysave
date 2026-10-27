@@ -1,39 +1,94 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
-import { useRouter } from 'next/navigation'
-import BottomNav from '@/components/BottomNav'
-import { CUSTOMER_NAV } from '@/components/nav-items'
+import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { useCustomerMe } from '@/components/customer/useCustomerMe'
+import EmptyState from '@/components/ui/EmptyState'
+import { Bone } from '@/components/ui/Skeleton'
+import { Icons } from '@/components/ui/icons'
+import { displayName, formatTime } from '@/lib/format'
+import { describeFailure, postJson } from '@/lib/http'
 
 type Msg = {
   id: string; sender: string; senderName: string | null; message: string; imageUrl?: string | null; createdAt: string; read: boolean
 }
+type Me = { agent: { name: string; agentId: string; phone: string } }
 
-export default function CustomerChatPage() {
+const PROMPTS = [
+  'A deposit isn’t showing in my savings',
+  'How do I collect my money?',
+  'I want to change my daily amount',
+]
+
+function dayLabel(iso: string) {
+  const d = new Date(iso)
+  const today = new Date()
+  const yesterday = new Date(); yesterday.setDate(today.getDate() - 1)
+  if (d.toDateString() === today.toDateString()) return 'Today'
+  if (d.toDateString() === yesterday.toDateString()) return 'Yesterday'
+  return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+function ChatInner() {
   const router = useRouter()
-  const [messages, setMessages] = useState<Msg[]>([])
-  const [text, setText] = useState('')
-  const [sending, setSending] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [imgPreview, setImgPreview] = useState<string | null>(null)
-  const bottomRef = useRef<HTMLDivElement>(null)
-  const fileRef = useRef<HTMLInputElement>(null)
+  const params = useSearchParams()
+  const aboutRef = params.get('ref')
+  const me = useCustomerMe<Me>()
 
-  async function load() {
-    const res = await fetch('/api/customer/chat')
-    if (res.status === 401) { router.push('/customer/login'); return }
-    const data = await res.json()
-    if (data.messages) setMessages(data.messages)
+  const [messages, setMessages] = useState<Msg[] | null>(null)
+  const [loadFailed, setLoadFailed] = useState(false)
+  const [text, setText] = useState(aboutRef ? `Hi, I have a question about transaction ${aboutRef}.` : '')
+  const [imgPreview, setImgPreview] = useState<string | null>(null)
+  const [sending, setSending] = useState(false)
+  const [sendError, setSendError] = useState('')
+  const listRef = useRef<HTMLDivElement>(null)
+  const fileRef = useRef<HTMLInputElement>(null)
+  const inputRef = useRef<HTMLTextAreaElement>(null)
+  const stickToBottom = useRef(true)
+  const lastCount = useRef(0)
+  const loadedOnce = useRef(false)
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/customer/chat')
+      if (res.status === 401) { router.push('/customer/login'); return }
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = await res.json()
+      setMessages(data.messages ?? [])
+      setLoadFailed(false)
+      loadedOnce.current = true
+    } catch {
+      // Keep showing what we have; only show the error screen if nothing ever loaded.
+      if (!loadedOnce.current) setLoadFailed(true)
+    }
+  }, [router])
+
+  useEffect(() => {
+    load()
+    const iv = setInterval(() => { if (document.visibilityState === 'visible') load() }, 5000)
+    return () => clearInterval(iv)
+  }, [load])
+
+  // Only jump to the newest message when one arrives and the reader is already near the bottom,
+  // so polling never yanks someone away from older messages they're reading.
+  useLayoutEffect(() => {
+    const el = listRef.current
+    if (!el || !messages) return
+    if (messages.length !== lastCount.current && stickToBottom.current) el.scrollTop = el.scrollHeight
+    lastCount.current = messages.length
+  }, [messages])
+
+  function onScroll() {
+    const el = listRef.current
+    if (el) stickToBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80
   }
 
-  useEffect(() => {
-    load().finally(() => setLoading(false))
-    const iv = setInterval(load, 5000)
-    return () => clearInterval(iv)
-  }, [])
-
-  useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
+  // Grow the box with the text, up to about five lines.
+  useLayoutEffect(() => {
+    const el = inputRef.current
+    if (!el) return
+    el.style.height = 'auto'
+    el.style.height = `${Math.min(el.scrollHeight, 132)}px`
+  }, [text])
 
   function pickImage(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
@@ -60,112 +115,142 @@ export default function CustomerChatPage() {
   async function send() {
     if ((!text.trim() && !imgPreview) || sending) return
     setSending(true)
-    try {
-      await fetch('/api/customer/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text.trim(), imageUrl: imgPreview }),
-      })
-      setText('')
-      setImgPreview(null)
-      await load()
-    } finally { setSending(false) }
+    setSendError('')
+    const result = await postJson('/api/customer/chat', { message: text.trim(), imageUrl: imgPreview })
+    setSending(false)
+    if (!result.ok) {
+      // Keep the text and photo so nothing the customer typed is lost.
+      setSendError(`Message not sent. ${describeFailure(result)}`)
+      return
+    }
+    setText('')
+    setImgPreview(null)
+    stickToBottom.current = true
+    // Sent: drop ?ref= so a reload doesn't pre-fill the same question again.
+    if (aboutRef) router.replace('/customer/chat')
+    await load()
   }
 
-  return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg)', paddingBottom: 80 }}>
-      <div style={{
-        height: 56, background: 'linear-gradient(135deg,#071a0e,#0e4d24)', flexShrink: 0,
-        display: 'flex', alignItems: 'center', padding: '0 16px', gap: 12,
-        boxShadow: '0 2px 12px rgba(0,0,0,.3)', zIndex: 10,
-      }}>
-        <button onClick={() => router.push('/customer/dashboard')} style={{ background: 'none', border: 'none', color: '#fff', fontSize: 22, cursor: 'pointer', padding: 0 }}>←</button>
-        <div>
-          <div style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 15, fontWeight: 800, color: '#fff' }}>Support Chat</div>
-          <div style={{ fontSize: 10.5, color: 'rgba(255,255,255,.45)', marginTop: 2 }}>Messages with your agent & admin</div>
-        </div>
-      </div>
+  const agentName = me.data ? displayName(me.data.agent.name) : 'Your agent'
+  const firstName = agentName.split(' ')[0]
 
-      <div style={{ flex: 1, overflowY: 'auto', padding: '16px 16px 8px' }}>
-        {loading && <div style={{ textAlign: 'center', color: 'var(--mu)', fontSize: 13, padding: 20 }}>Loading…</div>}
-        {!loading && messages.length === 0 && (
-          <div style={{ textAlign: 'center', padding: 40 }}>
-            <div style={{ fontSize: 36, marginBottom: 8 }}>💬</div>
-            <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--txt)' }}>No messages yet</div>
-            <div style={{ fontSize: 13, color: 'var(--mu)', marginTop: 4 }}>Send a message to your agent or support team.</div>
+  return (
+    <div className="ui-screen ui-chat">
+      <header className="ui-topbar ui-chat-head">
+        <button type="button" className="ui-icon-btn" onClick={() => router.push('/customer/dashboard')} aria-label="Back to home">
+          <Icons.back size={22} aria-hidden="true" />
+        </button>
+        <span className="ui-avatar" aria-hidden="true">{agentName[0]}</span>
+        <div className="ui-topbar-main">
+          <h1 className="ui-topbar-title">{agentName}</h1>
+          <div className="ui-topbar-sub">Your agent{me.data ? ` · ${me.data.agent.agentId}` : ''}</div>
+        </div>
+        {me.data && (
+          <a className="ui-icon-btn" href={`tel:${me.data.agent.phone}`} aria-label={`Call ${firstName}`}>
+            <Icons.phone size={20} aria-hidden="true" />
+          </a>
+        )}
+      </header>
+
+      <div className="ui-chat-list" ref={listRef} onScroll={onScroll} aria-live="polite">
+        {messages === null && !loadFailed && (
+          <div className="ui-skeleton" role="status" aria-label="Loading messages">
+            <div className="ui-bubble-row"><Bone w="62%" h={44} /></div>
+            <div className="ui-bubble-row ui-bubble-row--mine"><Bone w="48%" h={44} /></div>
+            <div className="ui-bubble-row"><Bone w="55%" h={60} /></div>
           </div>
         )}
-        {messages.map(msg => {
-          const isCustomer = msg.sender === 'customer'
+
+        {loadFailed && (
+          <EmptyState
+            icon="error"
+            tone="danger"
+            title="We couldn't load your messages"
+            text="Check your connection and try again."
+            action={<button type="button" className="ui-btn ui-btn--primary" onClick={() => { setLoadFailed(false); load() }}><Icons.retry size={18} aria-hidden="true" /> Try again</button>}
+          />
+        )}
+
+        {messages && messages.length === 0 && (
+          <div className="ui-chat-empty">
+            <EmptyState icon="chat" title={`Message ${firstName}`} text="Ask about a deposit, collecting your money or your plan. Tap a question to start." />
+            <div className="ui-chat-prompts">
+              {PROMPTS.map(p => (
+                <button key={p} type="button" className="ui-chip" onClick={() => { setText(p); inputRef.current?.focus() }}>{p}</button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {messages?.map((msg, i) => {
+          const mine = msg.sender === 'customer'
+          const showDay = i === 0 || dayLabel(messages[i - 1].createdAt) !== dayLabel(msg.createdAt)
           return (
-            <div key={msg.id} style={{ display: 'flex', justifyContent: isCustomer ? 'flex-end' : 'flex-start', marginBottom: 10 }}>
-              <div style={{ maxWidth: '78%' }}>
-                {!isCustomer && <div style={{ fontSize: 10.5, color: 'var(--mu)', marginBottom: 3, fontWeight: 600 }}>{msg.senderName ?? msg.sender}</div>}
-                <div style={{
-                  borderRadius: isCustomer ? '14px 14px 4px 14px' : '14px 14px 14px 4px',
-                  background: isCustomer ? 'var(--g)' : 'var(--card)',
-                  border: isCustomer ? 'none' : '1px solid var(--br)',
-                  overflow: 'hidden',
-                }}>
+            <div key={msg.id}>
+              {showDay && <p className="ui-chat-day">{dayLabel(msg.createdAt)}</p>}
+              <div className={`ui-bubble-row${mine ? ' ui-bubble-row--mine' : ''}`}>
+                <div className={`ui-bubble${mine ? ' ui-bubble--mine' : ''}`}>
                   {msg.imageUrl && (
-                    <img src={msg.imageUrl} alt="shared" style={{ width: '100%', maxWidth: 260, display: 'block', borderRadius: msg.message ? '14px 14px 0 0' : undefined }} onClick={() => window.open(msg.imageUrl!, '_blank')} />
+                    <a href={msg.imageUrl} target="_blank" rel="noreferrer" className="ui-bubble-img">
+                      <img src={msg.imageUrl} alt={mine ? 'Photo you sent' : `Photo from ${firstName}`} />
+                    </a>
                   )}
-                  {msg.message && (
-                    <div style={{ padding: '10px 14px', color: isCustomer ? '#fff' : 'var(--txt)', fontSize: 14, lineHeight: 1.5 }}>
-                      {msg.message}
-                    </div>
-                  )}
-                </div>
-                <div style={{ fontSize: 10, color: 'var(--mu)', marginTop: 3, textAlign: isCustomer ? 'right' : 'left' }}>
-                  {new Date(msg.createdAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}
+                  {msg.message && <p className="ui-bubble-text">{msg.message}</p>}
+                  <span className="ui-bubble-time">{formatTime(msg.createdAt)}</span>
                 </div>
               </div>
             </div>
           )
         })}
-        <div ref={bottomRef} />
       </div>
 
-      {/* Image preview */}
-      {imgPreview && (
-        <div style={{ padding: '8px 16px', background: 'var(--card)', borderTop: '1px solid var(--br)' }}>
-          <div style={{ position: 'relative', display: 'inline-block' }}>
-            <img src={imgPreview} alt="preview" style={{ height: 72, borderRadius: 10, border: '2px solid var(--g)' }} />
-            <button onClick={() => setImgPreview(null)} style={{ position: 'absolute', top: -6, right: -6, width: 20, height: 20, borderRadius: '50%', background: '#e74c3c', border: 'none', color: '#fff', cursor: 'pointer', fontSize: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900 }}>✕</button>
+      <div className="ui-composer">
+        {sendError && (
+          <p className="ui-composer-error" role="alert"><Icons.error size={16} aria-hidden="true" /> {sendError}</p>
+        )}
+        {imgPreview && (
+          <div className="ui-composer-preview">
+            <img src={imgPreview} alt="Photo to send" />
+            <button type="button" className="ui-icon-btn ui-icon-btn--soft" onClick={() => setImgPreview(null)} aria-label="Remove photo">
+              <Icons.close size={18} aria-hidden="true" />
+            </button>
           </div>
+        )}
+        <div className="ui-composer-row">
+          <input ref={fileRef} type="file" accept="image/*" onChange={pickImage} hidden />
+          <button type="button" className="ui-icon-btn ui-icon-btn--soft" onClick={() => fileRef.current?.click()} aria-label="Add a photo">
+            <Icons.image size={20} aria-hidden="true" />
+          </button>
+          <label htmlFor="chat-input" className="ui-sr-only">Message {firstName}</label>
+          <textarea
+            id="chat-input"
+            ref={inputRef}
+            className="ui-composer-input"
+            value={text}
+            onChange={e => { setText(e.target.value); setSendError('') }}
+            placeholder={`Message ${firstName}…`}
+            rows={1}
+          />
+          <button
+            type="button"
+            className="ui-send"
+            onClick={send}
+            disabled={(!text.trim() && !imgPreview) || sending}
+            aria-label={sending ? 'Sending' : 'Send message'}
+            aria-busy={sending}
+          >
+            {sending ? <span className="ui-spinner ui-spinner--sm" /> : <Icons.send size={20} aria-hidden="true" />}
+          </button>
         </div>
-      )}
-
-      <div style={{
-        padding: '10px 16px', background: 'var(--card)', borderTop: '1px solid var(--br)',
-        display: 'flex', gap: 8, alignItems: 'flex-end',
-        paddingBottom: `calc(10px + env(safe-area-inset-bottom,0px))`,
-      }}>
-        <input ref={fileRef} type="file" accept="image/*" onChange={pickImage} style={{ display: 'none' }} />
-        <button onClick={() => fileRef.current?.click()} style={{ width: 40, height: 40, borderRadius: '50%', background: 'var(--bg)', border: '1.5px solid var(--br)', cursor: 'pointer', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>🖼️</button>
-        <textarea
-          value={text} onChange={e => setText(e.target.value)}
-          placeholder="Type a message…"
-          rows={1}
-          style={{
-            flex: 1, border: '1.5px solid var(--br)', borderRadius: 20, padding: '10px 14px',
-            fontSize: 14, fontFamily: 'Inter', resize: 'none', outline: 'none',
-            marginBottom: 0, maxHeight: 100, overflowY: 'auto',
-          }}
-          onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send() } }}
-        />
-        <button
-          onClick={send} disabled={(!text.trim() && !imgPreview) || sending}
-          style={{
-            width: 42, height: 42, borderRadius: '50%', flexShrink: 0,
-            background: (text.trim() || imgPreview) ? 'var(--g)' : 'var(--br)',
-            border: 'none', cursor: (text.trim() || imgPreview) ? 'pointer' : 'default',
-            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18,
-          }}
-        >{sending ? '⏳' : '➤'}</button>
       </div>
-
-      <BottomNav items={CUSTOMER_NAV} />
     </div>
+  )
+}
+
+export default function CustomerChatPage() {
+  return (
+    <Suspense fallback={<div className="ui-screen ui-screen--center"><div className="ui-spinner" /></div>}>
+      <ChatInner />
+    </Suspense>
   )
 }

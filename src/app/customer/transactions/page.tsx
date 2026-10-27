@@ -251,7 +251,7 @@ export default function TransactionsPage() {
             tx={{ ...selected, recordedBy: recordedBy.get(selected.id) }}
             planName={selected.planGoal}
             hideAmounts={hide}
-            onHelp={() => router.push('/customer/chat')}
+            onHelp={() => router.push(`/customer/chat?ref=${encodeURIComponent(selected.ref)}`)}
             onDownload={() => download(selected)}
           />
         )}
