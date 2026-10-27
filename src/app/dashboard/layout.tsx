@@ -213,7 +213,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           {children}
         </div>
 
-        <BottomNav items={AGENT_NAV} />
+        <BottomNav items={AGENT_NAV} onMore={() => setSidebarOpen(true)} badges={{ more: chatUnread }} />
       </div>
     </div>
   )

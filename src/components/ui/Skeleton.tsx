@@ -63,3 +63,8 @@ export function FormSkeleton({ label }: { label: string }) {
     </div>
   )
 }
+
+/** A list card of placeholder rows, for lists that load inside an already-drawn page. */
+export function ListSkeleton({ count = 5 }: { count?: number }) {
+  return <div className="ui-skeleton" aria-hidden="true"><Rows count={count} /></div>
+}

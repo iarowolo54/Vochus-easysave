@@ -1,8 +1,17 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, Suspense } from 'react'
+import Link from 'next/link'
+import { useSearchParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
-import { blockMinus, nonNegativeString } from '@/lib/numeric'
+import { formatDate, formatNaira, formatTime } from '@/lib/format'
+import AmountField from '@/components/ui/AmountField'
+import EmptyState from '@/components/ui/EmptyState'
+import { FormError } from '@/components/ui/FormErrors'
+import ListRow from '@/components/ui/ListRow'
+import { ListSkeleton } from '@/components/ui/Skeleton'
+import Toast from '@/components/ui/Toast'
+import { Icons } from '@/components/ui/icons'
 
 interface Funding { id: string; ref: string; amount: number; method: string; note: string | null; createdAt: string }
 
@@ -22,31 +31,43 @@ declare global {
   }
 }
 
+const QUICK = [1000, 5000, 10000, 50000]
+
+const MIN = 100
+
+type AgentUser = { id?: string; agentId?: string; email?: string; walletBalance?: number }
+
 export default function WalletPage() {
+  return <Suspense><WalletContent /></Suspense>
+}
+
+/** Only return to pages inside the agent area, never to another site. */
+function safeReturn(v: string | null) {
+  return v && v.startsWith('/dashboard/') && !v.startsWith('//') ? v : null
+}
+
+function WalletContent() {
   const { data: session, update } = useSession()
+  const returnTo = safeReturn(useSearchParams().get('return'))
+  const [funded, setFunded] = useState(false)
   const [amount, setAmount] = useState('')
-  const [fundings, setFundings] = useState<Funding[]>([])
+  const [fundings, setFundings] = useState<Funding[] | null>(null)
   const [balance, setBalance] = useState(0)
   const [toast, setToast] = useState('')
-  const [toastType, setToastType] = useState<'ok' | 'err'>('ok')
+  const [error, setError] = useState('')
   const [paying, setPaying] = useState(false)
   const [paystackReady, setPaystackReady] = useState(false)
   const scriptLoaded = useRef(false)
-
-  const showToast = (msg: string, type: 'ok' | 'err' = 'ok') => {
-    setToast(msg); setToastType(type)
-    setTimeout(() => setToast(''), 5000)
-  }
 
   const loadFundings = () => {
     fetch('/api/wallet').then(r => r.json()).then(d => {
       setFundings(d.fundings ?? [])
       if (d.balance !== undefined) setBalance(d.balance)
-    })
+    }).catch(() => setFundings(prev => prev ?? []))
   }
 
   useEffect(() => {
-    const agent = session?.user as any
+    const agent = session?.user as AgentUser | undefined
     if (agent?.walletBalance !== undefined) setBalance(agent.walletBalance)
     loadFundings()
   }, [session])
@@ -64,22 +85,28 @@ export default function WalletPage() {
 
   async function handlePay() {
     const amt = parseFloat(amount)
-    if (!amt || amt < 100) { showToast('Minimum top-up is ₦100', 'err'); return }
+    if (!amt || amt < MIN) { setError(`The smallest top-up is ${formatNaira(MIN, { minor: false })}.`); return }
 
-    setPaying(true)
+    setPaying(true); setError('')
 
-    const initRes = await fetch('/api/wallet/paystack/init', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amount: amt }),
-    })
-    const initData = await initRes.json()
-    if (!initRes.ok) { showToast(initData.error ?? 'Could not initialise payment', 'err'); setPaying(false); return }
+    let initRes: Response
+    let initData: { error?: string; email?: string; reference?: string }
+    try {
+      initRes = await fetch('/api/wallet/paystack/init', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: amt }),
+      })
+      initData = await initRes.json()
+    } catch {
+      setError('No connection. Check your internet and try again.'); setPaying(false); return
+    }
+    if (!initRes.ok) { setError(initData.error ?? 'Couldn’t start the payment. Please try again.'); setPaying(false); return }
 
-    if (!window.PaystackPop) { showToast('Paystack not loaded yet — try again', 'err'); setPaying(false); return }
+    if (!window.PaystackPop) { setError('Paystack is still loading. Try again in a moment.'); setPaying(false); return }
 
     const pubKey = process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY ?? ''
-    const agentUser = session?.user as any
+    const agentUser = session?.user as AgentUser | undefined
     const email = initData.email ?? agentUser?.email ?? `${agentUser?.agentId?.toLowerCase()}@vochus.ng`
 
     const verify = (reference: string) => {
@@ -96,117 +123,121 @@ export default function WalletPage() {
             setAmount('')
             loadFundings()
             update()
-            showToast(`✅ ₦${amt.toLocaleString()} added to your wallet`)
+            setToast(`${formatNaira(amt, { minor: false })} added to your wallet`)
+            setFunded(true)
           } else {
-            showToast(d.error ?? 'Verification failed', 'err')
+            setError(d.error ?? 'We couldn’t confirm the payment. If you were charged, contact support with the reference.')
           }
         })
-        .catch(() => { setPaying(false); showToast('Verification error — contact support', 'err') })
+        .catch(() => { setPaying(false); setError('We couldn’t confirm the payment. If you were charged, contact support with the reference.') })
     }
 
     const handler = window.PaystackPop.setup({
       key: pubKey,
       email,
       amount: Math.round(amt * 100),
-      ref: initData.reference,
+      ref: initData.reference ?? '',
       metadata: { agentId: agentUser?.id, agentCode: agentUser?.agentId },
       callback: (resp) => { verify(resp.reference) },
-      onClose: () => { setPaying(false); showToast('Payment cancelled', 'err') },
+      onClose: () => { setPaying(false) },
     })
 
     handler.openIframe()
   }
 
-  const fmt = (n: number) => `₦${n.toLocaleString('en-NG')}`
-  const totalFunded = fundings.reduce((s, f) => s + f.amount, 0)
+  const amt = parseFloat(amount) || 0
+  const valid = amt >= MIN
+  const totalFunded = (fundings ?? []).reduce((s, f) => s + f.amount, 0)
 
   return (
-    <>
-      <div className="page-header">
-        <h2>Wallet Top-Up</h2>
-        <p>Fund your agent capital wallet via Paystack — card, bank transfer, or USSD</p>
-      </div>
+    <div className="ag-page">
+      {toast && <Toast message={toast} onDone={() => setToast('')} />}
 
-      <div className="grid g4" style={{ marginBottom: 18 }}>
-        <div className="stat-card green">
-          <div className="stat-icon" style={{ background: 'var(--gl)' }}>💼</div>
-          <div className="stat-lbl">Current Balance</div>
-          <div className="stat-val">{fmt(balance)}</div>
+      {returnTo && (
+        <div className={`ui-banner ${funded ? 'ui-banner--info' : 'ui-banner--warn'} ag-return`}>
+          {funded ? <Icons.check size={18} aria-hidden="true" /> : <Icons.wallet size={18} aria-hidden="true" />}
+          <div>{funded ? 'Your wallet is topped up.' : 'Top up, then carry on recording the saving.'}</div>
+          <Link href={returnTo} className="ui-btn ui-btn--primary ag-return-btn">{funded ? 'Back to recording' : 'Back'}</Link>
         </div>
-        <div className="stat-card blue">
-          <div className="stat-icon" style={{ background: 'var(--bl)' }}>📥</div>
-          <div className="stat-lbl">Total Funded</div>
-          <div className="stat-val">{fmt(totalFunded)}</div>
-          <div className="stat-sub">{fundings.length} top-ups</div>
-        </div>
-      </div>
+      )}
 
-      <div className="grid g-2-1">
-        <div className="card">
-          <div className="card-title">Top Up via Paystack</div>
-          <p style={{ fontSize: 12, color: 'var(--mu)', marginBottom: 16 }}>
-            Pay securely with card, bank transfer, or USSD. Funds are credited instantly after payment.
-          </p>
-          <label className="flabel">Amount (₦) *</label>
-          <input
-            className="finput" type="tel" inputMode="decimal" onKeyDown={blockMinus} placeholder="Enter amount (min ₦100)"
-            style={{ fontSize: 28, fontFamily: "'Plus Jakarta Sans',sans-serif", fontWeight: 700, textAlign: 'center', padding: 14, marginBottom: 14 }}
-            value={amount} onChange={e => setAmount(nonNegativeString(e.target.value))}
-          />
-          <div style={{ display: 'flex', gap: 8, marginBottom: 14, flexWrap: 'wrap' }}>
-            {[1000, 5000, 10000, 50000].map(n => (
-              <button key={n} className="btn btn-out btn-sm" onClick={() => setAmount(String(n))}>
-                +{fmt(n)}
-              </button>
-            ))}
-          </div>
-          {amount && parseFloat(amount) >= 100 && (
-            <div style={{ background: 'var(--gl)', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: 'var(--g)', marginBottom: 14, fontWeight: 600 }}>
-              You will pay: {fmt(parseFloat(amount))} → your wallet balance becomes {fmt(balance + parseFloat(amount))}
+      <div className="ag-home-grid ag-wallet-grid">
+        <div className="ag-col">
+          <div className="ui-section-head"><h2 id="topup-title">Add money</h2></div>
+          <section className="ui-card ag-topup" aria-labelledby="topup-title">
+            <div className="ag-topup-balance">
+              <span className="ag-topup-icon" aria-hidden="true"><Icons.wallet size={22} /></span>
+              <span>
+                <span className="ui-row-sub ui-block">Wallet balance</span>
+                <span className="ag-topup-balance-value">{formatNaira(balance)}</span>
+              </span>
             </div>
+
+            <p className="ui-row-sub">Your wallet pays for the cash savings you record. Top up before you go out to collect.</p>
+
+            <FormError message={error} />
+
+            <AmountField
+              value={amount}
+              onChange={v => { setAmount(v); setError('') }}
+              invalid={!!amount && !valid}
+              hint={amount && !valid ? `At least ${formatNaira(MIN, { minor: false })}` : `Minimum ${formatNaira(MIN, { minor: false })}`}
+            />
+
+            <div className="ag-quick" role="group" aria-label="Quick amounts">
+              {QUICK.map(n => (
+                <button key={n} type="button" className="ag-chip" aria-pressed={amt === n} onClick={() => { setAmount(String(n)); setError('') }}>
+                  {formatNaira(n, { minor: false })}
+                </button>
+              ))}
+            </div>
+
+            <dl className="ag-done-rows ag-topup-rows">
+              <div><dt>You pay</dt><dd>{valid ? formatNaira(amt) : '—'}</dd></div>
+              <div><dt>Wallet after</dt><dd className={valid ? 'ag-strong' : undefined}>{valid ? formatNaira(balance + amt) : '—'}</dd></div>
+            </dl>
+
+            <button type="button" className="ui-btn ui-btn--primary ui-btn--block ag-topup-btn" disabled={paying || !paystackReady || !valid} onClick={handlePay}>
+              {!paystackReady
+                ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Loading Paystack…</>
+                : paying
+                  ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Waiting for payment…</>
+                  : valid ? `Pay ${formatNaira(amt, { minor: false })}` : 'Enter an amount'}
+            </button>
+            <p className="ui-note ui-note--center"><Icons.locked size={16} aria-hidden="true" /> Secured by Paystack · card, bank transfer or USSD</p>
+          </section>
+        </div>
+
+        <div className="ag-col">
+          <div className="ui-section-head"><h2>Top-ups</h2>{fundings && fundings.length > 0 && <span className="ui-card-meta">Last {Math.min(8, fundings.length)}</span>}</div>
+          <section className="ui-card ag-funded" aria-label="Total funded">
+            <div>
+              <span className="ui-row-sub ui-block">Total added</span>
+              <span className="ag-funded-value">{formatNaira(totalFunded, { minor: false })}</span>
+            </div>
+            <span className="ag-funded-count">{fundings ? fundings.length : '–'}<span>top-up{fundings?.length === 1 ? '' : 's'}</span></span>
+          </section>
+          {fundings === null ? (
+            <ListSkeleton count={4} />
+          ) : fundings.length === 0 ? (
+            <section className="ui-card">
+              <EmptyState icon="wallet" title="No top-ups yet" text="Money you add to your wallet will show here." />
+            </section>
+          ) : (
+            <section className="ui-card ui-card--list">
+              {fundings.slice(0, 8).map(f => (
+                <ListRow
+                  key={f.id}
+                  icon={f.method === 'Paystack' ? 'card' : 'wallet'}
+                  title={f.method === 'Paystack' ? 'Paystack top-up' : 'Wallet funding'}
+                  sub={`${formatDate(f.createdAt)} · ${formatTime(f.createdAt)}`}
+                  value={<span className="ui-value-stack ui-amount--positive">+{formatNaira(f.amount, { minor: false })}</span>}
+                />
+              ))}
+            </section>
           )}
-          <button
-            className="btn btn-g"
-            style={{ width: '100%', fontSize: 15, padding: '13px 0' }}
-            disabled={paying || !paystackReady || !amount || parseFloat(amount) < 100}
-            onClick={handlePay}
-          >
-            {!paystackReady ? '⏳ Loading Paystack…' : paying ? '⏳ Opening payment…' : `Pay ${amount ? fmt(parseFloat(amount)) : ''} with Paystack`}
-          </button>
-          <div style={{ marginTop: 10, fontSize: 11, color: 'var(--mu)', textAlign: 'center' }}>
-            🔒 Secured by Paystack · Card · Bank Transfer · USSD
-          </div>
-        </div>
-
-        <div>
-          <div className="card">
-            <div className="card-title">Funding History</div>
-            {fundings.length === 0 && (
-              <div style={{ textAlign: 'center', color: 'var(--mu)', fontSize: 13, padding: 12 }}>No top-ups yet</div>
-            )}
-            {fundings.slice(0, 8).map((f, i) => (
-              <div key={f.id} className="cust-row" style={{ padding: '9px 0', borderBottom: i < Math.min(fundings.length, 8) - 1 ? '1px solid var(--bdr)' : 'none' }}>
-                <div className="av av-g" style={{ fontSize: 13 }}>
-                  {f.method === 'Paystack' ? '💳' : '🏦'}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div className="cust-name" style={{ fontSize: 13 }}>
-                    {f.method === 'Paystack' ? 'Paystack Top-Up' : 'Wallet Funding'}
-                  </div>
-                  <div className="cust-sub">{f.ref} · {new Date(f.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: '2-digit' })}</div>
-                </div>
-                <div style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", fontWeight: 700, color: 'var(--g)', whiteSpace: 'nowrap' }}>
-                  +{fmt(f.amount)}
-                </div>
-              </div>
-            ))}
-          </div>
         </div>
       </div>
-
-      <div className={`a-toast${toast ? ' show' : ''}`} style={toastType === 'err' ? { background: 'var(--rd)', color: '#fff' } : {}}>
-        {toast}
-      </div>
-    </>
+    </div>
   )
 }

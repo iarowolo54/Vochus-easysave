@@ -35,3 +35,9 @@ export function displayName(name: string): string {
 export function formatTime(d: string | Date): string {
   return new Date(d).toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit', hour12: true })
 }
+
+/** "10000.5" → "10,000.5" — for amount inputs; keep the stored value as plain digits. */
+export function groupDigits(v: string): string {
+  const [whole, dec] = v.split('.')
+  return whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',') + (dec !== undefined ? `.${dec}` : '')
+}

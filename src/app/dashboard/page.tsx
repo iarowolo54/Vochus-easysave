@@ -1,6 +1,7 @@
 import Link from 'next/link'
 import Amount from '@/components/ui/Amount'
 import EmptyState from '@/components/ui/EmptyState'
+import TodayRound from '@/components/agent/TodayRound'
 import { Icons, type IconName } from '@/components/ui/icons'
 import { displayName, formatDate, formatNaira, formatTime } from '@/lib/format'
 import { getServerSession } from 'next-auth'
@@ -174,6 +175,8 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         <Collected label="Collected today" cash={cashToday} online={onlineToday} />
         <Collected label="Collected this week" cash={cashWeek} online={onlineWeek} />
       </div>
+
+      <TodayRound />
 
       <div className="ag-home-grid">
         <div className="ag-block ag-block--recent">

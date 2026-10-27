@@ -2,6 +2,13 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
+import { formatDate, formatNaira, formatTime } from '@/lib/format'
+import AmountField from '@/components/ui/AmountField'
+import EmptyState from '@/components/ui/EmptyState'
+import { FormError } from '@/components/ui/FormErrors'
+import { Bone, ListSkeleton } from '@/components/ui/Skeleton'
+import Toast from '@/components/ui/Toast'
+import { Icons } from '@/components/ui/icons'
 
 interface Withdrawal {
   id: string
@@ -26,9 +33,21 @@ interface Bank {
   accountName?: string
 }
 
-const fmt = (n: number) => `₦${n.toLocaleString('en-NG', { minimumFractionDigits: 0 })}`
-const fmtDate = (d: string) =>
-  new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+const STATUS: Record<string, { label: string; tone: 'warn' | 'success' | 'danger' | 'neutral' }> = {
+  Pending: { label: 'Waiting for approval', tone: 'warn' },
+  AwaitingOTP: { label: 'Approved · sending', tone: 'warn' },
+  Approved: { label: 'Paid', tone: 'success' },
+  Rejected: { label: 'Declined', tone: 'danger' },
+}
+const statusOf = (s: string) => STATUS[s] ?? { label: s, tone: 'neutral' as const }
+
+const STEPS = [
+  { label: 'Requested', hint: 'The amount is held from your commission.' },
+  { label: 'Admin approval', hint: 'An admin checks your request. You’ll see the decision here.' },
+  { label: 'Sent to your bank', hint: 'Paystack transfers the money once it’s approved.' },
+]
+
+const last4 = (n?: string | null) => (n ? `•••• ${n.slice(-4)}` : '')
 
 export default function WithdrawPage() {
   const [commissionBalance, setCommissionBalance] = useState(0)
@@ -36,6 +55,7 @@ export default function WithdrawPage() {
   const [withdrawals, setWithdrawals] = useState<Withdrawal[]>([])
   const [minWithdrawal, setMinWithdrawal] = useState(500)
   const [loading, setLoading] = useState(true)
+  const [loadFailed, setLoadFailed] = useState(false)
 
   const [amount, setAmount] = useState('')
   const [note, setNote] = useState('')
@@ -45,187 +65,210 @@ export default function WithdrawPage() {
 
   const load = useCallback(async () => {
     setLoading(true)
-    const res = await fetch('/api/agent/withdrawal')
-    if (res.ok) {
-      const d = await res.json()
-      setCommissionBalance(d.commissionBalance ?? 0)
-      setBank(d.bank ?? null)
-      setWithdrawals(d.withdrawals ?? [])
-      setMinWithdrawal(d.minWithdrawal ?? 500)
+    try {
+      const res = await fetch('/api/agent/withdrawal')
+      if (res.ok) {
+        const d = await res.json()
+        setCommissionBalance(d.commissionBalance ?? 0)
+        setBank(d.bank ?? null)
+        setWithdrawals(d.withdrawals ?? [])
+        setMinWithdrawal(d.minWithdrawal ?? 500)
+        setLoadFailed(false)
+      } else {
+        setLoadFailed(true)
+      }
+    } catch {
+      setLoadFailed(true)
     }
     setLoading(false)
   }, [])
 
   useEffect(() => { load() }, [load])
 
-  const hasPending = withdrawals.some(w => ['Pending', 'AwaitingOTP'].includes(w.status))
+  const pending = withdrawals.find(w => ['Pending', 'AwaitingOTP'].includes(w.status)) ?? null
+  const hasPending = !!pending
+  const hasBank = !!bank?.accountNumber
+  const locked = hasPending || !hasBank
 
   async function submit() {
     setError('')
     const amt = parseFloat(amount)
-    if (!Number.isFinite(amt) || amt <= 0) { setError('Enter a valid amount'); return }
-    if (amt > commissionBalance) { setError('Amount exceeds your commission balance'); return }
+    if (!Number.isFinite(amt) || amt <= 0) { setError('Enter an amount to withdraw.'); return }
+    if (amt > commissionBalance) { setError(`That’s more than your available ${formatNaira(commissionBalance)}.`); return }
     setSubmitting(true)
-    const res = await fetch('/api/agent/withdrawal', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amount: amt, note }),
-    })
+    let res: Response
+    let d: { error?: string }
+    try {
+      res = await fetch('/api/agent/withdrawal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: amt, note }),
+      })
+      d = await res.json().catch(() => ({}))
+    } catch {
+      setSubmitting(false)
+      setError('We lost the connection. Check your requests below before trying again.')
+      load(); return
+    }
     setSubmitting(false)
-    const d = await res.json().catch(() => ({}))
-    if (!res.ok) { setError(d.error ?? 'Failed to submit request'); return }
+    if (!res.ok) { setError(d.error ?? 'The request couldn’t be sent. Please try again.'); return }
     setAmount(''); setNote('')
-    setToast('Withdrawal request submitted. Awaiting super admin approval.')
-    setTimeout(() => setToast(''), 4500)
+    setToast('Request sent. An admin will review it.')
     load()
   }
 
-  const statusBadge = (s: string) => {
-    const map: Record<string, { bg: string; color: string; label: string }> = {
-      Pending:      { bg: '#fff3e0', color: '#e67e22', label: '⏳ Pending' },
-      AwaitingOTP:  { bg: '#e8f0fb', color: '#1a5fa8', label: '📩 Awaiting OTP' },
-      Approved:     { bg: '#dcfce7', color: '#16a34a', label: '✅ Approved' },
-      Rejected:     { bg: '#fde2e1', color: '#c0392b', label: '❌ Rejected' },
-    }
-    const s2 = map[s] ?? { bg: '#f1f5f9', color: '#64748b', label: s }
-    return <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: s2.bg, color: s2.color }}>{s2.label}</span>
-  }
+  const amt = parseFloat(amount) || 0
+  const tooMuch = amt > commissionBalance
+  const pendingStep = pending ? (pending.status === 'AwaitingOTP' ? 2 : 1) : 0
 
   return (
-    <>
-      <div className="page-header">
-        <h2>Withdraw Commission</h2>
-        <p>Cash out your accrued commission to your bank account</p>
-      </div>
+    <div className="ag-page">
+      {toast && <Toast message={toast} onDone={() => setToast('')} />}
 
-      {toast && <div className="alert alert-g" style={{ marginBottom: 16 }}>✅ {toast}</div>}
+      {loading && withdrawals.length === 0 && !loadFailed ? (
+        <div className="ag-home-grid ag-wallet-grid ui-skeleton" aria-hidden="true">
+          <div className="ag-col"><div className="ui-card ag-topup"><Bone h={72} /><Bone h={64} w="60%" center /><Bone h={52} /></div></div>
+          <div className="ag-col"><ListSkeleton count={3} /></div>
+        </div>
+      ) : loadFailed && withdrawals.length === 0 ? (
+        <section className="ui-card">
+          <EmptyState icon="error" tone="danger" title="Couldn’t load your commission" text="Check your connection and try again."
+            action={<button type="button" className="ui-btn ui-btn--secondary" onClick={load}><Icons.retry size={18} aria-hidden="true" /> Try again</button>} />
+        </section>
+      ) : (
+        <div className="ag-home-grid ag-wallet-grid">
+          <div className="ag-col">
+            {pending && (
+              <>
+              <div className="ui-section-head"><h2>In progress</h2></div>
+              <section className="ui-card ag-track" aria-label="Request in progress">
+                <div className="ag-track-head">
+                  <div>
+                    <span className="ui-row-sub ui-block">Requested {formatDate(pending.requestedAt)}</span>
+                    <span className="ag-funded-value">{formatNaira(pending.amount)}</span>
+                  </div>
+                  <span className={`ui-status ui-status--sm ui-status--${statusOf(pending.status).tone}`}>{statusOf(pending.status).label}</span>
+                </div>
+                <ol className="ui-steps">
+                  {STEPS.map((step, i) => {
+                    const state = i < pendingStep ? 'done' : i === pendingStep ? 'current' : 'todo'
+                    return (
+                      <li key={step.label} className={`ui-step ui-step--${state}`} aria-current={state === 'current' ? 'step' : undefined}>
+                        <span className="ui-step-dot" aria-hidden="true">{state === 'done' && <Icons.check size={14} />}</span>
+                        <span>
+                          <span className="ui-step-label">{step.label}</span>
+                          {state === 'current' && <span className="ui-step-hint">{step.hint}</span>}
+                        </span>
+                      </li>
+                    )
+                  })}
+                </ol>
+              </section>
+              </>
+            )}
+            <div className="ui-section-head"><h2 id="wd-title">New request</h2></div>
+            <section className="ui-card ag-topup" aria-labelledby="wd-title">
+              <div className="ag-topup-balance">
+                <span className="ag-topup-icon" aria-hidden="true"><Icons.commission size={22} /></span>
+                <span>
+                  <span className="ui-row-sub ui-block">Available to withdraw</span>
+                  <span className="ag-topup-balance-value">{formatNaira(commissionBalance)}</span>
+                </span>
+              </div>
 
-      {loading && <div style={{ textAlign: 'center', color: 'var(--mu)', padding: 24 }}>Loading…</div>}
-
-      {!loading && (
-        <div className="grid g-2-1">
-          <div>
-            <div className="card" style={{ marginBottom: 16 }}>
-              <div className="card-title">Request Withdrawal</div>
-
-              {!bank?.accountNumber ? (
-                <div className="alert" style={{ background: '#fff3e0', color: '#c0392b', border: '1px solid #f5c6c6', borderRadius: 8, padding: '10px 14px', fontSize: 13, marginBottom: 14 }}>
-                  ⚠️ Add your payout bank account first. <Link href="/dashboard/settings" style={{ color: '#c0392b', fontWeight: 700 }}>Go to Settings →</Link>
+              {!hasBank ? (
+                <div className="ui-banner ui-banner--warn">
+                  <Icons.error size={18} aria-hidden="true" />
+                  <div>Add the bank account you want to be paid into first. <Link href="/dashboard/settings" className="ag-banner-link">Add it in Settings</Link></div>
                 </div>
               ) : (
-                <div style={{ background: '#f8fafc', border: '1px solid var(--bdr)', borderRadius: 10, padding: 12, marginBottom: 14, fontSize: 13 }}>
-                  <div style={{ fontSize: 11, color: 'var(--mu)', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '.5px', marginBottom: 4 }}>Payout Account</div>
-                  <div style={{ fontWeight: 700, color: 'var(--text)' }}>{bank.accountName ?? '—'}</div>
-                  <div style={{ color: 'var(--mu)' }}>{bank.bankName} · {bank.accountNumber}</div>
+                <div className="ag-payee">
+                  <span className="ui-row-icon" aria-hidden="true"><Icons.loan size={20} /></span>
+                  <span className="ag-payee-main">
+                    <span className="ui-row-sub ui-block">Paid into</span>
+                    <span className="ui-row-title ui-block">{bank?.accountName || bank?.bankName}</span>
+                    <span className="ui-row-sub ui-block">{bank?.accountName ? `${bank.bankName} · ` : ''}{last4(bank?.accountNumber)}</span>
+                  </span>
+                  <Link href="/dashboard/settings" className="ui-link">Change</Link>
                 </div>
               )}
 
               {hasPending && (
-                <div className="alert" style={{ background: '#e8f0fb', color: '#1a5fa8', border: '1px solid #1a5fa8', borderRadius: 8, padding: '10px 14px', fontSize: 13, marginBottom: 14 }}>
-                  ℹ️ You have a pending withdrawal. Wait for admin decision before requesting another.
+                <div className="ui-banner ui-banner--info">
+                  <Icons.pending size={18} aria-hidden="true" />
+                  <div>You can ask for another withdrawal once the one in progress has been decided.</div>
                 </div>
               )}
 
-              {error && <div className="alert alert-rd" style={{ marginBottom: 12 }}>🔴 {error}</div>}
+              <FormError message={error} />
 
-              <div className="form-row">
-                <label className="flabel">Amount (₦)</label>
-                <input
-                  className="finput"
-                  inputMode="decimal"
-                  placeholder="Enter amount"
-                  value={amount}
-                  onChange={e => setAmount(e.target.value.replace(/[^0-9.]/g, ''))}
-                  disabled={hasPending || !bank?.accountNumber}
-                />
-                <div style={{ fontSize: 12, color: 'var(--mu)', marginTop: 4 }}>
-                  Available: <strong style={{ color: 'var(--g)' }}>{fmt(commissionBalance)}</strong>
-                  {commissionBalance > 0 && (
-                    <button
-                      type="button"
-                      style={{ background: 'none', border: 'none', color: 'var(--b)', fontSize: 12, cursor: 'pointer', marginLeft: 8, fontWeight: 600 }}
-                      onClick={() => setAmount(commissionBalance.toFixed(2))}
-                    >
-                      Withdraw all
-                    </button>
-                  )}
+              <AmountField
+                value={amount}
+                onChange={v => { setAmount(v); setError('') }}
+                invalid={tooMuch}
+                disabled={locked}
+                hint={tooMuch ? `More than your available ${formatNaira(commissionBalance)}` : `Minimum ${formatNaira(minWithdrawal, { minor: false })}`}
+              />
+              {commissionBalance > 0 && !locked && (
+                <div className="ag-quick">
+                  <button type="button" className="ag-chip" aria-pressed={amount === commissionBalance.toFixed(2)} onClick={() => setAmount(commissionBalance.toFixed(2))}>
+                    Withdraw all · {formatNaira(commissionBalance, { minor: false })}
+                  </button>
                 </div>
+              )}
+
+              <div className="ui-field ag-note-field">
+                <label className="ui-label" htmlFor="wd-note">Note for the admin <span className="ui-link--muted">(optional)</span></label>
+                <textarea id="wd-note" className="ui-input ag-textarea" rows={2} placeholder="Anything they should know"
+                  value={note} onChange={e => setNote(e.target.value)} disabled={locked} />
               </div>
 
-              <div className="form-row">
-                <label className="flabel">Note (optional)</label>
-                <textarea
-                  className="finput"
-                  rows={2}
-                  placeholder="Anything the admin should know…"
-                  value={note}
-                  onChange={e => setNote(e.target.value)}
-                  disabled={hasPending || !bank?.accountNumber}
-                  style={{ resize: 'vertical' }}
-                />
-              </div>
+              <dl className="ag-done-rows ag-topup-rows">
+                <div><dt>You receive</dt><dd>{amt > 0 && !tooMuch ? formatNaira(amt) : '—'}</dd></div>
+                <div><dt>Commission left</dt><dd>{amt > 0 && !tooMuch ? formatNaira(commissionBalance - amt) : '—'}</dd></div>
+              </dl>
 
-              <button
-                className="btn btn-g btn-sm"
-                disabled={submitting || hasPending || !bank?.accountNumber || !amount}
-                onClick={submit}
-              >
-                {submitting ? '⏳ Submitting…' : '💸 Submit Withdrawal Request'}
+              <button type="button" className="ui-btn ui-btn--primary ui-btn--block ag-topup-btn"
+                disabled={submitting || locked || !amount || tooMuch} onClick={submit}>
+                {submitting
+                  ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Sending request…</>
+                  : amt > 0 ? `Request ${formatNaira(amt, { minor: false })}` : 'Request withdrawal'}
               </button>
-            </div>
-
-            <div className="card">
-              <div className="card-title">Withdrawal History</div>
-              {withdrawals.length === 0 && (
-                <div style={{ textAlign: 'center', color: 'var(--mu)', fontSize: 13, padding: 12 }}>No withdrawals yet</div>
-              )}
-              {withdrawals.map((w, i) => (
-                <div key={w.id} style={{ padding: '12px 0', borderBottom: i < withdrawals.length - 1 ? '1px solid var(--bdr)' : 'none' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 4 }}>
-                    <div style={{ fontFamily: "'IBM Plex Serif', serif", fontWeight: 700, fontSize: 13, color: 'var(--b)' }}>{w.ref}</div>
-                    {statusBadge(w.status)}
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 13 }}>
-                    <div>
-                      <div style={{ fontWeight: 700, color: 'var(--text)' }}>{fmt(w.amount)}</div>
-                      <div style={{ fontSize: 11, color: 'var(--mu)' }}>{w.bankName} · ****{w.accountNumber?.slice(-4)}</div>
-                    </div>
-                    <div style={{ fontSize: 11, color: 'var(--mu)', textAlign: 'right' }}>
-                      Requested: {fmtDate(w.requestedAt)}
-                      {w.decidedAt && <><br />Decided: {fmtDate(w.decidedAt)} by {w.decidedBy}</>}
-                    </div>
-                  </div>
-                  {w.adminNote && (
-                    <div style={{ marginTop: 6, fontSize: 12, color: 'var(--mu)', fontStyle: 'italic' }}>Admin note: {w.adminNote}</div>
-                  )}
-                </div>
-              ))}
-            </div>
+              <p className="ui-note ui-note--center"><Icons.locked size={16} aria-hidden="true" /> An admin approves every withdrawal before it’s paid</p>
+            </section>
           </div>
 
-          <div>
-            <div className="card" style={{ marginBottom: 16 }}>
-              <div className="card-title">Commission Balance</div>
-              <div style={{ textAlign: 'center', padding: '16px 0' }}>
-                <div style={{ fontSize: 11, color: 'var(--mu)', textTransform: 'uppercase', letterSpacing: 1 }}>Available for withdrawal</div>
-                <div style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", fontSize: 34, fontWeight: 800, color: 'var(--g)', margin: '8px 0' }}>
-                  {fmt(commissionBalance)}
-                </div>
-              </div>
-            </div>
-            <div className="card">
-              <div className="card-title">How it works</div>
-              <ol style={{ fontSize: 13, color: 'var(--mu)', paddingLeft: 20, lineHeight: 1.7, margin: 0 }}>
-                <li>Add your payout bank in Settings.</li>
-                <li>Request a withdrawal — funds are held from your balance.</li>
-                <li>Super admin reviews and approves.</li>
-                <li>Paystack transfers to your bank on approval.</li>
-                <li>If rejected, the amount returns to your commission balance.</li>
-              </ol>
-            </div>
+          <div className="ag-col">
+            <div className="ui-section-head"><h2>All requests</h2></div>
+
+
+            {withdrawals.length === 0 ? (
+              <section className="ui-card">
+                <EmptyState icon="withdraw" title="No withdrawals yet" text="Your requests and their progress will show here." />
+              </section>
+            ) : (
+              <section className="ui-card ui-card--list" aria-label="Withdrawal history">
+                {withdrawals.map(w => {
+                  const st = statusOf(w.status)
+                  return (
+                    <div key={w.id} className="ui-row ag-wd-row">
+                      <span className={`ui-row-icon${w.status === 'Rejected' ? ' ag-icon-danger' : ''}`} aria-hidden="true">
+                        {w.status === 'Approved' ? <Icons.check size={20} /> : w.status === 'Rejected' ? <Icons.close size={20} /> : <Icons.pending size={20} />}
+                      </span>
+                      <span className="ui-row-main">
+                        <span className="ui-row-title ui-block">{formatNaira(w.amount)}</span>
+                        <span className="ui-row-sub ui-block">{last4(w.accountNumber)} · {formatDate(w.requestedAt)}, {formatTime(w.requestedAt)}</span>
+                        {w.adminNote && <span className="ag-admin-note">“{w.adminNote}”</span>}
+                      </span>
+                      <span className={`ui-status ui-status--sm ui-status--${st.tone}`}>{st.label}</span>
+                    </div>
+                  )
+                })}
+              </section>
+            )}
           </div>
         </div>
       )}
-    </>
+    </div>
   )
 }

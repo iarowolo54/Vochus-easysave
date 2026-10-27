@@ -5,10 +5,12 @@ import { useSession } from 'next-auth/react'
 import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { blockMinus, nonNegativeString } from '@/lib/numeric'
+import { avatarTint } from '@/lib/avatar'
 import { displayName, formatNaira, formatTime } from '@/lib/format'
 import BottomSheet from '@/components/ui/BottomSheet'
 import EmptyState from '@/components/ui/EmptyState'
-import { FieldError, FormError } from '@/components/ui/FormErrors'
+import { FormError } from '@/components/ui/FormErrors'
+import PinPad from '@/components/ui/PinPad'
 import ListRow from '@/components/ui/ListRow'
 import Toast from '@/components/ui/Toast'
 import { Icons } from '@/components/ui/icons'
@@ -21,6 +23,8 @@ interface Customer {
 }
 
 interface TodaySaving { name: string; time: string; method: string; amount: number }
+interface RecentCustomer { code: string; name: string; photoUrl?: string | null }
+interface PaidToday { amount: number; time: string }
 
 type Receipt = {
   ref: string; customer: string; customerId: string; phone: string; amount: number; balance: number
@@ -43,6 +47,25 @@ export default function SavingsPage() {
 function maskPhone(p: string) {
   if (!p || p.length < 7) return p
   return p.slice(0, 4) + '****' + p.slice(-3)
+}
+
+/** wa.me needs the number in international form: 0803… → 234803… */
+function waNumber(phone: string) {
+  const d = phone.replace(/\D/g, '')
+  return d.startsWith('0') ? `234${d.slice(1)}` : d
+}
+
+function whatsAppLink(phone: string, r: Receipt, days: number) {
+  const lines = [
+    'Vochus Easy Save — saving received',
+    `${formatNaira(r.amount)} for ${displayName(r.customer)}${days > 1 ? ` (${days} days)` : ''}`,
+    `New balance: ${formatNaira(r.balance)}`,
+    r.goal ? `Plan: ${r.goal}` : '',
+    `Date: ${r.date}`,
+    `Reference: ${r.ref}`,
+    r.agent ? `Recorded by: ${r.agent}` : '',
+  ].filter(Boolean)
+  return `https://wa.me/${waNumber(phone)}?text=${encodeURIComponent(lines.join('\n'))}`
 }
 
 function CustomerAvatar({ c }: { c: Pick<Customer, 'firstName' | 'lastName' | 'photoUrl'> }) {
@@ -75,6 +98,10 @@ function SavingsContent() {
   const [hasPin, setHasPin] = useState(true)
   const [lastReceipt, setLastReceipt] = useState<Receipt | null>(null)
   const [lastDays, setLastDays] = useState(1)
+  const [lastPhone, setLastPhone] = useState('')
+  const [walletBalance, setWalletBalance] = useState<number | null>(null)
+  const [recent, setRecent] = useState<RecentCustomer[]>([])
+  const [paidToday, setPaidToday] = useState<PaidToday[] | null>(null)
   const recordDate = searchParams.get('date') ?? null
 
   // Bulk payment
@@ -95,8 +122,11 @@ function SavingsContent() {
   const [pinVerifying, setPinVerifying] = useState(false)
 
   useEffect(() => {
-    fetch('/api/agent').then(r => r.json()).then(d => setHasPin(!!d.agent?.hasPin)).catch(() => {})
-  }, [])
+    fetch('/api/agent').then(r => r.json()).then(d => {
+      setHasPin(!!d.agent?.hasPin)
+      if (typeof d.agent?.walletBalance === 'number') setWalletBalance(d.agent.walletBalance)
+    }).catch(() => {})
+  }, [refreshKey])
 
   useEffect(() => {
     if (!bulkMode || !selected?.planId) return
@@ -162,16 +192,57 @@ function SavingsContent() {
           const d2 = new Date(t.createdAt)
           const now = new Date()
           return d2.toDateString() === now.toDateString()
-        }).slice(0, 5).map((t: { customer?: { name?: string }; createdAt: string; method?: string; amount: number }) => ({
-          name: t.customer?.name ?? '—',
+        }).slice(0, 5).map((t: { customer?: { name?: string; firstName?: string; lastName?: string }; createdAt: string; method?: string; amount: number }) => ({
+          name: t.customer?.name ?? (t.customer ? `${t.customer.firstName ?? ''} ${t.customer.lastName ?? ''}`.trim() : '—'),
           time: formatTime(t.createdAt),
           method: t.method ?? 'Cash',
           amount: t.amount,
         })) ?? []
         setTodaySavings(today)
+        // People this agent recorded most recently, for one-tap selection.
+        const seen = new Set<string>()
+        const rec: RecentCustomer[] = []
+        for (const t of (d.transactions ?? []) as { customer?: { customerId?: string; name?: string } }[]) {
+          const c = t.customer
+          if (!c?.customerId || !c.name || seen.has(c.customerId)) continue
+          seen.add(c.customerId)
+          rec.push({ code: c.customerId, name: c.name })
+          if (rec.length === 5) break
+        }
+        setRecent(rec)
       })
       .catch(() => setTodaySavings(prev => prev ?? []))
   }, [refreshKey])
+
+  // Has this customer already paid today? Guards against recording the same cash twice.
+  useEffect(() => {
+    setPaidToday(null)
+    if (!selected || recordDate) return
+    let live = true
+    fetch(`/api/transactions?type=saving&customerId=${selected.id}&limit=10`)
+      .then(r => r.json())
+      .then(d => {
+        if (!live) return
+        const today = new Date().toDateString()
+        setPaidToday(((d.transactions ?? []) as { amount: number; createdAt: string; status?: string }[])
+          .filter(t => new Date(t.createdAt).toDateString() === today)
+          .map(t => ({ amount: t.amount, time: formatTime(t.createdAt) })))
+      })
+      .catch(() => { if (live) setPaidToday([]) })
+    return () => { live = false }
+  }, [selected, recordDate])
+
+  async function chooseRecent(code: string) {
+    setError('')
+    try {
+      const d = await fetch(`/api/customers?search=${encodeURIComponent(code)}&limit=1`).then(r => r.json())
+      const c = d.customers?.[0]
+      if (c) choose(c)
+      else setError('Couldn’t open that customer. Try searching instead.')
+    } catch {
+      setError('No connection. Check your internet and try again.')
+    }
+  }
 
   function choose(c: Customer) {
     setSelected(c); setResults([]); setQuery(`${c.firstName} ${c.lastName}`); setError('')
@@ -308,6 +379,7 @@ function SavingsContent() {
       inviteUrl,
     })
     setLastDays(isBulk ? selectedDates.length : 1)
+    setLastPhone(selected.phone ?? '')
     reset()
     setRefreshKey(k => k + 1)
   }
@@ -323,6 +395,9 @@ function SavingsContent() {
   const redeemed = selected?.planStatus === 'Redeemed'
   const bulkTotal = (selected?.dailyAmount ?? 0) * selectedDates.length
   const payAmount = bulkMode ? bulkTotal : parseFloat(amount || '0')
+  const short = walletBalance !== null && payAmount > 0 && payAmount > walletBalance
+  const alreadyPaid = !bulkMode && !recordDate && paidToday && paidToday.length > 0 ? paidToday : null
+  const returnHere = selected ? `/dashboard/savings?cid=${encodeURIComponent(selected.customerId)}` : '/dashboard/savings'
   const lateDateLabel = recordDate
     ? new Date(recordDate + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
     : ''
@@ -362,6 +437,11 @@ function SavingsContent() {
                 <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => { setLastReceipt(null); requestAnimationFrame(() => searchRef.current?.focus()) }}>
                   <Icons.add size={18} aria-hidden="true" /> Record another
                 </button>
+                {lastPhone && (
+                  <a className="ui-btn ui-btn--secondary ui-btn--block" href={whatsAppLink(lastPhone, lastReceipt, lastDays)} target="_blank" rel="noopener noreferrer">
+                    <Icons.share size={18} aria-hidden="true" /> Send receipt on WhatsApp
+                  </a>
+                )}
                 {canPrint && (
                   <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={printReceipt}>
                     <Icons.print size={18} aria-hidden="true" /> Print receipt
@@ -407,7 +487,24 @@ function SavingsContent() {
                   ? <p className="ui-note"><Icons.error size={16} aria-hidden="true" /> Couldn’t search. Check your connection.</p>
                   : <p className="ui-note">No customer matches “{searchedFor}”.</p>
               )}
-              {!query.trim() && <p className="ui-note">Search, then tap the customer who paid you.</p>}
+              {!query.trim() && (recent.length > 0 ? (
+                <>
+                  <p className="ag-recent-label">Recent</p>
+                  <div className="ag-recent">
+                    {recent.map(r => {
+                      const [f = '', l = ''] = r.name.split(' ')
+                      return (
+                        <button key={r.code} type="button" className="ag-recent-item" onClick={() => chooseRecent(r.code)}>
+                          {r.photoUrl
+                            ? <img src={r.photoUrl} className="ui-avatar" alt="" />
+                            : <span className={`ui-avatar ag-av ag-av--${avatarTint(r.code)}`} aria-hidden="true">{f[0]}{l[0]}</span>}
+                          <span className="ag-recent-name">{displayName(f)}</span>
+                        </button>
+                      )
+                    })}
+                  </div>
+                </>
+              ) : <p className="ui-note">Search, then tap the customer who paid you.</p>)}
             </section>
           ) : (
             <>
@@ -455,11 +552,33 @@ function SavingsContent() {
                     </div>
                   )}
 
+                  {alreadyPaid && (
+                    <div className="ui-banner ui-banner--warn ag-card-banner" role="status">
+                      <Icons.error size={18} aria-hidden="true" />
+                      <div>
+                        <strong>Already paid today:</strong>{' '}
+                        {alreadyPaid.map(p => `${formatNaira(p.amount, { minor: false })} at ${p.time}`).join(', ')}.
+                        {' '}Only record again if this is new cash.
+                      </div>
+                    </div>
+                  )}
+                  {short && (
+                    <div className="ui-banner ui-banner--danger ag-card-banner" role="alert">
+                      <Icons.wallet size={18} aria-hidden="true" />
+                      <div>
+                        Your wallet has <strong>{formatNaira(walletBalance ?? 0)}</strong>, not enough for {formatNaira(payAmount, { minor: false })}.{' '}
+                        <Link href={`/dashboard/wallet?return=${encodeURIComponent(returnHere)}`} className="ag-banner-link">Top up wallet</Link>
+                      </div>
+                    </div>
+                  )}
                   <div className="ag-paid-in">
                     <Icons.cash size={20} aria-hidden="true" />
                     <span>Paid in</span>
                     <strong>{method}</strong>
                   </div>
+                  {walletBalance !== null && !short && payAmount > 0 && (
+                    <p className="ag-wallet-after">Wallet after: <strong>{formatNaira(walletBalance - payAmount)}</strong></p>
+                  )}
                 </section>
               )}
 
@@ -472,12 +591,12 @@ function SavingsContent() {
                   <button
                     type="button"
                     className="ui-btn ui-btn--primary ui-btn--block"
-                    disabled={loading || (bulkMode && selectedDates.length === 0)}
+                    disabled={loading || short || (bulkMode && selectedDates.length === 0)}
                     onClick={requestPin}
                   >
                     {loading
                       ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Recording…</>
-                      : payAmount > 0 ? `Record ${formatNaira(payAmount, { minor: false })}` : 'Record saving'}
+                      : payAmount > 0 ? `${alreadyPaid ? 'Record again' : 'Record'} ${formatNaira(payAmount, { minor: false })}` : 'Record saving'}
                   </button>
                 )}
                 <button type="button" className="ui-btn ui-btn--plain ui-btn--block" onClick={reset} disabled={loading}>Cancel</button>
@@ -530,28 +649,16 @@ function SavingsContent() {
           {bulkMode ? ` (${selectedDates.length} day${selectedDates.length === 1 ? '' : 's'})` : ''} for{' '}
           <strong>{displayName(`${selected?.firstName ?? ''} ${selected?.lastName ?? ''}`)}</strong>
         </p>
-        <form onSubmit={e => { e.preventDefault(); confirmPin() }}>
-          <div className="ui-field">
-            <label className="ui-label" htmlFor="pin">Transaction PIN</label>
-            <input
-              id="pin"
-              className="ui-input ui-input--number ag-pin"
-              type="password"
-              inputMode="numeric"
-              autoComplete="one-time-code"
-              maxLength={6}
-              autoFocus
-              value={pinEntry}
-              aria-invalid={!!pinError}
-              aria-describedby={pinError ? 'pin-error' : undefined}
-              onChange={e => { setPinEntry(e.target.value.replace(/\D/g, '')); setPinError('') }}
-            />
-            <FieldError id="pin-error" message={pinError} />
-          </div>
-          <button type="submit" className="ui-btn ui-btn--primary ui-btn--block" disabled={pinVerifying || !pinEntry}>
-            {pinVerifying ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Checking…</> : 'Confirm'}
-          </button>
-        </form>
+        {alreadyPaid && <p className="ag-sheet-warn"><Icons.error size={16} aria-hidden="true" /> They already paid today. Make sure this is new cash.</p>}
+        {pinModal && (
+          <PinPad
+            value={pinEntry}
+            onChange={v => { setPinEntry(v); setPinError('') }}
+            onSubmit={confirmPin}
+            busy={pinVerifying}
+            error={pinError}
+          />
+        )}
       </BottomSheet>
     </div>
   )

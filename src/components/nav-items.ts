@@ -5,6 +5,10 @@ export interface NavItem {
   icon: IconName
   label: string
   href: string
+  /** Raised centre button for the main action. */
+  prominent?: boolean
+  /** Opens the full menu instead of navigating. */
+  more?: boolean
 }
 
 export const CUSTOMER_NAV: NavItem[] = [
@@ -16,8 +20,9 @@ export const CUSTOMER_NAV: NavItem[] = [
 ]
 
 export const AGENT_NAV: NavItem[] = [
-  { key: 'dashboard', icon: 'home',      label: 'Home',      href: '/dashboard' },
-  { key: 'customers', icon: 'customers', label: 'Customers', href: '/dashboard/customers' },
-  { key: 'savings',   icon: 'plan',      label: 'Savings',   href: '/dashboard/savings' },
-  { key: 'chat',      icon: 'chat',      label: 'Chat',      href: '/dashboard/chat' },
+  { key: 'dashboard', icon: 'home',      label: 'Home',        href: '/dashboard' },
+  { key: 'customers', icon: 'customers', label: 'Customers',   href: '/dashboard/customers' },
+  { key: 'savings',   icon: 'add',       label: 'Record',      href: '/dashboard/savings', prominent: true },
+  { key: 'redeem',    icon: 'collect',   label: 'Collections', href: '/dashboard/redeem' },
+  { key: 'more',      icon: 'menu',      label: 'More',        href: '#', more: true },
 ]
