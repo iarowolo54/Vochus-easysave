@@ -29,9 +29,13 @@ export function loadOwnedRedeemablePlan(agentDbId: string, customerId: string, p
 export async function claimPlanForRedemption(
   client: Prisma.TransactionClient | typeof prisma,
   planId: string,
+  expectedBalance: number,
 ): Promise<boolean> {
+  // Match the EXACT balance the payout was computed from, so a concurrent change
+  // (e.g. a deposit) since the plan was loaded makes this claim fail rather than
+  // pay out a stale amount. The caller then retries with a fresh balance.
   const res = await client.savingsPlan.updateMany({
-    where: { id: planId, balance: { gt: 0 }, status: { not: 'Redeemed' } },
+    where: { id: planId, balance: expectedBalance, status: { not: 'Redeemed' } },
     data: { balance: 0, status: 'Redeemed' },
   })
   return res.count === 1

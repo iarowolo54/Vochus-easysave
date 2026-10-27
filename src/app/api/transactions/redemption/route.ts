@@ -41,8 +41,9 @@ export async function POST(req: NextRequest) {
   let txn
   try {
     txn = await prisma.$transaction(async (tx) => {
-      // Atomically claim the plan; a losing concurrent call must not credit.
-      const won = await claimPlanForRedemption(tx, planId)
+      // Atomically claim the plan at the exact balance the payout was computed
+      // from; a losing/stale concurrent call must not credit.
+      const won = await claimPlanForRedemption(tx, planId, plan.balance)
       if (!won) throw new Error('ALREADY_REDEEMED')
       const created = await tx.transaction.create({
         data: {

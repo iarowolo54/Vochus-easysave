@@ -49,11 +49,19 @@ test('the owning agent loads the plan', async () => {
   assert.ok(seen && seen.id === planB)
 })
 
+test('claim fails if the balance changed since load (no stale payout)', async () => {
+  // expected balance 9999 != actual 5000 -> must not claim, plan unchanged
+  assert.equal(await claimPlanForRedemption(prisma, planB, 9999), false)
+  const unchanged = await prisma.savingsPlan.findUnique({ where: { id: planB } })
+  assert.equal(unchanged?.balance, 5000)
+  assert.equal(unchanged?.status, 'Active')
+})
+
 test('concurrent claims redeem the plan exactly once (no double-spend)', async () => {
   const results = await Promise.all([
-    claimPlanForRedemption(prisma, planB),
-    claimPlanForRedemption(prisma, planB),
-    claimPlanForRedemption(prisma, planB),
+    claimPlanForRedemption(prisma, planB, 5000),
+    claimPlanForRedemption(prisma, planB, 5000),
+    claimPlanForRedemption(prisma, planB, 5000),
   ])
   assert.equal(results.filter(Boolean).length, 1)
   const after = await prisma.savingsPlan.findUnique({ where: { id: planB } })
@@ -61,5 +69,5 @@ test('concurrent claims redeem the plan exactly once (no double-spend)', async (
   assert.equal(after?.status, 'Redeemed')
   // once redeemed, it is no longer loadable/claimable
   assert.equal(await loadOwnedRedeemablePlan(agentB, customerB, planB), null)
-  assert.equal(await claimPlanForRedemption(prisma, planB), false)
+  assert.equal(await claimPlanForRedemption(prisma, planB, 5000), false)
 })
