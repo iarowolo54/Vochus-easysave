@@ -5,6 +5,8 @@ import { logAudit } from '@/lib/audit'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
 import { resolveAccount } from '@/lib/paystack'
+import { sendSMS } from '@/lib/kudisms'
+import { sendMail } from '@/lib/mail'
 import crypto from 'crypto'
 
 export async function GET() {
@@ -112,7 +114,21 @@ export async function POST(req: NextRequest) {
     actorName: `${customer.firstName} ${customer.lastName}`,
   })
 
-  return NextResponse.json({ ref: redemption.ref, token, isEarly, deduction, netPayout, balance: plan.balance })
+  // Deliver the confirmation code to the customer's OWN registered phone (and
+  // email if on file) — it is never returned in the response or logged, so the
+  // confirmation step proves possession of the registered contact, not just
+  // that the customer can read their own screen. sendSMS is a no-op off-prod.
+  const expiryStr = tokenExpiry.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  sendSMS(customer.phone, `Vochus Easy Save: your redemption confirmation code is ${token}. It expires ${expiryStr}. Do not share it.`).catch(() => {})
+  if (customer.email) {
+    sendMail({
+      to: customer.email,
+      subject: 'Your Vochus Easy Save redemption code',
+      html: `<p>Hi ${customer.firstName},</p><p>Your redemption confirmation code is:</p><p style="font-size:32px;font-weight:800;letter-spacing:8px;font-family:monospace">${token}</p><p>It expires ${expiryStr}. Do not share this code with anyone.</p>`,
+    }).catch(() => {})
+  }
+
+  return NextResponse.json({ ref: redemption.ref, isEarly, deduction, netPayout, balance: plan.balance })
 }
 
 export async function PATCH(req: NextRequest) {
