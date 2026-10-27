@@ -30,3 +30,8 @@ export function formatDate(d: string | Date): string {
 export function displayName(name: string): string {
   return name.trim().split(/\s+/).map(w => w ? w[0].toUpperCase() + w.slice(1) : w).join(' ')
 }
+
+/** 7:19 am — always with am/pm; the en-NG locale alone drops it. */
+export function formatTime(d: string | Date): string {
+  return new Date(d).toLocaleTimeString('en-GB', { hour: 'numeric', minute: '2-digit', hour12: true })
+}

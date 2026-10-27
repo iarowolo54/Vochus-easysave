@@ -6,7 +6,7 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
       <CustomerIdleTimeout />
       <style>{`
         :root {
-          --g: #1a6b3a; --gl: #e6f4ec; --gm: #9dd1b3; --gdk: #0e4d24;
+          --g: #17783a; --gl: #e7f3ea; --gm: #9fd3ae; --gdk: #125e2d;
           --gd: #c8841a; --gdl: #fdf3e0;
           --rd: #c0392b; --rdl: #fdecea;
           --b: #1a5fa8; --bl: #e8f0fb;

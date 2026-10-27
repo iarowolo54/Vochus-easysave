@@ -17,7 +17,8 @@ function prefersReducedMotion(): boolean {
   return typeof window !== 'undefined' && window.matchMedia('(prefers-reduced-motion: reduce)').matches
 }
 
-function useCountUp(target: number, enabled: boolean): number {
+/** Animates from the previous value to `target` (800ms ease-out). Shared so other visuals can move in step with a balance. */
+export function useCountUp(target: number, enabled: boolean, whole = true): number {
   const start = () => (enabled && !prefersReducedMotion() ? 0 : target)
   const [shown, setShown] = useState(start)
   const current = useRef(shown)
@@ -38,12 +39,12 @@ function useCountUp(target: number, enabled: boolean): number {
       // Continue from wherever we are if the target changes mid-count.
       current.current = from + (target - from) * eased
       // Tick whole naira; land on the exact kobo at the end so decimals don't flicker.
-      setShown(t < 1 ? Math.trunc(current.current) : target)
+      setShown(t < 1 ? (whole ? Math.trunc(current.current) : current.current) : target)
       if (t < 1) raf = requestAnimationFrame(tick)
     }
     raf = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(raf)
-  }, [target, enabled])
+  }, [target, enabled, whole])
 
   return shown
 }

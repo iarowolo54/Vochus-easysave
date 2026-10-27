@@ -3,12 +3,12 @@
 ═══════════════════════════════════════════════════════ */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
-  --g:   #1a6b3a;  --gl:  #e6f4ec;  --gm:  #9dd1b3;  --gd2: #134f2b;
+  --g:   #17783a;  --gl:  #e7f3ea;  --gm:  #9fd3ae;  --gd2: #125e2d;
   --b:   #1a5fa8;  --bl:  #e8f0fb;  --bm:  #94b8e8;
   --gd:  #c8841a;  --gdl: #fdf3e0;
   --rd:  #c0392b;  --rdl: #fdecea;
   --pu:  #7c3aed;  --pul: #f3e8ff;
-  --acc: #1a6b3a;  --accl: #e6f4ec;
+  --acc: #17783a;  --accl: #e7f3ea;
   --bg:  #f2f5f2;  --card:#ffffff;
   --txt: #111a14;  --mu:  #6b8070;  --br:  #d8e8dd;
   --r:   12px;
@@ -493,10 +493,13 @@ textarea.finput { resize: vertical; min-height: 80px; }
   --ui-ink: #0f2a1d;
   --ui-ink-2: #5e6b64;
   --ui-ink-3: #8b948f;
-  --ui-brand: #134f2b;
-  --ui-brand-on: #c4f1d6;
-  --ui-brand-tint: #e1f3e8;
-  --ui-positive: #1a7f45;
+  /* Brand green taken from the logo's wallet. Solid fill with white text (5.5:1); a slightly
+     deeper shade for green text, icons and borders on white (6.5:1). One brand colour, used sparingly. */
+  --ui-brand: #17783a;
+  --ui-brand-on: #ffffff;
+  --ui-brand-ink: #146c34;
+  --ui-brand-tint: #e7f3ea;
+  --ui-positive: #146c34;
   --ui-danger: #b42318;  --ui-danger-tint: #fdecea;
   --ui-warn: #93500c;    --ui-warn-tint: #fdf1dc;
   --ui-info: #1a5fa8;    --ui-info-tint: #e8f0fb;
@@ -520,7 +523,7 @@ textarea.finput { resize: vertical; min-height: 80px; }
 .ui-container { max-width: 560px; margin: 0 auto; padding: 0 var(--ui-s4); }
 
 :where(.ui-screen, .ui-bottom-nav) :is(button, a):focus-visible {
-  outline: 2px solid var(--ui-brand); outline-offset: 2px;
+  outline: 2px solid var(--ui-brand-ink); outline-offset: 2px;
 }
 
 /* Logo */
@@ -536,7 +539,7 @@ textarea.finput { resize: vertical; min-height: 80px; }
 .ui-topbar-sub { font-size: var(--ui-fs-sm); color: var(--ui-ink-2); margin-top: 2px; }
 .ui-avatar {
   width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0; object-fit: cover;
-  background: var(--ui-brand-tint); color: var(--ui-brand);
+  background: var(--ui-brand-tint); color: var(--ui-brand-ink);
   display: flex; align-items: center; justify-content: center;
   font-family: var(--ui-font-display); font-size: var(--ui-fs-md); font-weight: 700; text-transform: uppercase;
 }
@@ -552,7 +555,7 @@ textarea.finput { resize: vertical; min-height: 80px; }
 /* Balance hero */
 .ui-hero { display: flex; flex-direction: column; align-items: center; text-align: center; padding: var(--ui-s2) 0 var(--ui-s5); }
 .ui-hero-label { display: inline-flex; align-items: center; gap: var(--ui-s1); font-size: var(--ui-fs-md); color: var(--ui-ink-2); }
-.ui-hero-sub { font-size: var(--ui-fs-md); color: var(--ui-ink-2); margin-top: var(--ui-s2); }
+.ui-hero-sub { font-size: var(--ui-fs-md); line-height: 1.5; color: var(--ui-ink-2); margin-top: var(--ui-s2); }
 .ui-hero-sub strong { color: var(--ui-ink); }
 
 /* Money */
@@ -595,7 +598,7 @@ textarea.finput { resize: vertical; min-height: 80px; }
 .ui-link {
   display: inline-flex; align-items: center; gap: var(--ui-s1); min-height: var(--ui-tap);
   border: none; background: none; padding: 0; cursor: pointer;
-  font-family: inherit; font-size: var(--ui-fs-md); font-weight: 600; color: var(--ui-brand); text-decoration: none;
+  font-family: inherit; font-size: var(--ui-fs-md); font-weight: 600; color: var(--ui-brand-ink); text-decoration: none;
 }
 
 /* List rows */
@@ -603,7 +606,7 @@ textarea.finput { resize: vertical; min-height: 80px; }
 .ui-row + .ui-row { border-top: 1px solid var(--ui-line); }
 .ui-row-icon {
   width: 40px; height: 40px; border-radius: 50%; flex-shrink: 0;
-  background: var(--ui-brand-tint); color: var(--ui-brand);
+  background: var(--ui-brand-tint); color: var(--ui-brand-ink);
   display: flex; align-items: center; justify-content: center;
 }
 .ui-row-main { flex: 1; min-width: 0; }
@@ -633,7 +636,7 @@ textarea.finput { resize: vertical; min-height: 80px; }
   font-family: inherit; font-size: var(--ui-fs-md); font-weight: 600; text-decoration: none;
 }
 .ui-btn--primary { background: var(--ui-brand); color: var(--ui-brand-on); }
-.ui-btn--secondary { background: var(--ui-brand-tint); color: var(--ui-brand); }
+.ui-btn--secondary { background: var(--ui-brand-tint); color: var(--ui-brand-ink); }
 .ui-btn--block { width: 100%; }
 .ui-btn:disabled { opacity: .5; cursor: not-allowed; }
 .ui-btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--ui-s3); padding: 0 0 var(--ui-s4); }
@@ -644,12 +647,12 @@ textarea.finput { resize: vertical; min-height: 80px; }
 .ui-empty { text-align: center; padding: var(--ui-s5) var(--ui-s4); }
 .ui-empty-icon {
   width: 48px; height: 48px; border-radius: 50%; margin: 0 auto var(--ui-s3);
-  background: var(--ui-brand-tint); color: var(--ui-brand);
+  background: var(--ui-brand-tint); color: var(--ui-brand-ink);
   display: flex; align-items: center; justify-content: center;
 }
 .ui-empty-title { font-family: var(--ui-font-display); font-size: var(--ui-fs-md); font-weight: 700; }
 .ui-empty-text { font-size: var(--ui-fs-md); color: var(--ui-ink-2); margin: var(--ui-s1) 0 var(--ui-s4); }
-.ui-spinner { width: 32px; height: 32px; border-radius: 50%; border: 3px solid var(--ui-brand-tint); border-top-color: var(--ui-brand); animation: ui-spin .8s linear infinite; }
+.ui-spinner { width: 32px; height: 32px; border-radius: 50%; border: 3px solid var(--ui-brand-tint); border-top-color: var(--ui-brand-ink); animation: ui-spin .8s linear infinite; }
 @keyframes ui-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .ui-spinner { animation-duration: 2s; } .ui-progress > span { transition: none; } }
 
@@ -663,7 +666,7 @@ textarea.finput { resize: vertical; min-height: 80px; }
   flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: var(--ui-s1);
   font-size: var(--ui-fs-xs); font-weight: 500; color: var(--ui-ink-2); text-decoration: none;
 }
-.ui-bottom-nav-item[aria-current="page"] { color: var(--ui-brand); font-weight: 700; }
+.ui-bottom-nav-item[aria-current="page"] { color: var(--ui-brand-ink); font-weight: 700; }
 @media (min-width: 769px) { .ui-bottom-nav { display: none; } }
 
 /* Large text (Settings → Text size). Applies to every .ui-* screen. */
@@ -674,11 +677,11 @@ html[data-text-size="large"] {
 
 /* Today line under the balance */
 .ui-today {
-  display: inline-flex; align-items: center; gap: var(--ui-s2); margin-top: var(--ui-s3);
+  display: inline-flex; align-items: center; gap: var(--ui-s2); margin-top: var(--ui-s4);
   padding: var(--ui-s2) var(--ui-s4); border-radius: var(--ui-r-pill);
   font-size: var(--ui-fs-sm); font-weight: 600; background: var(--ui-surface); color: var(--ui-ink-2);
 }
-.ui-today--done { background: var(--ui-brand-tint); color: var(--ui-brand); }
+.ui-today--done { background: var(--ui-brand-tint); color: var(--ui-brand-ink); }
 
 /* Card parts */
 .ui-card-head { display: flex; align-items: center; justify-content: space-between; gap: var(--ui-s3); margin-bottom: var(--ui-s2); }
@@ -690,7 +693,7 @@ html[data-text-size="large"] {
 .ui-card-status { display: flex; align-items: center; gap: var(--ui-s2); font-weight: 600; color: var(--ui-positive); margin-bottom: var(--ui-s4); }
 .ui-card-status--warn { color: var(--ui-warn); }
 .ui-card-status--neutral { color: var(--ui-ink-2); font-weight: 500; }
-.ui-card--highlight { border: 2px solid var(--ui-brand); }
+.ui-card--highlight { border: 2px solid var(--ui-brand-ink); }
 
 /* Savings card calendar */
 .ui-cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--ui-s2); }
@@ -698,15 +701,19 @@ html[data-text-size="large"] {
 .ui-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; list-style: none; padding: 0; margin: 0 0 6px; }
 .ui-cal-dow { text-align: center; font-size: var(--ui-fs-xs); font-weight: 600; color: var(--ui-ink-2); }
 .ui-cal-day {
-  width: 100%; max-width: 44px; aspect-ratio: 1; margin: 0 auto; border-radius: 50%;
+  position: relative; width: 100%; max-width: 44px; aspect-ratio: 1; margin: 0 auto; border-radius: 50%;
   display: flex; align-items: center; justify-content: center;
+  padding: 0; border: 0; background: transparent; font-family: inherit; color: inherit;
   font-size: var(--ui-fs-sm); font-weight: 600; font-variant-numeric: tabular-nums;
 }
 .ui-cal-day--saved { background: var(--ui-brand); color: var(--ui-brand-on); }
 .ui-cal-day--missed { border: 2px dashed var(--ui-warn); background: var(--ui-warn-tint); color: var(--ui-warn); }
-.ui-cal-day--today { border: 2px solid var(--ui-brand); color: var(--ui-brand); }
+.ui-cal-day--today { border: 2px solid var(--ui-brand-ink); color: var(--ui-brand-ink); }
 .ui-cal-day--upcoming { border: 1px solid var(--ui-line); color: var(--ui-ink-2); }
-.ui-cal-day--off { color: var(--ui-ink-3); font-weight: 400; }
+.ui-cal-day--off { color: var(--ui-ink-3); font-weight: 400; opacity: .45; }
+button.ui-cal-day { cursor: pointer; transition: transform .1s ease-out; -webkit-tap-highlight-color: transparent; }
+button.ui-cal-day:active { transform: scale(.9); }
+@media (hover: hover) { button.ui-cal-day:hover { box-shadow: 0 0 0 3px var(--ui-brand-tint); } }
 .ui-legend { display: flex; flex-wrap: wrap; gap: var(--ui-s2) var(--ui-s4); list-style: none; padding: 0; margin: var(--ui-s3) 0 0; font-size: var(--ui-fs-sm); color: var(--ui-ink-2); }
 .ui-legend li { display: inline-flex; align-items: center; gap: 6px; }
 .ui-legend .ui-cal-day { width: 14px; height: 14px; margin: 0; }
@@ -719,7 +726,7 @@ html[data-text-size="large"] {
   display: flex; align-items: center; justify-content: center;
 }
 .ui-step--done .ui-step-dot { background: var(--ui-brand); border-color: var(--ui-brand); color: var(--ui-brand-on); }
-.ui-step--current .ui-step-dot { border-color: var(--ui-brand); }
+.ui-step--current .ui-step-dot { border-color: var(--ui-brand-ink); }
 .ui-step--current, .ui-step--done { color: var(--ui-ink); }
 .ui-step--current .ui-step-label { font-weight: 700; }
 .ui-step-label { display: block; }
@@ -764,8 +771,8 @@ html[data-text-size="large"] {
   font-family: inherit; font-size: inherit; color: inherit; text-decoration: none;
 }
 .ui-option:first-child { border-top: none; }
-.ui-option[aria-current="true"] .ui-row-title { color: var(--ui-brand); }
-.ui-option-check { width: 24px; flex-shrink: 0; color: var(--ui-brand); display: flex; justify-content: center; }
+.ui-option[aria-current="true"] .ui-row-title { color: var(--ui-brand-ink); }
+.ui-option-check { width: 24px; flex-shrink: 0; color: var(--ui-brand-ink); display: flex; justify-content: center; }
 
 /* Plan picker above the balance */
 .ui-plan-picker {
@@ -774,7 +781,13 @@ html[data-text-size="large"] {
   font-family: inherit; font-size: var(--ui-fs-md); font-weight: 600; color: var(--ui-ink);
 }
 .ui-plan-name { font-size: var(--ui-fs-md); font-weight: 600; color: var(--ui-ink); }
-.ui-hero-top { display: flex; align-items: center; justify-content: center; gap: var(--ui-s1); margin-bottom: var(--ui-s2); }
+.ui-hero-top { display: flex; justify-content: center; width: 100%; margin-bottom: var(--ui-s4); }
+/* Leave room for the eye (44px + gap) on both sides so long plan names can't push it off-screen. */
+.ui-hero-top-inner { position: relative; display: flex; justify-content: center; max-width: calc(100% - 2 * 48px); }
+.ui-hero-eye { position: absolute; left: 100%; top: 50%; transform: translateY(-50%); margin-left: var(--ui-s1); }
+.ui-plan-picker { max-width: 100%; }
+.ui-plan-picker-label, .ui-plan-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.ui-plan-name { display: block; max-width: 100%; line-height: var(--ui-tap); }
 
 /* Forms. `.ui-screen` prefix beats the customer layout's `.customer-page input` rule. */
 .ui-field { margin-bottom: var(--ui-s4); }
@@ -786,15 +799,20 @@ html[data-text-size="large"] {
   font-family: inherit; font-size: max(16px, var(--ui-fs-md)); color: var(--ui-ink);
   box-shadow: none; outline: none; -webkit-appearance: none; appearance: none;
 }
-.ui-screen .ui-input:focus { border-color: var(--ui-brand); box-shadow: 0 0 0 3px var(--ui-brand-tint); }
+.ui-screen .ui-input:focus { border-color: var(--ui-brand-ink); box-shadow: 0 0 0 3px var(--ui-brand-tint); }
 .ui-screen .ui-input::placeholder { color: var(--ui-ink-3); }
 .ui-screen .ui-input--number { font-size: max(18px, var(--ui-fs-lg)); font-weight: 600; letter-spacing: .5px; font-variant-numeric: tabular-nums; }
+.ui-screen .ui-input[aria-invalid="true"] { border-color: var(--ui-danger); background: #fffafa; }
+.ui-screen .ui-input[aria-invalid="true"]:focus { box-shadow: 0 0 0 3px var(--ui-danger-tint); }
+.ui-field-error { display: flex; align-items: flex-start; gap: 6px; margin-top: 6px; font-size: var(--ui-fs-sm); font-weight: 500; color: var(--ui-danger); }
+.ui-field-error svg { flex-shrink: 0; margin-top: 2px; }
+.ui-banner:focus { outline: none; }
 .ui-input-wrap { position: relative; }
 .ui-screen .ui-input-wrap .ui-input { padding-right: 76px; }
 .ui-input-action {
   position: absolute; top: 4px; right: 4px; bottom: 4px; min-width: 64px; padding: 0 var(--ui-s3);
   border: none; border-radius: 6px; background: none; cursor: pointer;
-  font-family: inherit; font-size: var(--ui-fs-md); font-weight: 600; color: var(--ui-brand);
+  font-family: inherit; font-size: var(--ui-fs-md); font-weight: 600; color: var(--ui-brand-ink);
 }
 .ui-field-link { margin-top: var(--ui-s1); }
 
@@ -817,6 +835,13 @@ body:has(.ui-auth) { background: var(--ui-canvas) !important; }
 .ui-auth-alt { margin-top: var(--ui-s3); }
 .ui-auth-foot { display: flex; align-items: center; justify-content: center; gap: 6px; margin-top: clamp(16px, 3dvh, 24px); font-size: var(--ui-fs-sm); color: var(--ui-ink-2); text-align: center; }
 .ui-banner > div { min-width: 0; overflow-wrap: anywhere; }
+.ui-auth-audience {
+  margin-left: auto; padding: 2px var(--ui-s3); border-radius: var(--ui-r-pill);
+  background: var(--ui-brand-tint); color: var(--ui-brand-ink); font-family: 'Inter', sans-serif; font-size: var(--ui-fs-sm); font-weight: 600;
+}
+.ui-field-links { display: flex; justify-content: space-between; gap: var(--ui-s3); flex-wrap: wrap; margin-top: var(--ui-s1); }
+.ui-link--muted { color: var(--ui-ink-2); }
+
 /* Very short screens (e.g. 320×568, where the app banner also wraps): tighten the sign-in page to fit. */
 @media (max-height: 600px) {
   .ui-auth-inner { padding-top: 12px; }
@@ -827,3 +852,60 @@ body:has(.ui-auth) { background: var(--ui-canvas) !important; }
   .ui-screen.ui-auth .ui-input { min-height: 48px; }
   .ui-auth-foot { margin-top: 12px; }
 }
+
+/* Finished plan: result ring */
+.ui-status-chip {
+  display: inline-flex; align-items: center; gap: 6px; margin-bottom: var(--ui-s4);
+  padding: 6px var(--ui-s3); border-radius: var(--ui-r-pill);
+  background: var(--ui-surface); color: var(--ui-ink-2); font-size: var(--ui-fs-sm); font-weight: 600;
+}
+.ui-status-chip--success { background: var(--ui-brand-tint); color: var(--ui-brand-ink); }
+.ui-ring { position: relative; width: 208px; height: 208px; margin: 0 auto var(--ui-s3); }
+.ui-ring svg { display: block; }
+.ui-ring-inner {
+  position: absolute; inset: 22px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; text-align: center;
+}
+.ui-ring-label { font-size: var(--ui-fs-sm); color: var(--ui-ink-2); }
+.ui-ring-amount { font-family: var(--ui-font-display); font-size: 32px; font-weight: 800; letter-spacing: -.5px; line-height: 1.15; }
+.ui-ring-amount--long { font-size: 24px; }
+.ui-plan-ended-actions { display: grid; gap: var(--ui-s3); width: 100%; margin-top: var(--ui-s4); }
+.ui-summary { margin: 0 0 var(--ui-s3); }
+.ui-summary dd { margin: 0; }
+.ui-summary-key { margin: 0; font-size: var(--ui-fs-md); }
+.ui-cal-day--unsaved { border: 1px solid var(--ui-line); color: var(--ui-ink-3); font-weight: 500; }
+
+/* Savings card: key, heading, ticks */
+.ui-key { display: flex; flex-wrap: wrap; gap: var(--ui-s2) var(--ui-s4); list-style: none; padding: 0; margin: 0 0 var(--ui-s3); }
+.ui-key li { display: inline-flex; align-items: center; gap: 6px; color: var(--ui-ink-2); }
+.ui-key strong { color: var(--ui-ink); font-variant-numeric: tabular-nums; }
+.ui-key .ui-cal-day { width: 14px; height: 14px; margin: 0; }
+.ui-cal-heading { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.ui-cal-sub { font-size: var(--ui-fs-xs); color: var(--ui-ink-2); margin-top: 2px; }
+.ui-cal-dow { font-size: 11px; letter-spacing: .2px; }
+.ui-cal-grid li { list-style: none; display: flex; }
+.ui-cal-check {
+  position: absolute; top: -3px; right: -3px; width: 16px; height: 16px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--ui-surface); color: var(--ui-brand-ink); box-shadow: 0 0 0 1.5px var(--ui-brand);
+}
+.ui-sheet { overflow-y: auto; }
+.ui-savings-card { padding-bottom: var(--ui-s2); }
+.ui-day-empty { color: var(--ui-ink-2); padding: var(--ui-s2) 0 var(--ui-s3); }
+
+/* This-week strip on home */
+.ui-week { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; list-style: none; padding: 0; margin: var(--ui-s2) 0 0; }
+.ui-week-day { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+.ui-week-label { font-size: var(--ui-fs-xs); font-weight: 600; color: var(--ui-ink-2); white-space: nowrap; }
+.ui-week-day.is-today .ui-week-label { color: var(--ui-brand-ink); }
+.ui-week .ui-cal-day { max-width: 40px; }
+.ui-week-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--ui-s3); margin-top: var(--ui-s3); }
+.ui-week-hint { font-size: var(--ui-fs-sm); color: var(--ui-ink-2); }
+.ui-week-more { flex-shrink: 0; }
+
+/* Finished plan: row linking to the full card */
+.ui-card-link {
+  display: flex; align-items: center; gap: var(--ui-s3); width: 100%; border: none; cursor: pointer; text-align: left;
+  font-family: inherit; font-size: inherit; color: var(--ui-ink);
+}
+.ui-card-link .ui-row-title, .ui-card-link .ui-row-sub { display: block; }
+.ui-card-link > svg { color: var(--ui-ink-2); flex-shrink: 0; }

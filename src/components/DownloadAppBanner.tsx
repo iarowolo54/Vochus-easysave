@@ -43,7 +43,7 @@ export default function DownloadAppBanner({ variant: forced }: { variant?: Varia
   return (
     <div style={{
       position: 'relative', zIndex: 250,
-      background: 'linear-gradient(135deg,#0e4d24,#1a6b3a)', color: '#fff',
+      background: 'var(--ui-brand-ink)', color: '#fff',
       padding: '10px 14px', display: 'flex', alignItems: 'center', gap: 12,
       fontFamily: 'Inter, sans-serif', fontSize: 13,
       boxShadow: '0 2px 8px rgba(0,0,0,.15)',
@@ -54,7 +54,7 @@ export default function DownloadAppBanner({ variant: forced }: { variant?: Varia
         <div style={{ opacity: .85, fontSize: 12 }}>Faster access, native experience.</div>
       </div>
       <a href={actionHref} {...(isAndroid ? { download: true } : {})} style={{
-        background: '#fff', color: '#0e4d24', padding: '7px 12px',
+        background: '#fff', color: 'var(--ui-brand-ink)', padding: '7px 12px',
         borderRadius: 8, textDecoration: 'none', fontWeight: 800, fontSize: 12,
         whiteSpace: 'nowrap',
       }}>{actionLabel}</a>

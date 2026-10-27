@@ -1,5 +1,5 @@
 import { Icons } from '@/components/ui/icons'
-import { formatNaira } from '@/lib/format'
+import { formatNaira, formatTime } from '@/lib/format'
 
 type Deposit = { amount: number; createdAt: string; method: string | null; recordedBy: string }
 
@@ -21,7 +21,7 @@ export default function TodayStatus({ weekly, deposits }: Props) {
   }
   const total = deposits.reduce((sum, d) => sum + d.amount, 0)
   const latest = deposits[0]
-  const time = new Date(latest.createdAt).toLocaleTimeString('en-NG', { hour: 'numeric', minute: '2-digit' })
+  const time = formatTime(latest.createdAt)
   return (
     <p className="ui-today ui-today--done">
       <Icons.check size={16} aria-hidden="true" />

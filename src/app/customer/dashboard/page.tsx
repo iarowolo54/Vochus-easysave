@@ -4,7 +4,8 @@ import { useRouter } from 'next/navigation'
 import BottomNav from '@/components/BottomNav'
 import { CUSTOMER_NAV } from '@/components/nav-items'
 import CollectionTracker from '@/components/customer/CollectionTracker'
-import SavingsCard from '@/components/customer/SavingsCard'
+import PlanEnded, { PlanSummary } from '@/components/customer/PlanEnded'
+import { DayDetails, SavingsCalendar, WeekStrip, type DaySelection } from '@/components/customer/SavingsCard'
 import TodayStatus from '@/components/customer/TodayStatus'
 import { useCustomerMe } from '@/components/customer/useCustomerMe'
 import ActionButton from '@/components/ui/ActionButton'
@@ -15,7 +16,7 @@ import ListRow from '@/components/ui/ListRow'
 import { Icons } from '@/components/ui/icons'
 import { displayName, formatDate, formatNaira } from '@/lib/format'
 import { getHideBalance, setHideBalance } from '@/lib/preferences'
-import { dateKey, hasEnded, isWeekly } from '@/lib/savings-card'
+import { buildSlots, dateKey, hasEnded, isWeekly } from '@/lib/savings-card'
 
 type Plan = {
   id: string; dailyAmount: number; periodDays: number; cadence?: string; goal: string
@@ -48,6 +49,8 @@ export default function CustomerDashboard() {
   const [activePlanIdx, setActivePlanIdx] = useState(0)
   const [hideBalance, setHide] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
+  const [cardOpen, setCardOpen] = useState(false)
+  const [daySel, setDaySel] = useState<DaySelection | null>(null)
 
   useEffect(() => { setHide(getHideBalance()) }, [])
 
@@ -117,6 +120,8 @@ export default function CustomerDashboard() {
   const weekly = plan ? isWeekly(plan) : false
   const ended = plan ? hasEnded(plan) : false
   const pending = plan ? data.pendingRedemptions.find(r => r.savingsPlanId === plan.id) ?? null : null
+  // Past its payout date with no collection in progress: show the result, not the saving controls.
+  const finished = ended && !pending
   const target = plan ? plan.dailyAmount * plan.periodDays : 0
   const firstName = displayName(data.name).split(' ')[0]
   const hour = new Date().getHours()
@@ -155,36 +160,49 @@ export default function CustomerDashboard() {
 
       <main className="ui-container">
         <section className="ui-hero" aria-label="Savings balance">
+          {/* The pill is centred on its own; the eye hangs off its right edge so it doesn't shift the pill. */}
           <div className="ui-hero-top">
-            {plans.length > 1 ? (
+            <div className="ui-hero-top-inner">
+              {plans.length > 1 ? (
+                <button
+                  type="button"
+                  className="ui-plan-picker"
+                  onClick={() => setPickerOpen(true)}
+                  aria-haspopup="dialog"
+                  aria-label={`${plan?.goal ?? 'Plan'}. Change plan`}
+                >
+                  <span className="ui-plan-picker-label">{plan?.goal}</span>
+                  <Icons.expand size={18} aria-hidden="true" />
+                </button>
+              ) : (
+                <span className="ui-plan-name">{plan ? plan.goal : 'Savings balance'}</span>
+              )}
               <button
                 type="button"
-                className="ui-plan-picker"
-                onClick={() => setPickerOpen(true)}
-                aria-haspopup="dialog"
-                aria-label={`${plan?.goal ?? 'Plan'}. Change plan`}
+                className="ui-icon-btn ui-icon-btn--plain ui-hero-eye"
+                onClick={toggleBalance}
+                aria-label={hideBalance ? 'Show balance' : 'Hide balance'}
+                aria-pressed={hideBalance}
               >
-                {plan?.goal} <Icons.expand size={18} aria-hidden="true" />
+                {hideBalance ? <Icons.show size={18} aria-hidden="true" /> : <Icons.hide size={18} aria-hidden="true" />}
               </button>
-            ) : (
-              <span className="ui-plan-name">{plan ? plan.goal : 'Savings balance'}</span>
-            )}
-            <button
-              type="button"
-              className="ui-icon-btn ui-icon-btn--plain"
-              onClick={toggleBalance}
-              aria-label={hideBalance ? 'Show balance' : 'Hide balance'}
-              aria-pressed={hideBalance}
-            >
-              {hideBalance ? <Icons.show size={18} aria-hidden="true" /> : <Icons.hide size={18} aria-hidden="true" />}
-            </button>
+            </div>
           </div>
+          {plan && finished ? (
+            <PlanEnded
+              plan={plan}
+              hideAmounts={hideBalance}
+              onCollect={() => router.push('/customer/redeem')}
+              onNewPlan={() => router.push('/customer/save?new=1')}
+            />
+          ) : (
+          <>
           {hideBalance
             ? <span className="ui-amount ui-amount--hero" aria-label="Balance hidden">₦ ••••</span>
             : <Amount value={plan?.balance ?? 0} size="hero" animate />}
           <div className="ui-hero-sub">
             {!plan && 'No active plan yet'}
-            {plan && ended && 'Plan complete'}
+            {plan && ended && `Plan ended ${formatDate(plan.maturityDate)}`}
             {plan && !ended && (
               <>
                 {rate}
@@ -194,23 +212,13 @@ export default function CustomerDashboard() {
             )}
           </div>
           {plan && !ended && !pending && <TodayStatus weekly={weekly} deposits={recentForStatus} />}
+          </>
+          )}
         </section>
-
-        {plan && ended && !pending && (
-          <section className="ui-card ui-card--highlight" aria-label="Plan complete">
-            <h2 className="ui-card-title">Your plan is complete</h2>
-            <p className="ui-card-text">
-              {hideBalance ? 'Your savings are ready to collect.' : <>You can now collect <strong>{formatNaira(plan.balance)}</strong>.</>}
-            </p>
-            <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => router.push('/customer/redeem')}>
-              Collect money
-            </button>
-          </section>
-        )}
 
         {pending && <CollectionTracker status={pending.status} onView={() => router.push('/customer/redeem')} />}
 
-        <div className="ui-actions">
+        {!finished && <div className="ui-actions">
           {!ended && (
             <ActionButton
               icon={pending ? 'locked' : 'add'}
@@ -219,17 +227,32 @@ export default function CustomerDashboard() {
               onClick={() => router.push(plan ? `/customer/save?planId=${plan.id}` : '/customer/save')}
             />
           )}
-          {/* A finished plan already has a big "Collect money" button above. */}
-          {!ended && <ActionButton icon="withdraw" label="Collect" onClick={() => router.push('/customer/redeem')} />}
+          <ActionButton icon="withdraw" label="Collect" onClick={() => router.push('/customer/redeem')} />
           <ActionButton
             icon="plan"
             label="New plan"
             disabled={!!pending}
             onClick={() => router.push('/customer/save?new=1')}
           />
-        </div>
+        </div>}
 
-        {plan && <SavingsCard plan={plan} depositDates={depositDates} hideAmounts={hideBalance} />}
+        {plan && finished && <PlanSummary plan={plan} hideAmounts={hideBalance} />}
+        {plan && !finished && (
+          <WeekStrip plan={plan} deposits={planTxs} onOpenCard={() => setCardOpen(true)} onSelect={setDaySel} />
+        )}
+        {plan && finished && (
+          <button type="button" className="ui-card ui-card-link" onClick={() => setCardOpen(true)}>
+            <span className="ui-row-icon" aria-hidden="true"><Icons.history size={20} /></span>
+            <span className="ui-row-main">
+              <span className="ui-row-title">Savings card</span>
+              <span className="ui-row-sub">
+                You saved on {buildSlots(plan, depositDates).filter(x => x.state === 'saved').length} of{' '}
+                {weekly ? Math.ceil(plan.periodDays / 7) : plan.periodDays} {weekly ? 'weeks' : 'days'}
+              </span>
+            </span>
+            <Icons.next size={20} aria-hidden="true" />
+          </button>
+        )}
 
         <div className="ui-section-head">
           <h2>Recent savings</h2>
@@ -301,6 +324,13 @@ export default function CustomerDashboard() {
             </button>
           )}
         </div>
+      </BottomSheet>
+
+      <BottomSheet open={cardOpen} onClose={() => setCardOpen(false)} title={plan ? `Savings card · ${plan.goal}` : 'Savings card'}>
+        {plan && <SavingsCalendar plan={plan} deposits={planTxs} hideAmounts={hideBalance} onSelect={setDaySel} />}
+      </BottomSheet>
+      <BottomSheet open={!!daySel} onClose={() => setDaySel(null)} title={daySel?.title ?? ''}>
+        {daySel && <DayDetails selection={daySel} hideAmounts={hideBalance} />}
       </BottomSheet>
 
       <BottomNav items={CUSTOMER_NAV} />

@@ -3,7 +3,11 @@
 import { useState, useEffect, useRef } from 'react'
 import { signIn, signOut } from 'next-auth/react'
 import { useRouter } from 'next/navigation'
-import Logo from '@/components/Logo'
+import AuthShell from '@/components/auth/AuthShell'
+import PasswordInput from '@/components/auth/PasswordInput'
+import { FieldError, FormError } from '@/components/ui/FormErrors'
+import { Icons } from '@/components/ui/icons'
+import { NETWORK_MESSAGE } from '@/lib/http'
 
 export default function LoginPage() {
   const router = useRouter()
@@ -13,147 +17,142 @@ export default function LoginPage() {
   const [password, setPassword] = useState('')
   const identifierRef = useRef<HTMLInputElement>(null)
   const passwordRef = useRef<HTMLInputElement>(null)
-  const [showPass, setShowPass] = useState(false)
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({ identifier: '', password: '' })
   const [locked, setLocked] = useState(false)
   const [lockedMinutes, setLockedMinutes] = useState(0)
   const [loading, setLoading] = useState(false)
 
-  const canSubmit = identifier.trim().length >= 4 && password.length >= 4
-
   async function handleLogin(e: React.FormEvent) {
     e.preventDefault()
+    // Read the DOM values too: browser autofill doesn't always fire onChange.
     const actualIdentifier = identifierRef.current?.value ?? identifier
     const actualPassword = passwordRef.current?.value ?? password
-    if (actualIdentifier.trim().length < 4 || actualPassword.length < 4) return
-    setLoading(true)
     setError('')
+    const next = {
+      identifier: actualIdentifier.trim().length >= 4 ? '' : actualIdentifier.trim() ? 'Agent IDs and phone numbers are at least 4 characters.' : 'Enter your agent ID or phone number.',
+      password: actualPassword.length >= 4 ? '' : actualPassword ? 'Your password or PIN is at least 4 characters.' : 'Enter your password or PIN.',
+    }
+    setFieldErrors(next)
+    if (next.identifier || next.password) {
+      (next.identifier ? identifierRef : passwordRef).current?.focus()
+      return
+    }
+    if (navigator.onLine === false) { setError(NETWORK_MESSAGE); return }
+    setLoading(true)
     setLocked(false)
-    const res = await signIn('credentials', {
-      identifier: actualIdentifier.trim(),
-      password: actualPassword,
-      redirect: false,
-    })
-    setLoading(false)
-    if (res?.ok) {
-      router.push('/dashboard')
-    } else {
-      const status = await fetch(`/api/agent/login-status?identifier=${encodeURIComponent(identifier.trim())}`).then(r => r.json()).catch(() => ({ locked: false, attemptsLeft: 3 }))
+    try {
+      const res = await signIn('credentials', {
+        identifier: actualIdentifier.trim(),
+        password: actualPassword,
+        redirect: false,
+      })
+      if (res?.ok) {
+        router.push('/dashboard')
+        return
+      }
+      const status = await fetch(`/api/agent/login-status?identifier=${encodeURIComponent(actualIdentifier.trim())}`)
+        .then(r => r.json())
+        .catch(() => ({ locked: false, attemptsLeft: 3 }))
       if (status.locked) {
         setLocked(true)
         setLockedMinutes(status.lockedMinutesRemaining ?? 30)
-        setError('')
       } else if (status.attemptsLeft <= 2) {
-        setError(`⚠️ Incorrect PIN. ${status.attemptsLeft} attempt${status.attemptsLeft === 1 ? '' : 's'} remaining before your account is locked.`)
+        setFieldErrors({ identifier: '', password: 'Wrong password or PIN.' })
+        setError(`Wrong password or PIN. ${status.attemptsLeft} ${status.attemptsLeft === 1 ? 'try' : 'tries'} left before your account is locked.`)
       } else {
-        setError('⚠️ Incorrect ID or password. Please try again.')
+        setFieldErrors({ identifier: ' ', password: ' ' })
+        setError('That agent ID and password don’t match. Check them and try again.')
       }
+    } catch {
+      setError(NETWORK_MESSAGE)
+    } finally {
+      setLoading(false)
     }
   }
 
-  return (
-    <div className="login-page">
-      <div className="login-wrap">
-        <Logo size={72} tile />
-        <div className="login-brand">
-          <h1>Vochus Easy Save</h1>
-          <p>Agent Portal &nbsp;·&nbsp; v2.1</p>
-        </div>
+  function clearErrors(field: 'identifier' | 'password') {
+    setFieldErrors(f => ({ ...f, [field]: '' }))
+    setError('')
+  }
 
-        {locked ? (
-          <div className="login-card" style={{ textAlign: 'center' }}>
-            <div style={{ fontSize: 40, marginBottom: 12 }}>🔒</div>
-            <h2 style={{ marginBottom: 8 }}>Account Locked</h2>
-            <p style={{ color: 'var(--text3)', fontSize: 14, marginBottom: 20, lineHeight: 1.6 }}>
-              Your account has been locked after 3 failed sign-in attempts.<br />
-              {lockedMinutes > 0 && <>It will auto-unlock in <strong>{lockedMinutes} min</strong>, or you can reset your password to unlock immediately.</>}
-            </p>
-            <button
-              className="lbtn"
-              onClick={() => router.push('/forgot-password')}
-              style={{ marginBottom: 10 }}
-            >
-              Reset Password & Unlock →
-            </button>
-            <button
-              type="button"
-              onClick={() => { setLocked(false); setError('') }}
-              style={{ background: 'none', border: 'none', color: 'var(--text3)', fontSize: 13, cursor: 'pointer', textDecoration: 'underline', padding: 4 }}
-            >
-              Try password again
-            </button>
-          </div>
-        ) : (
-          <form className="login-card" onSubmit={handleLogin}>
-            <h2>Sign In to Your Account</h2>
-            <p>Enter your agent credentials to access the portal.</p>
-
-            {error && <div className="lerr">{error}</div>}
-
-            <label className="lbl">Agent ID / Phone Number</label>
-            <input
-              className="linput"
-              type="text"
-              placeholder="e.g. AGT-00142 or 0801 234 5678"
-              value={identifier}
-              ref={identifierRef}
-              onChange={e => setIdentifier(e.target.value)}
-              onInput={e => setIdentifier((e.target as HTMLInputElement).value)}
-              autoComplete="username"
-            />
-
-            <label className="lbl">Password / PIN</label>
-            <div className="linput-row">
-              <input
-                className="linput"
-                type={showPass ? 'text' : 'password'}
-                placeholder="Enter your PIN"
-                style={{ paddingRight: 44 }}
-                value={password}
-                ref={passwordRef}
-                onChange={e => setPassword(e.target.value)}
-                onInput={e => setPassword((e.target as HTMLInputElement).value)}
-                autoComplete="current-password"
-              />
-              <button type="button" className="leye" onClick={() => setShowPass(v => !v)}>
-                {showPass ? '🙈' : '👁'}
-              </button>
-            </div>
-
-            <button
-              type="submit"
-              className="lbtn"
-              disabled={loading}
-            >
-              {loading ? 'Signing in…' : 'Sign In →'}
-            </button>
-
-            <div style={{ display: 'flex', justifyContent: 'center', gap: 18, marginTop: 14, flexWrap: 'wrap' }}>
-              <button
-                type="button"
-                style={{ background: 'none', border: 'none', color: '#1DC96A', fontSize: 13, fontWeight: 700, cursor: 'pointer' }}
-                onClick={() => router.push('/forgot-password')}
-              >
-                Forgot password?
-              </button>
-              <span style={{ color: 'rgba(255,255,255,.25)', fontSize: 13 }}>·</span>
-              <button
-                type="button"
-                style={{ background: 'none', border: 'none', color: 'rgba(255,255,255,.55)', fontSize: 13, cursor: 'pointer' }}
-                onClick={() => router.push('/unlock')}
-              >
-                Account locked?
-              </button>
-            </div>
-          </form>
-        )}
-
-        <div className="login-foot">
-          <strong style={{ color: 'rgba(255,255,255,.5)' }}>Vochus Easy Save Agent Portal</strong>
-          <br />
-          © 2026 Vochus Global Services Ltd. &nbsp;·&nbsp; Need access? Contact your supervisor.
+  if (locked) return (
+    <AuthShell title="Account locked" audience="Agent" footer={FOOTER}>
+      <div className="ui-banner ui-banner--warn" role="alert">
+        <Icons.locked size={18} aria-hidden="true" />
+        <div>
+          Your account was locked after 3 failed sign-in attempts.
+          {lockedMinutes > 0 && <> It unlocks by itself in <strong>{lockedMinutes} min</strong>, or reset your password to unlock it now.</>}
         </div>
       </div>
-    </div>
+      <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => router.push('/forgot-password')}>
+        Reset password and unlock
+      </button>
+      <button
+        type="button"
+        className="ui-btn ui-btn--secondary ui-btn--block ui-auth-alt"
+        onClick={() => { setLocked(false); setError('') }}
+      >
+        Try my password again
+      </button>
+    </AuthShell>
+  )
+
+  return (
+    <AuthShell title="Agent sign in" lead="Enter your agent ID or phone number." audience="Agent" footer={FOOTER}>
+      <form onSubmit={handleLogin} noValidate>
+        <div className="ui-field">
+          <label className="ui-label" htmlFor="root-identifier">Agent ID or phone number</label>
+          <input
+            id="root-identifier"
+            className="ui-input"
+            type="text"
+            placeholder="AGT-00142 or 080XXXXXXXX"
+            value={identifier}
+            ref={identifierRef}
+            onChange={e => { setIdentifier(e.target.value); clearErrors('identifier') }}
+            onInput={e => setIdentifier((e.target as HTMLInputElement).value)}
+            aria-invalid={!!fieldErrors.identifier}
+            aria-describedby={fieldErrors.identifier.trim() ? 'root-identifier-error' : undefined}
+            autoComplete="username"
+            autoCapitalize="characters"
+            spellCheck={false}
+          />
+          <FieldError id="root-identifier-error" message={fieldErrors.identifier.trim()} />
+        </div>
+
+        <div className="ui-field">
+          <label className="ui-label" htmlFor="root-password">Password or PIN</label>
+          <PasswordInput
+            id="root-password"
+            inputRef={passwordRef}
+            value={password}
+            onChange={e => { setPassword(e.target.value); clearErrors('password') }}
+            onInput={e => setPassword((e.target as HTMLInputElement).value)}
+            autoComplete="current-password"
+            aria-invalid={!!fieldErrors.password}
+            aria-describedby={fieldErrors.password.trim() ? 'root-password-error' : undefined}
+          />
+          <FieldError id="root-password-error" message={fieldErrors.password.trim()} />
+          <div className="ui-field-links">
+            <button type="button" className="ui-link" onClick={() => router.push('/forgot-password')}>Forgot password?</button>
+            <button type="button" className="ui-link ui-link--muted" onClick={() => router.push('/unlock')}>Account locked?</button>
+          </div>
+        </div>
+
+        <FormError message={error} />
+
+        <button type="submit" className="ui-btn ui-btn--primary ui-btn--block" disabled={loading} aria-busy={loading}>
+          {loading ? 'Signing in…' : 'Sign in'}
+        </button>
+      </form>
+    </AuthShell>
   )
 }
+
+const FOOTER = (
+  <span>
+    Need access? Contact your supervisor.
+    <br />© 2026 Vochus Global Services Ltd.
+  </span>
+)

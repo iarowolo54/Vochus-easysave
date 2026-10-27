@@ -56,3 +56,27 @@ export function buildSlots(plan: PlanLike, depositDates: string[], now = new Dat
     return { key: first, date, index: w + 1, state }
   })
 }
+
+/** Last day (YYYY-MM-DD) covered by a slot: the day itself, or the 7th day of a weekly slot. */
+export function slotEndKey(slot: Slot, weekly: boolean): string {
+  if (!weekly) return slot.key
+  return dateKey(addDays(slot.date, 6))
+}
+
+/** Monday–Sunday of the calendar week containing `now`, as dates. */
+export function currentWeekDays(now = new Date()): Date[] {
+  const monday = addDays(now, -((now.getDay() + 6) % 7))
+  return Array.from({ length: 7 }, (_, i) => addDays(monday, i))
+}
+
+/** Deposits grouped by the day they're stamped with. */
+export function depositsByDay<T extends { createdAt: string }>(deposits: T[]): Map<string, T[]> {
+  const map = new Map<string, T[]>()
+  for (const d of deposits) {
+    const k = dateKey(new Date(d.createdAt))
+    const list = map.get(k)
+    if (list) list.push(d)
+    else map.set(k, [d])
+  }
+  return map
+}

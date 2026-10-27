@@ -4,7 +4,9 @@ import { useRouter } from 'next/navigation'
 import { blockNonDigit, digitsOnly } from '@/lib/numeric'
 import AuthShell from '@/components/auth/AuthShell'
 import PasswordInput from '@/components/auth/PasswordInput'
+import { FieldError, FormError } from '@/components/ui/FormErrors'
 import { Icons } from '@/components/ui/icons'
+import { describeFailure, phoneError, postJson } from '@/lib/http'
 
 export default function LoginForm() {
   const router = useRouter()
@@ -12,6 +14,7 @@ export default function LoginForm() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState({ phone: '', password: '' })
 
   const [canBio, setCanBio] = useState(false)
 
@@ -68,21 +71,35 @@ export default function LoginForm() {
   async function login(e?: FormEvent) {
     e?.preventDefault()
     setError('')
-    if (!phone || !password) { setError('Enter your phone number and password.'); return }
+    const next = { phone: phoneError(phone), password: password ? '' : 'Enter your password.' }
+    setFieldErrors(next)
+    if (next.phone || next.password) {
+      document.getElementById(next.phone ? 'login-phone' : 'login-password')?.focus()
+      return
+    }
     setLoading(true)
     const w = window as unknown as { __vochusApp?: string; __vochusDeviceId?: string; __vochusDevice?: Record<string, string> }
-    try {
-      const res = await fetch('/api/customer/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: phone.trim(), password, app: w.__vochusApp ?? '', deviceId: w.__vochusDeviceId ?? '', device: w.__vochusDevice }),
-      })
-      const data = await res.json()
-      if (res.status === 401) { setError('That phone number and password don’t match. Check them and try again.'); return }
-      if (!res.ok) { setError(data.error ?? 'Sign in failed. Please try again.'); return }
-      router.push('/customer/dashboard')
-    } catch { setError('No connection. Check your internet and try again.') }
-    finally { setLoading(false) }
+    const result = await postJson('/api/customer/auth/login', {
+      phone: phone.trim(), password, app: w.__vochusApp ?? '', deviceId: w.__vochusDeviceId ?? '', device: w.__vochusDevice,
+    })
+    setLoading(false)
+    if (result.ok) { router.push('/customer/dashboard'); return }
+    if (result.status === 401) setFieldErrors({ phone: ' ', password: ' ' }) // mark both; the banner explains
+    setError(describeFailure(result, {
+      401: 'That phone number and password don’t match. Check them and try again, or reset your password.',
+    }))
+  }
+
+  function editPhone(value: string) {
+    setPhone(digitsOnly(value).slice(0, 11))
+    setFieldErrors(f => ({ ...f, phone: '' }))
+    setError('')
+  }
+
+  function editPassword(value: string) {
+    setPassword(value)
+    setFieldErrors(f => ({ ...f, password: '' }))
+    setError('')
   }
 
   return (
@@ -98,7 +115,9 @@ export default function LoginForm() {
             id="login-phone"
             className="ui-input ui-input--number"
             value={phone}
-            onChange={e => setPhone(digitsOnly(e.target.value).slice(0, 11))}
+            onChange={e => editPhone(e.target.value)}
+            aria-invalid={!!fieldErrors.phone}
+            aria-describedby={fieldErrors.phone.trim() ? 'login-phone-error' : undefined}
             onKeyDown={blockNonDigit}
             type="tel"
             inputMode="numeric"
@@ -106,22 +125,26 @@ export default function LoginForm() {
             placeholder="080XXXXXXXX"
             autoComplete="tel"
           />
+          <FieldError id="login-phone-error" message={fieldErrors.phone.trim()} />
         </div>
 
         <div className="ui-field">
           <label className="ui-label" htmlFor="login-password">Password</label>
-          <PasswordInput id="login-password" value={password} onChange={e => setPassword(e.target.value)} autoComplete="current-password" />
+          <PasswordInput
+            id="login-password"
+            value={password}
+            onChange={e => editPassword(e.target.value)}
+            autoComplete="current-password"
+            aria-invalid={!!fieldErrors.password}
+            aria-describedby={fieldErrors.password.trim() ? 'login-password-error' : undefined}
+          />
+          <FieldError id="login-password-error" message={fieldErrors.password.trim()} />
           <button type="button" className="ui-link ui-field-link" onClick={() => router.push('/customer/forgot-password')}>
             Forgot password?
           </button>
         </div>
 
-        {error && (
-          <div className="ui-banner ui-banner--danger" role="alert">
-            <Icons.error size={18} aria-hidden="true" />
-            <div>{error}</div>
-          </div>
-        )}
+        <FormError message={error} />
 
         <button type="submit" className="ui-btn ui-btn--primary ui-btn--block" disabled={loading} aria-busy={loading}>
           {loading ? 'Signing in…' : 'Sign in'}
