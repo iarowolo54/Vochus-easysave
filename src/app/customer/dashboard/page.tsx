@@ -5,11 +5,15 @@ import BottomNav from '@/components/BottomNav'
 import { CUSTOMER_NAV } from '@/components/nav-items'
 import CollectionTracker from '@/components/customer/CollectionTracker'
 import PlanEnded, { PlanSummary } from '@/components/customer/PlanEnded'
+import DepositReceipt, { depositIcon, depositMethod } from '@/components/customer/DepositReceipt'
 import { DayDetails, SavingsCalendar, WeekStrip, type DaySelection } from '@/components/customer/SavingsCard'
 import TodayStatus from '@/components/customer/TodayStatus'
 import { useCustomerMe } from '@/components/customer/useCustomerMe'
 import ActionButton from '@/components/ui/ActionButton'
 import BottomSheet from '@/components/ui/BottomSheet'
+import Toast from '@/components/ui/Toast'
+import { HomeSkeleton } from '@/components/ui/Skeleton'
+import { takeJustPaid } from '@/lib/payment-flash'
 import Amount from '@/components/ui/Amount'
 import EmptyState from '@/components/ui/EmptyState'
 import ListRow from '@/components/ui/ListRow'
@@ -51,6 +55,14 @@ export default function CustomerDashboard() {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [cardOpen, setCardOpen] = useState(false)
   const [daySel, setDaySel] = useState<DaySelection | null>(null)
+  const [receiptTx, setReceiptTx] = useState<Tx | null>(null)
+  const [toast, setToast] = useState('')
+
+  // Arriving from a successful Paystack payment: confirm it here, where the new balance is.
+  useEffect(() => {
+    const amount = takeJustPaid()
+    if (amount) setToast(`${formatNaira(amount)} added to your savings`)
+  }, [])
 
   useEffect(() => { setHide(getHideBalance()) }, [])
 
@@ -94,16 +106,13 @@ export default function CustomerDashboard() {
     setPickerOpen(false)
   }
 
-  if (loading) return (
-    <div className="ui-screen ui-screen--center" role="status" aria-label="Loading your savings">
-      <div className="ui-spinner" />
-    </div>
-  )
+  if (loading) return <HomeSkeleton />
 
   if (failed) return (
     <div className="ui-screen ui-screen--center">
       <EmptyState
         icon="error"
+        tone="danger"
         title="We couldn't load your savings"
         text="Check your connection and try again."
         action={
@@ -242,7 +251,6 @@ export default function CustomerDashboard() {
         )}
         {plan && finished && (
           <button type="button" className="ui-card ui-card-link" onClick={() => setCardOpen(true)}>
-            <span className="ui-row-icon" aria-hidden="true"><Icons.history size={20} /></span>
             <span className="ui-row-main">
               <span className="ui-row-title">Savings card</span>
               <span className="ui-row-sub">
@@ -269,10 +277,11 @@ export default function CustomerDashboard() {
             planTxs.slice(0, 5).map(tx => (
               <ListRow
                 key={tx.id}
-                icon="deposit"
+                icon={depositIcon(tx)}
                 title="Savings deposit"
-                sub={`${formatDate(tx.createdAt)} · ${capitalise(tx.method ?? 'Cash')} · ${tx.recordedBy}`}
-                value={<Amount value={tx.amount} incoming />}
+                sub={`${formatDate(tx.createdAt)} · ${depositMethod(tx)}`}
+                value={hideBalance ? '₦ ••••' : <Amount value={tx.amount} incoming />}
+                onClick={() => setReceiptTx(tx)}
               />
             ))
           )}
@@ -287,6 +296,10 @@ export default function CustomerDashboard() {
             title={displayName(data.agent.name)}
             sub={`Agent ID ${data.agent.agentId}`}
           />
+          <p className="ui-safety">
+            <Icons.locked size={16} aria-hidden="true" />
+            <span>Only give cash to {displayName(data.agent.name).split(' ')[0]}, and check it shows here the same day.</span>
+          </p>
           <div className="ui-btn-row">
             <a className="ui-btn ui-btn--secondary" href={`tel:${data.agent.phone}`}>
               <Icons.phone size={18} aria-hidden="true" /> Call
@@ -308,10 +321,11 @@ export default function CustomerDashboard() {
               aria-current={i === activePlanIdx ? 'true' : undefined}
               onClick={() => choosePlan(i)}
             >
-              <span className="ui-row-icon" aria-hidden="true"><Icons.plan size={20} /></span>
               <span className="ui-row-main">
                 <span className="ui-row-title" style={{ display: 'block' }}>{p.goal}</span>
-                <span className="ui-row-sub" style={{ display: 'block' }}>{hasEnded(p) ? 'Complete' : `Collect on ${formatDate(p.maturityDate)}`}</span>
+                <span className="ui-row-sub" style={{ display: 'block' }}>{hasEnded(p)
+                    ? (p.balance >= p.dailyAmount * p.periodDays ? 'Goal reached' : `Ended ${formatDate(p.maturityDate)}`)
+                    : `Collect on ${formatDate(p.maturityDate)}`}</span>
               </span>
               <span className="ui-row-value">{hideBalance ? '₦ ••••' : formatNaira(p.balance)}</span>
               <span className="ui-option-check" aria-hidden="true">{i === activePlanIdx && <Icons.check size={20} />}</span>
@@ -319,7 +333,7 @@ export default function CustomerDashboard() {
           ))}
           {!pending && (
             <button type="button" className="ui-option" onClick={() => router.push('/customer/save?new=1')}>
-              <span className="ui-row-icon" aria-hidden="true"><Icons.add size={20} /></span>
+              <span className="ui-row-icon ui-row-icon--action" aria-hidden="true"><Icons.add size={20} /></span>
               <span className="ui-row-main"><span className="ui-row-title">Start a new plan</span></span>
             </button>
           )}
@@ -330,8 +344,20 @@ export default function CustomerDashboard() {
         {plan && <SavingsCalendar plan={plan} deposits={planTxs} hideAmounts={hideBalance} onSelect={setDaySel} />}
       </BottomSheet>
       <BottomSheet open={!!daySel} onClose={() => setDaySel(null)} title={daySel?.title ?? ''}>
-        {daySel && <DayDetails selection={daySel} hideAmounts={hideBalance} />}
+        {daySel && <DayDetails selection={daySel} hideAmounts={hideBalance} onOpen={d => setReceiptTx(planTxs.find(t => t.id === d.id) ?? null)} />}
       </BottomSheet>
+      <BottomSheet open={!!receiptTx} onClose={() => setReceiptTx(null)} title="Deposit receipt">
+        {receiptTx && (
+          <DepositReceipt
+            tx={receiptTx}
+            planName={plans.find(p => p.id === receiptTx.planId)?.goal ?? 'Savings'}
+            hideAmounts={hideBalance}
+            onHelp={() => router.push('/customer/chat')}
+          />
+        )}
+      </BottomSheet>
+
+      {toast && <Toast message={toast} onDone={() => setToast('')} />}
 
       <BottomNav items={CUSTOMER_NAV} />
     </div>

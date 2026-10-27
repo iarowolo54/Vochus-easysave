@@ -33,7 +33,7 @@ export default function PlanEnded({ plan, hideAmounts, onCollect, onNewPlan }: P
 
   return (
     <>
-      <p className={`ui-status-chip${reached ? ' ui-status-chip--success' : ''}`}>
+      <p className={`ui-status ui-status--lg ${reached ? 'ui-status--success' : 'ui-status--neutral'}`}>
         {reached
           ? <><Icons.check size={16} aria-hidden="true" /> Goal reached</>
           : <>Plan ended {formatDate(plan.maturityDate)}</>}

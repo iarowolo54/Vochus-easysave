@@ -1,8 +1,8 @@
 // The one place UI concepts map to icons. Use these names — not emoji, not ad-hoc lucide imports —
 // so "save" or "withdraw" looks the same on every screen.
 import {
-  ArrowDownLeft, ArrowUpRight, Check, ChevronDown, ChevronLeft, ChevronRight, CircleAlert, Clock, Download, Eye, EyeOff, Fingerprint,
-  Headset, House, LayoutGrid, Lock, LogOut, MessageCircle, Phone, PiggyBank, Plus, Receipt, RefreshCw, Settings, Users, X,
+  ArrowDownLeft, Banknote, ArrowUpRight, Check, ChevronDown, CreditCard, ChevronLeft, ChevronRight, CircleAlert, Clock, Download, Eye, EyeOff, Fingerprint,
+  Headset, House, LayoutGrid, Lock, LogOut, MessageCircle, Phone, PiggyBank, Plus, Receipt, RefreshCw, Settings, Share2, Users, X,
 } from 'lucide-react'
 
 export const Icons = {
@@ -30,6 +30,9 @@ export const Icons = {
   show: Eye,
   hide: EyeOff,
   download: Download,
+  share: Share2,
+  card: CreditCard,
+  cash: Banknote,
   error: CircleAlert,
   retry: RefreshCw,
 } as const

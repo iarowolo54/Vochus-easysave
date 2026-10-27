@@ -6,6 +6,7 @@ import Logo from '@/components/Logo'
 import { CUSTOMER_NAV } from '@/components/nav-items'
 import { useCustomerMe } from '@/components/customer/useCustomerMe'
 import EmptyState from '@/components/ui/EmptyState'
+import { FormSkeleton } from '@/components/ui/Skeleton'
 import ListRow from '@/components/ui/ListRow'
 import { Icons } from '@/components/ui/icons'
 import { displayName } from '@/lib/format'
@@ -39,17 +40,14 @@ export default function CustomerSettingsPage() {
     router.push('/customer/login')
   }
 
-  if (loading) return (
-    <div className="ui-screen ui-screen--center" role="status" aria-label="Loading settings">
-      <div className="ui-spinner" />
-    </div>
-  )
+  if (loading) return <FormSkeleton label="Loading settings" />
 
   if (failed || !data) return (
     <div className="ui-screen ui-screen--center">
       {failed && (
         <EmptyState
           icon="error"
+          tone="danger"
           title="We couldn't load your settings"
           text="Check your connection and try again."
           action={

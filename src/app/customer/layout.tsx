@@ -1,9 +1,11 @@
 import CustomerIdleTimeout from '@/components/CustomerIdleTimeout'
+import OfflineNotice from '@/components/ui/OfflineNotice'
 
 export default function CustomerLayout({ children }: { children: React.ReactNode }) {
   return (
     <>
       <CustomerIdleTimeout />
+      <OfflineNotice />
       <style>{`
         :root {
           --g: #17783a; --gl: #e7f3ea; --gm: #9fd3ae; --gdk: #125e2d;

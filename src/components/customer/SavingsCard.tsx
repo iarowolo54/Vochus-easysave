@@ -2,6 +2,7 @@
 import { useMemo, useState } from 'react'
 import { Icons } from '@/components/ui/icons'
 import { formatDate, formatNaira, formatTime } from '@/lib/format'
+import { depositIcon, depositMethod } from './DepositReceipt'
 import {
   buildSlots, currentWeekDays, dateKey, depositsByDay, hasEnded, isWeekly, slotEndKey,
   type Slot, type SlotState,
@@ -75,11 +76,12 @@ export function WeekStrip({ plan, deposits, onOpenCard, onSelect }: StripProps) 
       const k = dateKey(d)
       return { label: WEEKDAYS[i], slot: byKey.get(k), isToday: k === today, dayNum: d.getDate() }
     })
-    const counted = cells.filter(c => c.slot && c.slot.key <= today)
+    // Today only counts once it's saved, so the morning doesn't read as a missed day.
+    const counted = cells.filter(c => c.slot && (c.slot.key < today || (c.slot.key === today && c.slot.state === 'saved')))
     const saved = counted.filter(c => c.slot!.state === 'saved').length
     summary = counted.length
       ? `${saved} of ${counted.length} day${counted.length > 1 ? 's' : ''} saved this week`
-      : slots.length && slots[0].key > today ? `Your plan starts ${formatDate(slots[0].date)}` : 'No saving days this week'
+      : slots.length && slots[0].key > today ? `Your plan starts ${formatDate(slots[0].date)}` : 'Save today to start your week'
   } else {
     // The current week is found by date, not state: a week already saved this week is still "now".
     const isNow = (s: Slot) => s.key <= today && today <= slotEndKey(s, true)
@@ -274,7 +276,7 @@ function WeekGrid({ slots, ended, onPick }: { slots: Slot[]; ended: boolean; onP
 
 /* ── What happened on a tapped day ──────────────────────────────────── */
 
-export function DayDetails({ selection, hideAmounts }: { selection: DaySelection; hideAmounts: boolean }) {
+export function DayDetails({ selection, hideAmounts, onOpen }: { selection: DaySelection; hideAmounts: boolean; onOpen: (d: Deposit) => void }) {
   const { deposits, state, ended } = selection
   if (deposits.length === 0) {
     const text = state === 'upcoming'
@@ -290,16 +292,14 @@ export function DayDetails({ selection, hideAmounts }: { selection: DaySelection
   return (
     <div className="ui-card--list">
       {deposits.map(d => (
-        <div key={d.id} className="ui-row">
-          <span className="ui-row-icon" aria-hidden="true"><Icons.check size={20} /></span>
-          <div className="ui-row-main">
-            <div className="ui-row-title">{hideAmounts ? '₦ •••• saved' : `${formatNaira(d.amount)} saved`}</div>
-            <div className="ui-row-sub">
-              {formatTime(d.createdAt)}
-              {' · '}{d.method ?? 'Cash'}{' · '}{d.recordedBy}
-            </div>
-          </div>
-        </div>
+        <button key={d.id} type="button" className="ui-row ui-row--button" onClick={() => onOpen(d)}>
+          <span className="ui-row-icon" aria-hidden="true">{(() => { const I = Icons[depositIcon(d)]; return <I size={20} /> })()}</span>
+          <span className="ui-row-main">
+            <span className="ui-row-title ui-block">{hideAmounts ? '₦ •••• saved' : `${formatNaira(d.amount)} saved`}</span>
+            <span className="ui-row-sub ui-block">{formatTime(d.createdAt)} · {depositMethod(d)}</span>
+          </span>
+          <Icons.next size={18} className="ui-row-chevron" aria-hidden="true" />
+        </button>
       ))}
       {deposits.length > 1 && !hideAmounts && (
         <div className="ui-row"><div className="ui-row-main ui-row-title">Total</div><div className="ui-row-value">{formatNaira(total)}</div></div>

@@ -29,5 +29,20 @@ export function useCustomerMe<T>() {
 
   useEffect(() => { reload() }, [reload])
 
+  // Coming back from Paystack, the agent or another app: quietly refetch so balances aren't stale.
+  useEffect(() => {
+    let last = Date.now()
+    function onVisible() {
+      if (document.visibilityState !== 'visible' || Date.now() - last < 15_000) return
+      last = Date.now()
+      fetch('/api/customer/me')
+        .then(r => (r.ok ? (r.json() as Promise<T>) : null))
+        .then(d => { if (d) setData(d) })
+        .catch(() => {})
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    return () => document.removeEventListener('visibilitychange', onVisible)
+  }, [])
+
   return { data, loading, failed, reload }
 }
