@@ -6,6 +6,7 @@ import { useSearchParams, useRouter } from 'next/navigation'
 import Link from 'next/link'
 import { blockMinus, nonNegativeString } from '@/lib/numeric'
 import { avatarTint } from '@/lib/avatar'
+import { waLink } from '@/lib/whatsapp'
 import { displayName, formatNaira, formatTime } from '@/lib/format'
 import BottomSheet from '@/components/ui/BottomSheet'
 import EmptyState from '@/components/ui/EmptyState'
@@ -49,12 +50,6 @@ function maskPhone(p: string) {
   return p.slice(0, 4) + '****' + p.slice(-3)
 }
 
-/** wa.me needs the number in international form: 0803… → 234803… */
-function waNumber(phone: string) {
-  const d = phone.replace(/\D/g, '')
-  return d.startsWith('0') ? `234${d.slice(1)}` : d
-}
-
 function whatsAppLink(phone: string, r: Receipt, days: number) {
   const lines = [
     'Vochus Easy Save — saving received',
@@ -65,7 +60,7 @@ function whatsAppLink(phone: string, r: Receipt, days: number) {
     `Reference: ${r.ref}`,
     r.agent ? `Recorded by: ${r.agent}` : '',
   ].filter(Boolean)
-  return `https://wa.me/${waNumber(phone)}?text=${encodeURIComponent(lines.join('\n'))}`
+  return waLink(phone, lines.join('\n'))
 }
 
 function CustomerAvatar({ c }: { c: Pick<Customer, 'firstName' | 'lastName' | 'photoUrl'> }) {

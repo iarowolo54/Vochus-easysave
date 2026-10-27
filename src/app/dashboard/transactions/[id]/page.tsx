@@ -1,8 +1,16 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import Link from 'next/link'
+import { useParams } from 'next/navigation'
 import Logo from '@/components/Logo'
+import EmptyState from '@/components/ui/EmptyState'
+import { Bone } from '@/components/ui/Skeleton'
+import { Icons, type IconName } from '@/components/ui/icons'
+import { txStatus } from '@/components/customer/DepositReceipt'
+import { displayName, formatDate, formatNaira, formatTime } from '@/lib/format'
+import { saveReceiptImage } from '@/lib/receipt-image'
+import { waLink } from '@/lib/whatsapp'
 
 interface Txn {
   id: string; ref: string; type: string; amount: number
@@ -12,39 +20,50 @@ interface Txn {
   plan: { goal: string; durationDays: number } | null
 }
 
-const TYPE_LABEL: Record<string, string> = {
-  saving: 'Savings Credit', redemption: 'Redemption Payout', repayment: 'Loan Repayment',
-  disbursement: 'Loan Disbursement', enrolment: 'Customer Enrolment', loan: 'Loan Application',
-  wallet_funding: 'Wallet Top-up',
+const TYPES: Record<string, { label: string; icon: IconName; sign: '+' | '−' | '' }> = {
+  saving: { label: 'Savings deposit', icon: 'deposit', sign: '+' },
+  redemption: { label: 'Collection payout', icon: 'withdraw', sign: '−' },
+  repayment: { label: 'Loan repayment', icon: 'repay', sign: '+' },
+  disbursement: { label: 'Loan paid out', icon: 'withdraw', sign: '−' },
+  enrolment: { label: 'Customer enrolment', icon: 'enrol', sign: '' },
+  registration: { label: 'Registration fee', icon: 'enrol', sign: '' },
+  loan: { label: 'Loan application', icon: 'loan', sign: '' },
+  wallet_funding: { label: 'Wallet top-up', icon: 'wallet', sign: '+' },
 }
-const TYPE_ICON: Record<string, string> = {
-  saving: '💰', redemption: '🎯', repayment: '🔄', disbursement: '💸',
-  enrolment: '📋', loan: '🏦', wallet_funding: '💼',
+const meta = (t: string) => TYPES[t] ?? { label: t.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase()), icon: 'history' as IconName, sign: '' as const }
+
+function maskPhone(p: string) {
+  if (!p || p.length < 7) return p
+  return p.slice(0, 4) + '****' + p.slice(-3)
 }
 
 export default function TransactionDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const router = useRouter()
   const [txn, setTxn] = useState<Txn | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState('')
   const [canPrint, setCanPrint] = useState(false)
+  const [copied, setCopied] = useState(false)
+  const [saving, setSaving] = useState(false)
 
   useEffect(() => {
-    const check = () => setCanPrint(!!(window as any).__vochusCanPrint)
+    const check = () => setCanPrint(!!(window as unknown as { __vochusCanPrint?: boolean }).__vochusCanPrint)
     check()
     window.addEventListener('vochus:flags-ready', check)
     return () => window.removeEventListener('vochus:flags-ready', check)
   }, [])
 
-  function maskPhone(p: string) {
-    if (!p || p.length < 7) return p
-    return p.slice(0, 4) + '****' + p.slice(-3)
-  }
+  useEffect(() => {
+    fetch(`/api/transactions/${id}`)
+      .then(r => r.json())
+      .then(d => { if (d.error) setError(d.error); else setTxn(d); setLoading(false) })
+      .catch(() => { setError('We couldn’t load this receipt. Check your connection.'); setLoading(false) })
+  }, [id])
 
+  // Payload for the app's receipt printer: keep these fields as they are.
   function printReceipt() {
     if (!txn) return
-    const w = window as any
+    const w = window as unknown as { VochusPrinter?: { postMessage: (s: string) => void } }
     if (!w.VochusPrinter) return
     const date = new Date(txn.createdAt)
     const origin = typeof window !== 'undefined' ? window.location.origin : ''
@@ -63,92 +82,118 @@ export default function TransactionDetailPage() {
     }))
   }
 
-  useEffect(() => {
-    fetch(`/api/transactions/${id}`)
-      .then(r => r.json())
-      .then(d => { if (d.error) setError(d.error); else setTxn(d); setLoading(false) })
-      .catch(() => { setError('Failed to load'); setLoading(false) })
-  }, [id])
-
-  if (loading) return <div style={{ textAlign: 'center', padding: 48, color: 'var(--mu)' }}>Loading…</div>
-  if (error || !txn) return <div style={{ textAlign: 'center', padding: 48, color: 'var(--rd)' }}>{error || 'Not found'}</div>
-
-  const date = new Date(txn.createdAt)
-  const amtColor = txn.type === 'saving' ? 'var(--g)' : txn.type === 'redemption' ? 'var(--rd)' : 'var(--b)'
-  const amtPrefix = txn.type === 'saving' ? '+' : txn.type === 'redemption' ? '−' : ''
-  const showAmt = txn.type !== 'enrolment'
-
-  return (
-    <>
-      <div className="page-header no-print">
-        <h2>Transaction Detail</h2>
-        <p>Receipt for {txn.ref}</p>
-      </div>
-
-      <div className="no-print" style={{ marginBottom: 16, display: 'flex', gap: 10 }}>
-        <button className="btn btn-out btn-sm" onClick={() => router.back()}>← Back</button>
-        <button className="btn btn-g btn-sm" onClick={() => window.print()}>⬇ Download Receipt</button>
-        {canPrint && (
-          <button className="btn btn-g btn-sm" onClick={printReceipt}>🖨 Print Receipt</button>
-        )}
-      </div>
-
-      <div className="receipt-wrap">
-        <div className="receipt">
-          <div className="receipt-header">
-            <Logo size={48} />
-            <div>
-              <div className="receipt-company">Vochus Easy Save</div>
-              <div className="receipt-tagline">Official Transaction Receipt</div>
-            </div>
-          </div>
-
-          <div className="receipt-ref">
-            <span className="receipt-ref-label">Transaction Ref</span>
-            <span className="receipt-ref-val">{txn.ref}</span>
-          </div>
-
-          <div className="receipt-amount-row">
-            <span style={{ fontSize: 13, color: '#666' }}>{TYPE_ICON[txn.type]} {TYPE_LABEL[txn.type] ?? txn.type}</span>
-            {showAmt && (
-              <span className="receipt-amount" style={{ color: amtColor }}>
-                {amtPrefix}₦{txn.amount.toLocaleString()}
-              </span>
-            )}
-          </div>
-
-          <div className="receipt-divider" />
-
-          <div className="receipt-rows">
-            <div className="receipt-row"><span>Date</span><strong>{date.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' })}</strong></div>
-            <div className="receipt-row"><span>Time</span><strong>{date.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</strong></div>
-            <div className="receipt-row"><span>Status</span><strong style={{ color: txn.status === 'Done' ? '#1a5c35' : '#b45309' }}>{txn.status}</strong></div>
-            {txn.method && <div className="receipt-row"><span>Method</span><strong>{txn.method}</strong></div>}
-            {txn.customer && (
-              <>
-                <div className="receipt-row"><span>Customer</span><strong>{txn.customer.name}</strong></div>
-                <div className="receipt-row"><span>Customer ID</span><strong>{txn.customer.customerId}</strong></div>
-                <div className="receipt-row"><span>Phone</span><strong>{txn.customer.phone}</strong></div>
-              </>
-            )}
-            {txn.plan && (
-              <>
-                <div className="receipt-row"><span>Plan Goal</span><strong>{txn.plan.goal}</strong></div>
-                <div className="receipt-row"><span>Plan Duration</span><strong>{txn.plan.durationDays} Days</strong></div>
-              </>
-            )}
-            <div className="receipt-row"><span>Agent</span><strong>{txn.agent.name}</strong></div>
-            <div className="receipt-row"><span>Agent ID</span><strong>{txn.agent.agentId}</strong></div>
-            {txn.note && <div className="receipt-row"><span>Note</span><strong>{txn.note}</strong></div>}
-          </div>
-
-          <div className="receipt-divider" />
-          <div className="receipt-footer">
-            This is an official receipt from Vochus Easy Save.<br />
-            Keep this for your records. — vochusglobalservices.co.uk
-          </div>
+  if (loading) {
+    return (
+      <div className="ag-page">
+        <div className="ui-card ag-receipt ui-skeleton" aria-hidden="true">
+          <Bone w={48} h={48} round center /><div style={{ height: 16 }} /><Bone w="40%" h={14} center /><div style={{ height: 10 }} />
+          <Bone w="60%" h={40} center /><div style={{ height: 24 }} />
+          {Array.from({ length: 6 }, (_, i) => <div key={i} style={{ marginBottom: 14 }}><Bone h={18} /></div>)}
         </div>
       </div>
-    </>
+    )
+  }
+
+  if (error || !txn) {
+    return (
+      <div className="ag-page">
+        <section className="ui-card ag-receipt">
+          <EmptyState icon="error" tone="danger" title="Receipt not found" text={error || 'This transaction doesn’t exist or isn’t yours.'}
+            action={<Link href="/dashboard/transactions" className="ui-btn ui-btn--secondary">Back to transactions</Link>} />
+        </section>
+      </div>
+    )
+  }
+
+  const m = meta(txn.type)
+  const status = txStatus(txn.status)
+  const StatusIcon = Icons[status.icon]
+  const showAmt = txn.type !== 'enrolment'
+  const amount = `${m.sign}${formatNaira(txn.amount)}`
+  const when = `${formatDate(txn.createdAt)}, ${formatTime(txn.createdAt)}`
+  const customer = txn.customer ? displayName(txn.customer.name) : ''
+
+  const rows: [string, string][] = [
+    ['Date', when],
+    ...(txn.method ? [['Paid by', txn.method] as [string, string]] : []),
+    ...(txn.customer ? [['Customer', `${customer} (${txn.customer.customerId})`] as [string, string]] : []),
+    ...(txn.plan ? [['Plan', `${txn.plan.goal} · ${txn.plan.durationDays} days`] as [string, string]] : []),
+    ['Agent', `${displayName(txn.agent.name)} (${txn.agent.agentId})`],
+    ...(txn.note ? [['Note', txn.note] as [string, string]] : []),
+  ]
+
+  const shareText = [
+    `Vochus Easy Save — ${m.label.toLowerCase()} receipt`,
+    showAmt ? `Amount: ${amount}` : '',
+    `Status: ${status.label}`,
+    ...rows.map(([k, v]) => `${k}: ${v}`),
+    `Reference: ${txn.ref}`,
+  ].filter(Boolean).join('\n')
+
+  async function copyRef() {
+    try { await navigator.clipboard.writeText(txn!.ref); setCopied(true); setTimeout(() => setCopied(false), 2000) } catch { /* reference stays visible */ }
+  }
+
+  async function saveImage() {
+    setSaving(true)
+    try {
+      await saveReceiptImage({ title: m.label, amount: showAmt ? amount : '—', status: status.label, rows, reference: txn!.ref })
+    } finally { setSaving(false) }
+  }
+
+  return (
+    <div className="ag-page">
+      <div className="ag-receipt-wrap">
+        <div className="ag-receipt-top no-print">
+          <Link href="/dashboard/transactions" className="ui-link"><Icons.back size={18} aria-hidden="true" /> All transactions</Link>
+        </div>
+
+        <article className="ui-card ag-receipt" aria-label={`${m.label} receipt`}>
+          <header className="ag-receipt-brand">
+            <Logo size={32} />
+            <span>Vochus Easy Save</span>
+            <span className="ag-receipt-kind">Receipt</span>
+          </header>
+
+          <div className="ui-receipt-head">
+            <span className={`ag-receipt-icon ag-tx-icon--${m.sign === '+' ? 'in' : m.sign === '−' ? 'out' : 'neutral'}`} aria-hidden="true">
+              {(() => { const I = Icons[m.icon]; return <I size={24} /> })()}
+            </span>
+            <span className="ui-row-sub">{m.label}</span>
+            {showAmt && <span className={`ui-amount ag-receipt-amount${m.sign === '+' ? '' : ' ui-receipt-amount--plain'}`}>{amount}</span>}
+            {customer && <span className="ag-receipt-for">{m.sign === '−' ? 'to' : 'from'} <strong>{customer}</strong></span>}
+            <span className={`ui-status ui-status--${status.tone}`}><StatusIcon size={14} aria-hidden="true" /> {status.label}</span>
+          </div>
+
+          <dl className="ui-receipt-rows">
+            {rows.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
+            {txn.customer?.phone && <div><dt>Customer phone</dt><dd><a className="ui-link" href={`tel:${txn.customer.phone}`}>{txn.customer.phone}</a></dd></div>}
+            <div>
+              <dt>Reference</dt>
+              <dd className="ui-receipt-ref">
+                <span>{txn.ref}</span>
+                <button type="button" className="ui-link no-print" onClick={copyRef}>{copied ? 'Copied' : 'Copy'}</button>
+              </dd>
+            </div>
+          </dl>
+
+          <p className="ag-receipt-foot">Official receipt from Vochus Easy Save. Keep it for your records.</p>
+
+          <div className="ag-receipt-actions no-print">
+            {txn.customer?.phone && (
+              <a className="ui-btn ui-btn--primary" href={waLink(txn.customer.phone, shareText)} target="_blank" rel="noopener noreferrer">
+                <Icons.share size={18} aria-hidden="true" /> Send to customer
+              </a>
+            )}
+            <button type="button" className="ui-btn ui-btn--secondary" onClick={saveImage} disabled={saving}>
+              {saving ? <span className="ui-spinner ui-spinner--sm ag-spin-dark" aria-hidden="true" /> : <Icons.image size={18} aria-hidden="true" />} Save image
+            </button>
+            {canPrint
+              ? <button type="button" className="ui-btn ui-btn--secondary" onClick={printReceipt}><Icons.print size={18} aria-hidden="true" /> Print</button>
+              : <button type="button" className="ui-btn ui-btn--secondary" onClick={() => window.print()}><Icons.download size={18} aria-hidden="true" /> Print or PDF</button>}
+          </div>
+        </article>
+      </div>
+    </div>
   )
 }

@@ -1,6 +1,12 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import Link from 'next/link'
+import EmptyState from '@/components/ui/EmptyState'
+import ListRow from '@/components/ui/ListRow'
+import { Bone, ListSkeleton } from '@/components/ui/Skeleton'
+import { Icons } from '@/components/ui/icons'
+import { displayName, formatDate, formatNaira } from '@/lib/format'
 
 interface Commission {
   id: string; month: number; year: number; amount: number; breakdown: string | null; createdAt: string
@@ -11,183 +17,154 @@ interface Reward {
   customer: { firstName: string; lastName: string; customerId: string }
 }
 
+interface Breakdown {
+  savings?: { count: number; volume: number; commission?: number }
+  redemptions?: { count: number; volume: number; commission?: number }
+  enrolments?: { count: number }
+  rewards?: { customerId: string; customerName: string; amount: number; type: string }[]
+}
+
 const MONTHS = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 
-function fmtDate(s: string) { return new Date(s).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) }
+function parseBreakdown(s: string | null): Breakdown | null {
+  if (!s) return null
+  try { return JSON.parse(s) as Breakdown } catch { return null }
+}
 
 export default function CommissionPage() {
   const [commissions, setCommissions] = useState<Commission[]>([])
   const [rewards, setRewards] = useState<Reward[]>([])
   const [loading, setLoading] = useState(true)
+  const [failed, setFailed] = useState(false)
 
   useEffect(() => {
     fetch('/api/commission').then(r => r.json()).then(d => {
       setCommissions(d.commissions ?? [])
       setRewards(d.rewards ?? [])
-      setLoading(false)
-    })
+    }).catch(() => setFailed(true)).finally(() => setLoading(false))
   }, [])
 
   const current = commissions[0]
-  const breakdown = current?.breakdown ? JSON.parse(current.breakdown) : null
-  const maxAmt = Math.max(...commissions.map(c => c.amount), 1)
+  const breakdown = parseBreakdown(current?.breakdown ?? null)
+  const txCount = breakdown ? (breakdown.savings?.count ?? 0) + (breakdown.redemptions?.count ?? 0) + (breakdown.enrolments?.count ?? 0) : 0
+  const volume = breakdown ? (breakdown.savings?.volume ?? 0) + (breakdown.redemptions?.volume ?? 0) : 0
+  const trend = commissions.slice(0, 6).reverse()
+  const maxAmt = Math.max(...trend.map(c => c.amount), 1)
+
+  if (loading) {
+    return (
+      <div className="ag-page ui-skeleton" aria-hidden="true">
+        <div className="ui-card ag-earn"><Bone w="30%" /><div style={{ height: 10 }} /><Bone w="50%" h={40} /><div style={{ height: 10 }} /><Bone w="40%" /></div>
+        <ListSkeleton count={4} />
+      </div>
+    )
+  }
+
+  if (failed) {
+    return (
+      <div className="ag-page">
+        <section className="ui-card"><EmptyState icon="error" tone="danger" title="Couldn’t load your commission" text="Check your connection and refresh the page." /></section>
+      </div>
+    )
+  }
+
+  if (!current) {
+    return (
+      <div className="ag-page">
+        <section className="ui-card">
+          <EmptyState icon="commission" title="No commission yet" text="What you earn from collections, loans and rewards will show here each month." />
+        </section>
+      </div>
+    )
+  }
 
   return (
-    <>
-      <div className="page-header">
-        <h2>Commission Statement</h2>
-        <p>Your earnings and payout history</p>
-      </div>
+    <div className="ag-page">
+      <div className="ag-home-grid">
+        <div className="ag-col">
+          <section className="ui-card ag-earn" aria-label="This month">
+            <span className="ui-row-sub">Earned in {MONTHS[current.month]} {current.year}</span>
+            <p className="ag-earn-amount">{formatNaira(current.amount)}</p>
+            {breakdown && <p className="ui-row-sub">From {txCount} transaction{txCount === 1 ? '' : 's'} · {formatNaira(volume, { minor: false })} handled</p>}
+            <Link href="/dashboard/withdraw" className="ui-btn ui-btn--primary ag-earn-btn"><Icons.withdraw size={18} aria-hidden="true" /> Withdraw commission</Link>
+          </section>
 
-      {loading && <div style={{ textAlign: 'center', color: 'var(--mu)', padding: 24 }}>Loading…</div>}
-
-      {!loading && (
-        <>
-          <div className="grid g4" style={{ marginBottom: 18 }}>
-            <div className="stat-card gold">
-              <div className="stat-icon" style={{ background: 'var(--gdl)' }}>🏅</div>
-              <div className="stat-lbl">Earned This Month</div>
-              <div className="stat-val">₦{(current?.amount ?? 0).toLocaleString()}</div>
-              <div className="stat-sub">Current period</div>
-            </div>
-            <div className="stat-card blue">
-              <div className="stat-icon" style={{ background: 'var(--bl)' }}>📊</div>
-              <div className="stat-lbl">Transactions</div>
-              <div className="stat-val">{breakdown ? (breakdown.savings?.count ?? 0) + (breakdown.redemptions?.count ?? 0) + (breakdown.enrolments?.count ?? 0) : '—'}</div>
-            </div>
-            <div className="stat-card green">
-              <div className="stat-icon" style={{ background: 'var(--gl)' }}>💰</div>
-              <div className="stat-lbl">Volume</div>
-              <div className="stat-val">₦{breakdown ? ((breakdown.savings?.volume ?? 0) + (breakdown.redemptions?.volume ?? 0)).toLocaleString() : '—'}</div>
-            </div>
-            <div className="stat-card green">
-              <div className="stat-icon" style={{ background: 'var(--gl)' }}>📈</div>
-              <div className="stat-lbl">Commission Rate</div>
-              <div className="stat-val">0.4%</div>
-            </div>
-          </div>
-
-          <div className="grid g-2-1">
-            <div>
-              {current && breakdown && (
-                <div className="card" style={{ marginBottom: 18 }}>
-                  <div className="card-title">Breakdown — {MONTHS[current.month]} {current.year}</div>
-                  <div className="table-wrap"><table>
-                    <thead><tr><th>Category</th><th>Transactions</th><th>Volume</th><th>Commission</th><th>Rate</th></tr></thead>
-                    <tbody>
-                      {breakdown.savings && (
-                        <tr>
-                          <td>💰 Savings</td>
-                          <td>{breakdown.savings.count}</td>
-                          <td>₦{(breakdown.savings.volume ?? 0).toLocaleString()}</td>
-                          <td className="td-mono" style={{ color: 'var(--mu)' }}>₦0</td>
-                          <td>—</td>
-                        </tr>
-                      )}
-                      {breakdown.redemptions && (
-                        <tr>
-                          <td>🎯 Redemptions</td>
-                          <td>{breakdown.redemptions.count}</td>
-                          <td>₦{(breakdown.redemptions.volume ?? 0).toLocaleString()}</td>
-                          <td className="td-mono" style={{ color: 'var(--g)' }}>₦{(breakdown.redemptions.commission ?? 0).toLocaleString()}</td>
-                          <td>—</td>
-                        </tr>
-                      )}
-                      {breakdown.enrolments && (
-                        <tr>
-                          <td>📋 Enrolments</td>
-                          <td>{breakdown.enrolments.count}</td>
-                          <td>—</td>
-                          <td className="td-mono" style={{ color: 'var(--mu)' }}>₦0</td>
-                          <td>—</td>
-                        </tr>
-                      )}
-                      {breakdown.rewards && breakdown.rewards.map((r: any) => (
-                        <tr key={r.customerId}>
-                          <td>🎁 Reward — {r.customerName}</td>
-                          <td>1</td>
-                          <td>—</td>
-                          <td className="td-mono" style={{ color: 'var(--g)' }}>₦{r.amount.toLocaleString()}</td>
-                          <td style={{ fontSize: 11, color: 'var(--mu)' }}>{r.type}</td>
-                        </tr>
-                      ))}
-                      <tr style={{ fontWeight: 700, background: 'var(--gl)' }}>
-                        <td>Total</td>
-                        <td>—</td>
-                        <td>—</td>
-                        <td className="td-mono" style={{ color: 'var(--g)', fontSize: 15 }}>₦{current.amount.toLocaleString()}</td>
-                        <td>—</td>
-                      </tr>
-                    </tbody>
-                  </table></div>
-                </div>
-              )}
-              <div className="card">
-                <div className="card-title">Previous Payouts</div>
-                {commissions.slice(1).map((c, i) => (
-                  <div key={c.id} className="cust-row" style={{ padding: '9px 0', borderBottom: i < commissions.length - 2 ? undefined : 'none' }}>
-                    <div className="av av-gd">💵</div>
-                    <div><div className="cust-name">{MONTHS[c.month]} Commission</div><div className="cust-sub">{c.year}</div></div>
-                    <div style={{ marginLeft: 'auto', fontFamily: "'Plus Jakarta Sans',sans-serif", fontWeight: 700, color: 'var(--gd)' }}>₦{c.amount.toLocaleString()}</div>
-                  </div>
-                ))}
-                {commissions.length <= 1 && (
-                  <div style={{ textAlign: 'center', color: 'var(--mu)', fontSize: 13, padding: 8 }}>No previous payouts</div>
+          {breakdown && (
+            <>
+              <div className="ui-section-head"><h2>How you earned it</h2></div>
+              <section className="ui-card ui-card--list" aria-label="Breakdown">
+                {breakdown.savings && (
+                  <ListRow icon="deposit" title="Savings" sub={`${breakdown.savings.count} · ${formatNaira(breakdown.savings.volume ?? 0, { minor: false })}`}
+                    value={<span className="ui-value-stack">{formatNaira(breakdown.savings.commission ?? 0)}</span>} />
                 )}
-              </div>
-            </div>
-            <div>
-              {commissions.length > 1 && (
-                <div className="card" style={{ marginBottom: 18 }}>
-                  <div className="card-title">Monthly Trend</div>
-                  <div className="bar-chart" style={{ height: 100 }}>
-                    {commissions.slice(0, 6).reverse().map((c, i, arr) => (
-                      <div key={c.id} className="bar-col">
-                        <div className={`bar${i === arr.length - 1 ? ' active' : ''}`} style={{ height: `${Math.round((c.amount / maxAmt) * 100)}%` }} />
-                        <div className="bar-lbl" style={i === arr.length - 1 ? { color: 'var(--g)', fontWeight: 700 } : {}}>
-                          {MONTHS[c.month].slice(0, 3)}<br />
-                          <span style={{ color: 'var(--mu)' }}>₦{(c.amount / 1000).toFixed(1)}K</span>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                {breakdown.redemptions && (
+                  <ListRow icon="withdraw" title="Collections" sub={`${breakdown.redemptions.count} · ${formatNaira(breakdown.redemptions.volume ?? 0, { minor: false })}`}
+                    value={<span className="ui-value-stack ui-amount--positive">{formatNaira(breakdown.redemptions.commission ?? 0)}</span>} />
+                )}
+                {breakdown.enrolments && (
+                  <ListRow icon="enrol" title="Enrolments" sub={`${breakdown.enrolments.count} new customer${breakdown.enrolments.count === 1 ? '' : 's'}`}
+                    value={<span className="ui-value-stack">{formatNaira(0)}</span>} />
+                )}
+                {breakdown.rewards?.map(r => (
+                  <ListRow key={r.customerId} icon="commission" title={`Reward · ${displayName(r.customerName)}`} sub={r.type === 'online' ? 'Online sign-up' : 'Enrolled by you'}
+                    value={<span className="ui-value-stack ui-amount--positive">{formatNaira(r.amount)}</span>} />
+                ))}
+                <div className="ui-row ag-earn-total">
+                  <span className="ui-row-main"><span className="ui-row-title">Total for {MONTHS[current.month]}</span></span>
+                  <span className="ui-row-value">{formatNaira(current.amount)}</span>
                 </div>
-              )}
-              {current && (
-                <div className="card" style={{ marginBottom: 18 }}>
-                  <div className="card-title">Current Period</div>
-                  <div style={{ textAlign: 'center', padding: '16px 0' }}>
-                    <div style={{ fontSize: 11, color: 'var(--mu)', textTransform: 'uppercase', letterSpacing: 1 }}>
-                      Commission for {MONTHS[current.month]} {current.year}
-                    </div>
-                    <div style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", fontSize: 36, fontWeight: 800, color: 'var(--gd)', margin: '8px 0' }}>
-                      ₦{current.amount.toLocaleString()}
-                    </div>
-                    <div style={{ fontSize: 12.5, color: 'var(--mu)' }}>Next payout: 1st of next month</div>
-                  </div>
-                </div>
-              )}
-              {rewards.length > 0 && (
-                <div className="card">
-                  <div className="card-title">Registration Rewards</div>
-                  {rewards.map((r, i) => (
-                    <div key={r.id} style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0', borderBottom: i < rewards.length - 1 ? '1px solid var(--br)' : 'none' }}>
-                      <div style={{ width: 34, height: 34, borderRadius: '50%', background: r.type === 'online' ? '#e8f0fe' : 'var(--gl)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16, flexShrink: 0 }}>
-                        {r.type === 'online' ? '🌐' : '📋'}
-                      </div>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontWeight: 700, fontSize: 13 }}>{r.customer.firstName} {r.customer.lastName}</div>
-                        <div style={{ fontSize: 11, color: 'var(--mu)' }}>{r.customer.customerId} · {fmtDate(r.createdAt)} · {r.type === 'online' ? 'Online' : 'Offline'}</div>
-                      </div>
-                      <div style={{ fontWeight: 800, color: 'var(--g)', fontSize: 14 }}>+₦{r.amount.toLocaleString()}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </>
-      )}
-    </>
+              </section>
+            </>
+          )}
+        </div>
+
+        <div className="ag-col">
+          {trend.length > 1 && (
+            <>
+              <div className="ui-section-head"><h2>Last {trend.length} months</h2></div>
+              <section className="ui-card" aria-label="Commission per month">
+                <ol className="ag-bars">
+                  {trend.map((c, i) => {
+                    const isCurrent = i === trend.length - 1
+                    return (
+                      <li key={c.id} className={isCurrent ? 'is-current' : undefined}>
+                        <span className="ag-bar-value">{c.amount >= 1000 ? `₦${(c.amount / 1000).toFixed(1)}k` : formatNaira(c.amount, { minor: false })}</span>
+                        <span className="ag-bar-track"><span className="ag-bar" style={{ height: `${Math.max(4, Math.round((c.amount / maxAmt) * 100))}%` }} /></span>
+                        <span className="ag-bar-label">{MONTHS[c.month].slice(0, 3)}</span>
+                      </li>
+                    )
+                  })}
+                </ol>
+              </section>
+            </>
+          )}
+
+          {commissions.length > 1 && (
+            <>
+              <div className="ui-section-head"><h2>Earlier months</h2></div>
+              <section className="ui-card ui-card--list">
+                {commissions.slice(1).map(c => (
+                  <ListRow key={c.id} icon="calendar" title={`${MONTHS[c.month]} ${c.year}`} value={<span className="ui-value-stack">{formatNaira(c.amount)}</span>} />
+                ))}
+              </section>
+            </>
+          )}
+
+          {rewards.length > 0 && (
+            <>
+              <div className="ui-section-head"><h2>Sign-up rewards</h2></div>
+              <section className="ui-card ui-card--list">
+                {rewards.map(r => (
+                  <ListRow key={r.id} icon={r.type === 'online' ? 'share' : 'enrol'}
+                    title={displayName(`${r.customer.firstName} ${r.customer.lastName}`)}
+                    sub={`${r.customer.customerId} · ${formatDate(r.createdAt)} · ${r.type === 'online' ? 'Online' : 'In person'}`}
+                    value={<span className="ui-value-stack ui-amount--positive">+{formatNaira(r.amount, { minor: false })}</span>} />
+                ))}
+              </section>
+            </>
+          )}
+        </div>
+      </div>
+    </div>
   )
 }
