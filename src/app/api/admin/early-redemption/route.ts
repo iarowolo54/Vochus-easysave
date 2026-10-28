@@ -52,7 +52,9 @@ export async function GET() {
       balance: r.balance,
       penalty: r.penalty,
       netPayout: r.netPayout,
-      token: r.token,
+      // token intentionally omitted: it is a hash of a 6-digit code (low
+      // offline brute-force cost) and staff never need it. The customer gets
+      // the code out-of-band; agents validate it via verify-token.
       tokenExpiry: r.tokenExpiry,
       payoutMethod: r.payoutMethod,
       accountNumber: r.accountNumber,

@@ -3,34 +3,39 @@ import { randomInt } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { sendMail } from '@/lib/mail'
 import { enrolRateLimiter, clientIp } from '@/lib/rate-limit'
+import { normalizeEmail } from '@/lib/email'
 
 const SEND_MIN_INTERVAL_MS = 60 * 1000 // one send per email per 60s (DB-backed, cluster-safe)
 
 export async function POST(req: NextRequest) {
-  const { email } = await req.json()
-  if (!email || typeof email !== 'string' || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+  const { email: rawEmail } = await req.json()
+  if (!rawEmail || typeof rawEmail !== 'string' || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(rawEmail)) {
     return NextResponse.json({ error: 'Valid email required' }, { status: 400 })
   }
+  const email = normalizeEmail(rawEmail)
 
   // Per-IP soft limit (best-effort across the cluster): bounds a single source
-  // fanning out across many addresses.
+  // fanning out across many addresses, and bounds the DB read below.
   const ip = clientIp(req)
   const ipLimit = enrolRateLimiter.check(`email-otp-send:ip:${ip}`, 20, 60 * 60 * 1000)
   if (!ipLimit.allowed) {
     return NextResponse.json({ error: 'Too many requests. Please try again later.' }, { status: 429 })
   }
 
-  // Per-email hourly soft limit (~5/hr) so one address can't be flooded.
-  const hourLimit = enrolRateLimiter.check(`email-otp-send:email:${email}`, 5, 60 * 60 * 1000)
-  if (!hourLimit.allowed) {
-    return NextResponse.json({ error: 'Too many codes requested for this email. Please wait and try again.' }, { status: 429 })
-  }
-
-  // Exact 60s throttle per email, enforced from the DB (survives restarts and
-  // is shared across both cluster instances).
+  // Exact 60s throttle per email, enforced from the DB (survives restarts and is
+  // shared across both cluster instances). Checked BEFORE the hourly budget so a
+  // user mashing "resend" within 60s doesn't burn their 5/hr allowance on sends
+  // that never happen.
   const latest = await prisma.emailOTP.findFirst({ where: { email }, orderBy: { createdAt: 'desc' } })
   if (latest && Date.now() - latest.createdAt.getTime() < SEND_MIN_INTERVAL_MS) {
     return NextResponse.json({ error: 'A code was just sent. Please wait a minute before requesting another.' }, { status: 429 })
+  }
+
+  // Per-email hourly soft limit (~5/hr) so one address can't be flooded. Only
+  // counted once a send is actually going to happen.
+  const hourLimit = enrolRateLimiter.check(`email-otp-send:email:${email}`, 5, 60 * 60 * 1000)
+  if (!hourLimit.allowed) {
+    return NextResponse.json({ error: 'Too many codes requested for this email. Please wait and try again.' }, { status: 429 })
   }
 
   const code = randomInt(100000, 1000000).toString()

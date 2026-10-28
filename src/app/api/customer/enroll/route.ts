@@ -5,6 +5,7 @@ import { signCustomerToken, customerCookieOptions } from '@/lib/customer-auth'
 import { sendMail } from '@/lib/mail'
 import { logAudit } from '@/lib/audit'
 import { resolveBvn } from '@/lib/paystack'
+import { normalizeEmail } from '@/lib/email'
 
 function genId(prefix: string, pad = 5) {
   return `${prefix}-${String(Math.floor(Math.random() * (10 ** pad - 10 ** (pad - 1)) + 10 ** (pad - 1)))}`
@@ -85,9 +86,10 @@ export async function POST(req: NextRequest) {
   // Email must have been verified via the email-OTP flow, recently. This is the
   // server-side gate — the browser check alone is not enough. The row is
   // consumed after the customer is created so it can't be replayed.
+  const normEmail = normalizeEmail(String(email))
   const emailThirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000)
   const verifiedOtp = await prisma.emailOTP.findFirst({
-    where: { email, verified: true, createdAt: { gte: emailThirtyMinAgo } },
+    where: { email: normEmail, verified: true, createdAt: { gte: emailThirtyMinAgo } },
     orderBy: { createdAt: 'desc' },
   })
   if (!verifiedOtp) {
@@ -143,7 +145,7 @@ export async function POST(req: NextRequest) {
   })
 
   // Consume the email verification (all rows for this email) so it can't be reused.
-  await prisma.emailOTP.deleteMany({ where: { email } })
+  await prisma.emailOTP.deleteMany({ where: { email: normEmail } })
 
   if (Array.isArray(plans) && plans.length > 1) {
     for (let i = 0; i < plans.length - 1; i++) {
