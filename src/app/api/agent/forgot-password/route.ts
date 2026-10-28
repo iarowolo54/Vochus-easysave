@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { randomInt } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { sendMail } from '@/lib/mail'
 import { emailLogo } from '@/lib/email-brand'
 
 function genOtp() {
-  return String(Math.floor(100000 + Math.random() * 900000))
+  return randomInt(100000, 1000000).toString()
 }
 
 export async function POST(req: NextRequest) {

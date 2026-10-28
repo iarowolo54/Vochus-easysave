@@ -1,4 +1,5 @@
 import { NextAuthOptions } from 'next-auth'
+import { requireEnv } from '@/lib/env'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import bcrypt from 'bcryptjs'
 import { prisma } from './prisma'
@@ -60,5 +61,5 @@ export const adminAuthOptions: NextAuthOptions = {
   pages: {
     signIn: '/superadmin/login',
   },
-  secret: process.env.NEXTAUTH_SECRET ?? 'vochus-easy-save-secret-dev-2026',
+  secret: requireEnv('NEXTAUTH_SECRET'),
 }

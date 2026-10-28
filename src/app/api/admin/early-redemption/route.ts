@@ -1,11 +1,12 @@
 import { NextResponse } from 'next/server'
+import { randomBytes } from 'crypto'
 import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
 
 function genRef() {
-  return `ER-${Date.now().toString(36).toUpperCase()}-${Math.random().toString(36).slice(2, 6).toUpperCase()}`
+  return `ER-${Date.now().toString(36).toUpperCase()}-${randomBytes(4).toString('hex').toUpperCase()}`
 }
 
 export async function GET() {
@@ -51,7 +52,9 @@ export async function GET() {
       balance: r.balance,
       penalty: r.penalty,
       netPayout: r.netPayout,
-      token: r.token,
+      // token intentionally omitted: it is a hash of a 6-digit code (low
+      // offline brute-force cost) and staff never need it. The customer gets
+      // the code out-of-band; agents validate it via verify-token.
       tokenExpiry: r.tokenExpiry,
       payoutMethod: r.payoutMethod,
       accountNumber: r.accountNumber,

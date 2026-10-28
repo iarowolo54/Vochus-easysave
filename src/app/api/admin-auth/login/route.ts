@@ -3,9 +3,10 @@ import { encode } from 'next-auth/jwt'
 import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { requireEnv } from '@/lib/env'
 
 const COOKIE_NAME = 'next-admin-auth.session-token'
-const SECRET = process.env.NEXTAUTH_SECRET ?? 'vochus-easy-save-secret-dev-2026'
+const SECRET = requireEnv('NEXTAUTH_SECRET')
 
 export async function POST(req: NextRequest) {
   const { email, password } = await req.json()

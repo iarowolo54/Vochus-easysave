@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { randomBytes } from 'crypto'
 import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
@@ -18,7 +19,7 @@ export async function POST(req: NextRequest) {
   const agent = await prisma.agent.findUnique({ where: { id: agentId } })
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
 
-  const ref = `WF-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`
+  const ref = `WF-${Date.now()}-${randomBytes(4).toString('hex').toUpperCase()}`
   const walletAfter = agent.walletBalance + amount
 
   const [updated] = await prisma.$transaction([

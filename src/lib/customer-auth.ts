@@ -1,9 +1,8 @@
 import { SignJWT, jwtVerify } from 'jose'
 import { cookies } from 'next/headers'
+import { requireEnv } from '@/lib/env'
 
-const SECRET = new TextEncoder().encode(
-  process.env.NEXTAUTH_SECRET ?? 'vochus-customer-secret-2026'
-)
+const SECRET = new TextEncoder().encode(requireEnv('NEXTAUTH_SECRET'))
 const COOKIE = 'customer_token'
 const EXPIRY = '30d'
 

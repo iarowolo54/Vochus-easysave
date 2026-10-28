@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { randomInt } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { sendMail } from '@/lib/mail'
 
@@ -11,7 +12,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ to
 
   await prisma.emailOTP.deleteMany({ where: { email: invite.email } })
 
-  const code = String(Math.floor(100000 + Math.random() * 900000))
+  const code = randomInt(100000, 1000000).toString()
   await prisma.emailOTP.create({
     data: { email: invite.email, code, expiresAt: new Date(Date.now() + 10 * 60 * 1000) },
   })

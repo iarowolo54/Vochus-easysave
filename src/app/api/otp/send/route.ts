@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { randomInt } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { sendSMS } from '@/lib/kudisms'
 import { sendMail } from '@/lib/mail'
@@ -10,7 +11,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid Nigerian phone number' }, { status: 400 })
   }
 
-  const code = Math.floor(100000 + Math.random() * 900000).toString()
+  const code = randomInt(100000, 1000000).toString()
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000)
 
   await prisma.phoneOTP.create({ data: { phone, code, expiresAt } })
@@ -30,6 +31,7 @@ export async function POST(req: NextRequest) {
     }).catch(() => {})
   }
 
-  // TEMP: expose OTP in prod too so agents can still onboard while SMS delivery is being tuned.
-  return NextResponse.json({ ok: true, _devCode: code })
+  // The code is delivered out-of-band (SMS, and email if the number is known).
+  // It is never returned in the response or logged.
+  return NextResponse.json({ ok: true })
 }

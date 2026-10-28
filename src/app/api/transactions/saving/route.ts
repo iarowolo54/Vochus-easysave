@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { assertSufficient, insufficientResponse, InsufficientFundsError, money } from '@/lib/wallet-guard'
+import { debitAgentBalance } from '@/lib/wallet-debit'
 import { creditRegistrationReward } from '@/lib/reward'
 
 export async function POST(req: NextRequest) {
@@ -48,30 +49,33 @@ export async function POST(req: NextRequest) {
   const txnCount = await prisma.transaction.count()
   const ref = `TXN-${String(9000 + txnCount + 1)}`
 
-  const [txn] = await prisma.$transaction([
-    prisma.transaction.create({
-      data: {
-        ref,
-        agentId: agent.id,
-        customerId: customer.id,
-        planId: plan.id,
-        type: 'saving',
-        amount: rounded,
-        method: method ?? 'Cash',
-        status: 'Done',
-        walletAfter,
-        ...(date ? { createdAt: new Date(date) } : {}),
-      },
-    }),
-    prisma.savingsPlan.update({
-      where: { id: plan.id },
-      data: { balance: { increment: rounded } },
-    }),
-    prisma.agent.update({
-      where: { id: agent.id },
-      data: { walletBalance: { decrement: rounded } },
-    }),
-  ])
+  let txn
+  try {
+    txn = await prisma.$transaction(async (tx) => {
+      // Atomically debit the agent's wallet; concurrent savings can't overdraw.
+      const debited = await debitAgentBalance(tx, agent.id, 'walletBalance', rounded)
+      if (!debited) throw new InsufficientFundsError('Agent wallet', agent.walletBalance, rounded)
+      const created = await tx.transaction.create({
+        data: {
+          ref,
+          agentId: agent.id,
+          customerId: customer.id,
+          planId: plan.id,
+          type: 'saving',
+          amount: rounded,
+          method: method ?? 'Cash',
+          status: 'Done',
+          walletAfter,
+          ...(date ? { createdAt: new Date(date) } : {}),
+        },
+      })
+      await tx.savingsPlan.update({ where: { id: plan.id }, data: { balance: { increment: rounded } } })
+      return created
+    })
+  } catch (e) {
+    if (e instanceof InsufficientFundsError) return insufficientResponse(e)
+    throw e
+  }
 
   logAudit({ action: 'saving', entity: 'Transaction', entityId: txn.id, details: `₦${rounded} saving for ${customer.firstName} ${customer.lastName} (${ref}) via ${method ?? 'Cash'}`, actorId: agent.id, actorName: agent.name })
 

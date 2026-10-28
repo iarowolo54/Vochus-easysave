@@ -73,6 +73,11 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   }
 
   if (action === 'approve') {
+    // Mutual exclusion with the agent redemption path: never pay out a plan that
+    // has already been redeemed (defence alongside loadOwnedRedeemablePlan).
+    if (record.savingsPlan.status === 'Redeemed' || record.savingsPlan.balance <= 0) {
+      return NextResponse.json({ error: 'This plan has already been redeemed' }, { status: 409 })
+    }
     const agentId = record.savingsPlan.customer.agentId
     const customerId = record.savingsPlan.customer.id
     const isBankTransfer = record.payoutMethod === 'Bank Transfer' || record.payoutMethod === 'BankTransfer'

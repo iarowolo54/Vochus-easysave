@@ -1,9 +1,10 @@
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { getToken } from 'next-auth/jwt'
+import { requireEnv } from '@/lib/env'
 
-const AGENT_SECRET = process.env.NEXTAUTH_SECRET ?? 'vochus-easy-save-secret-dev-2026'
-const ADMIN_SECRET = process.env.NEXTAUTH_SECRET ?? 'vochus-easy-save-secret-dev-2026'
+const AGENT_SECRET = requireEnv('NEXTAUTH_SECRET')
+const ADMIN_SECRET = requireEnv('NEXTAUTH_SECRET')
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl

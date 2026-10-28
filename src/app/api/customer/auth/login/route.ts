@@ -5,17 +5,101 @@ import { prisma } from '@/lib/prisma'
 import { signCustomerToken, customerCookieOptions } from '@/lib/customer-auth'
 import { recordDeviceSession } from '@/lib/device-session'
 import { logAudit } from '@/lib/audit'
+import {
+  checkLoginThrottle,
+  recordLoginFailure,
+  clearLoginThrottle,
+} from '@/lib/login-attempt'
+import { formatRetryAfter } from '@/lib/login-throttle'
+
+// A valid cost-10 bcrypt hash used to equalise response timing when the account
+// doesn't exist, so an attacker can't tell real phones from fake ones by latency.
+const DUMMY_HASH = '$2b$10$nUrpvJfq2cpE.r5D1xRM8eSGRAxC9l6SBOTjAkDncBZh8XCnlnhM6'
+
+// The client IP, taken from the entry our own reverse proxy (nginx) appends to
+// X-Forwarded-For — the RIGHTMOST value. The leftmost entries are client-supplied
+// and forgeable, so using them would let an attacker both evade the IP rule and
+// lock out arbitrary addresses. Assumes a single trusted proxy hop.
+function clientIp(req: NextRequest): string | null {
+  const xff = req.headers.get('x-forwarded-for')
+  if (!xff) return null
+  const parts = xff.split(',').map((s) => s.trim()).filter(Boolean)
+  const ip = parts[parts.length - 1]
+  if (!ip || ip.length > 45) return null // 45 = max IPv6 textual length
+  return ip
+}
+
+// The throttle must never take down login: if its DB access fails, fail OPEN
+// rather than 500 the customer out. Rationale: this is one SQLite file — if it's
+// truly unreachable the customer lookup below fails too, so the login is already
+// broken and failing open opens no window that isn't already a full outage. A
+// transient "database is locked" shouldn't reject a legitimate user. We log so
+// the failure is never silent.
+async function safeCheck(ids: { phone?: string | null; ip?: string | null }) {
+  try {
+    return await checkLoginThrottle(ids)
+  } catch (e) {
+    console.error('[login-throttle] check failed — failing open:', e)
+    return { blocked: false, accountLocked: false, retryAfterSeconds: 0 }
+  }
+}
+const swallow = (p: Promise<unknown>) =>
+  p.catch((e) => console.error('[login-throttle] record/clear failed:', e))
+
+// Account is hard-locked after too many failures — the client must run the OTP
+// unlock flow (POST /api/customer/auth/unlock/request then /verify). 423 Locked.
+function lockedResponse() {
+  return NextResponse.json(
+    {
+      error: 'Your account is locked after too many failed attempts. Unlock it with a verification code to continue.',
+      locked: true,
+    },
+    { status: 423 },
+  )
+}
 
 export async function POST(req: NextRequest) {
   const { phone, password, app, deviceId, biometricToken, device } = await req.json()
-  if (!phone) return NextResponse.json({ error: 'Missing credentials' }, { status: 400 })
+  if (!phone || typeof phone !== 'string') {
+    return NextResponse.json({ error: 'Missing credentials' }, { status: 400 })
+  }
   if (!password && !biometricToken) return NextResponse.json({ error: 'Missing credentials' }, { status: 400 })
+
+  const ip = clientIp(req)
+  const isPasswordAttempt = !biometricToken && typeof password === 'string' && password.length > 0
+
+  // Full freeze: once the account is hard-locked, EVERY method is refused
+  // (password and biometric alike) until an OTP unlock. The IP spray rule is a
+  // separate, time-based 429.
+  const throttle = await safeCheck({ phone, ip })
+  if (throttle.accountLocked) return lockedResponse()
+  if (throttle.blocked) {
+    return NextResponse.json(
+      { error: `Too many attempts. Try again in ${formatRetryAfter(throttle.retryAfterSeconds)}.` },
+      { status: 429, headers: { 'Retry-After': String(throttle.retryAfterSeconds) } },
+    )
+  }
+
+  // Record a failed password attempt, then return 423 if it just caused the lock
+  // (so the client can jump to the unlock flow) or 401 otherwise. Applied
+  // uniformly whether or not the account exists, so behaviour can't be used to
+  // enumerate real phones.
+  async function failPassword(): Promise<NextResponse> {
+    await swallow(recordLoginFailure({ phone, ip }))
+    const after = await safeCheck({ phone, ip })
+    if (after.accountLocked) return lockedResponse()
+    return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
+  }
 
   const customer = await prisma.customer.findFirst({
     where: { phone: phone.trim() },
   })
 
   if (!customer || !customer.password) {
+    if (isPasswordAttempt) {
+      await bcrypt.compare(password, DUMMY_HASH) // equalise timing vs. a real account
+      return failPassword()
+    }
     return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
   }
 
@@ -29,11 +113,18 @@ export async function POST(req: NextRequest) {
       valid = true
       await prisma.biometricToken.update({ where: { id: t.id }, data: { lastUsedAt: new Date() } }).catch(() => {})
     }
-  } else if (password) {
+  } else if (isPasswordAttempt) {
     valid = await bcrypt.compare(password, customer.password)
   }
 
-  if (!valid) return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
+  if (!valid) {
+    if (isPasswordAttempt) return failPassword()
+    return NextResponse.json({ error: 'Invalid credentials' }, { status: 401 })
+  }
+
+  // Correct credentials: the throttle's job (protecting the password) is done,
+  // so clear the account counter even if a later gate (status/device) blocks.
+  await swallow(clearLoginThrottle({ phone }))
 
   if (customer.status && customer.status.toLowerCase() !== 'active') {
     return NextResponse.json({ error: 'Your account has been locked by the administrator. Please contact support.' }, { status: 403 })
@@ -76,7 +167,7 @@ export async function POST(req: NextRequest) {
       app,
       customerId: customer.id,
       meta: device ?? undefined,
-      ipAddress: req.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? null,
+      ipAddress: ip,
     })
   }
   return res

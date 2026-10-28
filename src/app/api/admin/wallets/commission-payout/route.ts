@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { randomBytes } from 'crypto'
 import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
@@ -24,7 +25,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Insufficient Float wallet for commission payout' }, { status: 400 })
   }
 
-  const ref = `COMM-${Date.now()}-${Math.random().toString(36).slice(2, 7).toUpperCase()}`
+  const ref = `COMM-${Date.now()}-${randomBytes(4).toString('hex').toUpperCase()}`
 
   await prisma.$transaction([
     prisma.agent.update({

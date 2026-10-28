@@ -254,6 +254,7 @@ model EmailOTP {
   code      String
   expiresAt DateTime
   verified  Boolean  @default(false)
+  attempts  Int      @default(0)
   createdAt DateTime @default(now())
 }
 
@@ -521,5 +522,54 @@ model AgentReward {
   narration  String      @default("Reward fee")
   createdAt  DateTime    @default(now())
 
+  @@index([agentId])
+}
+
+// Brute-force throttle state for the customer login path. One row per throttle
+// key: "phone:<normalised phone>" (per-account escalation) or "ip:<addr>"
+// (loose per-IP spray rule). Managed by src/lib/login-attempt.ts; the decision
+// logic lives in src/lib/login-throttle.ts.
+model LoginAttempt {
+  id          String    @id @default(cuid())
+  key         String    @unique
+  failCount   Int       @default(0)
+  lastFailAt  DateTime?
+  lockedUntil DateTime?
+  updatedAt   DateTime  @updatedAt
+}
+
+// One-time codes for unlocking a hard-locked customer account. The code itself
+// is never stored or returned — only a SHA-256 hash. Sent on the customer's
+// registration channel: email (link-registered) or SMS (agent-registered).
+model AccountUnlockOtp {
+  id         String    @id @default(cuid())
+  customerId String
+  channel    String // 'email' | 'sms'
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([customerId])
+}
+
+// Server-side payment intent created at Paystack init, consumed at verify. Binds
+// a payment reference to the actor, plan and amount it was initiated for, so a
+// verify cannot claim an arbitrary reference or credit a mismatched amount.
+model PaymentIntent {
+  id         String    @id @default(cuid())
+  ref        String    @unique
+  actorType  String // 'agent' | 'customer'
+  agentId    String?
+  customerId String?
+  planId     String?
+  amount     Float
+  currency   String    @default("NGN")
+  status     String    @default("Pending") // Pending | Done
+  createdAt  DateTime  @default(now())
+  consumedAt DateTime?
+
+  @@index([customerId])
   @@index([agentId])
 }

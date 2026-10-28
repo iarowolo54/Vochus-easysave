@@ -15,6 +15,7 @@ export default function LoginForm() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [fieldErrors, setFieldErrors] = useState({ phone: '', password: '' })
+  const [notice, setNotice] = useState('')
 
   const [canBio, setCanBio] = useState(false)
 
@@ -28,6 +29,9 @@ export default function LoginForm() {
     }
     const refresh = () => setCanBio(!!(w.__vochusCanBiometric && w.__vochusBiometricEnrolled))
     refresh()
+    if (new URLSearchParams(window.location.search).get('unlocked')) {
+      setNotice('Your account is unlocked. Sign in with your password.')
+    }
     const t1 = setTimeout(refresh, 300)
     const t2 = setTimeout(refresh, 1000)
     window.addEventListener('vochus:flags-ready', refresh)
@@ -47,6 +51,8 @@ export default function LoginForm() {
           }),
         })
         if (res.ok) { router.push('/customer/dashboard'); return }
+        // A hard-locked account (4 wrong passwords) can only be reopened with a one-time code.
+        if (res.status === 423) { router.push(`/customer/unlock?phone=${encodeURIComponent(creds.identifier)}`); return }
         setError('Fingerprint sign-in didn’t work. Please sign in with your password.')
       } catch {
         setError('Fingerprint sign-in didn’t work. Please sign in with your password.')
@@ -84,6 +90,8 @@ export default function LoginForm() {
     })
     setLoading(false)
     if (result.ok) { router.push('/customer/dashboard'); return }
+    // A hard-locked account (4 wrong passwords) can only be reopened with a one-time code.
+    if (result.status === 423) { router.push(`/customer/unlock?phone=${encodeURIComponent(phone.trim())}`); return }
     if (result.status === 401) setFieldErrors({ phone: ' ', password: ' ' }) // mark both; the banner explains
     setError(describeFailure(result, {
       401: 'That phone number and password don’t match. Check them and try again, or reset your password.',
@@ -109,6 +117,12 @@ export default function LoginForm() {
       footer={<><Icons.locked size={14} aria-hidden="true" /> Your details are sent securely.</>}
     >
       <form onSubmit={login} noValidate>
+        {notice && !error && (
+          <div className="ui-banner ui-banner--info" role="status">
+            <Icons.check size={18} aria-hidden="true" />
+            <div>{notice}</div>
+          </div>
+        )}
         <div className="ui-field">
           <label className="ui-label" htmlFor="login-phone">Phone number</label>
           <input
