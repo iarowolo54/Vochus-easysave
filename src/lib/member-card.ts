@@ -52,14 +52,18 @@ export async function createCardBatch(
       await client.memberCard.createMany({
         data: serials.map((serial) => ({ serial, batchName, batchId, expiryDate, status: 'Unlinked' })),
       })
+      // Scope the result to the serials we just generated — NOT to batchId,
+      // which has no unique constraint, so a batchId collision must not pull a
+      // different batch's rows onto the print sheet.
       const cards = await client.memberCard.findMany({
-        where: { batchId },
+        where: { serial: { in: serials } },
         select: { id: true, serial: true },
         orderBy: { createdAt: 'asc' },
       })
       return { batchId, cards }
     } catch (e) {
-      // P2002 = unique constraint (serial or batchId collided) — retry fresh.
+      // P2002 = the serial @unique index collided (astronomically rare at 48
+      // bits) — retry with a fresh set rather than inserting a partial batch.
       if (e && typeof e === 'object' && (e as { code?: string }).code === 'P2002') continue
       throw e
     }

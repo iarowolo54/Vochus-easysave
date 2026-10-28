@@ -25,8 +25,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'batchName, a quantity between 1 and 5000, and expiryDate are required' }, { status: 400 })
   }
   const expiry = new Date(expiryDate)
-  if (isNaN(expiry.getTime())) {
-    return NextResponse.json({ error: 'Invalid expiry date' }, { status: 400 })
+  if (isNaN(expiry.getTime()) || expiry.getTime() <= Date.now()) {
+    return NextResponse.json({ error: 'Expiry date must be a valid future date' }, { status: 400 })
   }
 
   const { batchId, cards } = await createCardBatch(prisma, { batchName: batchName.trim(), quantity: qty, expiryDate: expiry })
