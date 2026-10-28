@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { checkLoanEligibility, loadLoanEligibilityContext } from '@/lib/loan-eligibility'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -67,9 +68,14 @@ export async function POST(req: NextRequest) {
   if (!isFinite(p) || p <= 0) return NextResponse.json({ error: 'Principal must be a positive amount' }, { status: 400 })
   if (!isFinite(days) || days <= 0) return NextResponse.json({ error: 'Duration must be a positive number of days' }, { status: 400 })
 
-  // Customer must belong to the acting agent (closes the cross-agent IDOR).
-  const customer = await prisma.customer.findFirst({ where: { id: customerId, agentId: agent.id } })
-  if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
+  // Customer must belong to the acting agent (closes the cross-agent IDOR),
+  // and eligibility is server-authoritative — the 80%-of-savings cap and the
+  // one-active-loan rule were previously enforced only in the page. Loading the
+  // eligibility context is itself the owner-scoped lookup (null => not owned).
+  const eligibility = await loadLoanEligibilityContext(prisma, agent.id, customerId)
+  if (!eligibility) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
+  const verdict = checkLoanEligibility({ principal: p, savingsBalance: eligibility.savingsBalance, hasActiveLoan: eligibility.hasActiveLoan })
+  if (!verdict.ok) return NextResponse.json({ error: verdict.error }, { status: 400 })
 
   // Interest rate is server-authoritative — the admin-configured rate for this
   // duration, never a rate chosen by the requesting agent.
