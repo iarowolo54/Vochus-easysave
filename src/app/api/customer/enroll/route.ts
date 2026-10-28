@@ -18,6 +18,24 @@ export async function POST(req: NextRequest) {
   if (!firstName || !lastName || !phone || !email || !address || !nokName || !nokRelation || !nokPhone || !password) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
   }
+
+  // Field rules — the server now enforces what the UI enforces, so a direct
+  // POST can't bypass them. (Request/response shape is unchanged.)
+  if (!/^0\d{10}$/.test(String(phone))) {
+    return NextResponse.json({ error: 'Phone must be 11 digits starting with 0' }, { status: 400 })
+  }
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(email))) {
+    return NextResponse.json({ error: 'Enter a valid email address' }, { status: 400 })
+  }
+  if (String(address).trim().length < 8) {
+    return NextResponse.json({ error: 'Address must be at least 8 characters' }, { status: 400 })
+  }
+  if (String(nokPhone) === String(phone)) {
+    return NextResponse.json({ error: "Emergency contact's phone must be different from the customer's" }, { status: 400 })
+  }
+  if (String(password).length < 6) {
+    return NextResponse.json({ error: 'Password must be at least 6 characters' }, { status: 400 })
+  }
   if (dailyAmount !== undefined && dailyAmount !== null && dailyAmount !== '') {
     const da = Number(dailyAmount)
     if (!isFinite(da) || da < 0) return NextResponse.json({ error: 'Daily amount cannot be negative' }, { status: 400 })
@@ -63,6 +81,18 @@ export async function POST(req: NextRequest) {
 
   const existing = await prisma.customer.findFirst({ where: { phone } })
   if (existing) return NextResponse.json({ error: 'Phone number already registered' }, { status: 409 })
+
+  // Email must have been verified via the email-OTP flow, recently. This is the
+  // server-side gate — the browser check alone is not enough. The row is
+  // consumed after the customer is created so it can't be replayed.
+  const emailThirtyMinAgo = new Date(Date.now() - 30 * 60 * 1000)
+  const verifiedOtp = await prisma.emailOTP.findFirst({
+    where: { email, verified: true, createdAt: { gte: emailThirtyMinAgo } },
+    orderBy: { createdAt: 'desc' },
+  })
+  if (!verifiedOtp) {
+    return NextResponse.json({ error: 'Confirm your email first' }, { status: 400 })
+  }
 
   const hashed = await bcrypt.hash(password, 10)
 
@@ -111,6 +141,9 @@ export async function POST(req: NextRequest) {
     },
     include: { savingsPlans: true },
   })
+
+  // Consume the email verification (all rows for this email) so it can't be reused.
+  await prisma.emailOTP.deleteMany({ where: { email } })
 
   if (Array.isArray(plans) && plans.length > 1) {
     for (let i = 0; i < plans.length - 1; i++) {

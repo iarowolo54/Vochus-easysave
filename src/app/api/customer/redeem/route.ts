@@ -8,6 +8,7 @@ import { resolveAccount } from '@/lib/paystack'
 import { sendSMS } from '@/lib/kudisms'
 import { sendMail } from '@/lib/mail'
 import crypto from 'crypto'
+import { hashRedemptionToken, redemptionTokenMatches } from '@/lib/redemption-token'
 
 export async function GET() {
   const session = await getCustomerSession()
@@ -97,7 +98,7 @@ export async function POST(req: NextRequest) {
       balance: plan.balance,
       penalty: deduction,
       netPayout,
-      token,
+      token: hashRedemptionToken(token),
       tokenExpiry,
       payoutMethod,
       accountNumber: accountNumber || null,
@@ -151,7 +152,7 @@ export async function PATCH(req: NextRequest) {
   }
   if (redemption.status !== 'Pending') return NextResponse.json({ error: 'Already processed' }, { status: 409 })
 
-  if (redemption.token !== token) return NextResponse.json({ error: 'Invalid token' }, { status: 400 })
+  if (!redemptionTokenMatches(redemption.token, token)) return NextResponse.json({ error: 'Invalid token' }, { status: 400 })
   if (!redemption.tokenExpiry || redemption.tokenExpiry < new Date()) {
     return NextResponse.json({ error: 'Token expired' }, { status: 400 })
   }

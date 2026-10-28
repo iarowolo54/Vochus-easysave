@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { hashRedemptionToken } from '@/lib/redemption-token'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -14,7 +15,7 @@ export async function POST(req: NextRequest) {
   if (!token) return NextResponse.json({ valid: false, error: 'Token is required' }, { status: 400 })
 
   const record = await prisma.earlyRedemption.findFirst({
-    where: { token: String(token).trim() },
+    where: { token: hashRedemptionToken(token) },
     include: {
       savingsPlan: {
         include: { customer: { select: { agentId: true, firstName: true, lastName: true } } },

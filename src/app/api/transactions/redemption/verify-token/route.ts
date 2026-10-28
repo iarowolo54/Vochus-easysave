@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { redemptionTokenMatches } from '@/lib/redemption-token'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -25,7 +26,7 @@ export async function POST(req: NextRequest) {
   if (!record) return NextResponse.json({ valid: false, error: 'Redemption record not found' }, { status: 400 })
   if (record.savingsPlan.customer.agentId !== agent.id) return NextResponse.json({ valid: false, error: 'Not authorized for this record' }, { status: 400 })
   if (record.status !== 'Pending') return NextResponse.json({ valid: false, error: 'Record is no longer pending' }, { status: 400 })
-  if (record.token !== token) return NextResponse.json({ valid: false, error: 'Invalid token' }, { status: 400 })
+  if (!redemptionTokenMatches(record.token, token)) return NextResponse.json({ valid: false, error: 'Invalid token' }, { status: 400 })
   if (!record.tokenExpiry || record.tokenExpiry < new Date()) return NextResponse.json({ valid: false, error: 'Token has expired' }, { status: 400 })
 
   const customerName = `${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName}`

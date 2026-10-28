@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { randomInt } from 'node:crypto'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { sendSMS } from '@/lib/kudisms'
 import { sendMail } from '@/lib/mail'
+import { hashRedemptionToken } from '@/lib/redemption-token'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
@@ -42,7 +44,7 @@ export async function POST(req: NextRequest) {
     })
     if (existing) return NextResponse.json({ error: 'A pending redemption request already exists for this customer' }, { status: 409 })
 
-    const token = Math.floor(100000 + Math.random() * 900000).toString()
+    const token = randomInt(100000, 1000000).toString()
     const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000)
     const ref = `RDM-${Date.now().toString(36).toUpperCase()}`
     const customerName = `${plan.customer.firstName} ${plan.customer.lastName}`
@@ -62,7 +64,7 @@ export async function POST(req: NextRequest) {
         balance: plan.balance,
         penalty: deduction,
         netPayout,
-        token,
+        token: hashRedemptionToken(token),
         tokenExpiry,
         payoutMethod: payoutMethod ?? 'Cash',
         accountNumber: accountNumber ?? null,
@@ -75,8 +77,8 @@ export async function POST(req: NextRequest) {
     const expiryStr = tokenExpiry.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
     const smsBody = `Vochus Easy Save: Your redemption token is ${token}. Present this to your agent to collect N${netPayout.toLocaleString()}. Expires ${expiryStr}.`
 
-    console.log(`[DEV] Redemption token for ${customerName} (${plan.customer.phone}): ${token} | Ref: ${ref} | Expires: ${expiryStr}`)
-
+    // The plaintext token is delivered only out-of-band (SMS/email) — never
+    // logged. Only its hash is stored (see hashRedemptionToken above).
     sendSMS(plan.customer.phone, smsBody).catch(() => {})
 
     if (plan.customer.email) {
