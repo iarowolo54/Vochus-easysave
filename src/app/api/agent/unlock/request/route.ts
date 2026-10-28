@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { randomInt } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { sendSMS } from '@/lib/kudisms'
 
@@ -21,7 +22,7 @@ export async function POST(req: Request) {
     if (!agent) return NextResponse.json({ error: 'No agent found with that ID or phone number' }, { status: 404 })
     if (!agent.lockedAt) return NextResponse.json({ error: 'This account is not locked' }, { status: 400 })
 
-    const token = String(Math.floor(100000 + Math.random() * 900000))
+    const token = randomInt(100000, 1000000).toString()
     const expiry = new Date(Date.now() + 15 * 60 * 1000)
 
     await prisma.agent.update({
