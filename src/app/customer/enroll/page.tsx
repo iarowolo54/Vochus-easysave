@@ -118,6 +118,14 @@ function EnrollContent() {
   const [emailVerified, setEmailVerified] = useState(false)
 
   const [terms, setTerms] = useState(false)
+
+  // Phone already registered? Checked with the server when the phone field is left (the server still guards it).
+  const [phoneTaken, setPhoneTaken] = useState<string | null>(null)
+  const [phoneChecking, setPhoneChecking] = useState(false)
+  /** Seconds until a new email code can be requested (the server allows one a minute). */
+  const [resendIn, setResendIn] = useState(0)
+  /** The agent who sent the invite, shown on the welcome screen. */
+  const [invite, setInvite] = useState<{ firstName: string; area: string | null; photo: string | null } | null>(null)
   const [result, setResult] = useState<{ customerId: string; name: string; agentName: string; plan: unknown } | null>(null)
 
   useEffect(() => {
@@ -145,6 +153,40 @@ function EnrollContent() {
   }, [bvn])
 
   useEffect(() => () => { streamRef.current?.getTracks().forEach(t => t.stop()) }, [])
+
+  useEffect(() => {
+    if (!aid && !ref) return
+    const q = new URLSearchParams()
+    if (ref) q.set('ref', ref)
+    if (aid) q.set('aid', aid)
+    fetch(`/api/customer/enroll/invite?${q}`)
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (d?.firstName) setInvite({ firstName: d.firstName, area: d.area ?? null, photo: d.photo ?? null }) })
+      .catch(() => {}) // The welcome screen works without it.
+  }, [aid, ref])
+
+  useEffect(() => {
+    if (resendIn <= 0) return
+    const t = setTimeout(() => setResendIn(n => n - 1), 1000)
+    return () => clearTimeout(t)
+  }, [resendIn])
+
+  /** Asks the server whether this phone already has an account. Returns false only when it's known to be taken. */
+  async function checkPhone(p: string): Promise<boolean> {
+    if (phoneError(p, 'your')) return true
+    if (phoneTaken === p) return false
+    setPhoneChecking(true)
+    try {
+      const r = await fetch('/api/customer/phone-available', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ phone: p }),
+      })
+      if (!r.ok) return true // Rate-limited or down: don't block here; the server checks again at the end.
+      const d = await r.json()
+      if (d.available === false) { setPhoneTaken(p); return false }
+      return true
+    } catch { return true }
+    finally { setPhoneChecking(false) }
+  }
 
   // ── Draft: a refresh, a closed app or a dropped connection shouldn't lose what was typed ──
   // Kept on this device for a day. The password, BVN and photo are never stored.
@@ -261,7 +303,7 @@ function EnrollContent() {
   const rules: Record<string, string> = {
     fn: firstName.trim() ? '' : 'Enter your first name',
     ln: lastName.trim() ? '' : 'Enter your last name',
-    ph: phoneError(phone, 'your'),
+    ph: phoneError(phone, 'your') || (phoneTaken === phone ? 'This number already has an account.' : ''),
     em: !email.trim() ? 'Enter your email address' : /^\S+@\S+\.\S+$/.test(email.trim()) ? '' : 'Check your email. It should look like name@example.com',
     addr: !address.trim() ? 'Enter your home address' : address.trim().length < 8 ? 'Add more detail, like the street and area' : '',
     dob: dob && new Date(dob) > new Date() ? 'Your date of birth can’t be in the future' : '',
@@ -299,8 +341,13 @@ function EnrollContent() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email }),
       })
-      if (res.ok) { setOtpCode(''); setOtpError(''); setOtpScreen(true) }
-      else { const d = await res.json(); setError(d.error ?? 'We couldn’t send the code. Check your email address.') }
+      if (res.ok) { setOtpCode(''); setOtpError(''); setOtpScreen(true); setResendIn(60) }
+      else {
+        const d = await res.json().catch(() => ({}))
+        // 429: a code was sent in the last minute. If they already have one, let them enter it.
+        if (res.status === 429 && resendIn > 0) { setOtpScreen(true); return }
+        setError(d.error ?? 'We couldn’t send the code. Check your email address.')
+      }
     } catch {
       setError('No connection. Check your internet and try again.')
     } finally { setOtpLoading(false) }
@@ -330,7 +377,9 @@ function EnrollContent() {
   async function resendEmailCode() {
     setOtpLoading(true); setOtpError('')
     try {
-      await fetch('/api/customer/email-otp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) })
+      const res = await fetch('/api/customer/email-otp', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) })
+      if (res.ok) { setOtpCode(''); setResendIn(60) }
+      else { const d = await res.json().catch(() => ({})); setOtpError(d.error ?? 'We couldn’t send a new code. Please try again.') }
     } catch { setOtpError('No connection. Check your internet and try again.') }
     finally { setOtpLoading(false) }
   }
@@ -470,6 +519,14 @@ function EnrollContent() {
               <span className="cu-brand"><Logo size={34} variant="mono" /><span>Vochus Easy Save</span></span>
               <a className="cu-signin" href="/customer/login">Sign in</a>
             </div>
+            {invite && (
+              <p className="cu-invite">
+                {invite.photo
+                  ? <img src={invite.photo} alt="" />
+                  : <span className="cu-invite-initial" aria-hidden="true">{invite.firstName[0]}</span>}
+                <span>Invited by <strong>{invite.firstName}</strong>, your agent{invite.area ? ` in ${invite.area}` : ''}</span>
+              </p>
+            )}
             <h1 className="cu-hello-title">{resume?.firstName ? `Welcome back, ${resume.firstName}` : 'Let’s save for what matters to you'}</h1>
             <p className="cu-hello-text">
               {resume
@@ -632,25 +689,23 @@ function EnrollContent() {
           <>
             <h1 className="cu-q">How can we reach you?</h1>
             <p className="cu-lead">We’ll send a code to your email to check it’s yours.</p>
-            {process.env.NODE_ENV === 'development' && <p className="ui-banner ui-banner--warn">Test mode: the email code is skipped on this development server.</p>}
             <FormError message={error} />
             <Field id="ph" label="Phone number" error={err('ph')} valid={ok('ph')}>
               <input id="ph" className="ag-tf-input ag-tf-num" type="tel" inputMode="numeric" maxLength={11} placeholder="080 0000 0000" autoComplete="tel"
-                value={phone} {...v('ph')} onKeyDown={blockNonDigit} onChange={e => setPhone(digitsOnly(e.target.value).slice(0, 11))} />
+                value={phone} {...v('ph')} onBlur={() => { touch('ph')(); checkPhone(phone) }} onKeyDown={blockNonDigit} onChange={e => setPhone(digitsOnly(e.target.value).slice(0, 11))} />
             </Field>
+            {phoneTaken === phone && <p className="cu-note cu-taken"><a className="ui-link" href="/customer/login">Sign in instead</a> or use a different number.</p>}
             <Field id="em" label="Email" error={err('em')} valid={ok('em')}
               badge={emailVerified ? <span className="cu-ok"><Icons.check size={14} strokeWidth={3} aria-hidden="true" /> Confirmed</span> : undefined}>
               <input id="em" className="ag-tf-input" type="email" inputMode="email" autoComplete="email" autoCapitalize="none" placeholder="you@email.com"
                 value={email} {...v('em')} onChange={e => { setEmail(e.target.value); setEmailVerified(false) }} />
             </Field>
             <div className="cu-actions">
-              {cta(otpLoading ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Sending code…</> : emailVerified ? 'Continue' : 'Send code', () => {
+              {cta(otpLoading || phoneChecking ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> {phoneChecking ? 'Checking…' : 'Sending code…'}</> : emailVerified ? 'Continue' : 'Send code', async () => {
                 if (!screenOk()) return
-                // Development only (`npm run dev`, including through the ngrok tunnel): skip the email code so the
-                // flow can be tested without a mail server. Next inlines NODE_ENV, so production builds drop this.
-                if (process.env.NODE_ENV === 'development' && !emailVerified) { setEmailVerified(true); advance(); return }
+                if (!(await checkPhone(phone))) { setShowMissing(true); return }
                 if (emailVerified) advance(); else sendEmailCode()
-              }, otpLoading)}
+              }, otpLoading || phoneChecking)}
             </div>
           </>
         )}
@@ -924,7 +979,7 @@ function EnrollContent() {
           <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={otpCode.length !== 6 || otpLoading} onClick={verifyEmailCode}>
             {otpLoading ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Checking…</> : 'Confirm email'}
           </button>
-          <button type="button" className="ui-btn ui-btn--plain ui-btn--block" disabled={otpLoading} onClick={resendEmailCode}>Send a new code</button>
+          <button type="button" className="ui-btn ui-btn--plain ui-btn--block" disabled={otpLoading || resendIn > 0} onClick={resendEmailCode}>{resendIn > 0 ? `Send a new code in ${resendIn}s` : 'Send a new code'}</button>
         </div>
       </BottomSheet>
     </div>

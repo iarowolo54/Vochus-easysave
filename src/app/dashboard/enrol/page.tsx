@@ -164,7 +164,6 @@ export default function EnrolPage() {
   const [otpLoading, setOtpLoading] = useState(false)
   const [otpError, setOtpError] = useState('')
   const [otpCooldown, setOtpCooldown] = useState(0)
-  const [devCode, setDevCode] = useState('')
 
   useEffect(() => {
     if (otpCooldown <= 0) return
@@ -182,7 +181,7 @@ export default function EnrolPage() {
     })
       .then(r => r.json())
       .then(data => {
-        if (data.ok) { setOtpSent(true); setOtpCooldown(60); if (data._devCode) setDevCode(data._devCode) }
+        if (data.ok) { setOtpSent(true); setOtpCooldown(60) }
         else setOtpError(data.error ?? 'The code couldn’t be sent. Try again.')
       })
       .catch(() => setOtpError('No connection. Check your internet and resend the code.'))
@@ -255,7 +254,6 @@ export default function EnrolPage() {
       if (!res.ok) { setOtpError(data.error ?? 'The code couldn’t be sent. Try again.'); return }
       setOtpSent(true)
       setOtpCooldown(60)
-      if (data._devCode) setDevCode(data._devCode)
     } catch {
       setOtpError('No connection. Check your internet and try again.')
     } finally {
@@ -387,7 +385,7 @@ export default function EnrolPage() {
             <Link href="/dashboard/customers" className="ui-btn ui-btn--secondary ui-btn--block">View customers</Link>
             <button type="button" className="ui-btn ui-btn--plain ui-btn--block" onClick={() => {
               setForm(empty); setPhotoDataUrl(null); setPhoneVerified(false); setOtpSent(false); setOtpCode('')
-              setDevCode(''); setShowMissing(false); setCreated(null); submittingRef.current = false; setStep(1)
+              setShowMissing(false); setCreated(null); submittingRef.current = false; setStep(1)
             }}>Enrol another customer</button>
           </div>
         </section>
@@ -560,7 +558,6 @@ export default function EnrolPage() {
                           </button>}
                       <button type="button" className="ui-link ui-link--muted" onClick={() => go(1)}>Change number</button>
                     </div>
-                    {devCode && <p className="ag-dev-code">Test mode code: <strong>{devCode}</strong></p>}
                     <p className="ag-fineprint">Codes expire after 10 minutes. If it doesn’t arrive, check the line isn’t on DND.</p>
                   </>
                 )}

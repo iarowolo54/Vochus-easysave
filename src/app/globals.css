@@ -1733,8 +1733,6 @@ button.ui-bottom-nav-item { border: 0; background: none; cursor: pointer; font-f
 .ag-otp-meta { display: flex; gap: var(--ui-s5); margin-top: var(--ui-s4); }
 .ag-otp-meta .ui-link { min-height: 36px; }
 .ag-otp-meta .ui-link:disabled { color: var(--ui-ink-2); cursor: default; }
-.ag-dev-code { display: inline-block; margin-top: var(--ui-s3); padding: 4px var(--ui-s3); border: 1px dashed var(--ui-warn); border-radius: var(--ui-r-sm); background: var(--ui-warn-tint); color: var(--ui-warn); font-size: var(--ui-fs-sm); }
-.ag-dev-code strong { letter-spacing: 3px; }
 .ag-verified { display: flex; align-items: center; gap: var(--ui-s3); padding: var(--ui-s4); border-radius: 14px; background: var(--ui-brand-tint); }
 .ag-verified-icon { width: 44px; height: 44px; border-radius: 50%; display: grid; place-items: center; background: var(--ui-brand); color: var(--ui-brand-on); flex-shrink: 0; }
 
@@ -2186,6 +2184,11 @@ button.ui-bottom-nav-item { border: 0; background: none; cursor: pointer; font-f
 .cu-hello .cu-brand img { filter: brightness(0) invert(1); }
 .cu-hello .cu-signin { min-height: 36px; padding: 0 16px; border: 1px solid rgba(255,255,255,.35); border-radius: var(--ui-r-pill); color: #fff; font-size: 14px; font-weight: 600; }
 .cu-hello .cu-signin:active { background: rgba(255,255,255,.1); }
+.cu-invite { display: inline-flex; align-items: center; gap: 10px; max-width: 100%; margin-top: var(--ui-s3); padding: 6px 14px 6px 6px; border-radius: var(--ui-r-pill); background: rgba(255,255,255,.1); font-size: 14px; color: rgba(255,255,255,.88); }
+.cu-invite strong { color: #fff; font-weight: 600; }
+.cu-invite img, .cu-invite-initial { width: 32px; height: 32px; flex-shrink: 0; border-radius: 50%; object-fit: cover; }
+.cu-invite-initial { display: grid; place-items: center; background: rgba(255,255,255,.2); color: #fff; font-weight: 700; }
+.cu-taken { margin: calc(-1 * var(--ui-s1)) 0 var(--ui-s3); }
 .cu-hello-title { margin-top: var(--ui-s4); font-family: var(--ui-font-display); font-size: clamp(28px, 7.5vw, 34px); font-weight: 800; line-height: 1.12; letter-spacing: -.6px; text-wrap: balance; }
 .cu-hello-text { margin-top: 10px; max-width: 42ch; text-wrap: pretty; font-size: 15px; line-height: 1.5; color: rgba(255,255,255,.78); }
 .cu-hello-plan { margin-top: var(--ui-s4); padding: 12px 14px; border-radius: 12px; background: rgba(255,255,255,.08); font-size: 14px; line-height: 1.45; color: rgba(255,255,255,.85); }
@@ -2294,3 +2297,8 @@ button.ui-bottom-nav-item { border: 0; background: none; cursor: pointer; font-f
 .cu-receipt dd { margin: 0; font-weight: 600; text-align: right; }
 @media (min-width: 769px) { .cu-page { padding-top: var(--ui-s5); } }
 :is(.ui-screen, .ag-shell) .ag-amount-input { border: 0; border-radius: 0; background: none; box-shadow: none; padding: 0; margin: 0; height: auto; min-height: 0; font-size: clamp(40px, 9vw, 56px); }
+
+/* Customer: unlock a locked account */
+.cu-unlock-sent { margin-bottom: var(--ui-s4); }
+.cu-unlock-sent .ui-spinner { flex-shrink: 0; margin-top: 2px; }
+.cu-unlock-resend { margin-top: var(--ui-s2); color: var(--ui-brand-ink); }
