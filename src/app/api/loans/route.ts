@@ -65,6 +65,10 @@ export async function POST(req: NextRequest) {
   const p = parseFloat(principal)
   const days = parseInt(durationDays)
 
+  // Require a real customer id. Without this, `where: { id: undefined, agentId }`
+  // would match an arbitrary customer of the acting agent and create a loan with
+  // a null customer.
+  if (typeof customerId !== 'string' || !customerId) return NextResponse.json({ error: 'A customer is required' }, { status: 400 })
   if (!isFinite(p) || p <= 0) return NextResponse.json({ error: 'Principal must be a positive amount' }, { status: 400 })
   if (!isFinite(days) || days <= 0) return NextResponse.json({ error: 'Duration must be a positive number of days' }, { status: 400 })
 
