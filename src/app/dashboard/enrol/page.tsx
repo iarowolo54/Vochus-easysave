@@ -6,7 +6,9 @@ import { useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { blockMinus, blockNonDigit, digitsOnly, nonNegativeString } from '@/lib/numeric'
 import { displayName, formatNaira } from '@/lib/format'
+import { addDays, isoDate, parseDateInput, today } from '@/lib/plan-dates'
 import EmptyState from '@/components/ui/EmptyState'
+import EndDateField, { endDateDays } from '@/components/ui/EndDateField'
 import { FieldError, FormError } from '@/components/ui/FormErrors'
 import { Icons } from '@/components/ui/icons'
 
@@ -71,6 +73,8 @@ export default function EnrolPage() {
   const walletBalance = (session?.user as { walletBalance?: number } | undefined)?.walletBalance ?? 0
   const [step, setStep] = useState(1)
   const [form, setForm] = useState<FormData>(empty)
+  /** A chosen end date ("yyyy-mm-dd") for the plan being filled in, instead of a set length. */
+  const [customEnd, setCustomEnd] = useState('')
   const [loading, setLoading] = useState(false)
   const submittingRef = useRef(false)
   const [created, setCreated] = useState<{ customerId: string; name: string } | null>(null)
@@ -82,7 +86,6 @@ export default function EnrolPage() {
   const videoRef = useRef<HTMLVideoElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
 
   // QR scanner state
   const [qrScanActive, setQrScanActive] = useState(false)
@@ -209,8 +212,12 @@ export default function EnrolPage() {
       const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: 640, height: 480 } })
       streamRef.current = stream
       setCameraActive(true)
-    } catch {
-      setCameraError('The camera couldn’t be opened. Upload a photo from the gallery instead.')
+    } catch (e) {
+      // Only a photo taken now is accepted, so explain how to let the camera in rather than offering an upload.
+      const denied = (e as { name?: string })?.name === 'NotAllowedError'
+      setCameraError(denied
+        ? 'Camera access is blocked. Allow the camera for this site in your browser or phone settings, then try again.'
+        : 'We couldn’t open the camera. Close other apps using it, then try again.')
     }
   }
 
@@ -228,14 +235,6 @@ export default function EnrolPage() {
   function retake() {
     setPhotoDataUrl(null)
     startCamera()
-  }
-
-  function handleFileUpload(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]
-    if (!file) return
-    const reader = new FileReader()
-    reader.onload = ev => { setPhotoDataUrl(ev.target?.result as string); setCameraError('') }
-    reader.readAsDataURL(file)
   }
 
   function onPhoneChange(val: string) {
@@ -291,15 +290,17 @@ export default function EnrolPage() {
     window.scrollTo({ top: 0, behavior: 'smooth' })
   }
 
+  const planStart = parseDateInput(form.startDate) ?? today()
   const draftHasAny = !!(form.dailyAmount || form.periodDays || form.goal)
   const draftValid = !!(form.dailyAmount && form.periodDays && form.goal)
 
   function addDraftPlan() {
     setForm(f => ({
       ...f,
-      plans: [...f.plans, { dailyAmount: f.dailyAmount, periodDays: f.periodDays, goal: f.goal, startDate: f.startDate || new Date().toISOString().split('T')[0], notes: f.notes, cadence: f.cadence }],
+      plans: [...f.plans, { dailyAmount: f.dailyAmount, periodDays: f.periodDays, goal: f.goal, startDate: f.startDate || isoDate(today()), notes: f.notes, cadence: f.cadence }],
       dailyAmount: '', periodDays: '', goal: '', startDate: '', notes: '', cadence: 'daily',
     }))
+    setCustomEnd('')
   }
 
   async function submit() {
@@ -585,30 +586,24 @@ export default function EnrolPage() {
                   {photoDataUrl ? 'Looks good. Retake it if the face isn’t clear.' : cameraActive ? 'Fit their face inside the oval' : 'Face the camera, good light, no sunglasses'}
                 </p>
                 <canvas ref={canvasRef} hidden />
-                <input ref={fileInputRef} type="file" accept="image/*" hidden onChange={handleFileUpload} />
                 {cameraError && <p className="ui-field-error ag-center" role="alert"><Icons.error size={16} aria-hidden="true" /> {cameraError}</p>}
 
                 <div className="ag-cam-actions">
                   {photoDataUrl ? (
-                    <>
-                      <button type="button" className="ui-btn ui-btn--secondary" onClick={retake}><Icons.retry size={18} aria-hidden="true" /> Retake</button>
-                      <button type="button" className="ui-btn ui-btn--plain" onClick={() => fileInputRef.current?.click()}>Choose from gallery</button>
-                    </>
+                    <button type="button" className="ui-btn ui-btn--secondary" onClick={retake}><Icons.retry size={18} aria-hidden="true" /> Retake</button>
                   ) : cameraActive ? (
                     <>
                       <button type="button" className="ag-shutter" onClick={capturePhoto} aria-label="Take photo"><span /></button>
                       <button type="button" className="ui-btn ui-btn--plain" onClick={stopCamera}>Cancel</button>
                     </>
-                  ) : (
-                    <button type="button" className="ui-btn ui-btn--plain" onClick={() => fileInputRef.current?.click()}>Upload from gallery instead</button>
-                  )}
+                  ) : null}
                 </div>
 
                 <FlowActions primary={photoDataUrl
                   ? <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={() => { stopCamera(); go(4) }}>Continue</button>
                   : cameraActive
                     ? <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={capturePhoto}>Take photo</button>
-                    : <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={startCamera}><Icons.image size={18} aria-hidden="true" /> Open camera</button>} />
+                    : <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={startCamera}><Icons.image size={18} aria-hidden="true" /> {cameraError ? 'Try again' : 'Open camera'}</button>} />
               </>
             )}
 
@@ -643,7 +638,7 @@ export default function EnrolPage() {
                 <p className="ag-label" id="cad">How often?</p>
                 <div className="ui-segment ag-seg" role="group" aria-labelledby="cad">
                   {(['daily', 'weekly', 'monthly'] as const).map(c => (
-                    <button key={c} type="button" aria-pressed={form.cadence === c} onClick={() => setForm(f => ({ ...f, cadence: c, periodDays: '' }))}>
+                    <button key={c} type="button" aria-pressed={form.cadence === c} onClick={() => { setForm(f => ({ ...f, cadence: c, periodDays: '' })); setCustomEnd('') }}>
                       {c === 'daily' ? 'Daily' : c === 'weekly' ? 'Weekly' : 'Monthly'}
                     </button>
                   ))}
@@ -659,20 +654,36 @@ export default function EnrolPage() {
                     </span>
                   </Field>
                   <Field id="per" label="For how long">
-                    <select id="per" className="ag-tf-input ag-tf-select" value={form.periodDays} onChange={e => set('periodDays', e.target.value)}>
+                    <select id="per" className="ag-tf-input ag-tf-select" value={customEnd ? 'custom' : form.periodDays} onChange={e => {
+                      if (e.target.value === 'custom') {
+                        const end = isoDate(addDays(planStart, parseInt(form.periodDays || PERIODS[form.cadence][1][0])))
+                        setCustomEnd(end)
+                        set('periodDays', String(endDateDays(end, planStart, form.cadence) ?? ''))
+                      } else { setCustomEnd(''); set('periodDays', e.target.value) }
+                    }}>
                       <option value="">Choose</option>
                       {PERIODS[form.cadence].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                      <option value="custom">Choose an end date…</option>
                     </select>
                   </Field>
                 </div>
                 <div className="ag-grid-2">
                   <Field id="sd" label="Start date" hint="Leave empty to start today.">
-                    <input id="sd" className="ag-tf-input" type="date" value={form.startDate} onChange={e => set('startDate', e.target.value)} />
+                    <input id="sd" className="ag-tf-input" type="date" value={form.startDate} onChange={e => {
+                      set('startDate', e.target.value)
+                      // Keep a chosen end date where it is; the length changes instead.
+                      if (customEnd) set('periodDays', String(endDateDays(customEnd, parseDateInput(e.target.value) ?? today(), form.cadence) ?? ''))
+                    }} />
                   </Field>
                   <Field id="nt" label="Note (optional)">
                     <input id="nt" className="ag-tf-input" placeholder="e.g. Daughter’s school fees" value={form.notes} onChange={e => set('notes', e.target.value)} />
                   </Field>
                 </div>
+
+                {customEnd && (
+                  <EndDateField start={planStart} cadence={form.cadence} value={customEnd}
+                    onChange={(v, days) => { setCustomEnd(v); set('periodDays', days ? String(days) : '') }} />
+                )}
 
                 {draftValid && (
                   <div className="ag-target">

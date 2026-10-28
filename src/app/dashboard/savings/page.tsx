@@ -8,8 +8,10 @@ import { blockMinus, nonNegativeString } from '@/lib/numeric'
 import { avatarTint } from '@/lib/avatar'
 import { waLink } from '@/lib/whatsapp'
 import { displayName, formatNaira, formatTime } from '@/lib/format'
+import { addDays, isoDate, parseDateInput, today } from '@/lib/plan-dates'
 import BottomSheet from '@/components/ui/BottomSheet'
 import EmptyState from '@/components/ui/EmptyState'
+import EndDateField, { endDateDays } from '@/components/ui/EndDateField'
 import { FormError } from '@/components/ui/FormErrors'
 import PinPad from '@/components/ui/PinPad'
 import ListRow from '@/components/ui/ListRow'
@@ -33,7 +35,8 @@ type Receipt = {
 }
 
 type Cadence = 'daily' | 'weekly' | 'monthly'
-const EMPTY_PLAN = { dailyAmount: '', periodDays: '90', goal: '', startDate: '', cadence: 'daily' as Cadence }
+// `endDate` is a chosen end date ("yyyy-mm-dd") instead of a set length; only `periodDays` is sent.
+const EMPTY_PLAN = { dailyAmount: '', periodDays: '90', goal: '', startDate: '', endDate: '', cadence: 'daily' as Cadence }
 
 const PERIODS: Record<Cadence, [string, string][]> = {
   daily: [['31', '31 days'], ['62', '62 days'], ['90', '90 days'], ['180', '180 days'], ['365', '365 days']],
@@ -256,6 +259,7 @@ function SavingsContent() {
   async function createPlan() {
     if (!selected) return
     if (!newPlan.dailyAmount || !newPlan.goal) { setError('Enter the amount and what the customer is saving for.'); return }
+    if (!newPlan.periodDays) { setError('Choose how long the plan runs, or pick a valid end date.'); return }
     setLoading(true); setError('')
     const rawAmt = parseFloat(newPlan.dailyAmount)
     const isWeekly = newPlan.cadence === 'weekly'
@@ -786,6 +790,7 @@ function NewPlanForm({ plan, setPlan }: { plan: typeof EMPTY_PLAN; setPlan: (fn:
       : Math.round(dailyEquiv * (parseInt(plan.periodDays) / 31) * 100) / 100)
     : 0
   const unit = isW ? 'Weekly' : isM ? 'Monthly' : 'Daily'
+  const start = parseDateInput(plan.startDate) ?? today()
 
   return (
     <section className="ui-card" aria-labelledby="plan-title">
@@ -800,7 +805,7 @@ function NewPlanForm({ plan, setPlan }: { plan: typeof EMPTY_PLAN; setPlan: (fn:
         <div className="ui-segment" role="group" aria-labelledby="cadence-label">
           {(['daily', 'weekly', 'monthly'] as const).map(c => (
             <button key={c} type="button" aria-pressed={plan.cadence === c}
-              onClick={() => setPlan(p => ({ ...p, cadence: c, periodDays: c === 'daily' ? '90' : c === 'weekly' ? '56' : '60' }))}>
+              onClick={() => setPlan(p => ({ ...p, cadence: c, endDate: '', periodDays: c === 'daily' ? '90' : c === 'weekly' ? '56' : '60' }))}>
               {c === 'daily' ? 'Daily' : c === 'weekly' ? 'Weekly' : 'Monthly'}
             </button>
           ))}
@@ -819,10 +824,21 @@ function NewPlanForm({ plan, setPlan }: { plan: typeof EMPTY_PLAN; setPlan: (fn:
 
       <div className="ui-field">
         <label className="ui-label" htmlFor="plan-period">How long</label>
-        <select id="plan-period" className="ui-input ui-select" value={plan.periodDays} onChange={e => setPlan(p => ({ ...p, periodDays: e.target.value }))}>
+        <select id="plan-period" className="ui-input ui-select" value={plan.endDate ? 'custom' : plan.periodDays} onChange={e => {
+          const v = e.target.value
+          if (v === 'custom') {
+            const end = isoDate(addDays(start, parseInt(plan.periodDays || '0') || 30))
+            setPlan(p => ({ ...p, endDate: end, periodDays: String(endDateDays(end, start, p.cadence) ?? '') }))
+          } else setPlan(p => ({ ...p, endDate: '', periodDays: v }))
+        }}>
           {PERIODS[plan.cadence].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+          <option value="custom">Choose an end date…</option>
         </select>
       </div>
+      {plan.endDate && (
+        <EndDateField start={start} cadence={plan.cadence} value={plan.endDate}
+          onChange={(v, days) => setPlan(p => ({ ...p, endDate: v, periodDays: days ? String(days) : '' }))} />
+      )}
 
       <div className="ui-field">
         <label className="ui-label" htmlFor="plan-goal">What are they saving for?</label>
@@ -833,7 +849,11 @@ function NewPlanForm({ plan, setPlan }: { plan: typeof EMPTY_PLAN; setPlan: (fn:
       <div className="ui-field">
         <label className="ui-label" htmlFor="plan-start">Start date <span className="ui-link--muted">(optional)</span></label>
         <input id="plan-start" className="ui-input" type="date"
-          value={plan.startDate} onChange={e => setPlan(p => ({ ...p, startDate: e.target.value }))} />
+          value={plan.startDate} onChange={e => {
+            const v = e.target.value
+            // Keep a chosen end date where it is; the length changes instead.
+            setPlan(p => ({ ...p, startDate: v, periodDays: p.endDate ? String(endDateDays(p.endDate, parseDateInput(v) ?? today(), p.cadence) ?? '') : p.periodDays }))
+          }} />
       </div>
 
       {previewTotal > 0 && (

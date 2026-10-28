@@ -1,6 +1,8 @@
 'use client'
 import { useEffect, useState, Suspense } from 'react'
 import { useSearchParams, useRouter } from 'next/navigation'
+import EndDateField, { endDateDays } from '@/components/ui/EndDateField'
+import { addDays, isoDate, parseDateInput, today } from '@/lib/plan-dates'
 
 interface Customer {
   id: string; customerId: string; firstName: string; lastName: string; phone: string
@@ -29,6 +31,8 @@ function AddPlanContent() {
   const [periodDays, setPeriodDays] = useState('')
   const [goal, setGoal] = useState('')
   const [startDate, setStartDate] = useState('')
+  /** A chosen end date ("yyyy-mm-dd") instead of a set length. */
+  const [customEnd, setCustomEnd] = useState('')
   const [notes, setNotes] = useState('')
   const [agreed, setAgreed] = useState(false)
 
@@ -84,6 +88,7 @@ function AddPlanContent() {
   const isWeekly = cadence === 'weekly'
   const isMonthly = cadence === 'monthly'
 
+  const planStart = parseDateInput(startDate) ?? today()
   const rawAmt = parseFloat(dailyAmount) || 0
   const dailyEquiv = isWeekly ? rawAmt / 7 : isMonthly ? rawAmt / 30 : rawAmt
   const total = rawAmt && periodDays ? Math.round(dailyEquiv * parseInt(periodDays)) : 0
@@ -122,9 +127,9 @@ function AddPlanContent() {
         <div style={{ marginBottom: 12 }}>
           <label className="flabel">Saving Frequency *</label>
           <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => setCadence('daily')} style={cadenceBtn(cadence === 'daily')}>📅 Daily</button>
-            <button onClick={() => setCadence('weekly')} style={cadenceBtn(cadence === 'weekly')}>📆 Weekly</button>
-            <button onClick={() => setCadence('monthly')} style={cadenceBtn(cadence === 'monthly')}>🗓️ Monthly</button>
+            <button onClick={() => { setCadence('daily'); setPeriodDays(''); setCustomEnd('') }} style={cadenceBtn(cadence === 'daily')}>📅 Daily</button>
+            <button onClick={() => { setCadence('weekly'); setPeriodDays(''); setCustomEnd('') }} style={cadenceBtn(cadence === 'weekly')}>📆 Weekly</button>
+            <button onClick={() => { setCadence('monthly'); setPeriodDays(''); setCustomEnd('') }} style={cadenceBtn(cadence === 'monthly')}>🗓️ Monthly</button>
           </div>
         </div>
 
@@ -135,7 +140,13 @@ function AddPlanContent() {
           </div>
           <div>
             <label className="flabel">Saving Period {isWeekly ? '(Weeks)' : isMonthly ? '(Months)' : '(Days)'} *</label>
-            <select className="finput" value={periodDays} onChange={e => setPeriodDays(e.target.value)}>
+            <select className="finput" value={customEnd ? 'custom' : periodDays} onChange={e => {
+              if (e.target.value === 'custom') {
+                const end = isoDate(addDays(planStart, parseInt(periodDays || (isWeekly ? '56' : isMonthly ? '60' : '62'))))
+                setCustomEnd(end)
+                setPeriodDays(String(endDateDays(end, planStart, cadence) ?? ''))
+              } else { setCustomEnd(''); setPeriodDays(e.target.value) }
+            }}>
               <option value="">Select…</option>
               {isWeekly ? (
                 <>
@@ -153,9 +164,15 @@ function AddPlanContent() {
                   <option value="93">93 Days</option><option value="186">186 Days</option><option value="365">365 Days</option>
                 </>
               )}
+              <option value="custom">Choose an end date…</option>
             </select>
           </div>
         </div>
+
+        {customEnd && (
+          <EndDateField start={planStart} cadence={cadence} value={customEnd}
+            onChange={(v, days) => { setCustomEnd(v); setPeriodDays(days ? String(days) : '') }} />
+        )}
 
         <div className="form-row fr2">
           <div>
@@ -168,7 +185,11 @@ function AddPlanContent() {
           </div>
           <div>
             <label className="flabel">Start Date</label>
-            <input className="finput" type="date" value={startDate} onChange={e => setStartDate(e.target.value)} />
+            <input className="finput" type="date" value={startDate} onChange={e => {
+              setStartDate(e.target.value)
+              // Keep a chosen end date where it is; the length changes instead.
+              if (customEnd) setPeriodDays(String(endDateDays(customEnd, parseDateInput(e.target.value) ?? today(), cadence) ?? ''))
+            }} />
           </div>
         </div>
 

@@ -2,6 +2,7 @@
 // so "save" or "withdraw" looks the same on every screen.
 import {
   ArrowDownLeft, Award, Banknote, CalendarDays, ClipboardList, HandCoins, Landmark, Menu, Network, Percent, Repeat, TriangleAlert, Wallet, ArrowUpRight, Check, ChevronDown, CreditCard, ChevronLeft, ChevronRight, CircleAlert, Clock, Download, Eye, EyeOff, Fingerprint,
+  GraduationCap, HeartPulse, PartyPopper, Sprout, Store,
   Headset, House, ImagePlus, LayoutGrid, Lock, LogOut, MessageCircle, Phone, PiggyBank, Plus, Printer, Search, Receipt, RefreshCw, SendHorizontal, Settings, Share2, Users, X,
 } from 'lucide-react'
 
@@ -51,6 +52,13 @@ export const Icons = {
   commission: Award,
   team: Network,
   report: TriangleAlert,
+  // Savings goals
+  goalSchool: GraduationCap,
+  goalBusiness: Store,
+  goalRent: House,
+  goalHealth: HeartPulse,
+  goalEvent: PartyPopper,
+  goalFarm: Sprout,
 } as const
 
 export type IconName = keyof typeof Icons

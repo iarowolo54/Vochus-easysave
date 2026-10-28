@@ -27,7 +27,7 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
         .customer-page textarea {
           width: 100%; padding: 13px 14px;
           border: 1.5px solid var(--br); border-radius: 11px;
-          font-size: 15px; font-family: 'Inter', sans-serif; color: var(--txt);
+          font-size: 16px; font-family: 'Inter', sans-serif; color: var(--txt); /* under 16px makes phones zoom in on focus */
           background: var(--card); outline: none; margin-bottom: 13px;
           transition: border-color .15s, box-shadow .15s; -webkit-appearance: none;
           box-sizing: border-box;
