@@ -12,7 +12,7 @@
 // `savingsBalance` and `hasActiveLoan` are computed exactly as the customers
 // endpoint computes them, so the API and the page agree on the numbers.
 
-import type { PrismaClient } from '@prisma/client'
+import type { Prisma, PrismaClient } from '@prisma/client'
 
 export const LOAN_LIMIT_FRACTION = 0.8
 
@@ -68,4 +68,22 @@ export async function loadLoanEligibilityContext(
   const savingsBalance = customer.savingsPlans.reduce((s, p) => s + p.balance, 0)
   const hasActiveLoan = customer.loans.length > 0
   return { savingsBalance, hasActiveLoan }
+}
+
+// Disburse-time guard for the one-loan rule. The request-time check in
+// POST /api/loans is a non-atomic read, so a race can leave a customer with two
+// Pending loans that an admin may both approve. Called inside the disburse
+// transaction (pass the tx client) BEFORE claiming the loan, this makes the
+// rule unbypassable at the money boundary: a second payout for a customer who
+// already has a Disbursed loan is refused. `excludeLoanId` is the loan being
+// disbursed, so it never counts itself.
+export async function customerHasOtherDisbursedLoan(
+  client: Prisma.TransactionClient | Pick<PrismaClient, 'loan'>,
+  customerId: string,
+  excludeLoanId: string,
+): Promise<boolean> {
+  const count = await client.loan.count({
+    where: { customerId, id: { not: excludeLoanId }, status: 'Disbursed' },
+  })
+  return count > 0
 }

@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { LOAN_AGENT_COMMISSION, LOAN_PLATFORM_FEE } from '@/lib/wallet-rates'
 import { debitAgentBalance } from '@/lib/wallet-debit'
+import { customerHasOtherDisbursedLoan } from '@/lib/loan-eligibility'
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -31,6 +32,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   try {
     await prisma.$transaction(async (tx) => {
+      // One loan at a time: refuse if the customer already has a Disbursed loan.
+      // Enforced here (not just at request time) so a request-time race that
+      // produced two Approved loans can't pay out twice for the same customer.
+      if (loan.customerId && await customerHasOtherDisbursedLoan(tx, loan.customerId, loan.id)) {
+        throw new Error('ALREADY_DISBURSED')
+      }
       // Atomically claim the loan: only an Approved loan transitions, exactly once.
       const claimed = await tx.loan.updateMany({ where: { id: loan.id, status: 'Approved' }, data: { status: 'Disbursed' } })
       if (claimed.count === 0) throw new Error('NOT_CLAIMABLE')
@@ -57,6 +64,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       })
     })
   } catch (e) {
+    if (e instanceof Error && e.message === 'ALREADY_DISBURSED') {
+      return NextResponse.json({ error: 'This customer already has a loan out. It must be repaid before another can be disbursed.' }, { status: 409 })
+    }
     if (e instanceof Error && e.message === 'NOT_CLAIMABLE') {
       return NextResponse.json({ error: 'Loan already disbursed' }, { status: 409 })
     }
