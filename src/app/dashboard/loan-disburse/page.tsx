@@ -1,8 +1,16 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useRouter } from 'next/navigation'
+import Link from 'next/link'
 import { useSession } from 'next-auth/react'
+import BottomSheet from '@/components/ui/BottomSheet'
+import EmptyState from '@/components/ui/EmptyState'
+import { FormError } from '@/components/ui/FormErrors'
+import { ListSkeleton } from '@/components/ui/Skeleton'
+import Toast from '@/components/ui/Toast'
+import { Icons } from '@/components/ui/icons'
+import { avatarTint } from '@/lib/avatar'
+import { displayName, formatDate, formatNaira } from '@/lib/format'
 
 interface Loan {
   id: string; ref: string; principal: number; interestRate: number; totalAmount: number
@@ -10,122 +18,136 @@ interface Loan {
   customer: { id: string; name: string; customerId: string; phone: string }
 }
 
+const initials = (name: string) => name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+
 export default function LoanDisbursePage() {
-  const router = useRouter()
   const { update } = useSession()
-  const [loans, setLoans] = useState<Loan[]>([])
+  const [loans, setLoans] = useState<Loan[] | null>(null)
   const [selected, setSelected] = useState<Loan | null>(null)
-  const [method, setMethod] = useState('Cash')
-  const [loading, setLoading] = useState(true)
+  const [method] = useState('Cash')
+  const [wallet, setWallet] = useState<number | null>(null)
+  const [confirming, setConfirming] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [toast, setToast] = useState('')
   const [error, setError] = useState('')
+  const [refreshKey, setRefreshKey] = useState(0)
 
   useEffect(() => {
     fetch('/api/loans?status=Approved')
       .then(r => r.json())
-      .then(d => { setLoans(d.loans ?? []); setLoading(false) })
-  }, [toast])
+      .then(d => setLoans(d.loans ?? []))
+      .catch(() => setLoans(prev => prev ?? []))
+    fetch('/api/agent').then(r => r.json()).then(d => { if (typeof d.agent?.walletBalance === 'number') setWallet(d.agent.walletBalance) }).catch(() => {})
+  }, [refreshKey])
 
   async function disburse() {
-    if (!selected) { setError('Select a loan first'); return }
+    if (!selected) { setError('Choose a loan first.'); return }
     setSubmitting(true); setError('')
-    const res = await fetch(`/api/loans/${selected.id}/disburse`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ method }),
-    })
-    const data = await res.json()
-    if (!res.ok) { setError(data.error ?? 'Failed'); setSubmitting(false); return }
-    setToast(`₦${selected.principal.toLocaleString()} disbursed to ${selected.customer.name}`)
-    setSelected(null)
+    try {
+      const res = await fetch(`/api/loans/${selected.id}/disburse`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ method }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setError(data.error ?? 'The payout didn’t go through. Please try again.'); setSubmitting(false); setConfirming(false); return }
+      setToast(`${formatNaira(selected.principal, { minor: false })} paid out to ${displayName(selected.customer.name)}`)
+      setSelected(null)
+      setConfirming(false)
+      setRefreshKey(k => k + 1)
+      update()
+    } catch {
+      setError('We lost the connection. Check this list before trying again, so the loan isn’t paid twice.')
+      setConfirming(false)
+      setRefreshKey(k => k + 1)
+    }
     setSubmitting(false)
-    update()
-    setTimeout(() => setToast(''), 4000)
   }
 
-  const initials = (name: string) => name.split(' ').map(w => w[0]).join('').slice(0, 2)
+  const short = selected && wallet !== null && wallet < selected.principal
+
+  const summary = selected && (
+    <>
+      <span className="ui-row-sub ui-block">Pay out to {displayName(selected.customer.name)}</span>
+      <p className="ag-earn-amount">{formatNaira(selected.principal)}</p>
+      <dl className="ag-breakdown">
+        <div><dt>Loan</dt><dd className="ag-mono">{selected.ref}</dd></div>
+        <div><dt>Interest</dt><dd>{selected.interestRate}% · {selected.durationDays} days</dd></div>
+        <div><dt>They repay</dt><dd>{formatNaira(selected.totalAmount)}</dd></div>
+        <div><dt>Due</dt><dd>{formatDate(selected.dueDate)}</dd></div>
+        <div><dt>Paid in</dt><dd>{method}</dd></div>
+        {wallet !== null && <div className="ag-breakdown-total"><dt>Your wallet after</dt><dd className={short ? 'ag-neg' : undefined}>{formatNaira(wallet - selected.principal)}</dd></div>}
+      </dl>
+      {short && (
+        <div className="ui-banner ui-banner--danger" role="alert">
+          <Icons.wallet size={18} aria-hidden="true" />
+          <div>Your wallet has {formatNaira(wallet ?? 0)}, not enough for this loan. <Link href={`/dashboard/wallet?return=${encodeURIComponent('/dashboard/loan-disburse')}`} className="ag-banner-link">Top up wallet</Link></div>
+        </div>
+      )}
+      <button type="button" className="ui-btn ui-btn--primary ui-btn--block ag-confirm-btn" disabled={!!short || submitting} onClick={() => setConfirming(true)}>
+        Pay out {formatNaira(selected.principal, { minor: false })}
+      </button>
+    </>
+  )
 
   return (
-    <>
-      <div className="page-header">
-        <h2>Loan Disbursement</h2>
-        <p>Release approved loans to customers</p>
+    <div className="ag-page">
+      {toast && <Toast message={toast} onDone={() => setToast('')} />}
+      <div className="ag-collect">
+        <div className="ag-collect-main">
+          <div className="ui-section-head"><h2>Approved, ready to pay out</h2>{loans && loans.length > 0 && <span className="ui-card-meta">{loans.length}</span>}</div>
+          <FormError message={error} />
+          {loans === null ? (
+            <ListSkeleton count={3} />
+          ) : loans.length === 0 ? (
+            <section className="ui-card">
+              <EmptyState icon="loan" title="Nothing to pay out" text="Loans show here once an admin approves them."
+                action={<Link href="/dashboard/loan-request" className="ui-btn ui-btn--secondary">Request a loan</Link>} />
+            </section>
+          ) : (
+            <div className="ag-radio-group" role="radiogroup" aria-label="Approved loans">
+              {loans.map(l => (
+                <button key={l.id} type="button" role="radio" aria-checked={selected?.id === l.id} className="ag-radio ag-loan-pick"
+                  onClick={() => { setSelected(selected?.id === l.id ? null : l); setError('') }}>
+                  <span className={`ui-avatar ag-av ag-av--${avatarTint(l.customer.customerId)}`} aria-hidden="true">{initials(l.customer.name)}</span>
+                  <span className="ag-payee-main">
+                    <span className="ui-row-title ui-block">{displayName(l.customer.name)}</span>
+                    <span className="ui-row-sub ui-block">{l.ref} · {l.durationDays} days · due {formatDate(l.dueDate)}</span>
+                  </span>
+                  <span className="ag-pick-amount">{formatNaira(l.principal, { minor: false })}</span>
+                  <span className="ui-radio" aria-hidden="true" />
+                </button>
+              ))}
+            </div>
+          )}
+          {selected && <section className="ui-card ag-loan-summary ag-loan-summary--inline">{summary}</section>}
+        </div>
+
+        <aside className="ag-collect-side ag-loan-side">
+          <div className="ui-section-head"><h2>Payout</h2></div>
+          <section className="ui-card ag-loan-summary">
+            {summary || <EmptyState icon="withdraw" title="Choose a loan" text="Pick an approved loan to see what you’re paying out." />}
+          </section>
+          <p className="ag-fineprint ag-side-note">Paying out takes the loan amount from your wallet straight away. It can’t be undone.</p>
+        </aside>
       </div>
 
-      {toast && <div className="alert alert-g" style={{ marginBottom: 16 }}>✅ {toast}</div>}
-      {error && <div className="alert alert-rd" style={{ marginBottom: 16 }}>🔴 {error}</div>}
-      <div className="alert alert-g" style={{ marginBottom: 18 }}>✅ Only admin-approved loans can be disbursed. Pending loans are awaiting superadmin review.</div>
-
-      <div className="grid g-2-1">
-        <div>
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div className="card-title">Loans Awaiting Disbursement</div>
-            {loading && <div style={{ textAlign: 'center', color: 'var(--mu)', padding: 16 }}>Loading…</div>}
-            {!loading && loans.length === 0 && <div style={{ textAlign: 'center', color: 'var(--mu)', padding: 16 }}>No loans pending disbursement</div>}
-            {!loading && loans.map(l => (
-              <div
-                key={l.id}
-                className={`sel-item${selected?.id === l.id ? ' on' : ''}`}
-                style={{ cursor: 'pointer' }}
-                onClick={() => setSelected(selected?.id === l.id ? null : l)}
-              >
-                <div className="av av-rd">{initials(l.customer.name)}</div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 13.5, fontWeight: 600, color: 'var(--txt)' }}>{l.customer.name}</div>
-                  <div style={{ fontSize: 11.5, color: 'var(--mu)' }}>
-                    {l.ref} · {l.durationDays} Days · {l.interestRate}% · Due {new Date(l.dueDate).toLocaleDateString('en-GB', { month: 'short', day: 'numeric' })}
-                  </div>
-                </div>
-                <div style={{ textAlign: 'right' }}>
-                  <div style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", fontSize: 16, fontWeight: 800, color: 'var(--g)' }}>
-                    ₦{l.principal.toLocaleString()}
-                  </div>
-                  <span className={`bdg ${l.status === 'Approved' ? 'bdg-g' : 'bdg-gd'}`} style={{ fontSize: 10 }}>{l.status}</span>
-                </div>
-                <div className={`sel-radio${selected?.id === l.id ? ' on' : ''}`}>{selected?.id === l.id ? '✓' : ''}</div>
-              </div>
-            ))}
-          </div>
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div className="card-title">Disbursement Method</div>
-            {[
-              { icon: '💵', label: 'Cash in Hand', desc: 'Immediate physical handover', val: 'Cash' },
-            ].map(m => (
-              <div key={m.val} className={`sel-item${method === m.val ? ' on' : ''}`} style={{ cursor: 'pointer' }} onClick={() => setMethod(m.val)}>
-                <div style={{ fontSize: 22 }}>{m.icon}</div>
-                <div style={{ flex: 1 }}><div style={{ fontWeight: 600 }}>{m.label}</div><div style={{ fontSize: 12, color: 'var(--mu)' }}>{m.desc}</div></div>
-                <div className={`sel-radio${method === m.val ? ' on' : ''}`}>{method === m.val ? '✓' : ''}</div>
-              </div>
-            ))}
-          </div>
-          <div className="btn-row">
-            <button className="btn btn-out">Cancel</button>
-            <button className="btn btn-b" disabled={submitting || !selected} onClick={disburse}>
-              {submitting ? '⏳ Disbursing…' : '💸 Disburse Now'}
-            </button>
-          </div>
-        </div>
-        <div>
-          <div className="card">
-            <div className="card-title">Disbursement Summary</div>
-            {selected ? (
-              <>
-                <div className="conf-table">
-                  <div className="conf-row"><span className="conf-lbl">Customer</span><span className="conf-val">{selected.customer.name}</span></div>
-                  <div className="conf-row"><span className="conf-lbl">Loan Ref</span><strong style={{ color: 'var(--b)' }}>{selected.ref}</strong></div>
-                  <div className="conf-row"><span className="conf-lbl">Disbursing</span><strong style={{ color: 'var(--g)', fontFamily: "'Plus Jakarta Sans',sans-serif", fontSize: 18 }}>₦{selected.principal.toLocaleString()}</strong></div>
-                  <div className="conf-row"><span className="conf-lbl">Total Repayable</span><strong style={{ color: 'var(--gd)' }}>₦{selected.totalAmount.toLocaleString()}</strong></div>
-                  <div className="conf-row"><span className="conf-lbl">Due Date</span><strong>{new Date(selected.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</strong></div>
-                </div>
-                <div className="alert alert-rd" style={{ marginTop: 10 }}>🔴 Funds deducted immediately. Cannot be reversed.</div>
-              </>
-            ) : (
-              <div style={{ textAlign: 'center', color: 'var(--mu)', fontSize: 13, padding: 16 }}>Select a loan to see summary</div>
-            )}
-          </div>
-        </div>
-      </div>
-    </>
+      <BottomSheet open={confirming && !!selected} onClose={() => setConfirming(false)} title="Pay out this loan?">
+        {selected && (
+          <>
+            <p className="ag-sheet-text">
+              Give <strong>{displayName(selected.customer.name)}</strong> <strong>{formatNaira(selected.principal)}</strong> in {method.toLowerCase()} now.
+              {' '}It comes out of your wallet and can’t be undone.
+            </p>
+            <div className="ui-stack">
+              <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={submitting} onClick={disburse}>
+                {submitting ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Paying out…</> : `Yes, pay out ${formatNaira(selected.principal, { minor: false })}`}
+              </button>
+              <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" disabled={submitting} onClick={() => setConfirming(false)}>Not yet</button>
+            </div>
+          </>
+        )}
+      </BottomSheet>
+    </div>
   )
 }

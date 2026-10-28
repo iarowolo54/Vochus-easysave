@@ -2084,3 +2084,24 @@ button.ui-bottom-nav-item { border: 0; background: none; cursor: pointer; font-f
 .ag-earn-btn { margin-top: var(--ui-s4); min-height: 48px; text-decoration: none; }
 .ag-earn-total .ui-row-title { font-weight: 700; }
 .ag-earn-total .ui-row-value { color: var(--ui-brand-ink); font-size: var(--ui-fs-lg); }
+
+/* ═══ Agent: loans ═══ */
+.ag-label--first { margin-top: var(--ui-s2) !important; }
+.ag-stack-actions { display: grid; gap: var(--ui-s2); margin: var(--ui-s2) 0 var(--ui-s4); }
+.ag-stack-actions .ui-btn { min-height: 52px; text-decoration: none; }
+.ag-rules { list-style: none; padding: 0; margin: var(--ui-s4) 0 0; display: grid; gap: var(--ui-s2); font-size: var(--ui-fs-sm); color: var(--ui-ink-2); }
+.ag-rules li { display: flex; gap: var(--ui-s2); align-items: flex-start; }
+.ag-rules svg { flex-shrink: 0; margin-top: 2px; color: var(--ui-brand-ink); }
+.ag-rate-row { min-height: 72px; }
+.ag-rate-pct { width: 56px; height: 56px; flex-shrink: 0; border-radius: 16px; display: grid; place-items: center; background: var(--ui-brand-tint); color: var(--ui-brand-ink); font-family: var(--ui-font-display); font-size: var(--ui-fs-lg); font-weight: 800; }
+.ag-rates-note { display: flex; align-items: flex-start; gap: 6px; margin-top: var(--ui-s3); }
+.ag-rates-note svg { flex-shrink: 0; margin-top: 3px; }
+.ag-loan-pick .ui-avatar { overflow: hidden; }
+.ag-loan-summary { padding: var(--ui-s5); margin: 0; }
+.ag-loan-summary .ui-banner { margin-top: var(--ui-s3); }
+.ag-loan-summary--inline { margin-top: var(--ui-s3); }
+@media (min-width: 1024px) { .ag-loan-summary--inline { display: none; } }
+@media (max-width: 1023px) { .ag-loan-side > .ui-section-head, .ag-loan-side > .ag-loan-summary { display: none; } }
+.ag-crow-tag--due { background: var(--ui-danger-tint); color: var(--ui-danger); }
+.ag-repay-bar { height: 8px; margin: var(--ui-s3) 0 var(--ui-s1); }
+.ag-panel .ag-flow-body:not(:has(.ag-flow-actions)) { padding-bottom: var(--ui-s5); }

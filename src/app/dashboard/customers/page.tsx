@@ -7,6 +7,7 @@ import BottomSheet from '@/components/ui/BottomSheet'
 import EmptyState from '@/components/ui/EmptyState'
 import ListRow from '@/components/ui/ListRow'
 import { ListSkeleton } from '@/components/ui/Skeleton'
+import { useWide } from '@/components/ui/useWide'
 import { Icons, type IconName } from '@/components/ui/icons'
 import { avatarTint } from '@/lib/avatar'
 import { displayName, formatDate, formatNaira, formatTime } from '@/lib/format'
@@ -84,17 +85,6 @@ function StatusBadge({ status }: { status: string }) {
   return <span className={`ui-status ui-status--sm ui-status--${tone}`}>{status}</span>
 }
 
-function useWide() {
-  const [wide, setWide] = useState(false)
-  useEffect(() => {
-    const mq = window.matchMedia('(min-width: 1024px)')
-    const on = () => setWide(mq.matches)
-    on()
-    mq.addEventListener('change', on)
-    return () => mq.removeEventListener('change', on)
-  }, [])
-  return wide
-}
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([])

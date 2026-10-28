@@ -1,14 +1,30 @@
 'use client'
 
-import { useState, useEffect, Suspense } from 'react'
+import { useState, useEffect, useCallback, Suspense } from 'react'
 import { useSession } from 'next-auth/react'
 import { useSearchParams } from 'next/navigation'
-import { blockMinus, nonNegativeString } from '@/lib/numeric'
+import AmountField from '@/components/ui/AmountField'
+import EmptyState from '@/components/ui/EmptyState'
+import { FormError } from '@/components/ui/FormErrors'
+import { ListSkeleton } from '@/components/ui/Skeleton'
+import Toast from '@/components/ui/Toast'
+import { Icons } from '@/components/ui/icons'
+import { avatarTint } from '@/lib/avatar'
+import { displayName, formatDate, formatNaira } from '@/lib/format'
 
 interface Loan {
   id: string; ref: string; principal: number; interestAmount: number; totalAmount: number
   durationDays: number; dueDate: string; status: string; repaid: number
   customer: { id: string; name: string; customerId: string }
+}
+
+const initials = (name: string) => name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
+
+function dueText(iso: string) {
+  const days = Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000)
+  if (days < 0) return { text: `${-days} day${days === -1 ? '' : 's'} overdue`, overdue: true }
+  if (days === 0) return { text: 'Due today', overdue: false }
+  return { text: `Due in ${days} day${days === 1 ? '' : 's'}`, overdue: false }
 }
 
 export default function LoanRepayPage() {
@@ -18,159 +34,176 @@ export default function LoanRepayPage() {
 function LoanRepayContent() {
   const { update } = useSession()
   const searchParams = useSearchParams()
-  const [loans, setLoans] = useState<Loan[]>([])
+  const [loans, setLoans] = useState<Loan[] | null>(null)
   const [selected, setSelected] = useState<Loan | null>(null)
   const [amount, setAmount] = useState('')
-  const [method, setMethod] = useState('Cash')
-  const [loading, setLoading] = useState(true)
+  const [method] = useState('Cash')
   const [submitting, setSubmitting] = useState(false)
   const [toast, setToast] = useState('')
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
+  const [refreshKey, setRefreshKey] = useState(0)
 
-  const loadLoans = async () => {
-    setLoading(true)
-    const res = await fetch('/api/loans?status=Disbursed,Approved')
-    const data = await res.json()
-    setLoans(data.loans ?? [])
-    setLoading(false)
-  }
+  const loadLoans = useCallback(async () => {
+    try {
+      const res = await fetch('/api/loans?status=Disbursed,Approved')
+      const data = await res.json()
+      setLoans(data.loans ?? [])
+    } catch {
+      setLoans(prev => prev ?? [])
+    }
+  }, [])
 
-  useEffect(() => { loadLoans() }, [toast])
+  useEffect(() => { loadLoans() }, [loadLoans, refreshKey])
 
   useEffect(() => {
     const cid = searchParams.get('cid')
-    if (!cid || loans.length === 0) return
+    if (!cid || !loans || loans.length === 0) return
     const match = loans.find(l => l.customer.customerId === cid)
-    if (match) { setSelected(match); setQuery(match.customer.name) }
+    if (match) setSelected(match)
   }, [loans, searchParams])
 
-  const filtered = query
-    ? loans.filter(l =>
-        l.customer.name.toLowerCase().includes(query.toLowerCase()) ||
-        l.ref.toLowerCase().includes(query.toLowerCase()) ||
-        l.customer.customerId.toLowerCase().includes(query.toLowerCase())
-      )
-    : loans
+  const q = query.trim().toLowerCase()
+  const filtered = (loans ?? []).filter(l => !q
+    || l.customer.name.toLowerCase().includes(q)
+    || l.ref.toLowerCase().includes(q)
+    || l.customer.customerId.toLowerCase().includes(q))
 
   const outstanding = selected ? selected.totalAmount - selected.repaid : 0
+  const amt = parseFloat(amount || '0')
+  const tooMuch = amt > outstanding + 0.005
 
   async function submit() {
-    if (!selected) { setError('Select a loan first'); return }
-    if (!amount || parseFloat(amount) <= 0) { setError('Enter a valid amount'); return }
+    if (!selected) { setError('Choose a loan first.'); return }
+    if (!amount || amt <= 0) { setError('Enter the amount you received.'); return }
+    if (tooMuch) { setError(`That’s more than the ${formatNaira(outstanding)} still owed.`); return }
     setSubmitting(true); setError('')
-    const res = await fetch(`/api/loans/${selected.id}/repay`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amount: parseFloat(amount), method }),
-    })
-    const data = await res.json()
-    if (!res.ok) { setError(data.error ?? 'Failed'); setSubmitting(false); return }
-    setToast(`₦${parseFloat(amount).toLocaleString()} repayment recorded for ${selected.customer.name}${data.fullyRepaid ? ' — Loan fully repaid! 🎉' : ''}`)
-    setSelected(null); setAmount('')
+    try {
+      const res = await fetch(`/api/loans/${selected.id}/repay`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: amt, method }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setError(data.error ?? 'The repayment didn’t go through. Please try again.'); setSubmitting(false); return }
+      setToast(data.fullyRepaid
+        ? `${displayName(selected.customer.name)}’s loan is fully repaid`
+        : `${formatNaira(amt, { minor: false })} recorded for ${displayName(selected.customer.name)}`)
+      setSelected(null); setAmount('')
+      setRefreshKey(k => k + 1)
+      update()
+    } catch {
+      setError('We lost the connection. Check the loan’s balance before trying again, so it isn’t recorded twice.')
+      setRefreshKey(k => k + 1)
+    }
     setSubmitting(false)
-    update()
-    setTimeout(() => setToast(''), 5000)
   }
 
-  const initials = (name: string) => name.split(' ').map(w => w[0]).join('').slice(0, 2)
-
   return (
-    <>
-      <div className="page-header">
-        <h2>Record Repayment</h2>
-        <p>Collect and record customer loan repayments</p>
-      </div>
-
-      {toast && <div className="alert alert-g" style={{ marginBottom: 16 }}>✅ {toast}</div>}
-      {error && <div className="alert alert-rd" style={{ marginBottom: 16 }}>🔴 {error}</div>}
-
-      <div className="grid g-2-1">
-        <div>
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div className="card-title">Active Loans</div>
-            <div className="isearch" style={{ marginBottom: 12 }}>
-              <span className="sicon">🔍</span>
-              <input className="finput" type="text" placeholder="Name, phone or loan ref…" value={query} onChange={e => setQuery(e.target.value)} />
-            </div>
-            {loading && <div style={{ textAlign: 'center', color: 'var(--mu)', padding: 12 }}>Loading…</div>}
-            {!loading && filtered.length === 0 && <div style={{ textAlign: 'center', color: 'var(--mu)', padding: 12 }}>No active loans found</div>}
-            {!loading && filtered.map(l => {
-              const out = l.totalAmount - l.repaid
-              const due = new Date(l.dueDate)
-              const isOverdue = due < new Date()
-              return (
-                <div
-                  key={l.id}
-                  className={`sel-item${selected?.id === l.id ? ' on' : ''}`}
-                  style={{ cursor: 'pointer' }}
-                  onClick={() => setSelected(selected?.id === l.id ? null : l)}
-                >
-                  <div className="av av-rd">{initials(l.customer.name)}</div>
-                  <div style={{ flex: 1 }}>
-                    <div style={{ fontWeight: 600 }}>{l.customer.name}</div>
-                    <div style={{ fontSize: 11.5, color: 'var(--mu)' }}>
-                      {l.ref} · Due {due.toLocaleDateString('en-GB', { month: 'short', day: 'numeric' })} · {l.durationDays} days
-                    </div>
-                  </div>
-                  <div style={{ textAlign: 'right' }}>
-                    <div style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", fontWeight: 800, color: isOverdue ? 'var(--rd)' : 'var(--gd)' }}>
-                      ₦{out.toLocaleString()}
-                    </div>
-                    <span className={`bdg ${isOverdue ? 'bdg-rd' : 'bdg-gd'}`} style={{ fontSize: 10 }}>
-                      {isOverdue ? 'Overdue' : 'Active'}
-                    </span>
-                  </div>
-                  <div className={`sel-radio${selected?.id === l.id ? ' on' : ''}`}>{selected?.id === l.id ? '✓' : ''}</div>
-                </div>
-              )
-            })}
-          </div>
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div className="card-title">Payment Details</div>
-            <label className="flabel">Amount Received (₦) *</label>
-            <input
-              className="finput" type="tel" inputMode="decimal" onKeyDown={blockMinus} placeholder="Enter amount"
-              style={{ fontSize: 28, fontFamily: "'Plus Jakarta Sans',sans-serif", fontWeight: 800, textAlign: 'center', padding: 14, marginBottom: 14 }}
-              value={amount} onChange={e => setAmount(nonNegativeString(e.target.value))}
-            />
-            <div className="form-row fr2">
-              <div><label className="flabel">Payment Method</label>
-                <select className="finput" value={method} onChange={e => setMethod(e.target.value)}>
-                  <option>Cash</option>
-                </select>
+    <div className="ag-page">
+      {toast && <Toast message={toast} onDone={() => setToast('')} />}
+      <div className="ag-collect">
+        <div className="ag-collect-main">
+          {!selected ? (
+            <>
+              <div className="ui-section-head"><h2>Loans being repaid</h2>{loans && loans.length > 0 && <span className="ui-card-meta">{loans.length}</span>}</div>
+              <div className="ag-search ag-cal-search">
+                <Icons.search size={20} aria-hidden="true" />
+                <input className="ui-input" type="search" autoComplete="off" placeholder="Name, customer ID or loan reference" aria-label="Search loans" value={query} onChange={e => setQuery(e.target.value)} />
               </div>
-            </div>
-          </div>
-          <div className="btn-row">
-            <button className="btn btn-out" onClick={() => { setSelected(null); setAmount('') }}>Cancel</button>
-            <button className="btn btn-g" disabled={submitting || !selected} onClick={submit}>
-              {submitting ? '⏳ Recording…' : '✓ Record Repayment'}
-            </button>
-          </div>
-        </div>
-        <div>
-          {selected ? (
-            <div className="card" style={{ marginBottom: 16 }}>
-              <div className="card-title">Loan Summary</div>
-              <div className="conf-table">
-                <div className="conf-row"><span className="conf-lbl">Customer</span><strong>{selected.customer.name}</strong></div>
-                <div className="conf-row"><span className="conf-lbl">Loan Ref</span><strong style={{ color: 'var(--b)' }}>{selected.ref}</strong></div>
-                <div className="conf-row"><span className="conf-lbl">Principal</span><strong style={{ color: 'var(--txt)' }}>₦{selected.principal.toLocaleString()}</strong></div>
-                <div className="conf-row"><span className="conf-lbl">Interest</span><strong style={{ color: 'var(--gd)' }}>₦{selected.interestAmount.toLocaleString()}</strong></div>
-                <div className="conf-row"><span className="conf-lbl">Total</span><strong>₦{selected.totalAmount.toLocaleString()}</strong></div>
-                <div className="conf-row"><span className="conf-lbl">Repaid</span><strong style={{ color: 'var(--g)' }}>₦{selected.repaid.toLocaleString()}</strong></div>
-                <div className="conf-row"><span className="conf-lbl">Outstanding</span><strong style={{ color: 'var(--rd)', fontFamily: "'Plus Jakarta Sans',sans-serif", fontSize: 18 }}>₦{outstanding.toLocaleString()}</strong></div>
-                <div className="conf-row"><span className="conf-lbl">Due Date</span><strong style={{ color: new Date(selected.dueDate) < new Date() ? 'var(--rd)' : 'inherit' }}>{new Date(selected.dueDate).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</strong></div>
-              </div>
-            </div>
+              {loans === null ? (
+                <ListSkeleton count={4} />
+              ) : filtered.length === 0 ? (
+                <section className="ui-card"><EmptyState icon="repay" title={q ? 'No loans match' : 'No loans to repay'} text={q ? 'Try another name or reference.' : 'Loans you pay out show here until they’re fully repaid.'} /></section>
+              ) : (
+                <section className="ui-card ui-card--list">
+                  {filtered.map(l => {
+                    const out = l.totalAmount - l.repaid
+                    const pct = l.totalAmount > 0 ? Math.round((l.repaid / l.totalAmount) * 100) : 0
+                    const due = dueText(l.dueDate)
+                    return (
+                      <button key={l.id} type="button" className="ag-crow" onClick={() => { setSelected(l); setAmount(''); setError('') }}>
+                        <span className={`ui-avatar ag-av ag-av--${avatarTint(l.customer.customerId)}`} aria-hidden="true">{initials(l.customer.name)}</span>
+                        <span className="ag-crow-main">
+                          <span className="ag-crow-name">{displayName(l.customer.name)}</span>
+                          <span className="ag-crow-sub">{l.ref}</span>
+                          <span className="ag-crow-plan">
+                            <span className="ag-mini-bar" aria-hidden="true"><span style={{ width: `${pct}%` }} /></span>
+                            <span className="ag-crow-plan-text">{pct}% repaid</span>
+                          </span>
+                        </span>
+                        <span className="ag-crow-end">
+                          <span className="ag-crow-bal">{formatNaira(out, { minor: false })}</span>
+                          <span className={`ag-crow-tag${due.overdue ? ' ag-crow-tag--due' : ''}`}>{due.text}</span>
+                        </span>
+                      </button>
+                    )
+                  })}
+                </section>
+              )}
+            </>
           ) : (
-            <div className="card" style={{ marginBottom: 16 }}>
-              <div style={{ textAlign: 'center', color: 'var(--mu)', fontSize: 13, padding: 24 }}>Select a loan to see details</div>
+            <div className="ag-panel">
+              <header className="ag-flow-head ag-panel-head">
+                <div className="ag-flow-nav">
+                  <button type="button" className="ui-icon-btn ui-icon-btn--soft" aria-label="Back to loans" onClick={() => { setSelected(null); setAmount(''); setError('') }}><Icons.back size={20} aria-hidden="true" /></button>
+                  <span className="ag-flow-count">Record a repayment</span>
+                  <span className="ag-flow-nav-gap" />
+                </div>
+              </header>
+              <div className="ag-flow-body">
+                <div className="ag-who">
+                  <span className={`ui-avatar ag-av ag-av--${avatarTint(selected.customer.customerId)}`} aria-hidden="true">{initials(selected.customer.name)}</span>
+                  <div className="ag-payee-main">
+                    <p className="ui-row-title">{displayName(selected.customer.name)}</p>
+                    <p className="ui-row-sub">{selected.ref} · {dueText(selected.dueDate).text}</p>
+                  </div>
+                </div>
+
+                <h2 className="ag-q ag-q--amount"><span className="ag-q-kicker">Still owed</span>{formatNaira(outstanding)}</h2>
+                <div className="ui-progress ag-repay-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100}
+                  aria-valuenow={Math.round((selected.repaid / selected.totalAmount) * 100)} aria-label="Repaid so far">
+                  <span style={{ width: `${Math.min(100, (selected.repaid / selected.totalAmount) * 100)}%` }} />
+                </div>
+                <p className="ui-row-sub">{formatNaira(selected.repaid, { minor: false })} repaid of {formatNaira(selected.totalAmount, { minor: false })}</p>
+
+                <p className="ag-label">How much did they pay?</p>
+                <AmountField value={amount} onChange={v => { setAmount(v); setError('') }} invalid={tooMuch}
+                  hint={tooMuch ? `More than the ${formatNaira(outstanding, { minor: false })} still owed` : 'Cash you received from the customer'} />
+                <div className="ag-quick">
+                  <button type="button" className="ag-chip" aria-pressed={Math.abs(amt - outstanding) < 0.005} onClick={() => setAmount(String(Math.round(outstanding * 100) / 100))}>
+                    All of it · {formatNaira(outstanding, { minor: false })}
+                  </button>
+                </div>
+
+                <dl className="ag-breakdown">
+                  <div><dt>Loan</dt><dd>{formatNaira(selected.principal)}</dd></div>
+                  <div><dt>Interest</dt><dd>{formatNaira(selected.interestAmount)}</dd></div>
+                  <div><dt>Due</dt><dd>{formatDate(selected.dueDate)}</dd></div>
+                  <div><dt>Paid in</dt><dd>{method}</dd></div>
+                  {amt > 0 && !tooMuch && <div className="ag-breakdown-total"><dt>Left to pay after this</dt><dd>{formatNaira(outstanding - amt)}</dd></div>}
+                </dl>
+
+                <FormError message={error} />
+                <div className="ag-flow-actions">
+                  <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" disabled={submitting || !amt || tooMuch} onClick={submit}>
+                    {submitting ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Recording…</> : amt > 0 ? `Record ${formatNaira(amt, { minor: false })}` : 'Record repayment'}
+                  </button>
+                </div>
+              </div>
             </div>
           )}
         </div>
+
+        <aside className="ag-collect-side">
+          <div className="ui-section-head"><h2>About repayments</h2></div>
+          <ul className="ag-rules">
+            <li><Icons.check size={16} aria-hidden="true" /> Customers can repay in parts, as often as they like</li>
+            <li><Icons.check size={16} aria-hidden="true" /> A repayment can’t be more than what’s still owed</li>
+            <li><Icons.check size={16} aria-hidden="true" /> The cash you record is added to your wallet</li>
+          </ul>
+        </aside>
       </div>
-    </>
+    </div>
   )
 }

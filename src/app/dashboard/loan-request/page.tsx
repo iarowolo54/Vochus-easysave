@@ -1,179 +1,263 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useRouter } from 'next/navigation'
-import { blockMinus, nonNegativeString } from '@/lib/numeric'
+import Link from 'next/link'
+import AmountField from '@/components/ui/AmountField'
+import EmptyState from '@/components/ui/EmptyState'
+import { FormError } from '@/components/ui/FormErrors'
+import { Icons } from '@/components/ui/icons'
+import { avatarTint } from '@/lib/avatar'
+import { displayName, formatDate, formatNaira } from '@/lib/format'
 
 interface Customer {
   id: string; customerId: string; firstName: string; lastName: string
-  phone: string; savingsBalance: number; activeLoan: any; photoUrl?: string | null
+  phone: string; savingsBalance: number; activeLoan: { ref: string; totalAmount: number; status: string } | null; photoUrl?: string | null
 }
 
 interface Rate { id: string; durationDays: number; label: string; rate: number }
 interface Loan { ref: string; principal: number; status: string; customer: { name: string } }
 
+const LIMIT = 0.8 // a customer can borrow up to 80% of what they've saved
+
+function Avatar({ c }: { c: Customer }) {
+  return c.photoUrl
+    ? <img src={c.photoUrl} className="ui-avatar" alt="" />
+    : <span className={`ui-avatar ag-av ag-av--${avatarTint(c.customerId)}`} aria-hidden="true">{c.firstName[0]}{c.lastName[0]}</span>
+}
+
+function loanStatus(s: string): { label: string; tone: 'warn' | 'success' | 'danger' | 'neutral' } {
+  if (s === 'Pending') return { label: 'Waiting for approval', tone: 'warn' }
+  if (s === 'Approved') return { label: 'Approved · ready to pay out', tone: 'success' }
+  if (s === 'Rejected') return { label: 'Declined', tone: 'danger' }
+  return { label: s, tone: 'neutral' }
+}
+
 export default function LoanRequestPage() {
-  const router = useRouter()
   const [query, setQuery] = useState('')
   const [results, setResults] = useState<Customer[]>([])
+  const [searching, setSearching] = useState(false)
   const [selected, setSelected] = useState<Customer | null>(null)
   const [rates, setRates] = useState<Rate[]>([])
   const [selectedRate, setSelectedRate] = useState<Rate | null>(null)
   const [principal, setPrincipal] = useState('')
   const [loading, setLoading] = useState(false)
-  const [toast, setToast] = useState('')
   const [error, setError] = useState('')
-  const [recentLoans, setRecentLoans] = useState<Loan[]>([])
+  const [created, setCreated] = useState<{ ref: string; name: string; amount: number } | null>(null)
+  const [recentLoans, setRecentLoans] = useState<Loan[] | null>(null)
 
   useEffect(() => {
     fetch('/api/interest-rates').then(r => r.json()).then(d => {
       setRates(d.rates ?? [])
       if (d.rates?.length) setSelectedRate(d.rates[0])
-    })
-    fetch('/api/loans?status=Pending,Approved').then(r => r.json()).then(d => setRecentLoans((d.loans ?? []).slice(0, 3)))
-  }, [])
+    }).catch(() => {})
+    fetch('/api/loans?status=Pending,Approved').then(r => r.json())
+      .then(d => setRecentLoans((d.loans ?? []).slice(0, 4)))
+      .catch(() => setRecentLoans([]))
+  }, [created])
 
   const search = useCallback(async () => {
     if (!query.trim()) { setResults([]); return }
-    const res = await fetch(`/api/customers?search=${encodeURIComponent(query)}&limit=5`)
-    const data = await res.json()
-    setResults(data.customers ?? [])
+    setSearching(true)
+    try {
+      const res = await fetch(`/api/customers?search=${encodeURIComponent(query)}&limit=5`)
+      const data = await res.json()
+      setResults(data.customers ?? [])
+    } catch { setResults([]) }
+    setSearching(false)
   }, [query])
 
   useEffect(() => {
+    if (selected) return
     const t = setTimeout(search, 300)
     return () => clearTimeout(t)
-  }, [search])
+  }, [search, selected])
 
-  const maxLoan = selected ? selected.savingsBalance * 0.8 : 0
-  const interest = selectedRate && principal ? (parseFloat(principal) * selectedRate.rate) / 100 : 0
-  const total = parseFloat(principal || '0') + interest
+  const maxLoan = selected ? selected.savingsBalance * LIMIT : 0
+  const amt = parseFloat(principal || '0')
+  const interest = selectedRate && amt ? (amt * selectedRate.rate) / 100 : 0
+  const total = amt + interest
+  const tooMuch = !!selected && amt > maxLoan
+  const due = selectedRate ? new Date(Date.now() + selectedRate.durationDays * 86400000) : null
 
   async function submit() {
-    if (!selected) { setError('Select a customer first'); return }
-    if (!principal || parseFloat(principal) <= 0) { setError('Enter loan amount'); return }
-    if (!selectedRate) { setError('Select a duration'); return }
-    if (parseFloat(principal) > maxLoan) { setError(`Max loan is ₦${maxLoan.toLocaleString()} (80% of savings)`); return }
-    if (selected.activeLoan) { setError('Customer has an active loan'); return }
+    if (!selected) { setError('Choose a customer first.'); return }
+    if (!principal || amt <= 0) { setError('Enter how much they want to borrow.'); return }
+    if (!selectedRate) { setError('Choose how long the loan is for.'); return }
+    if (amt > maxLoan) { setError(`The most they can borrow is ${formatNaira(maxLoan)} (80% of their savings).`); return }
+    if (selected.activeLoan) { setError('This customer already has a loan. They need to repay it first.'); return }
     setLoading(true); setError('')
-    const res = await fetch('/api/loans', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        customerId: selected.id,
-        principal: parseFloat(principal),
-        durationDays: selectedRate.durationDays,
-        interestRate: selectedRate.rate,
-      }),
-    })
-    const data = await res.json()
-    if (!res.ok) { setError(data.error ?? 'Failed'); setLoading(false); return }
-    setToast(`Loan application submitted: ${data.loan.ref}`)
-    setTimeout(() => router.push('/dashboard/loan-disburse'), 2000)
+    try {
+      const res = await fetch('/api/loans', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          customerId: selected.id,
+          principal: amt,
+          durationDays: selectedRate.durationDays,
+          interestRate: selectedRate.rate,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) { setError(data.error ?? 'The request didn’t go through. Please try again.'); setLoading(false); return }
+      setCreated({ ref: data.loan.ref, name: displayName(`${selected.firstName} ${selected.lastName}`), amount: amt })
+    } catch {
+      setError('No connection. Check your loan list before trying again, so it isn’t requested twice.')
+    }
     setLoading(false)
   }
 
+  function reset() {
+    setCreated(null); setSelected(null); setQuery(''); setResults([]); setPrincipal(''); setError('')
+    if (rates.length) setSelectedRate(rates[0])
+  }
+
   return (
-    <>
-      <div className="page-header">
-        <h2>Loan Request</h2>
-        <p>Submit a new customer loan application for admin approval</p>
-      </div>
-
-      {toast && <div className="alert alert-g" style={{ marginBottom: 16 }}>✅ {toast}</div>}
-      {error && <div className="alert alert-rd" style={{ marginBottom: 16 }}>🔴 {error}</div>}
-
-      <div className="grid g-2-1">
-        <div>
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div className="card-title">Customer Selection</div>
-            <div className="isearch" style={{ marginBottom: 10 }}>
-              <span className="sicon">🔍</span>
-              <input className="finput" type="text" placeholder="Search by name, phone or ID…"
-                value={query} onChange={e => { setQuery(e.target.value); setSelected(null) }} />
-            </div>
-            {results.length > 0 && !selected && (
-              <div style={{ border: '1px solid var(--br)', borderRadius: 8 }}>
-                {results.map(c => (
-                  <div key={c.id} className="lookup-box show" style={{ cursor: 'pointer' }}
-                    onClick={() => { setSelected(c); setResults([]); setQuery(`${c.firstName} ${c.lastName}`) }}>
-                    {c.photoUrl ? <img src={c.photoUrl} className="av" style={{ objectFit: 'cover', borderRadius: '50%' }} alt="" /> : <div className="av av-g">{c.firstName[0]}{c.lastName[0]}</div>}
-                    <div>
-                      <div style={{ fontSize: 14, fontWeight: 700 }}>{c.firstName} {c.lastName}</div>
-                      <div style={{ fontSize: 11.5, color: 'var(--mu)' }}>{c.customerId} · {c.phone}</div>
-                      <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--g)', marginTop: 3 }}>
-                        Savings: ₦{c.savingsBalance.toLocaleString()} · {c.activeLoan ? '⚠️ Has active loan' : 'Eligible ✅'}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
-            {selected && (
-              <div className="lookup-box show">
-                {selected.photoUrl ? <img src={selected.photoUrl} className="av" style={{ objectFit: 'cover', borderRadius: '50%' }} alt="" /> : <div className="av av-g">{selected.firstName[0]}{selected.lastName[0]}</div>}
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 700 }}>{selected.firstName} {selected.lastName}</div>
-                  <div style={{ fontSize: 11.5, color: 'var(--mu)' }}>{selected.customerId} · {selected.phone}</div>
-                  <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--g)', marginTop: 3 }}>
-                    Savings: ₦{selected.savingsBalance.toLocaleString()} · Max loan: ₦{maxLoan.toLocaleString()} · {selected.activeLoan ? '⚠️ Has active loan' : 'Eligible ✅'}
+    <div className="ag-page">
+      <div className="ag-collect">
+        <div className="ag-collect-main">
+          <div className="ag-panel">
+            <div className="ag-flow-body">
+              {created ? (
+                <div className="ag-sent">
+                  <span className="ag-sent-icon" aria-hidden="true"><Icons.check size={30} /></span>
+                  <h2 className="ag-q">Sent for approval</h2>
+                  <p className="ag-q-lead">An admin checks every loan. Once it’s approved you can pay it out from Disburse loan.</p>
+                  <dl className="ag-breakdown">
+                    <div><dt>Customer</dt><dd>{created.name}</dd></div>
+                    <div><dt>Reference</dt><dd className="ag-mono">{created.ref}</dd></div>
+                    <div className="ag-breakdown-total"><dt>Loan</dt><dd>{formatNaira(created.amount)}</dd></div>
+                  </dl>
+                  <div className="ag-stack-actions">
+                    <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={reset}>Request another loan</button>
+                    <Link href="/dashboard/loan-disburse" className="ui-btn ui-btn--secondary ui-btn--block">Go to Disburse loan</Link>
                   </div>
                 </div>
-                <button className="btn btn-out btn-sm" onClick={() => { setSelected(null); setQuery('') }}>✕</button>
-              </div>
-            )}
-          </div>
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div className="card-title">Loan Details</div>
-            {selected && (
-              <div className="alert alert-b">ℹ️ Maximum loan = 80% of savings. {selected.firstName}: max ₦{maxLoan.toLocaleString()}</div>
-            )}
-            <div className="form-row fr2">
-              <div><label className="flabel">Loan Amount (₦) *</label>
-                <input className="finput" type="tel" inputMode="decimal" onKeyDown={blockMinus} placeholder="10,000" value={principal} onChange={e => setPrincipal(nonNegativeString(e.target.value))} />
-              </div>
-              <div><label className="flabel">Duration *</label>
-                <select className="finput" onChange={e => setSelectedRate(rates.find(r => r.id === e.target.value) ?? null)}>
-                  {rates.map(r => (
-                    <option key={r.id} value={r.id}>{r.label} — {r.rate}%</option>
-                  ))}
-                </select>
-              </div>
+              ) : !selected ? (
+                <>
+                  <h2 className="ag-q">Who needs a loan?</h2>
+                  <p className="ag-q-lead">Customers can borrow up to 80% of what they’ve saved, one loan at a time.</p>
+                  <FormError message={error} />
+                  <div className="ag-search">
+                    <Icons.search size={20} aria-hidden="true" />
+                    <input className="ui-input" type="search" enterKeyHint="search" autoComplete="off" placeholder="Name, phone or customer ID"
+                      aria-label="Search customers" value={query} onChange={e => setQuery(e.target.value)} />
+                    {searching && <span className="ui-spinner ag-search-spin" aria-label="Searching" />}
+                  </div>
+                  {results.length > 0 && (
+                    <div className="ag-pick-list">
+                      {results.map(c => (
+                        <button key={c.id} type="button" className="ag-pick" onClick={() => { setSelected(c); setResults([]); setError('') }}>
+                          <Avatar c={c} />
+                          <span className="ag-payee-main">
+                            <span className="ui-row-title ui-block">{displayName(`${c.firstName} ${c.lastName}`)}</span>
+                            <span className="ui-row-sub ui-block">{c.activeLoan ? 'Has a loan already' : `Can borrow up to ${formatNaira(c.savingsBalance * LIMIT, { minor: false })}`}</span>
+                          </span>
+                          {c.activeLoan
+                            ? <span className="ui-status ui-status--sm ui-status--warn">Has a loan</span>
+                            : <span className="ag-pick-amount">{formatNaira(c.savingsBalance, { minor: false })}</span>}
+                          <Icons.next size={18} aria-hidden="true" className="ui-row-chevron" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {!searching && query.trim() && results.length === 0 && <p className="ui-note">No customer matches “{query.trim()}”.</p>}
+                </>
+              ) : (
+                <>
+                  <div className="ag-who">
+                    <Avatar c={selected} />
+                    <div className="ag-payee-main">
+                      <p className="ui-row-title">{displayName(`${selected.firstName} ${selected.lastName}`)}</p>
+                      <p className="ui-row-sub">Saved {formatNaira(selected.savingsBalance, { minor: false })} · can borrow up to {formatNaira(maxLoan, { minor: false })}</p>
+                    </div>
+                    <button type="button" className="ui-link" onClick={() => { setSelected(null); setQuery(''); setPrincipal(''); setError('') }}>Change</button>
+                  </div>
+
+                  {selected.activeLoan ? (
+                    <EmptyState icon="loan" title="They already have a loan" text={`${displayName(selected.firstName)} needs to finish repaying ${selected.activeLoan.ref} before taking another.`}
+                      action={<Link href={`/dashboard/loan-repay?cid=${encodeURIComponent(selected.customerId)}`} className="ui-btn ui-btn--secondary">Record a repayment</Link>} />
+                  ) : maxLoan <= 0 ? (
+                    <EmptyState icon="plan" title="Nothing saved yet" text="Customers can borrow once they have savings. The limit is 80% of what they’ve saved." />
+                  ) : (
+                    <>
+                      <p className="ag-label ag-label--first">How much?</p>
+                      <AmountField value={principal} onChange={v => { setPrincipal(v); setError('') }} invalid={tooMuch}
+                        hint={tooMuch ? `That’s more than their limit of ${formatNaira(maxLoan, { minor: false })}` : `Up to ${formatNaira(maxLoan, { minor: false })}`} />
+                      <div className="ag-quick">
+                        {[0.25, 0.5, 1].map(f => {
+                          const v = Math.floor(maxLoan * f)
+                          return v > 0 ? <button key={f} type="button" className="ag-chip" aria-pressed={amt === v} onClick={() => setPrincipal(String(v))}>{f === 1 ? `Max ${formatNaira(v, { minor: false })}` : formatNaira(v, { minor: false })}</button> : null
+                        })}
+                      </div>
+
+                      <p className="ag-label">For how long?</p>
+                      {rates.length === 0 ? <p className="ui-note">Loading the loan lengths…</p> : (
+                        <div className="ag-radio-group">
+                          {rates.map(r => (
+                            <button key={r.id} type="button" role="radio" aria-checked={selectedRate?.id === r.id} className="ag-radio" onClick={() => setSelectedRate(r)}>
+                              <span className="ag-payee-main">
+                                <span className="ui-row-title ui-block">{r.label}</span>
+                                <span className="ui-row-sub ui-block">{r.rate}% interest{amt > 0 ? ` · repay ${formatNaira(amt + amt * r.rate / 100, { minor: false })}` : ''}</span>
+                              </span>
+                              <span className="ui-radio" aria-hidden="true" />
+                            </button>
+                          ))}
+                        </div>
+                      )}
+
+                      {amt > 0 && selectedRate && !tooMuch && (
+                        <dl className="ag-breakdown">
+                          <div><dt>Loan</dt><dd>{formatNaira(amt)}</dd></div>
+                          <div><dt>Interest ({selectedRate.rate}%)</dt><dd>{formatNaira(interest)}</dd></div>
+                          {due && <div><dt>Due</dt><dd>{formatDate(due)}</dd></div>}
+                          <div className="ag-breakdown-total"><dt>They repay</dt><dd>{formatNaira(total)}</dd></div>
+                        </dl>
+                      )}
+
+                      <FormError message={error} />
+                      <div className="ag-flow-actions">
+                        <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" disabled={loading || !amt || tooMuch || !selectedRate} onClick={submit}>
+                          {loading ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Sending…</> : amt > 0 ? `Request ${formatNaira(amt, { minor: false })} loan` : 'Request loan'}
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
             </div>
-            {principal && selectedRate && (
-              <div className="conf-table" style={{ marginTop: 12 }}>
-                <div className="conf-row"><span className="conf-lbl">Interest ({selectedRate.rate}%)</span><strong style={{ color: 'var(--gd)' }}>₦{interest.toLocaleString()}</strong></div>
-                <div className="conf-row"><span className="conf-lbl">Total Repayable</span><strong style={{ color: 'var(--gd)', fontSize: 16 }}>₦{total.toLocaleString()}</strong></div>
-              </div>
-            )}
-          </div>
-          <div className="btn-row">
-            <button className="btn btn-out">Cancel</button>
-            <button className="btn btn-pu" disabled={loading} onClick={submit}>
-              {loading ? '⏳ Submitting…' : '📤 Submit Application'}
-            </button>
           </div>
         </div>
-        <div>
-          <div className="sec-label" style={{ marginTop: 0 }}>Recent Applications</div>
-          <div className="card" style={{ marginBottom: 16 }}>
-            {recentLoans.length === 0 && <div style={{ textAlign: 'center', color: 'var(--mu)', fontSize: 13, padding: 12 }}>No recent applications</div>}
-            {recentLoans.map((l, i) => (
-              <div key={l.ref} className="cust-row" style={{ padding: '9px 0', borderBottom: i < recentLoans.length - 1 ? undefined : 'none' }}>
-                <div className="av av-g">{l.customer.name.split(' ').map(w => w[0]).join('').slice(0, 2)}</div>
-                <div><div className="cust-name">{l.customer.name}</div><div className="cust-sub">{l.ref} · ₦{l.principal.toLocaleString()}</div></div>
-                <span className={`bdg ${l.status === 'Approved' ? 'bdg-g' : l.status === 'Pending' ? 'bdg-gd' : 'bdg-rd'}`} style={{ marginLeft: 'auto' }}>{l.status}</span>
-              </div>
-            ))}
-          </div>
-          <div className="card">
-            <div className="card-title">Eligibility Rules</div>
-            <div style={{ fontSize: 12.5, color: 'var(--mu)', lineHeight: 1.9 }}>
-              • Max 80% of savings balance<br />• No existing active loan<br />• Min 30 days of saving history<br />• No overdue repayments<br />• Admin approval required
-            </div>
-          </div>
-        </div>
+
+        <aside className="ag-collect-side">
+          <div className="ui-section-head"><h2>Waiting on approval</h2></div>
+          {recentLoans === null ? (
+            <section className="ui-card"><p className="ui-note ui-note--center">Loading…</p></section>
+          ) : recentLoans.length === 0 ? (
+            <section className="ui-card"><EmptyState icon="loan" title="No open requests" text="Loans you request show here until they’re paid out." /></section>
+          ) : (
+            <section className="ui-card ui-card--list">
+              {recentLoans.map(l => {
+                const st = loanStatus(l.status)
+                return (
+                  <div key={l.ref} className="ui-row">
+                    <span className="ui-row-icon" aria-hidden="true"><Icons.loan size={20} /></span>
+                    <span className="ui-row-main">
+                      <span className="ui-row-title ui-block">{displayName(l.customer.name)}</span>
+                      <span className="ui-row-sub ui-block">{formatNaira(l.principal, { minor: false })} · {l.ref}</span>
+                    </span>
+                    <span className={`ui-status ui-status--sm ui-status--${st.tone}`}>{st.label}</span>
+                  </div>
+                )
+              })}
+            </section>
+          )}
+          <ul className="ag-rules" aria-label="How loans work">
+            <li><Icons.check size={16} aria-hidden="true" /> Up to 80% of what the customer has saved</li>
+            <li><Icons.check size={16} aria-hidden="true" /> One loan at a time</li>
+            <li><Icons.check size={16} aria-hidden="true" /> An admin approves every loan before you pay it out</li>
+          </ul>
+        </aside>
       </div>
-    </>
+    </div>
   )
 }

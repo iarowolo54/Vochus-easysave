@@ -6,6 +6,7 @@ import { useSearchParams } from 'next/navigation'
 import BottomSheet from '@/components/ui/BottomSheet'
 import EmptyState from '@/components/ui/EmptyState'
 import { ListSkeleton } from '@/components/ui/Skeleton'
+import { useWide } from '@/components/ui/useWide'
 import { Icons } from '@/components/ui/icons'
 import { avatarTint } from '@/lib/avatar'
 import { displayName, formatNaira } from '@/lib/format'
@@ -37,16 +38,6 @@ function initials(name: string) {
   return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
 }
 
-function useWide() {
-  const [wide, setWide] = useState(false)
-  useEffect(() => {
-    const mq = window.matchMedia('(min-width: 1024px)')
-    const on = () => setWide(mq.matches)
-    on(); mq.addEventListener('change', on)
-    return () => mq.removeEventListener('change', on)
-  }, [])
-  return wide
-}
 
 function CalendarPage() {
   const searchParams = useSearchParams()
