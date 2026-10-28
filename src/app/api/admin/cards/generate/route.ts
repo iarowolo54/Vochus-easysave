@@ -2,44 +2,34 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { createCardBatch } from '@/lib/member-card'
+
+const MAX_BATCH = 5000
 
 export async function POST(req: NextRequest) {
   const guard = await requireSuperAdmin()
   if (!guard.ok) return guard.response
-  const session = guard.session
 
   const body = await req.json()
-  const { batchName, quantity, expiryDate, serials, batchId } = body as {
+  const { batchName, quantity, expiryDate } = body as {
     batchName: string
     quantity: number
     expiryDate: string
-    serials: string[]
-    batchId: string
   }
 
-  if (!batchName || !quantity || !expiryDate || !serials?.length) {
-    return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
+  // Serials and the batch id are generated SERVER-SIDE (see member-card.ts) —
+  // any client-supplied serials/batchId are ignored so the serial space can't be
+  // chosen or made enumerable by the caller.
+  const qty = Number(quantity)
+  if (!batchName || typeof batchName !== 'string' || !Number.isInteger(qty) || qty < 1 || qty > MAX_BATCH || !expiryDate) {
+    return NextResponse.json({ error: 'batchName, a quantity between 1 and 5000, and expiryDate are required' }, { status: 400 })
+  }
+  const expiry = new Date(expiryDate)
+  if (isNaN(expiry.getTime())) {
+    return NextResponse.json({ error: 'Invalid expiry date' }, { status: 400 })
   }
 
-  if (serials.length !== quantity) {
-    return NextResponse.json({ error: 'Serial count mismatch' }, { status: 400 })
-  }
-
-  const data = serials.map(serial => ({
-    serial,
-    batchName,
-    batchId,
-    expiryDate: new Date(expiryDate),
-    status: 'Unlinked',
-  }))
-
-  await prisma.memberCard.createMany({ data })
-
-  const cards = await prisma.memberCard.findMany({
-    where: { batchId },
-    select: { id: true, serial: true },
-    orderBy: { createdAt: 'asc' },
-  })
+  const { batchId, cards } = await createCardBatch(prisma, { batchName: batchName.trim(), quantity: qty, expiryDate: expiry })
 
   logAudit({
     action: 'card_batch_create',
