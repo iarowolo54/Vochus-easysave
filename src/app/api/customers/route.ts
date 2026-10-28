@@ -176,9 +176,9 @@ export async function POST(req: NextRequest) {
     for (let i = 0; i < plans.length - 1; i++) {
       const p = plans[i + 1]
       if (!p?.dailyAmount || !p?.periodDays || !p?.goal) continue
-      // Bump startDate by (i+1)s so (customerId, startDate) unique index doesn't collide
+      // Plans may share a start date now that the (customerId, startDate) unique
+      // index is gone; no more per-plan +1s bump.
       const pStart = p.startDate ? new Date(p.startDate) : new Date()
-      pStart.setSeconds(pStart.getSeconds() + i + 1)
       const pMat = new Date(pStart); pMat.setDate(pMat.getDate() + parseInt(p.periodDays))
       await prisma.savingsPlan.create({
         data: {

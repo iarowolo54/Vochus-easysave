@@ -61,6 +61,11 @@ export async function POST(
   })
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
 
+  // The customer being linked must belong to the acting agent — otherwise any
+  // agent could link a card to another agent's customer (IDOR).
+  const owned = await prisma.customer.findFirst({ where: { id: customerId, agentId: agent.id }, select: { id: true } })
+  if (!owned) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
+
   const updated = await prisma.memberCard.update({
     where: { serial },
     data: {

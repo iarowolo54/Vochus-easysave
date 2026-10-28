@@ -47,10 +47,20 @@ export async function POST(req: NextRequest) {
     const customer = await prisma.customer.findUnique({ where: { id: customerId } })
     if (!customer) return NextResponse.json({ ok: true })
 
+    // Prefer the plan pinned at initiation (meta.planId). With no planId, credit
+    // the sole Active plan; if there are several, we can't reject an already-paid
+    // transaction, so credit the newest but flag it (initiation should pin a plan).
     const planId = meta.planId as string | undefined
-    const plan = planId
+    let plan = planId
       ? await prisma.savingsPlan.findFirst({ where: { id: planId, customerId, status: 'Active' } })
-      : await prisma.savingsPlan.findFirst({ where: { customerId, status: 'Active' }, orderBy: { startDate: 'desc' } })
+      : null
+    if (!plan && !planId) {
+      const active = await prisma.savingsPlan.findMany({ where: { customerId, status: 'Active' }, orderBy: { startDate: 'desc' }, take: 2 })
+      if (active.length > 1) {
+        console.warn(`[paystack webhook] no meta.planId for customer ${customerId} with multiple active plans — crediting newest`)
+      }
+      plan = active[0] ?? null
+    }
     if (!plan) return NextResponse.json({ ok: true })
 
     const agent = await prisma.agent.findUnique({ where: { id: customer.agentId } })
