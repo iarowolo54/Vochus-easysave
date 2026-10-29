@@ -21,7 +21,7 @@ export default function SettingsPage() {
   const [agent, setAgent] = useState<Agent | null>(null)
   const [failed, setFailed] = useState(false)
   const [toast, setToast] = useState('')
-  const [sheet, setSheet] = useState<'profile' | 'bank' | 'pin' | null>(null)
+  const [sheet, setSheet] = useState<'profile' | 'bank' | 'pin' | 'password' | null>(null)
 
   // Profile
   const [name, setName] = useState('')
@@ -49,6 +49,14 @@ export default function SettingsPage() {
   const [pinTouched, setPinTouched] = useState(false)
   const [pinError, setPinError] = useState('')
   const [pinBusy, setPinBusy] = useState(false)
+
+  // Password
+  const [curPw, setCurPw] = useState('')
+  const [newPw, setNewPw] = useState('')
+  const [newPw2, setNewPw2] = useState('')
+  const [pwTouched, setPwTouched] = useState(false)
+  const [pwError, setPwError] = useState('')
+  const [pwBusy, setPwBusy] = useState(false)
 
   useEffect(() => {
     fetch('/api/agent')
@@ -95,6 +103,39 @@ export default function SettingsPage() {
   function openPin() {
     setPin(''); setPin2(''); setPassword(''); setPinTouched(false); setPinError('')
     setSheet('pin')
+  }
+
+  function openPassword() {
+    setCurPw(''); setNewPw(''); setNewPw2(''); setPwTouched(false); setPwError('')
+    setSheet('password')
+  }
+
+  const curRule = curPw ? '' : 'Enter your current password'
+  const newRule = !newPw ? 'Create a new password' : newPw.length < 6 ? `Use at least 6 characters. This has ${newPw.length}.` : newPw === curPw ? 'Use a different password from your current one' : ''
+  const new2Rule = !newPw2 ? 'Type the new password again' : newPw2 !== newPw ? 'The two passwords don’t match' : ''
+
+  async function savePassword() {
+    setPwTouched(true)
+    if (curRule || newRule || new2Rule) return
+    setPwBusy(true); setPwError('')
+    try {
+      const res = await fetch('/api/agent/password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ currentPassword: curPw, newPassword: newPw }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setPwError(data.error === 'Current password is incorrect' ? 'Your current password isn’t right.' : data.error ?? 'Your password wasn’t changed. Please try again.')
+        return
+      }
+      setSheet(null)
+      setToast('Password changed')
+    } catch {
+      setPwError('No connection. Check your internet and try again.')
+    } finally {
+      setPwBusy(false)
+    }
   }
 
   async function saveProfile() {
@@ -231,14 +272,14 @@ export default function SettingsPage() {
               </span>
               <span className="ag-crow-end"><span className={`ag-crow-tag ${agent.hasPin ? 'ag-crow-tag--ok' : 'ag-crow-tag--due'}`}>{agent.hasPin ? 'Set' : 'Not set'}</span></span>
             </button>
-            <Link href="/forgot-password" className="ag-crow">
+            <button type="button" className="ag-crow" onClick={openPassword}>
               <span className="ag-report-icon ag-set-icon" aria-hidden="true"><Icons.fingerprint size={18} /></span>
               <span className="ag-crow-main">
                 <span className="ag-crow-name">Password</span>
-                <span className="ag-crow-sub">Reset it with a one-time code</span>
+                <span className="ag-crow-sub">Change the password you sign in with</span>
               </span>
               <span className="ag-crow-end"><Icons.next size={18} aria-hidden="true" /></span>
-            </Link>
+            </button>
           </section>
         </div>
 
@@ -301,6 +342,26 @@ export default function SettingsPage() {
                 {bankBusy ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Saving…</> : 'Save without confirming'}
               </button>}
           <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" disabled={bankBusy} onClick={() => setSheet(null)}>Cancel</button>
+        </div>
+      </BottomSheet>
+
+      <BottomSheet open={sheet === 'password'} onClose={() => { if (!pwBusy) setSheet(null) }} title="Change password">
+        <Field id="cpw" label="Current password" error={pwTouched ? curRule : ''}>
+          <input id="cpw" className="ag-tf-input" type="password" autoComplete="current-password" value={curPw} onChange={e => { setCurPw(e.target.value); setPwError('') }} />
+        </Field>
+        <Field id="npw" label="New password" error={pwTouched ? newRule : ''}>
+          <input id="npw" className="ag-tf-input" type="password" autoComplete="new-password" value={newPw} onChange={e => setNewPw(e.target.value)} />
+        </Field>
+        <Field id="npw2" label="Type the new password again" error={pwTouched ? new2Rule : ''}>
+          <input id="npw2" className="ag-tf-input" type="password" autoComplete="new-password" value={newPw2} onChange={e => setNewPw2(e.target.value)} />
+        </Field>
+        <p className="ag-set-note"><Icons.fingerprint size={16} aria-hidden="true" /> Fingerprint sign-in turns off on your devices. Set it up again after you sign in with the new password.</p>
+        <FormError message={pwError} />
+        <div className="ui-stack">
+          <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={pwBusy} onClick={savePassword}>
+            {pwBusy ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Changing…</> : 'Change password'}
+          </button>
+          <Link href="/forgot-password" className="ui-btn ui-btn--plain ui-btn--block">Forgot it? Reset with a code</Link>
         </div>
       </BottomSheet>
 
