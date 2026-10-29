@@ -78,18 +78,20 @@ export async function POST(
   const owned = await prisma.customer.findFirst({ where: { id: customerId, agentId: agent.id }, select: { id: true } })
   if (!owned) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
 
-  const updated = await prisma.memberCard.update({
-    where: { serial },
-    data: {
-      customerId,
-      agentId: agent.id,
-      status: 'Linked',
-      linkedAt: new Date(),
-    },
-    include: {
-      customer: { select: { firstName: true, lastName: true, customerId: true } },
-    },
+  // Claim the card atomically: only an Unlinked card transitions, so two
+  // concurrent links can't both win (the guard above is a fast-fail; this is
+  // the real guard).
+  const claimed = await prisma.memberCard.updateMany({
+    where: { serial, status: 'Unlinked' },
+    data: { customerId, agentId: agent.id, status: 'Linked', linkedAt: new Date() },
   })
+  if (claimed.count === 0) return NextResponse.json({ error: 'Card already linked' }, { status: 409 })
+
+  const updated = await prisma.memberCard.findUnique({
+    where: { serial },
+    include: { customer: { select: { firstName: true, lastName: true, customerId: true } } },
+  })
+  if (!updated) return NextResponse.json({ error: 'Card not found' }, { status: 404 })
 
   logAudit({
     action: 'card_link',
