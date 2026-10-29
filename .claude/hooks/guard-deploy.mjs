@@ -79,7 +79,15 @@ function resolveDeployDir(command) {
 // override. Fail CLOSED: any git error (not a checkout, missing script) blocks.
 function scriptsMatchHead(dir) {
   try {
+    // Both scripts must be tracked and in normal state — reject skip-worktree (S)
+    // or assume-unchanged (lowercase flag), which would make `git diff` ignore a
+    // tampered working copy. `ls-files -v` prefixes each path with a status letter.
+    const v = execFileSync('git', ['-C', dir, 'ls-files', '-v', '--', 'scripts/deploy.sh', 'scripts/rollback.sh'], { encoding: 'utf8' }).trim();
+    const lines = v ? v.split('\n') : [];
+    if (lines.length < 2 || !lines.every((l) => l.startsWith('H '))) return false;
+    // No tracked changes vs the committed tree...
     execFileSync('git', ['-C', dir, 'diff', '--quiet', 'HEAD', '--', 'scripts/deploy.sh', 'scripts/rollback.sh'], { stdio: 'ignore' });
+    // ...and no untracked override.
     const untracked = execFileSync('git', ['-C', dir, 'ls-files', '--others', '--exclude-standard', '--', 'scripts/deploy.sh', 'scripts/rollback.sh'], { encoding: 'utf8' }).trim();
     return untracked.length === 0;
   } catch {
@@ -112,7 +120,7 @@ if (isCleanDeploy(raw)) {
         hookEventName: 'PreToolUse',
         permissionDecision: 'ask',
         permissionDecisionReason:
-          `PRODUCTION deploy/rollback in ${dir} (scripts/deploy.sh @ ${deployScriptHash(dir)}, verified unmodified vs HEAD). Approve ONLY if you intend to deploy to prod now. Command: ${raw.trim()}`,
+          `PRODUCTION deploy/rollback in ${dir} (scripts/deploy.sh @ ${deployScriptHash(dir)}; no local diff vs committed HEAD, not skip-worktree). Approve ONLY if you intend to deploy to prod now, and only if the directory is one you recognise. Command: ${raw.trim()}`,
       },
     }),
   );

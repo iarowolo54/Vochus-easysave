@@ -46,6 +46,14 @@ const rules = [
     /\bDROP\s+(DATABASE|SCHEMA|TABLE)\b/i,
     'Blocked: dropping a database/schema/table must be done by the user deliberately, not by Claude.',
   ],
+  [
+    // Layer: don't let Claude rewrite the prod deploy/rollback scripts from the
+    // shell (guard-deploy also verifies their content vs HEAD at approval time).
+    // Blocks redirect/copy/move/sed-in-place/etc. onto a deploy/rollback script;
+    // reading/running them is unaffected. `\s*` after redirect ops; case-insensitive.
+    /(?:>>?|\btee\b|\bcp\b|\bmv\b|\bdd\b|\bsed\s+-\w*i|\bchmod\b|\bln\b)\s*[^|;&]*\bscripts\/(?:deploy[\w.-]*|rollback)\.sh\b/i,
+    'Blocked: do not modify the production deploy/rollback scripts from the shell — they gate prod and must stay exactly as committed.',
+  ],
 ];
 
 if (isCommit && /co-authored-by|generated with \[?claude|noreply@anthropic\.com/i.test(cmd)) {
