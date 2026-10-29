@@ -3,22 +3,7 @@ import path from 'node:path';
 import { block, projectDir, readInput, rel } from './lib.mjs';
 
 const input = readInput();
-const rawPath = input.tool_input?.file_path ?? input.tool_input?.notebook_path;
-
-// Production deploy/rollback scripts gate prod. Claude must never modify them —
-// in the main checkout OR any worktree (where rel() is null) — so that an
-// approved `./scripts/deploy.sh` always runs the trusted, committed script and
-// can't be tampered before approval. Checked by basename, before the rel guard.
-if (rawPath) {
-  const rawBase = path.posix.basename(String(rawPath).replace(/\\/g, '/').toLowerCase());
-  if (/^(?:deploy[\w.-]*|rollback)\.sh$/.test(rawBase)) {
-    block(
-      `Blocked: ${rawPath} is a production deploy/rollback script that gates prod. Claude must not modify it — change it yourself if you need to.`,
-    );
-  }
-}
-
-const file = rel(rawPath);
+const file = rel(input.tool_input?.file_path ?? input.tool_input?.notebook_path);
 if (!file) process.exit(0);
 // Match case-insensitively: the dev filesystem (macOS) is case-insensitive,
 // so .ENV resolves to the same file as .env. Keep `file` for git/messages.

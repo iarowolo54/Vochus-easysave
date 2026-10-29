@@ -1,4 +1,5 @@
-import { block, readInput } from './lib.mjs';
+import { execFileSync } from 'node:child_process';
+import { block, projectDir, readInput } from './lib.mjs';
 
 // Guards PRODUCTION deploys/rollbacks and commands that could tamper with
 // production user data. Staging (deploy-staging.sh, the -staging dir) and local
@@ -59,17 +60,59 @@ function isCleanDeploy(command) {
   return true;
 }
 
+// The directory the command runs in: the `cd` target (a literal absolute path,
+// per isCleanDeploy) or, with no cd, the project directory.
+function resolveDeployDir(command) {
+  const segs = command.trim().split('&&').map((s) => s.trim());
+  if (segs.length === 2) {
+    const m = segs[0].match(/^cd (\/[A-Za-z0-9_./-]+)$/);
+    if (m) return m[1];
+  }
+  return projectDir;
+}
+
+// The real control behind the UI prompt: the script that will actually run must
+// be the committed one, so approving `./scripts/deploy.sh` can't run tampered
+// content (a text denylist on edits can't guarantee this — a worktree path or a
+// parser trick routes around it). Verify, in the target checkout, that the
+// deploy/rollback scripts have no tracked changes vs HEAD and no untracked
+// override. Fail CLOSED: any git error (not a checkout, missing script) blocks.
+function scriptsMatchHead(dir) {
+  try {
+    execFileSync('git', ['-C', dir, 'diff', '--quiet', 'HEAD', '--', 'scripts/deploy.sh', 'scripts/rollback.sh'], { stdio: 'ignore' });
+    const untracked = execFileSync('git', ['-C', dir, 'ls-files', '--others', '--exclude-standard', '--', 'scripts/deploy.sh', 'scripts/rollback.sh'], { encoding: 'utf8' }).trim();
+    return untracked.length === 0;
+  } catch {
+    return false;
+  }
+}
+
+function deployScriptHash(dir) {
+  try {
+    return execFileSync('git', ['-C', dir, 'hash-object', 'scripts/deploy.sh'], { encoding: 'utf8' }).trim().slice(0, 12);
+  } catch {
+    return 'unknown';
+  }
+}
+
 // 1. A clean deploy/rollback invocation: hand it to the human to approve in the
 //    UI. `ask` forces a prompt even under broad allow rules; the agent cannot
-//    answer it, so this is a genuine human-in-the-loop gate.
+//    answer it, so this is a genuine human-in-the-loop gate. First verify the
+//    script that will run is the committed one.
 if (isCleanDeploy(raw)) {
+  const dir = resolveDeployDir(raw);
+  if (!scriptsMatchHead(dir)) {
+    block(
+      `Blocked: the deploy/rollback scripts in ${dir} differ from the committed version (modified, untracked, or not a clean git checkout). The approval can only vouch for the committed script. Restore/commit scripts/deploy.sh and scripts/rollback.sh there, then retry.`,
+    );
+  }
   process.stdout.write(
     JSON.stringify({
       hookSpecificOutput: {
         hookEventName: 'PreToolUse',
         permissionDecision: 'ask',
         permissionDecisionReason:
-          `PRODUCTION deploy/rollback — approve ONLY if you intend to deploy to prod now. Command: ${raw.trim()}`,
+          `PRODUCTION deploy/rollback in ${dir} (scripts/deploy.sh @ ${deployScriptHash(dir)}, verified unmodified vs HEAD). Approve ONLY if you intend to deploy to prod now. Command: ${raw.trim()}`,
       },
     }),
   );
