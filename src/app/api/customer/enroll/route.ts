@@ -8,7 +8,7 @@ import { resolveBvn } from '@/lib/paystack'
 import { normalizeEmail } from '@/lib/email'
 import { resolvePlanStartDate, maturityFrom } from '@/lib/saving-plan'
 import { validatePhoto } from '@/lib/photo'
-import { validateGender, validateState, normalizeLga } from '@/lib/customer-fields'
+import { validateGender, validateState, validateLga } from '@/lib/customer-fields'
 
 function genId(prefix: string, pad = 5) {
   return `${prefix}-${String(Math.floor(Math.random() * (10 ** pad - 10 ** (pad - 1)) + 10 ** (pad - 1)))}`
@@ -43,11 +43,13 @@ export async function POST(req: NextRequest) {
   const photoCheck = validatePhoto(photoUrl)
   if (!photoCheck.ok) return NextResponse.json({ error: photoCheck.error }, { status: 400 })
 
-  // Gender is required (Female/Male); state is optional but validated (#18).
+  // Gender, state and LGA are required; the LGA must belong to the state (#18).
   const genderCheck = validateGender(gender)
   if (!genderCheck.ok) return NextResponse.json({ error: genderCheck.error }, { status: 400 })
   const stateCheck = validateState(state)
   if (!stateCheck.ok) return NextResponse.json({ error: stateCheck.error }, { status: 400 })
+  const lgaCheck = validateLga(stateCheck.value, lga)
+  if (!lgaCheck.ok) return NextResponse.json({ error: lgaCheck.error }, { status: 400 })
   if (dailyAmount !== undefined && dailyAmount !== null && dailyAmount !== '') {
     const da = Number(dailyAmount)
     if (!isFinite(da) || da < 0) return NextResponse.json({ error: 'Daily amount cannot be negative' }, { status: 400 })
@@ -135,7 +137,7 @@ export async function POST(req: NextRequest) {
       address,
       gender: genderCheck.value,
       state: stateCheck.value,
-      lga: normalizeLga(lga),
+      lga: lgaCheck.value,
       bvn: bvn || null,
       nokName,
       nokRelation,
