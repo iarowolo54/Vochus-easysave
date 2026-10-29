@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { loadChatThread, loadAgentChatList } from '@/lib/chat'
 
 export const maxDuration = 30
 export const dynamic = 'force-dynamic'
@@ -20,11 +21,8 @@ export async function GET(req: NextRequest) {
     const customer = await prisma.customer.findFirst({ where: { id: customerId, agentId: agent.id } })
     if (!customer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-    const messages = await prisma.customerChatMessage.findMany({
-      where: { customerId },
-      orderBy: { createdAt: 'asc' },
-      take: 100,
-    })
+    // Latest 100 (ascending), not the first 100 ever (#14).
+    const messages = await loadChatThread(prisma, customerId, 100)
     await prisma.customerChatMessage.updateMany({
       where: { customerId, sender: 'customer', read: false },
       data: { read: true },
@@ -32,23 +30,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ messages })
   }
 
-  const customers = await prisma.customer.findMany({
-    where: { agentId: agent.id },
-    select: { id: true, customerId: true, firstName: true, lastName: true, photoUrl: true },
-  })
-
-  const withUnread = await Promise.all(customers.map(async c => {
-    const unread = await prisma.customerChatMessage.count({
-      where: { customerId: c.id, sender: 'customer', read: false },
-    })
-    const last = await prisma.customerChatMessage.findFirst({
-      where: { customerId: c.id },
-      orderBy: { createdAt: 'desc' },
-    })
-    return { ...c, unread, lastMessage: last?.imageUrl ? '📷 Image' : last?.message, lastAt: last?.createdAt }
-  }))
-
-  return NextResponse.json({ customers: withUnread.filter(c => c.lastAt) })
+  // Conversation list in a few grouped queries, no base64 photo (#15).
+  const customers = await loadAgentChatList(prisma, agent.id)
+  return NextResponse.json({ customers })
 }
 
 export async function POST(req: NextRequest) {

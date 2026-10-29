@@ -28,6 +28,19 @@ export function genBatchId(): string {
 // Returns `count` distinct, well-formed serials. Dedups in-process; the
 // MemberCard.serial @unique index is the final guard against the (astronomically
 // rare) cross-batch collision, which the caller retries on.
+// Why a card can't be linked right now (#16). null = linkable. The route maps
+// 'linked' -> 409 and 'blocked'/'expired' -> 400. The server is the guard even
+// though the agent UI also blocks these.
+export function cardLinkBlockReason(
+  card: { status: string; expiryDate: Date | null },
+  now: Date = new Date(),
+): 'linked' | 'blocked' | 'expired' | null {
+  if (card.status === 'Linked') return 'linked'
+  if (card.status === 'Blocked') return 'blocked'
+  if (card.expiryDate && card.expiryDate.getTime() < now.getTime()) return 'expired'
+  return null
+}
+
 export function generateUniqueSerials(count: number): string[] {
   const set = new Set<string>()
   while (set.size < count) set.add(genSerial())

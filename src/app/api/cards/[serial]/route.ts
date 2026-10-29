@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { cardLinkBlockReason } from '@/lib/member-card'
 
 export async function GET(
   _req: NextRequest,
@@ -10,6 +11,9 @@ export async function GET(
 ) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const agent = await prisma.agent.findFirst({ where: { agentId: (session.user as any).agentId } })
+  if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
 
   const { serial } = await params
 
@@ -24,13 +28,17 @@ export async function GET(
 
   if (!card) return NextResponse.json({ error: 'Card not found' }, { status: 404 })
 
+  // Card metadata is fine for any agent (they need status to decide if it's
+  // linkable). The linked customer's identity is only for the OWNING agent —
+  // otherwise typing a serial would leak another agent's customer (#16).
+  const ownsCard = card.agentId === agent.id
   return NextResponse.json({
     id: card.id,
     serial: card.serial,
     status: card.status,
     batchName: card.batchName,
     expiryDate: card.expiryDate,
-    customer: card.customer
+    customer: ownsCard && card.customer
       ? {
           name: `${card.customer.firstName} ${card.customer.lastName}`,
           customerId: card.customer.customerId,
@@ -54,7 +62,11 @@ export async function POST(
 
   const card = await prisma.memberCard.findUnique({ where: { serial } })
   if (!card) return NextResponse.json({ error: 'Card not found' }, { status: 404 })
-  if (card.status === 'Linked') return NextResponse.json({ error: 'Card already linked' }, { status: 409 })
+  // A card must be linkable: not already linked, not blocked, not expired (#16).
+  const blocked = cardLinkBlockReason(card)
+  if (blocked === 'linked') return NextResponse.json({ error: 'Card already linked' }, { status: 409 })
+  if (blocked === 'blocked') return NextResponse.json({ error: 'This card is blocked and cannot be linked' }, { status: 400 })
+  if (blocked === 'expired') return NextResponse.json({ error: 'This card has expired and cannot be linked' }, { status: 400 })
 
   const agent = await prisma.agent.findFirst({
     where: { agentId: (session.user as any).agentId },

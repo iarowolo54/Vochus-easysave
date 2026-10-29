@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
+import { loadChatThread } from '@/lib/chat'
 
 export const maxDuration = 30
 export const dynamic = 'force-dynamic'
@@ -9,11 +10,8 @@ export async function GET() {
   const session = await getCustomerSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const messages = await prisma.customerChatMessage.findMany({
-    where: { customerId: session.id },
-    orderBy: { createdAt: 'asc' },
-    take: 100,
-  })
+  // Latest 100 (ascending), not the first 100 ever (#14).
+  const messages = await loadChatThread(prisma, session.id, 100)
 
   await prisma.customerChatMessage.updateMany({
     where: { customerId: session.id, sender: { not: 'customer' }, read: false },
