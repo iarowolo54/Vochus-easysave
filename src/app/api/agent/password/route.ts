@@ -27,22 +27,33 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'New password must be at least 6 characters' }, { status: 400 })
   }
 
-  // Reject while the account is locked (same lockout as login) or inactive.
   if (agent.status !== 'Active') {
     return NextResponse.json({ error: 'This account is not active' }, { status: 403 })
   }
-  if (agent.lockedAt && Date.now() - new Date(agent.lockedAt).getTime() < LOCKOUT_MS) {
+
+  // Clear an expired lockout first (same as login), so the agent isn't stuck.
+  if (agent.lockedAt && Date.now() - new Date(agent.lockedAt).getTime() >= LOCKOUT_MS) {
+    await prisma.agent.update({ where: { id: agent.id }, data: { loginAttempts: 0, lockedAt: null } })
+  }
+
+  // Reserve an attempt ATOMICALLY before running bcrypt: only when not locked and
+  // under the limit. 0 rows updated => locked / over limit => reject. This closes
+  // the TOCTOU where concurrent wrong guesses all read the same loginAttempts.
+  const reserved = await prisma.agent.updateMany({
+    where: { id: agent.id, lockedAt: null, loginAttempts: { lt: FAIL_LIMIT } },
+    data: { loginAttempts: { increment: 1 } },
+  })
+  if (reserved.count === 0) {
     return NextResponse.json({ error: 'Account temporarily locked after too many attempts. Try again later.' }, { status: 423 })
   }
 
   const ok = await bcrypt.compare(String(currentPassword), agent.password)
   if (!ok) {
-    // Count the wrong attempt and lock at the threshold, like login.
-    const attempts = agent.loginAttempts + 1
-    await prisma.agent.update({
-      where: { id: agent.id },
-      data: attempts >= FAIL_LIMIT ? { loginAttempts: attempts, lockedAt: new Date() } : { loginAttempts: attempts },
-    })
+    // The attempt was already counted; lock if this reached the limit.
+    const fresh = await prisma.agent.findUnique({ where: { id: agent.id }, select: { loginAttempts: true } })
+    if ((fresh?.loginAttempts ?? 0) >= FAIL_LIMIT) {
+      await prisma.agent.update({ where: { id: agent.id }, data: { lockedAt: new Date() } })
+    }
     return NextResponse.json({ error: 'Current password is incorrect' }, { status: 400 })
   }
 
