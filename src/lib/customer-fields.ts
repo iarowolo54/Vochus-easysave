@@ -1,13 +1,11 @@
-// Customer demographic fields (#18): gender (required, Female/Male), state (one
-// of the 36 states + FCT, optional), lga (optional, no official list yet).
+// Customer demographic fields (#18): gender, state and LGA, all REQUIRED on new
+// customers. The screens require them and the server is now the guard too. State
+// and LGA are validated against the shared NG list, and the LGA must belong to
+// the chosen state.
+import { NG_STATES, lgasOf } from './ng-lgas'
 
-export const NIGERIA_STATES = [
-  'Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno',
-  'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'Gombe', 'Imo',
-  'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara', 'Lagos',
-  'Nasarawa', 'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers',
-  'Sokoto', 'Taraba', 'Yobe', 'Zamfara', 'FCT',
-] as const
+// Kept for callers/tests that reference the state list by this name.
+export const NIGERIA_STATES = NG_STATES
 
 export type Gender = 'Female' | 'Male'
 
@@ -16,14 +14,15 @@ export function validateGender(input: unknown): { ok: true; value: Gender } | { 
   return { ok: false, error: 'Gender is required and must be Female or Male' }
 }
 
-// Optional. Missing/empty -> null. Provided must be a real state.
-export function validateState(input: unknown): { ok: true; value: string | null } | { ok: false; error: string } {
-  if (input === undefined || input === null || input === '') return { ok: true, value: null }
-  if (typeof input === 'string' && (NIGERIA_STATES as readonly string[]).includes(input)) return { ok: true, value: input }
-  return { ok: false, error: 'State must be one of the 36 states or FCT' }
+// Required: must be one of the 36 states or FCT.
+export function validateState(input: unknown): { ok: true; value: string } | { ok: false; error: string } {
+  if (typeof input === 'string' && (NG_STATES as readonly string[]).includes(input)) return { ok: true, value: input }
+  return { ok: false, error: 'State is required and must be one of the 36 states or FCT' }
 }
 
-// Optional free text for now (no official LGA list yet).
-export function normalizeLga(input: unknown): string | null {
-  return typeof input === 'string' && input.trim() ? input.trim() : null
+// Required: must be a local government that belongs to the given (already
+// validated) state.
+export function validateLga(state: string, input: unknown): { ok: true; value: string } | { ok: false; error: string } {
+  if (typeof input === 'string' && lgasOf(state).includes(input)) return { ok: true, value: input }
+  return { ok: false, error: 'Local government is required and must belong to the chosen state' }
 }

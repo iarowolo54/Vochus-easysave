@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { validateGender, validateState, normalizeLga } from '@/lib/customer-fields'
+import { validateGender, validateState, validateLga } from '@/lib/customer-fields'
 import { logAudit } from '@/lib/audit'
 import { PLATFORM_SAVINGS_FEE, AGENT_SAVINGS_COMMISSION } from '@/lib/wallet-rates'
 import { assertSufficient, insufficientResponse, InsufficientFundsError, money } from '@/lib/wallet-guard'
@@ -119,11 +119,13 @@ export async function POST(req: NextRequest) {
   const body = await req.json()
   const { firstName, lastName, phone, email, dob, address, language, gender, state, lga, bvn, nokName, nokRelation, nokPhone, dailyAmount, periodDays, goal, startDate, notes, registrationFee, feeMethod, cadence, plans } = body
 
-  // Gender required (Female/Male); state optional but validated (#18).
+  // Gender, state and LGA required; the LGA must belong to the state (#18).
   const genderCheck = validateGender(gender)
   if (!genderCheck.ok) return NextResponse.json({ error: genderCheck.error }, { status: 400 })
   const stateCheck = validateState(state)
   if (!stateCheck.ok) return NextResponse.json({ error: stateCheck.error }, { status: 400 })
+  const lgaCheck = validateLga(stateCheck.value, lga)
+  if (!lgaCheck.ok) return NextResponse.json({ error: lgaCheck.error }, { status: 400 })
 
   const last = await prisma.customer.findFirst({ orderBy: { customerId: 'desc' } })
   const lastNum = last ? parseInt(last.customerId.replace('CST-', ''), 10) : 0
@@ -146,7 +148,7 @@ export async function POST(req: NextRequest) {
       language: language ?? 'English',
       gender: genderCheck.value,
       state: stateCheck.value,
-      lga: normalizeLga(lga),
+      lga: lgaCheck.value,
       bvn: bvn || null,
       nokName: nokName || '',
       nokRelation: nokRelation || '',
