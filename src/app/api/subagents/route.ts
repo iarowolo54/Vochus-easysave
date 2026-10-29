@@ -29,15 +29,32 @@ export async function POST(req: NextRequest) {
   const body = await req.json()
   const { name, phone, location } = body
 
-  const subAgent = await prisma.subAgent.create({
-    data: { parentAgentId: agent.id, name, phone, location, walletBalance: 0 },
-  })
+  // Validate before touching the DB (#10).
+  if (typeof name !== 'string' || !name.trim() || typeof location !== 'string' || !location.trim()) {
+    return NextResponse.json({ error: 'Name and location are required' }, { status: 400 })
+  }
+  if (typeof phone !== 'string' || !/^0\d{10}$/.test(phone)) {
+    return NextResponse.json({ error: 'Phone must be 11 digits starting with 0' }, { status: 400 })
+  }
+
+  let subAgent
+  try {
+    subAgent = await prisma.subAgent.create({
+      data: { parentAgentId: agent.id, name: name.trim(), phone, location: location.trim(), walletBalance: 0 },
+    })
+  } catch (e) {
+    // SubAgent.phone is unique — surface a clean 409 instead of a 500 (#10).
+    if (e && typeof e === 'object' && (e as { code?: string }).code === 'P2002') {
+      return NextResponse.json({ error: 'This phone number is already registered as a sub-agent' }, { status: 409 })
+    }
+    throw e
+  }
 
   logAudit({
     action: 'subagent_create',
     entity: 'SubAgent',
     entityId: subAgent.id,
-    details: `Created sub-agent ${name} (${phone}) at ${location ?? 'n/a'} under ${agent.name}`,
+    details: `Created sub-agent ${name} (${phone}) at ${location} under ${agent.name}`,
     actorId: agent.id,
     actorName: agent.name,
   })

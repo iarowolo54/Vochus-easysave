@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { genTxnRef } from '@/lib/ref'
 import { logAudit } from '@/lib/audit'
 
 export async function POST(req: NextRequest) {
@@ -37,8 +38,9 @@ export async function POST(req: NextRequest) {
     },
   })
 
-  const txnCount = await prisma.transaction.count()
-  const ref = `ENR-${String(txnCount + 1).padStart(5, '0')}`
+  // Collision-safe ref — a count-based ENR-<n> collides when two plans are
+  // created at once and 500s on the unique Transaction.ref (#17).
+  const ref = genTxnRef('ENR')
 
   await prisma.transaction.create({
     data: {

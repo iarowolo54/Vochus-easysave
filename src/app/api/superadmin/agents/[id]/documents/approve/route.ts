@@ -29,6 +29,31 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       where: { id: document.id },
       data: { docApprovalStatus: 'approved', docApprovedAt: new Date() },
     })
+
+    // Tell the agent (#13 — previously only rejections emailed). If this was the
+    // last document, send the stronger "account ready" note.
+    if (document.agent.email) {
+      const docs = await prisma.agentDocument.findMany({ where: { agentId: id }, select: { docApprovalStatus: true } })
+      const allApproved = docs.length > 0 && docs.every(d => d.docApprovalStatus === 'approved')
+      sendMail({
+        to: document.agent.email,
+        subject: allApproved ? 'Your Vochus Easy Save account is ready' : 'Document Approved',
+        html: `
+          <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
+            <h2 style="color:#1a5c35">${allApproved ? 'All documents approved 🎉' : 'Document Approved'}</h2>
+            <p>Hello ${document.agent.name},</p>
+            <div style="background:#f0f8f5;border-left:4px solid #1a5c35;padding:16px;margin:16px 0">
+              <p style="margin:0;color:#666"><strong>Document Type:</strong> ${docType}</p>
+              <p style="margin:8px 0 0;color:#1a5c35"><strong>Status:</strong> Approved</p>
+            </div>
+            <p>${allApproved
+              ? 'All your submitted documents have been approved — your account is now fully active. You can sign in and start working.'
+              : 'This document has been approved. We’ll let you know as your remaining documents are reviewed.'}</p>
+            <p style="color:#888;font-size:12px;margin-top:24px">Vochus Easy Save Team</p>
+          </div>
+        `,
+      }).catch(() => {})
+    }
   } else if (action === 'reject') {
     if (!reason) {
       return NextResponse.json({ error: 'Rejection reason required' }, { status: 400 })
