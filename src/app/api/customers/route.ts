@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { validateGender, validateState, normalizeLga } from '@/lib/customer-fields'
 import { logAudit } from '@/lib/audit'
 import { PLATFORM_SAVINGS_FEE, AGENT_SAVINGS_COMMISSION } from '@/lib/wallet-rates'
 import { assertSufficient, insufficientResponse, InsufficientFundsError, money } from '@/lib/wallet-guard'
@@ -93,6 +94,9 @@ export async function GET(req: NextRequest) {
       language: c.language,
       dob: c.dob,
       bvn: c.bvn,
+      gender: c.gender,
+      state: c.state,
+      lga: c.lga,
       photoUrl: c.photoUrl,
     }
   })
@@ -113,7 +117,13 @@ export async function POST(req: NextRequest) {
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
 
   const body = await req.json()
-  const { firstName, lastName, phone, email, dob, address, language, bvn, nokName, nokRelation, nokPhone, dailyAmount, periodDays, goal, startDate, notes, registrationFee, feeMethod, cadence, plans } = body
+  const { firstName, lastName, phone, email, dob, address, language, gender, state, lga, bvn, nokName, nokRelation, nokPhone, dailyAmount, periodDays, goal, startDate, notes, registrationFee, feeMethod, cadence, plans } = body
+
+  // Gender required (Female/Male); state optional but validated (#18).
+  const genderCheck = validateGender(gender)
+  if (!genderCheck.ok) return NextResponse.json({ error: genderCheck.error }, { status: 400 })
+  const stateCheck = validateState(state)
+  if (!stateCheck.ok) return NextResponse.json({ error: stateCheck.error }, { status: 400 })
 
   const last = await prisma.customer.findFirst({ orderBy: { customerId: 'desc' } })
   const lastNum = last ? parseInt(last.customerId.replace('CST-', ''), 10) : 0
@@ -134,6 +144,9 @@ export async function POST(req: NextRequest) {
       dob: dob ? new Date(dob) : null,
       address,
       language: language ?? 'English',
+      gender: genderCheck.value,
+      state: stateCheck.value,
+      lga: normalizeLga(lga),
       bvn: bvn || null,
       nokName: nokName || '',
       nokRelation: nokRelation || '',

@@ -86,6 +86,9 @@ model Customer {
   dob          DateTime?
   address      String
   language     String       @default("English")
+  gender       String?
+  state        String?
+  lga          String?
   bvn          String?
   nokName      String
   nokRelation  String

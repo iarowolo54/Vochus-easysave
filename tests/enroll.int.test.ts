@@ -30,6 +30,7 @@ function validBody(overrides: Record<string, unknown> = {}) {
     address: '12 Allen Avenue, Ikeja',
     nokName: 'Chidi Obi', nokRelation: 'Brother', nokPhone: '08090001122',
     password: 'secret1',
+    gender: 'Female', state: 'Lagos',
     dailyAmount: 500, periodDays: 90, goal: 'Rent',
     ...overrides,
   }
@@ -67,6 +68,10 @@ test('rejects a bad phone, short address, matching NOK phone, short password', a
   assert.equal((await POST(req(validBody({ address: 'short' })))).status, 400)
   assert.equal((await POST(req(validBody({ nokPhone: phone })))).status, 400)
   assert.equal((await POST(req(validBody({ password: '123' })))).status, 400)
+  // #18: gender required (Female/Male), state validated.
+  assert.equal((await POST(req(validBody({ gender: undefined })))).status, 400)
+  assert.equal((await POST(req(validBody({ gender: 'Other' })))).status, 400)
+  assert.equal((await POST(req(validBody({ state: 'Atlantis' })))).status, 400)
 })
 
 test('creates the customer with a verified email and consumes the OTP', async () => {
@@ -78,6 +83,8 @@ test('creates the customer with a verified email and consumes the OTP', async ()
   assert.ok(body.customerId, 'returns customerId (shape unchanged)')
   const created = await prisma.customer.findFirst({ where: { phone } })
   assert.ok(created)
+  assert.equal(created!.gender, 'Female') // #18 saved
+  assert.equal(created!.state, 'Lagos')
   createdCustomerIds.push(created!.id)
   // The verification row is consumed so it can't be replayed.
   const leftover = await prisma.emailOTP.findFirst({ where: { email, verified: true } })
