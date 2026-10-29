@@ -26,7 +26,10 @@ const prodTargeted = prodPath.test(cmd);
 // (so git add / cat / grep on the file is fine). Excludes deploy-staging.sh.
 const wrapper = '(?:[A-Za-z_]\\w*=\\S*|sudo|env|nohup|exec|command|time|nice|ionice|bash|sh|source|\\.)(?:\\s+-\\S+)*\\s+';
 const scriptExec = new RegExp(
-  `(?:^|[;&|(\\n\`])\\s*(?:${wrapper})*(?:[\\w./-]*/)?(?:deploy(?!-staging)|rollback)[\\w.-]*\\.sh\\b`,
+  // `[^\\s/]*` after the name (not `[\\w.-]*`) so an obfuscated/globbed reference
+  // like deploy*.sh or deploy?.sh is still recognised and forced to a clean,
+  // approvable form rather than slipping through with no opinion.
+  `(?:^|[;&|(\\n\`])\\s*(?:${wrapper})*(?:[\\w./-]*/)?(?:deploy(?!-staging)|rollback)[^\\s/]*\\.sh\\b`,
 );
 
 // A command is a CLEAN deploy only if the WHOLE command is exactly the
@@ -39,13 +42,20 @@ const scriptExec = new RegExp(
 function isCleanDeploy(command) {
   const c = command.trim();
   if (c.length === 0) return false;
-  if (/[;|`\n<>]/.test(c) || c.includes('$(')) return false; // no subst/pipe/redirect
+  // Reject every shell metacharacter that enables substitution, expansion,
+  // globbing, redirection, piping, sequencing or control. The approved text must
+  // be exactly what executes — no `$VAR`, `$(...)`, `~`, globs or escapes that
+  // could expand to something the human didn't see. `&` is intentionally NOT here
+  // (`&&` is the one allowed separator); a stray single `&` is caught below.
+  if (/[$`~{}()[\]*?\\<>|;!#]/.test(c) || /[\x00-\x1f]/.test(c)) return false;
   const segs = c.split('&&').map((s) => s.trim());
   if (segs.length > 2 || segs.some((s) => s.length === 0)) return false;
   if (segs.some((s) => s.includes('&'))) return false; // stray single & / backgrounding
-  const deployRe = /^(?:ALLOW_DB_PUSH=1\s+)?(?:\.\/)?scripts\/(?:deploy|rollback)\.sh$/;
+  const deployRe = /^(?:ALLOW_DB_PUSH=1 )?(?:\.\/)?scripts\/(?:deploy|rollback)\.sh$/;
   if (!deployRe.test(segs[segs.length - 1])) return false;
-  if (segs.length === 2 && !/^cd\s+\S+$/.test(segs[0])) return false;
+  // The `cd` target must be a literal absolute path (no expansion chars — already
+  // excluded above — and must start at root, so the human sees the real directory).
+  if (segs.length === 2 && !/^cd \/[A-Za-z0-9_./-]+$/.test(segs[0])) return false;
   return true;
 }
 
