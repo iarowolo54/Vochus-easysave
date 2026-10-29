@@ -2260,6 +2260,7 @@ button.ui-bottom-nav-item { border: 0; background: none; cursor: pointer; font-f
 .cu-option-title { font-size: 16px; font-weight: 600; }
 .cu-option-sub { font-size: 14px; color: var(--ui-ink-2); }
 .cu-enddate { margin-top: var(--ui-s3); }
+.cu-start { margin-bottom: var(--ui-s4); }
 .cu-option-end { font-family: var(--ui-font-display); font-weight: 700; color: var(--ui-brand-ink); font-variant-numeric: tabular-nums; }
 
 /* Review */
@@ -2379,3 +2380,5 @@ a.ag-crow { text-decoration: none; color: inherit; }
   .ag-doc-action .ui-btn { width: 100%; }
   .ag-doc-feedback { margin-left: 0; }
 }
+.ag-plan-pick { margin-bottom: var(--ui-s4); }
+.ag-plan-pick .ag-label { margin-bottom: var(--ui-s1); }

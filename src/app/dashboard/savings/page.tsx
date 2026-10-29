@@ -22,8 +22,13 @@ interface Customer {
   id: string; customerId: string; firstName: string; lastName: string
   phone: string; savingsBalance: number; planDays: number | null; planId: string | null
   planStatus: string | null; dailyAmount: number | null; photoUrl?: string | null
-  savingsPlans?: { id: string; goal: string; status: string; maturityDate: string | null }[]
+  savingsPlans?: SavingsPlan[]
 }
+/** `dailyAmount` is stored as a per-day equivalent; weekly / monthly plans pay 7 or 30 times that each time. */
+interface SavingsPlan { id: string; goal: string; status: string; maturityDate: string | null; dailyAmount: number; cadence?: string | null; balance: number }
+const UNIT_DAYS: Record<string, number> = { daily: 1, weekly: 7, monthly: 30 }
+const perPayment = (p: SavingsPlan) => Math.round(p.dailyAmount * (UNIT_DAYS[p.cadence ?? 'daily'] ?? 1) * 100) / 100
+const planUnit = (p: SavingsPlan) => p.cadence === 'weekly' ? 'week' : p.cadence === 'monthly' ? 'month' : 'day'
 
 interface TodaySaving { name: string; time: string; method: string; amount: number }
 interface RecentCustomer { code: string; name: string; photoUrl?: string | null }
@@ -83,6 +88,8 @@ function SavingsContent() {
   const [searchedFor, setSearchedFor] = useState('')
   const [searchFailed, setSearchFailed] = useState(false)
   const [selected, setSelected] = useState<Customer | null>(null)
+  /** The plan this saving goes into. Picked automatically when the customer has one active plan. */
+  const [planId, setPlanId] = useState<string | null>(null)
   const [amount, setAmount] = useState('')
   const [method] = useState('Cash')
   const [loading, setLoading] = useState(false)
@@ -127,11 +134,11 @@ function SavingsContent() {
   }, [refreshKey])
 
   useEffect(() => {
-    if (!bulkMode || !selected?.planId) return
+    if (!bulkMode || !planId) return
     setPaidDatesLoading(true)
     const n = new Date()
     setCalendarView({ year: n.getFullYear(), month: n.getMonth() })
-    fetch(`/api/transactions/saving/paid-dates?planId=${selected.planId}`)
+    fetch(`/api/transactions/saving/paid-dates?planId=${planId}`)
       .then(r => r.json())
       .then(d => {
         setPaidDates(d.paidDates ?? [])
@@ -140,7 +147,7 @@ function SavingsContent() {
       })
       .catch(() => setPlanStartDate(null))
       .finally(() => setPaidDatesLoading(false))
-  }, [bulkMode, selected?.planId])
+  }, [bulkMode, planId])
 
   useEffect(() => {
     const cid = searchParams.get('cid')
@@ -177,9 +184,20 @@ function SavingsContent() {
     return () => clearTimeout(t)
   }, [search, selected])
 
+  const activePlans = (selected?.savingsPlans ?? []).filter(p => p.status === 'Active')
+  const plan = activePlans.find(p => p.id === planId) ?? null
+  const choosePlan = activePlans.length > 1
+
+  // A new customer: pick their plan if there's only one, otherwise make the agent choose.
   useEffect(() => {
-    if (selected?.dailyAmount) setAmount(String(selected.dailyAmount))
+    const active = (selected?.savingsPlans ?? []).filter(p => p.status === 'Active')
+    setPlanId(active.length === 1 ? active[0].id : null)
   }, [selected])
+
+  // The amount is the chosen plan's agreed payment (per day, week or month).
+  useEffect(() => {
+    setAmount(plan ? String(perPayment(plan)) : '')
+  }, [plan?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     fetch('/api/transactions?type=saving')
@@ -248,7 +266,7 @@ function SavingsContent() {
 
   function reset() {
     setSelected(null); setQuery(''); setAmount(''); setResults([]); setSearchedFor('')
-    setBulkMode(false); setSelectedDates([]); setNewPlan(EMPTY_PLAN); setError('')
+    setBulkMode(false); setSelectedDates([]); setNewPlan(EMPTY_PLAN); setError(''); setPlanId(null)
   }
 
   function changeCustomer() {
@@ -292,8 +310,9 @@ function SavingsContent() {
 
   function requestPin() {
     if (!selected) { setError('Choose a customer first.'); return }
+    if (!plan) { setError(choosePlan ? 'Choose which plan this saving goes into.' : 'This customer has no active plan.'); return }
     if (!bulkMode && (!amount || parseFloat(amount) <= 0)) { setError('This customer has no agreed amount on their plan.'); return }
-    if (bulkMode && (!selected.dailyAmount || selectedDates.length < 1)) { setError('Tap at least one day on the calendar.'); return }
+    if (bulkMode && (!plan.dailyAmount || selectedDates.length < 1)) { setError('Tap at least one day on the calendar.'); return }
     setError('')
     if (!hasPin) { setNoPinModal(true); return }
     setPinEntry(''); setPinError(''); setPinModal(true)
@@ -335,8 +354,8 @@ function SavingsContent() {
     const isBulk = bulkMode && !recordDate
     const endpoint = isBulk ? '/api/transactions/saving/bulk' : '/api/transactions/saving'
     const body = isBulk
-      ? { customerId: selected.id, dates: selectedDates, method }
-      : { customerId: selected.id, amount, method, ...(recordDate ? { date: recordDate } : {}) }
+      ? { customerId: selected.id, dates: selectedDates, method, planId: plan?.id }
+      : { customerId: selected.id, amount, method, planId: plan?.id, ...(recordDate ? { date: recordDate } : {}) }
 
     let res: Response
     let data: { error?: string; total?: number; transaction?: { ref?: string }; transactions?: { ref?: string }[] }
@@ -358,7 +377,7 @@ function SavingsContent() {
     }
 
     const totalAmt = isBulk ? (data.total ?? 0) : parseFloat(amount)
-    const activePlan = selected.savingsPlans?.find(p => p.status === 'Active') ?? selected.savingsPlans?.[0]
+    const activePlan = plan ?? selected.savingsPlans?.find(p => p.status === 'Active') ?? selected.savingsPlans?.[0]
     const agentUser = session?.user as { name?: string; agentId?: string } | undefined
     const origin = typeof window !== 'undefined' ? window.location.origin : ''
     const inviteUrl = agentUser?.agentId ? `${origin}/customer/enroll?aid=${agentUser.agentId}` : ''
@@ -392,7 +411,7 @@ function SavingsContent() {
   }
 
   const redeemed = selected?.planStatus === 'Redeemed'
-  const bulkTotal = (selected?.dailyAmount ?? 0) * selectedDates.length
+  const bulkTotal = (plan?.dailyAmount ?? 0) * selectedDates.length
   const payAmount = bulkMode ? bulkTotal : parseFloat(amount || '0')
   const short = walletBalance !== null && payAmount > 0 && payAmount > walletBalance
   const alreadyPaid = !bulkMode && !recordDate && paidToday && paidToday.length > 0 ? paidToday : null
@@ -522,6 +541,21 @@ function SavingsContent() {
               ) : (
                 <section className="ui-card" aria-labelledby="saving-title">
                   <h2 id="saving-title" className="ui-card-title ag-card-title">What are they paying for?</h2>
+                  {choosePlan && (
+                    <div className="ag-radio-group ag-plan-pick" role="radiogroup" aria-label="Which plan">
+                      <p className="ag-label">They have {activePlans.length} plans. Which one is this for?</p>
+                      {activePlans.map(p => (
+                        <button key={p.id} type="button" role="radio" aria-checked={planId === p.id} className="ag-radio"
+                          onClick={() => { setPlanId(p.id); setError(''); setSelectedDates([]) }}>
+                          <span className="ag-payee-main">
+                            <span className="ui-row-title ui-block">{p.goal}</span>
+                            <span className="ui-row-sub ui-block">{formatNaira(perPayment(p), { minor: false })} a {planUnit(p)} · {formatNaira(p.balance, { minor: false })} saved</span>
+                          </span>
+                          <span className="ui-radio" aria-hidden="true" />
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   {!recordDate && (
                     <div className="ui-segment ag-segment" role="group" aria-label="Days to record">
                       <button type="button" aria-pressed={!bulkMode} onClick={() => setBulkMode(false)}>Today</button>
@@ -538,16 +572,16 @@ function SavingsContent() {
                       setSelectedDates={setSelectedDates}
                       view={calendarView}
                       setView={setCalendarView}
-                      dailyAmount={selected.dailyAmount}
+                      dailyAmount={plan?.dailyAmount ?? null}
                     />
                   ) : (
                     <div className="ag-pay-amount">
-                      {selected.dailyAmount
+                      {plan
                         ? <>
                             <span className="ui-amount ui-amount--hero">{formatNaira(parseFloat(amount || '0'), { minor: false })}</span>
-                            <span className="ui-row-sub">Their agreed amount for {recordDate ? 'that day' : 'one day'}</span>
+                            <span className="ui-row-sub">Their agreed amount for {recordDate ? 'that day' : `one ${planUnit(plan)}`}{choosePlan ? ` · ${plan.goal}` : ''}</span>
                           </>
-                        : <span className="ui-row-sub">This customer has no agreed daily amount.</span>}
+                        : <span className="ui-row-sub">{choosePlan ? 'Choose a plan above to see the amount.' : 'This customer has no active plan.'}</span>}
                     </div>
                   )}
 

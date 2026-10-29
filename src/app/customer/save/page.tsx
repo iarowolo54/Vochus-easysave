@@ -14,7 +14,7 @@ import { Icons } from '@/components/ui/icons'
 import { formatDate, formatNaira } from '@/lib/format'
 import { describeFailure, postJson } from '@/lib/http'
 import { blockMinus, nonNegativeString } from '@/lib/numeric'
-import { addDays, isoDate, lengthLabel, today } from '@/lib/plan-dates'
+import { addDays, isoDate, lengthLabel, parseDateInput, today } from '@/lib/plan-dates'
 
 type Cadence = 'daily' | 'weekly' | 'monthly'
 
@@ -92,6 +92,8 @@ function SavePageInner() {
   const [periodDays, setPeriodDays] = useState(DEFAULT_DAYS.daily)
   /** A chosen end date ("yyyy-mm-dd") instead of a set length; "" when a set length is picked. */
   const [customEnd, setCustomEnd] = useState('')
+  /** The plan's start date ("yyyy-mm-dd"); "" means today. */
+  const [planStart, setPlanStart] = useState('')
   const [goal, setGoal] = useState('General Savings')
   const [amountError, setAmountError] = useState('')
   const [creating, setCreating] = useState(false)
@@ -139,13 +141,13 @@ function SavePageInner() {
       document.getElementById('plan-amount')?.focus()
       return
     }
-    if (customEnd && endDateDays(customEnd, today(), cadence) === null) {
+    if (customEnd && endDateDays(customEnd, parseDateInput(planStart) ?? today(), cadence) === null) {
       setError('Pick a valid end date for your plan.')
       return
     }
     const dailyAmount = cadence === 'weekly' ? raw / 7 : cadence === 'monthly' ? raw / 30 : raw
     setCreating(true)
-    const result = await postJson<{ plan: Plan }>('/api/customer/plan', { dailyAmount, periodDays, goal, cadence })
+    const result = await postJson<{ plan: Plan }>('/api/customer/plan', { dailyAmount, periodDays, goal, cadence, ...(planStart ? { startDate: planStart } : {}) })
     setCreating(false)
     if (!result.ok) { setError(describeFailure(result)); return }
     setPlans(prev => [result.data.plan, ...prev])
@@ -171,7 +173,8 @@ function SavePageInner() {
 
   const raw = parseFloat(amountText) || 0
   const dailyEquiv = cadence === 'weekly' ? raw / 7 : cadence === 'monthly' ? raw / 30 : raw
-  const finishDate = new Date(Date.now() + periodDays * 86400000)
+  const startDay = parseDateInput(planStart) ?? today()
+  const finishDate = addDays(startDay, periodDays)
   const duration = DURATIONS[cadence].find(d => d.days === periodDays)
 
   return (
@@ -292,6 +295,18 @@ function SavePageInner() {
             </div>
 
             <div className="ui-field">
+              <label className="ui-label" htmlFor="plan-start">Starts on</label>
+              <input id="plan-start" className="ui-input" type="date" min={isoDate(today())} value={planStart || isoDate(today())}
+                onChange={e => {
+                  const v = !e.target.value || e.target.value === isoDate(today()) ? '' : e.target.value
+                  setPlanStart(v)
+                  // Keep a chosen end date where it is; the length changes instead.
+                  if (customEnd) { const d = endDateDays(customEnd, parseDateInput(v) ?? today(), cadence); if (d) setPeriodDays(d) }
+                }} />
+              <p className="ui-field-hint">{planStart ? `Your plan starts on ${formatDate(startDay)}.` : 'Starts today. Pick a later day if you’d rather.'}</p>
+            </div>
+
+            <div className="ui-field">
               <p className="ui-label" id="duration-label">For how long?</p>
               <div className="ui-card ui-card--list" role="radiogroup" aria-labelledby="duration-label">
                 {DURATIONS[cadence].map(d => (
@@ -314,7 +329,7 @@ function SavePageInner() {
                   </button>
                 ))}
                 <button type="button" role="radio" aria-checked={!!customEnd} className="ui-option ui-radio-row"
-                  onClick={() => { if (!customEnd) setCustomEnd(isoDate(addDays(today(), periodDays))) }}>
+                  onClick={() => { if (!customEnd) setCustomEnd(isoDate(addDays(startDay, periodDays))) }}>
                   <span className="ui-radio" aria-hidden="true" />
                   <span className="ui-row-main">
                     <span className="ui-row-title ui-block">Choose an end date</span>
@@ -325,7 +340,7 @@ function SavePageInner() {
               </div>
               {customEnd && (
                 <div className="cu-enddate">
-                  <EndDateField start={today()} cadence={cadence} value={customEnd}
+                  <EndDateField start={startDay} cadence={cadence} value={customEnd}
                     onChange={(v, days) => { setCustomEnd(v); if (days) setPeriodDays(days) }} />
                 </div>
               )}

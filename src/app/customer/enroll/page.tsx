@@ -10,10 +10,11 @@ import CodeBoxes from '@/components/ui/CodeBoxes'
 import { FieldError, FormError } from '@/components/ui/FormErrors'
 import { Icons, type IconName } from '@/components/ui/icons'
 import { formatDate, formatNaira } from '@/lib/format'
-import { isoDate, today } from '@/lib/plan-dates'
+import { addDays, isoDate, parseDateInput, today } from '@/lib/plan-dates'
 
 type Cadence = 'daily' | 'weekly' | 'monthly'
-type PlanDraft = { daily: number; period: number; goal: string; cadence: Cadence }
+/** `start` is a chosen start date ("yyyy-mm-dd"); missing or empty means the plan starts today. */
+type PlanDraft = { daily: number; period: number; goal: string; cadence: Cadence; start?: string }
 
 const DURATIONS = [31, 62, 93, 186, 365] // in days; shown as weeks / months for those cadences
 /** What people save for. `value` is what the API stores; `label` is how we say it to them. */
@@ -38,7 +39,8 @@ const UNIT: Record<Cadence, { per: string; every: string; plural: string; days: 
 /** The plan stores a daily equivalent and a period counted in the cadence's own unit (days, weeks or months). */
 const perPayment = (p: PlanDraft) => p.daily * UNIT[p.cadence].days
 const totalSaved = (p: PlanDraft) => p.daily * p.period * UNIT[p.cadence].days
-const endDate = (p: PlanDraft) => new Date(Date.now() + p.period * UNIT[p.cadence].days * 86400000)
+const startOf = (p: PlanDraft) => parseDateInput(p.start ?? '') ?? today()
+const endDate = (p: PlanDraft) => addDays(startOf(p), p.period * UNIT[p.cadence].days)
 const money2 = (n: number) => Math.round(n * 100) / 100
 
 /** One question per screen, grouped into four sections; the hub screens show where you are between sections. */
@@ -107,6 +109,8 @@ function EnrollContent() {
   const [plans, setPlans] = useState<PlanDraft[]>([])
   /** A chosen end date ("yyyy-mm-dd") instead of one of the set lengths; "" when a set length is picked. */
   const [customEnd, setCustomEnd] = useState('')
+  /** The plan's start date ("yyyy-mm-dd"); "" means today. */
+  const [planStart, setPlanStart] = useState('')
   /** Which saved plan the form is editing; -1 adds a new one. */
   const [editing, setEditing] = useState(-1)
 
@@ -205,7 +209,7 @@ function EnrollContent() {
     const t = setTimeout(() => writeDraft({
       v: 1, savedAt: Date.now(), aid, ref, screen,
       firstName, lastName, phone, email, verifiedEmail: emailVerified ? email : '', dob, gender, address,
-      nokName, nokRelation, nokPhone, plans, plan: { daily, period, goal, cadence }, startGoal,
+      nokName, nokRelation, nokPhone, plans, plan: { daily, period, goal, cadence, start: planStart }, startGoal,
     }), 400)
     return () => clearTimeout(t)
   }, [aid, ref, screen, firstName, lastName, phone, email, emailVerified, dob, gender, address, nokName, nokRelation, nokPhone, plans, daily, period, goal, cadence, startGoal, result])
@@ -227,8 +231,9 @@ function EnrollContent() {
     setResume(null)
   }
 
-  const draft: PlanDraft = { daily, period, goal, cadence }
-  const endDateInvalid = !!customEnd && endDateDays(customEnd, today(), cadence) === null
+  const draft: PlanDraft = { daily, period, goal, cadence, start: planStart || undefined }
+  const startDay = startOf(draft)
+  const endDateInvalid = !!customEnd && endDateDays(customEnd, startDay, cadence) === null
 
   function go(next: Screen) {
     setError('')
@@ -257,7 +262,7 @@ function EnrollContent() {
   }
 
   function loadPlan(p: PlanDraft) {
-    setDaily(p.daily); setPeriod(p.period); setGoal(p.goal); setCadence(p.cadence)
+    setDaily(p.daily); setPeriod(p.period); setGoal(p.goal); setCadence(p.cadence); setPlanStart(p.start ?? '')
     // A length that isn't one of the set options was a chosen end date; show it as one.
     const preset = DURATIONS.some(d => Math.round(d / UNIT[p.cadence].days) === p.period)
     setCustomEnd(preset ? '' : isoDate(endDate(p)))
@@ -464,7 +469,8 @@ function EnrollContent() {
           // This API takes the amount per payment and divides weekly / monthly amounts itself. It reads the first
           // plan's length as days but the other plans' lengths in weeks or months, so send each the way it reads it.
           dailyAmount: money2(perPayment(first)), periodDays: first.period * UNIT[first.cadence].days, goal: first.goal, cadence: first.cadence,
-          plans: plans.map(p => ({ daily: money2(perPayment(p)), period: p.period, goal: p.goal, cadence: p.cadence })),
+          startDate: first.start || undefined,
+          plans: plans.map(p => ({ daily: money2(perPayment(p)), period: p.period, goal: p.goal, cadence: p.cadence, startDate: p.start || undefined })),
         }),
       })
       const data = await res.json()
@@ -860,6 +866,19 @@ function EnrollContent() {
           <>
             <h1 className="cu-q">For how long?</h1>
             <p className="cu-lead">Saving {formatNaira(perPayment(draft), { minor: false })} {UNIT[cadence].per}. Pick when you want to collect.</p>
+            <div className="ag-tf-wrap cu-start">
+              <div className="ag-tf cu-tf">
+                <label className="ag-tf-label" htmlFor="plan-start">Starts on</label>
+                <input id="plan-start" className="ag-tf-input" type="date" min={isoDate(today())} value={planStart || isoDate(today())}
+                  onChange={e => {
+                    const v = !e.target.value || e.target.value === isoDate(today()) ? '' : e.target.value
+                    setPlanStart(v)
+                    // Keep a chosen end date where it is; the length changes instead.
+                    if (customEnd) { const d = endDateDays(customEnd, parseDateInput(v) ?? today(), cadence); if (d) setPeriod(d / UNIT[cadence].days) }
+                  }} />
+              </div>
+              <p className="ag-fineprint">{planStart ? `Your plan starts on ${formatDate(startDay)}.` : 'Starts today. Pick a later day if you’d rather.'}</p>
+            </div>
             <div className="cu-options" role="radiogroup" aria-label="How long">
               {DURATIONS.map(days => {
                 const value = Math.round(days / UNIT[cadence].days)
@@ -887,11 +906,11 @@ function EnrollContent() {
             </div>
             {customEnd && (
               <div className="cu-enddate">
-                <EndDateField start={today()} cadence={cadence} value={customEnd}
+                <EndDateField start={startDay} cadence={cadence} value={customEnd}
                   onChange={(v, days) => { setCustomEnd(v); if (days) setPeriod(days / UNIT[cadence].days) }} />
               </div>
             )}
-            <p className="cu-note">Your plan starts today. The amount on the right is what you’ll have saved; a platform fee is taken when you collect.</p>
+            <p className="cu-note">The amount on the right is what you’ll have saved; a platform fee is taken when you collect.</p>
             <div className="cu-actions">{cta('Continue', () => { if (startGoal && plans.length === 0 && editing < 0) savePlan(); else go('goal') }, !!customEnd && endDateInvalid)}</div>
           </>
         )}
@@ -947,7 +966,7 @@ function EnrollContent() {
                   {(() => { const m = goalMeta(p.goal); const Icon = Icons[m.icon]; return <span className="cu-goal-icon" aria-hidden="true"><Icon size={20} strokeWidth={1.75} /></span> })()}
                   <span className="cu-option-main">
                     <span className="cu-option-title">{goalMeta(p.goal).label}</span>
-                    <span className="cu-option-sub">{formatNaira(perPayment(p), { minor: false })} {UNIT[p.cadence].per} · until {formatDate(endDate(p))}</span>
+                    <span className="cu-option-sub">{formatNaira(perPayment(p), { minor: false })} {UNIT[p.cadence].per} · {p.start ? `${formatDate(startOf(p))} to ` : 'until '}{formatDate(endDate(p))}</span>
                     <span className="cu-plan-total">{formatNaira(totalSaved(p), { minor: false })} saved by the end</span>
                   </span>
                   <span className="cu-plan-acts">
