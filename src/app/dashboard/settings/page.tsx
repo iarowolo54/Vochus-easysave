@@ -1,341 +1,342 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, type ReactNode } from 'react'
+import Link from 'next/link'
+import BankSelect from '@/components/ui/BankSelect'
+import BottomSheet from '@/components/ui/BottomSheet'
+import EmptyState from '@/components/ui/EmptyState'
+import { FieldError, FormError } from '@/components/ui/FormErrors'
+import { ListSkeleton } from '@/components/ui/Skeleton'
+import Toast from '@/components/ui/Toast'
+import { Icons } from '@/components/ui/icons'
+import { formatDate, formatNaira } from '@/lib/format'
+import { blockNonDigit, digitsOnly } from '@/lib/numeric'
 
 interface Agent { id: string; agentId: string; name: string; phone: string; location: string; walletBalance: number; createdAt: string; profileUnlocked: boolean; hasPin: boolean; photoUrl?: string | null }
+type Bank = { bankCode?: string; bankName?: string; accountNumber?: string; accountName?: string }
+
+const initials = (name: string) => name.split(' ').filter(Boolean).map(w => w[0]).join('').slice(0, 2).toUpperCase()
 
 export default function SettingsPage() {
   const [agent, setAgent] = useState<Agent | null>(null)
+  const [failed, setFailed] = useState(false)
+  const [toast, setToast] = useState('')
+  const [sheet, setSheet] = useState<'profile' | 'bank' | 'pin' | null>(null)
+
+  // Profile
   const [name, setName] = useState('')
   const [phone, setPhone] = useState('')
   const [location, setLocation] = useState('')
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
-  const [toast, setToast] = useState('')
-  const [error, setError] = useState('')
+  const [profileError, setProfileError] = useState('')
+  const [profileBusy, setProfileBusy] = useState(false)
 
-  // PIN state
-  const [pinForm, setPinForm] = useState({ pin: '', confirmPin: '', password: '' })
-  const [pinLoading, setPinLoading] = useState(false)
-  const [pinError, setPinError] = useState('')
-
-  // Bank state
-  const [bank, setBank] = useState<{ bankCode?: string; bankName?: string; accountNumber?: string; accountName?: string } | null>(null)
+  // Bank
+  const [bank, setBank] = useState<Bank | null>(null)
   const [banks, setBanks] = useState<{ code: string; name: string }[]>([])
-  const [bankForm, setBankForm] = useState({ bankCode: '', bankName: '', accountNumber: '' })
-  const [resolvedName, setResolvedName] = useState('')
-  const [bankSaving, setBankSaving] = useState(false)
+  const [banksLoading, setBanksLoading] = useState(true)
+  const [pick, setPick] = useState<{ code: string; name: string } | null>(null)
+  const [accountNumber, setAccountNumber] = useState('')
+  const [resolved, setResolved] = useState('')
+  const [resolving, setResolving] = useState(false)
+  const [resolveError, setResolveError] = useState('')
   const [bankError, setBankError] = useState('')
+  const [bankBusy, setBankBusy] = useState(false)
+
+  // PIN
+  const [pin, setPin] = useState('')
+  const [pin2, setPin2] = useState('')
+  const [password, setPassword] = useState('')
+  const [pinTouched, setPinTouched] = useState(false)
+  const [pinError, setPinError] = useState('')
+  const [pinBusy, setPinBusy] = useState(false)
 
   useEffect(() => {
-    fetch('/api/agent/bank').then(r => r.json()).then(d => {
-      if (d.bank) {
-        setBank(d.bank)
-        setBankForm({ bankCode: d.bank.bankCode ?? '', bankName: d.bank.bankName ?? '', accountNumber: d.bank.accountNumber ?? '' })
-        setResolvedName(d.bank.accountName ?? '')
-      }
-    }).catch(() => {})
-    fetch('/api/paystack/banks').then(r => r.json()).then(d => setBanks(d.banks ?? [])).catch(() => {})
+    fetch('/api/agent')
+      .then(r => { if (!r.ok) throw new Error(); return r.json() })
+      .then(d => setAgent(d.agent))
+      .catch(() => setFailed(true))
+    fetch('/api/agent/bank').then(r => r.json()).then(d => { if (d.bank) setBank(d.bank) }).catch(() => {})
+    fetch('/api/paystack/banks').then(r => r.json()).then(d => setBanks(d.banks ?? [])).catch(() => {}).finally(() => setBanksLoading(false))
   }, [])
 
+  // Look up the account name as soon as a bank and 10 digits are in.
   useEffect(() => {
-    setResolvedName('')
-    setBankError('')
-    if (!/^\d{10}$/.test(bankForm.accountNumber) || !bankForm.bankCode) return
+    setResolved(''); setResolveError('')
+    if (sheet !== 'bank' || !pick || !/^\d{10}$/.test(accountNumber)) return
+    setResolving(true)
     const t = setTimeout(async () => {
-      const res = await fetch(`/api/paystack/resolve-account?accountNumber=${bankForm.accountNumber}&bankCode=${bankForm.bankCode}`)
-      const d = await res.json()
-      if (res.ok && d.accountName) setResolvedName(d.accountName)
-      else setBankError(d.error ?? 'Could not verify account')
+      try {
+        const res = await fetch(`/api/paystack/resolve-account?accountNumber=${accountNumber}&bankCode=${pick.code}`)
+        const d = await res.json()
+        if (res.ok && d.accountName) setResolved(d.accountName)
+        else setResolveError(d.error ?? 'We couldn’t confirm this account with the bank.')
+      } catch {
+        setResolveError('No connection. We couldn’t confirm this account.')
+      } finally {
+        setResolving(false)
+      }
     }, 400)
-    return () => clearTimeout(t)
-  }, [bankForm.accountNumber, bankForm.bankCode])
+    return () => { clearTimeout(t); setResolving(false) }
+  }, [sheet, pick, accountNumber])
 
-  async function saveBank() {
-    if (!bankForm.bankCode || !/^\d{10}$/.test(bankForm.accountNumber)) { setBankError('Pick a bank and enter a 10-digit account number'); return }
-    if (!resolvedName && !confirm('Could not verify this account with the bank. Save it anyway?')) return
-    setBankSaving(true); setBankError('')
+  function openProfile() {
+    if (!agent) return
+    setName(agent.name); setPhone(agent.phone); setLocation(agent.location); setProfileError('')
+    setSheet('profile')
+  }
+
+  function openBank() {
+    setPick(bank?.bankCode ? { code: bank.bankCode, name: bank.bankName ?? '' } : null)
+    setAccountNumber(bank?.accountNumber ?? '')
+    setBankError('')
+    setSheet('bank')
+  }
+
+  function openPin() {
+    setPin(''); setPin2(''); setPassword(''); setPinTouched(false); setPinError('')
+    setSheet('pin')
+  }
+
+  async function saveProfile() {
+    if (!name.trim() || !location.trim() || !/^0\d{10}$/.test(phone)) { setProfileError('Check your name, an 11-digit phone number starting with 0, and your location.'); return }
+    setProfileBusy(true); setProfileError('')
+    try {
+      const res = await fetch('/api/agent', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: name.trim(), phone, location: location.trim() }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { setProfileError(data.error ?? 'Your changes weren’t saved. Please try again.'); return }
+      setAgent(a => a ? { ...a, ...data.agent } : data.agent)
+      setSheet(null)
+      setToast('Profile saved')
+    } catch {
+      setProfileError('No connection. Check your internet and try again.')
+    } finally {
+      setProfileBusy(false)
+    }
+  }
+
+  async function saveBank(confirmedUnverified = false) {
+    if (!pick || !/^\d{10}$/.test(accountNumber)) { setBankError('Choose your bank and enter your 10-digit account number.'); return }
+    if (!resolved && !confirmedUnverified) return
+    setBankBusy(true); setBankError('')
     try {
       const res = await fetch('/api/agent/bank', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(bankForm),
+        body: JSON.stringify({ bankCode: pick.code, bankName: pick.name, accountNumber }),
       })
       const text = await res.text()
       const d = text ? JSON.parse(text) : {}
-      if (!res.ok) { setBankError(d.error ?? `Failed (${res.status})`); return }
+      if (!res.ok) { setBankError(d.error ?? 'Your bank account wasn’t saved. Please try again.'); return }
       setBank(d.bank)
-      setToast('Payout bank account saved')
-      setTimeout(() => setToast(''), 4000)
-    } catch (e: any) {
-      setBankError(e.message ?? 'Network error')
+      setSheet(null)
+      setToast('Payout account saved')
+    } catch {
+      setBankError('No connection. Check your internet and try again.')
     } finally {
-      setBankSaving(false)
+      setBankBusy(false)
     }
   }
 
-  useEffect(() => {
-    fetch('/api/agent').then(r => r.json()).then(d => {
-      setAgent(d.agent)
-      setName(d.agent?.name ?? '')
-      setPhone(d.agent?.phone ?? '')
-      setLocation(d.agent?.location ?? '')
-      setLoading(false)
-    })
-  }, [])
+  const pinRule = !pin ? 'Enter a PIN' : !/^\d{4,6}$/.test(pin) ? 'Use 4 to 6 digits' : ''
+  const pin2Rule = !pin2 ? 'Type the PIN again' : pin2 !== pin ? 'The two PINs don’t match' : ''
+  const pwRule = !password ? 'Enter your sign-in password to confirm' : ''
 
   async function savePin() {
-    setPinError('')
-    if (!/^\d{4,6}$/.test(pinForm.pin)) { setPinError('PIN must be 4–6 digits'); return }
-    if (pinForm.pin !== pinForm.confirmPin) { setPinError('PINs do not match'); return }
-    if (!pinForm.password) { setPinError('Enter your account password to confirm'); return }
-    setPinLoading(true)
-    const res = await fetch('/api/agent/transaction-pin', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ pin: pinForm.pin, currentPassword: pinForm.password }),
-    })
-    const data = await res.json()
-    setPinLoading(false)
-    if (!res.ok) { setPinError(data.error ?? 'Failed'); return }
-    setAgent(a => a ? { ...a, hasPin: true } : a)
-    setPinForm({ pin: '', confirmPin: '', password: '' })
-    setToast('Transaction PIN set successfully')
-    setTimeout(() => setToast(''), 4000)
+    setPinTouched(true)
+    if (pinRule || pin2Rule || pwRule) return
+    setPinBusy(true); setPinError('')
+    try {
+      const res = await fetch('/api/agent/transaction-pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pin, currentPassword: password }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { setPinError(data.error === 'Incorrect password' ? 'That password isn’t right.' : data.error ?? 'Your PIN wasn’t saved. Please try again.'); return }
+      const changed = agent?.hasPin
+      setAgent(a => a ? { ...a, hasPin: true } : a)
+      setSheet(null)
+      setToast(changed ? 'Transaction PIN changed' : 'Transaction PIN set')
+    } catch {
+      setPinError('No connection. Check your internet and try again.')
+    } finally {
+      setPinBusy(false)
+    }
   }
 
-  async function save() {
-    setSaving(true); setError('')
-    const res = await fetch('/api/agent', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name, phone, location }),
-    })
-    const data = await res.json()
-    if (!res.ok) { setError(data.error ?? 'Failed'); setSaving(false); return }
-    setAgent(data.agent)
-    setToast('Profile updated successfully')
-    setSaving(false)
-    setTimeout(() => setToast(''), 4000)
+  if (failed && !agent) {
+    return <div className="ag-page"><section className="ui-card"><EmptyState icon="error" tone="danger" title="Couldn’t load your settings" text="Check your connection and refresh the page." /></section></div>
   }
+  if (!agent) return <div className="ag-page"><ListSkeleton count={5} /></div>
 
-  const initials = agent ? agent.name.split(' ').map(w => w[0]).join('').slice(0, 2) : '—'
+  const verified = !!bank?.accountName
+  const savedBank = !!bank?.accountNumber
 
   return (
-    <>
-      <div className="page-header">
-        <h2>Settings</h2>
-        <p>Manage your account and preferences</p>
+    <div className="ag-page">
+      {toast && <Toast message={toast} onDone={() => setToast('')} />}
+      <div className="ag-home-grid ag-wallet-grid">
+        <div className="ag-col">
+          <div className="ui-section-head"><h2>Profile</h2></div>
+          <section className="ui-card ag-set-card">
+            <div className="ag-set-person">
+              {agent.photoUrl
+                ? <img src={agent.photoUrl} alt="" className="ag-set-photo" />
+                : <span className="ui-avatar ag-set-photo" aria-hidden="true">{initials(agent.name)}</span>}
+              <div className="ag-crow-main">
+                <p className="ag-set-name">{agent.name}</p>
+                <p className="ui-row-sub">{agent.agentId} · {agent.location}</p>
+              </div>
+            </div>
+            <dl className="ag-set-rows">
+              <div><dt>Full name</dt><dd>{agent.name}</dd></div>
+              <div><dt>Phone</dt><dd>{agent.phone}</dd></div>
+              <div><dt>Location</dt><dd>{agent.location}</dd></div>
+            </dl>
+            {agent.profileUnlocked
+              ? <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={openProfile}>Edit details</button>
+              : <p className="ag-set-note"><Icons.locked size={16} aria-hidden="true" /> To change these, ask your admin to unlock your profile.</p>}
+          </section>
+
+          <div className="ui-section-head"><h2>Payout account</h2>
+            <span className={`ag-crow-tag ${verified ? 'ag-crow-tag--ok' : savedBank ? 'ag-crow-tag--soon' : 'ag-crow-tag--due'}`}>{verified ? 'Confirmed' : savedBank ? 'Not confirmed' : 'Not added'}</span>
+          </div>
+          <section className="ui-card ag-set-card">
+            {savedBank ? (
+              <div className="ag-set-bank">
+                <span className="ag-topup-icon" aria-hidden="true"><Icons.loan size={20} /></span>
+                <div className="ag-crow-main">
+                  <p className="ag-crow-name">{bank?.accountName || 'Name not confirmed'}</p>
+                  <p className="ui-row-sub">{bank?.bankName} · <span className="ag-mono">{bank?.accountNumber}</span></p>
+                </div>
+              </div>
+            ) : (
+              <p className="ui-row-sub">Add the bank account your commission is paid into.</p>
+            )}
+            {savedBank && !verified && <p className="ag-set-note ag-set-note--warn"><Icons.error size={16} aria-hidden="true" /> The bank didn’t confirm the name on this account. Save it again to retry.</p>}
+            <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={openBank}>{savedBank ? 'Change account' : 'Add bank account'}</button>
+          </section>
+
+          <div className="ui-section-head"><h2>Security</h2></div>
+          <section className="ui-card ui-card--list">
+            <button type="button" className="ag-crow" onClick={openPin}>
+              <span className={`ag-report-icon ${agent.hasPin ? 'ag-report-icon--ok' : 'ag-report-icon--open'}`} aria-hidden="true"><Icons.locked size={18} /></span>
+              <span className="ag-crow-main">
+                <span className="ag-crow-name">Transaction PIN</span>
+                <span className="ag-crow-sub">{agent.hasPin ? 'You enter it to confirm each saving you record' : 'Needed before you can record savings'}</span>
+              </span>
+              <span className="ag-crow-end"><span className={`ag-crow-tag ${agent.hasPin ? 'ag-crow-tag--ok' : 'ag-crow-tag--due'}`}>{agent.hasPin ? 'Set' : 'Not set'}</span></span>
+            </button>
+            <Link href="/forgot-password" className="ag-crow">
+              <span className="ag-report-icon ag-set-icon" aria-hidden="true"><Icons.fingerprint size={18} /></span>
+              <span className="ag-crow-main">
+                <span className="ag-crow-name">Password</span>
+                <span className="ag-crow-sub">Reset it with a one-time code</span>
+              </span>
+              <span className="ag-crow-end"><Icons.next size={18} aria-hidden="true" /></span>
+            </Link>
+          </section>
+        </div>
+
+        <div className="ag-col">
+          <div className="ui-section-head"><h2>Account</h2></div>
+          <section className="ui-card ag-set-card">
+            <dl className="ag-set-rows">
+              <div><dt>Agent ID</dt><dd className="ag-mono">{agent.agentId}</dd></div>
+              <div><dt>Joined</dt><dd>{formatDate(agent.createdAt)}</dd></div>
+              <div><dt>Wallet balance</dt><dd>{formatNaira(agent.walletBalance)}</dd></div>
+            </dl>
+          </section>
+
+          <div className="ui-section-head"><h2>Android app</h2></div>
+          <section className="ui-card ag-set-card">
+            <p className="ui-row-sub">The Vochus Easy Save Agent app for Android, with receipt printing on a Bluetooth printer.</p>
+            <a href="/downloads/easysave-agent.apk" download className="ui-btn ui-btn--primary ui-btn--block"><Icons.download size={18} aria-hidden="true" /> Download for Android</a>
+          </section>
+        </div>
       </div>
 
-      {toast && <div className="alert alert-g" style={{ marginBottom: 16 }}>✅ {toast}</div>}
-      {error && <div className="alert alert-rd" style={{ marginBottom: 16 }}>🔴 {error}</div>}
-
-      {loading && <div style={{ textAlign: 'center', color: 'var(--mu)', padding: 24 }}>Loading…</div>}
-
-      {!loading && agent && (
-        <div className="grid g-2-1">
-          <div>
-            <div className="card" style={{ marginBottom: 16 }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
-                <div className="card-title" style={{ margin: 0 }}>Profile</div>
-                <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: agent.profileUnlocked ? '#dcfce7' : '#f1f5f9', color: agent.profileUnlocked ? '#16a34a' : '#64748b', display: 'flex', alignItems: 'center', gap: 4 }}>
-                  {agent.profileUnlocked ? '🔓 Unlocked' : '🔒 Locked by Admin'}
-                </span>
-              </div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 20 }}>
-                <div style={{ width: 64, height: 64, borderRadius: '50%', background: 'var(--g)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontFamily: "'Plus Jakarta Sans',sans-serif", fontSize: 24, fontWeight: 800, color: '#fff', flexShrink: 0, overflow: 'hidden' }}>
-                  {agent.photoUrl
-                    ? <img src={agent.photoUrl} alt={agent.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                    : initials}
-                </div>
-                <div>
-                  <div style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", fontSize: 17, fontWeight: 700 }}>{agent.name}</div>
-                  <div style={{ fontSize: 12.5, color: 'var(--mu)' }}>{agent.agentId} · {agent.location}</div>
-                </div>
-              </div>
-              {!agent.profileUnlocked ? (
-                <div style={{ background: '#f8fafc', border: '1px solid var(--bdr)', borderRadius: 10, padding: 16, marginBottom: 12 }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                    {[{ label: 'Full Name', value: agent.name }, { label: 'Phone', value: agent.phone }, { label: 'Location', value: agent.location }].map(f => (
-                      <div key={f.label}>
-                        <div style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--mu)', marginBottom: 3 }}>{f.label}</div>
-                        <div style={{ fontSize: 14, fontWeight: 500, color: 'var(--text)' }}>{f.value}</div>
-                      </div>
-                    ))}
-                  </div>
-                  <div style={{ marginTop: 14, fontSize: 12, color: 'var(--mu)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                    🔒 Profile editing is locked. Contact your administrator to make changes.
-                  </div>
-                </div>
-              ) : (
-                <>
-                  <div className="form-row fr2">
-                    <div><label className="flabel">Full Name</label><input className="finput" value={name} onChange={e => setName(e.target.value)} /></div>
-                    <div><label className="flabel">Phone</label><input className="finput" value={phone} onChange={e => setPhone(e.target.value)} /></div>
-                  </div>
-                  <div className="form-row">
-                    <div><label className="flabel">Location</label><input className="finput" value={location} onChange={e => setLocation(e.target.value)} /></div>
-                  </div>
-                  <button className="btn btn-g btn-sm" disabled={saving} onClick={save}>
-                    {saving ? '⏳ Saving…' : 'Save Changes'}
-                  </button>
-                </>
-              )}
-            </div>
-            <div className="card" style={{ marginBottom: 16 }}>
-              <div className="card-title">Security</div>
-              <div className="form-row">
-                <div><label className="flabel">Current Password</label><input className="finput" type="password" placeholder="••••••••" /></div>
-              </div>
-              <div className="form-row fr2">
-                <div><label className="flabel">New Password</label><input className="finput" type="password" placeholder="Min 8 characters" /></div>
-                <div><label className="flabel">Confirm New Password</label><input className="finput" type="password" placeholder="Repeat new password" /></div>
-              </div>
-              <button className="btn btn-out btn-sm">Update Password</button>
-            </div>
-
-            {(() => {
-              const verified = !!bank?.accountName
-              const saved = !!bank?.accountNumber
-              const status = verified ? { color: '#16a34a', bg: '#dcfce7', label: '✓ Linked', border: 'var(--g)' }
-                : saved ? { color: '#1a5fa8', bg: '#e8f0fb', label: '✓ Saved (unverified)', border: '#1a5fa8' }
-                : { color: '#e67e22', bg: '#fff3e0', label: '⚠ Not Linked', border: '#e67e22' }
-              return (
-            <div className="card" style={{ marginBottom: 16, border: `1.5px solid ${status.border}` }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-                <div className="card-title" style={{ margin: 0 }}>🏦 Payout Bank Account</div>
-                <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: status.bg, color: status.color }}>
-                  {status.label}
-                </span>
-              </div>
-              <div style={{ fontSize: 12.5, color: 'var(--mu)', marginBottom: 12 }}>
-                {verified
-                  ? `Commission payouts will be sent to ${bank!.accountName} · ${bank!.bankName} · ${bank!.accountNumber}. You can update it any time.`
-                  : saved
-                  ? `Saved: ${bank!.bankName} · ${bank!.accountNumber}. The name couldn't be verified with Paystack — re-save once to retry verification.`
-                  : 'Add the bank account where you want your commission payouts deposited. Verified via your bank.'}
-              </div>
-              {bankError && <div className="alert alert-rd" style={{ marginBottom: 12 }}>🔴 {bankError}</div>}
-              <div className="form-row fr2">
-                <div>
-                  <label className="flabel">Bank</label>
-                  <select
-                    className="finput"
-                    value={bankForm.bankCode}
-                    onChange={e => {
-                      const b = banks.find(x => x.code === e.target.value)
-                      setBankForm(f => ({ ...f, bankCode: e.target.value, bankName: b?.name ?? '' }))
-                    }}
-                  >
-                    <option value="">Select bank…</option>
-                    {banks.map(b => <option key={b.code} value={b.code}>{b.name}</option>)}
-                  </select>
-                </div>
-                <div>
-                  <label className="flabel">Account Number</label>
-                  <input
-                    className="finput"
-                    inputMode="numeric"
-                    maxLength={10}
-                    placeholder="10-digit account number"
-                    value={bankForm.accountNumber}
-                    onChange={e => setBankForm(f => ({ ...f, accountNumber: e.target.value.replace(/\D/g, '') }))}
-                  />
-                </div>
-              </div>
-              {resolvedName && (
-                <div style={{ background: '#dcfce7', color: '#16a34a', borderRadius: 8, padding: '8px 12px', fontSize: 13, fontWeight: 700, marginBottom: 12 }}>
-                  ✓ {resolvedName}
-                </div>
-              )}
-              <button
-                className="btn btn-g btn-sm"
-                disabled={bankSaving || !bankForm.bankCode || !/^\d{10}$/.test(bankForm.accountNumber)}
-                onClick={saveBank}
-              >
-                {bankSaving ? '⏳ Saving…' : bank?.accountNumber ? 'Update Bank Account' : 'Save Bank Account'}
-              </button>
-            </div>
-              )
-            })()}
-
-            <div className="card" style={{ border: agent?.hasPin ? '1.5px solid var(--g)' : '1.5px solid #e67e22' }}>
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-                <div className="card-title" style={{ margin: 0 }}>🔐 Transaction PIN</div>
-                <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20, background: agent?.hasPin ? '#dcfce7' : '#fff3e0', color: agent?.hasPin ? '#16a34a' : '#e67e22' }}>
-                  {agent?.hasPin ? '✓ PIN Set' : '⚠ Not Set'}
-                </span>
-              </div>
-              {!agent?.hasPin && (
-                <div className="alert" style={{ background: '#fff3e0', color: '#c0392b', border: '1px solid #f5c6c6', borderRadius: 8, padding: '10px 14px', fontSize: 13, marginBottom: 14 }}>
-                  ⚠️ You must set a transaction PIN before recording savings or other transactions.
-                </div>
-              )}
-              <p style={{ fontSize: 13, color: 'var(--mu)', marginBottom: 14 }}>
-                {agent?.hasPin ? 'Update your 4–6 digit PIN used to confirm transactions.' : 'Set a 4–6 digit PIN that will be required for every transaction.'}
-              </p>
-              <div className="form-row fr2">
-                <div><label className="flabel">{agent?.hasPin ? 'New PIN' : 'PIN'} (4–6 digits)</label><input className="finput" type="password" inputMode="numeric" maxLength={6} placeholder="e.g. 1234" value={pinForm.pin} onChange={e => setPinForm(f => ({ ...f, pin: e.target.value.replace(/\D/g, '') }))} /></div>
-                <div><label className="flabel">Confirm PIN</label><input className="finput" type="password" inputMode="numeric" maxLength={6} placeholder="Repeat PIN" value={pinForm.confirmPin} onChange={e => setPinForm(f => ({ ...f, confirmPin: e.target.value.replace(/\D/g, '') }))} /></div>
-              </div>
-              <div className="form-row">
-                <label className="flabel">Account Password (to confirm)</label>
-                <input className="finput" type="password" placeholder="Your login password" value={pinForm.password} onChange={e => setPinForm(f => ({ ...f, password: e.target.value }))} />
-              </div>
-              {pinError && <div className="alert alert-rd" style={{ marginBottom: 12, fontSize: 13 }}>{pinError}</div>}
-              <button className="btn btn-g btn-sm" disabled={pinLoading} onClick={savePin}>
-                {pinLoading ? '⏳ Saving…' : agent?.hasPin ? 'Update PIN' : 'Set Transaction PIN'}
-              </button>
-            </div>
-          </div>
-          <div>
-            <div className="card" style={{ marginBottom: 16 }}>
-              <div className="card-title">Notifications</div>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-                {[
-                  { label: 'Email Alerts', desc: 'Transactions & approvals', on: true },
-                  { label: 'SMS Alerts', desc: 'Critical activity only', on: true },
-                  { label: 'Daily Reports', desc: 'End-of-day summary', on: false },
-                ].map(n => (
-                  <div key={n.label} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div>
-                      <div style={{ fontSize: 13.5, fontWeight: 600 }}>{n.label}</div>
-                      <div style={{ fontSize: 12, color: 'var(--mu)' }}>{n.desc}</div>
-                    </div>
-                    <div style={{ width: 44, height: 26, borderRadius: 100, background: n.on ? 'var(--g)' : 'var(--br)', position: 'relative', cursor: 'pointer' }}>
-                      <div style={{ position: 'absolute', width: 20, height: 20, borderRadius: '50%', background: '#fff', top: 3, [n.on ? 'right' : 'left']: 3, boxShadow: '0 1px 4px rgba(0,0,0,.15)' }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-            <div className="card">
-              <div className="card-title">Account Info</div>
-              <div className="conf-table">
-                <div className="conf-row"><span className="conf-lbl">Agent ID</span><strong style={{ color: 'var(--b)' }}>{agent.agentId}</strong></div>
-                <div className="conf-row"><span className="conf-lbl">Status</span><span className="bdg bdg-ok">Active</span></div>
-                <div className="conf-row"><span className="conf-lbl">Joined</span><span className="conf-val">{new Date(agent.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</span></div>
-                <div className="conf-row"><span className="conf-lbl">Wallet Balance</span><strong style={{ color: 'var(--g)' }}>₦{agent.walletBalance.toLocaleString()}</strong></div>
-              </div>
-            </div>
-            <div className="card" style={{ marginTop: 16 }}>
-              <div className="card-title">📱 Mobile App</div>
-              <p style={{ fontSize: 13, color: 'var(--mu)', marginBottom: 16 }}>
-                Get the native Vochus Easy Save Agent app for a faster, offline-capable experience with Bluetooth receipt printing.
-              </p>
-              <a
-                href="/downloads/easysave-agent.apk"
-                download
-                className="btn btn-g"
-                style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, textDecoration: 'none', padding: '12px 0', borderRadius: 10, fontWeight: 700, fontSize: 15 }}
-              >
-                📥 Download Agent App (Android)
-              </a>
-            </div>
-          </div>
+      <BottomSheet open={sheet === 'profile'} onClose={() => { if (!profileBusy) setSheet(null) }} title="Edit your details">
+        <p className="ag-set-note ag-set-note--warn"><Icons.locked size={16} aria-hidden="true" /> You can save one change. After that, your profile locks until your admin unlocks it again.</p>
+        <Field id="pf-name" label="Full name"><input id="pf-name" className="ag-tf-input" autoCapitalize="words" value={name} onChange={e => setName(e.target.value)} /></Field>
+        <Field id="pf-phone" label="Phone number"><input id="pf-phone" className="ag-tf-input ag-tf-num" type="tel" inputMode="numeric" maxLength={11} value={phone} onKeyDown={blockNonDigit} onChange={e => setPhone(digitsOnly(e.target.value).slice(0, 11))} /></Field>
+        <Field id="pf-loc" label="Location"><input id="pf-loc" className="ag-tf-input" value={location} onChange={e => setLocation(e.target.value)} /></Field>
+        <FormError message={profileError} />
+        <div className="ui-stack">
+          <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={profileBusy} onClick={saveProfile}>
+            {profileBusy ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Saving…</> : 'Save changes'}
+          </button>
+          <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" disabled={profileBusy} onClick={() => setSheet(null)}>Cancel</button>
         </div>
-      )}
-    </>
+      </BottomSheet>
+
+      <BottomSheet open={sheet === 'bank'} onClose={() => { if (!bankBusy) setSheet(null) }} title={savedBank ? 'Change payout account' : 'Add payout account'}>
+        <p className="ag-sheet-text">Your commission is paid into this account. Use an account in your own name.</p>
+        <div className="ag-tf-wrap">
+          <BankSelect banks={banks} loading={banksLoading} placeholder="Choose your bank" value={pick} onChange={b => { setPick(b); setBankError('') }} />
+        </div>
+        <Field id="bk-acct" label="Account number">
+          <input id="bk-acct" className="ag-tf-input ag-tf-num" type="tel" inputMode="numeric" maxLength={10} placeholder="10 digits"
+            value={accountNumber} onKeyDown={blockNonDigit} onChange={e => { setAccountNumber(digitsOnly(e.target.value).slice(0, 10)); setBankError('') }} />
+        </Field>
+        {resolving && <p className="ag-fineprint"><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Checking with the bank…</p>}
+        {resolved && (
+          <div className="ag-verified ag-verified--sm">
+            <span className="ag-verified-icon" aria-hidden="true"><Icons.check size={18} /></span>
+            <div><p className="ui-row-sub">Account name</p><p className="ui-row-title">{resolved}</p></div>
+          </div>
+        )}
+        {resolveError && <p className="ag-set-note ag-set-note--warn"><Icons.error size={16} aria-hidden="true" /> {resolveError} Check the number, or save it anyway and we’ll retry later.</p>}
+        <FormError message={bankError} />
+        <div className="ui-stack">
+          {resolved || !resolveError
+            ? <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={bankBusy || resolving || !resolved} onClick={() => saveBank()}>
+                {bankBusy ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Saving…</> : 'Save account'}
+              </button>
+            : <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={bankBusy} onClick={() => saveBank(true)}>
+                {bankBusy ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Saving…</> : 'Save without confirming'}
+              </button>}
+          <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" disabled={bankBusy} onClick={() => setSheet(null)}>Cancel</button>
+        </div>
+      </BottomSheet>
+
+      <BottomSheet open={sheet === 'pin'} onClose={() => { if (!pinBusy) setSheet(null) }} title={agent.hasPin ? 'Change transaction PIN' : 'Set transaction PIN'}>
+        <p className="ag-sheet-text">You’ll enter this PIN to confirm each saving you record. Don’t share it with anyone.</p>
+        <Field id="pin-1" label={agent.hasPin ? 'New PIN (4–6 digits)' : 'PIN (4–6 digits)'} error={pinTouched ? pinRule : ''}>
+          <input id="pin-1" className="ag-tf-input ag-tf-num" type="password" inputMode="numeric" autoComplete="new-password" maxLength={6}
+            value={pin} onKeyDown={blockNonDigit} onChange={e => setPin(digitsOnly(e.target.value).slice(0, 6))} />
+        </Field>
+        <Field id="pin-2" label="Type it again" error={pinTouched ? pin2Rule : ''}>
+          <input id="pin-2" className="ag-tf-input ag-tf-num" type="password" inputMode="numeric" autoComplete="new-password" maxLength={6}
+            value={pin2} onKeyDown={blockNonDigit} onChange={e => setPin2(digitsOnly(e.target.value).slice(0, 6))} />
+        </Field>
+        <Field id="pin-pw" label="Your sign-in password" error={pinTouched ? pwRule : ''}>
+          <input id="pin-pw" className="ag-tf-input" type="password" autoComplete="current-password" value={password} onChange={e => { setPassword(e.target.value); setPinError('') }} />
+        </Field>
+        <FormError message={pinError} />
+        <div className="ui-stack">
+          <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={pinBusy} onClick={savePin}>
+            {pinBusy ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Saving…</> : agent.hasPin ? 'Change PIN' : 'Set PIN'}
+          </button>
+          <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" disabled={pinBusy} onClick={() => setSheet(null)}>Cancel</button>
+        </div>
+      </BottomSheet>
+    </div>
+  )
+}
+
+function Field({ id, label, error, children }: { id: string; label: string; error?: string; children: ReactNode }) {
+  return (
+    <div className="ag-tf-wrap">
+      <div className={`ag-tf${error ? ' is-invalid' : ''}`}>
+        <label className="ag-tf-label" htmlFor={id}>{label}</label>
+        {children}
+      </div>
+      {error && <FieldError id={`${id}-error`} message={error} />}
+    </div>
   )
 }
