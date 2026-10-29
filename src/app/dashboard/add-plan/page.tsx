@@ -1,33 +1,48 @@
 'use client'
-import { useEffect, useState, Suspense } from 'react'
+import { useEffect, useState, Suspense, type ReactNode } from 'react'
+import Link from 'next/link'
 import { useSearchParams, useRouter } from 'next/navigation'
+import EmptyState from '@/components/ui/EmptyState'
 import EndDateField, { endDateDays } from '@/components/ui/EndDateField'
-import { addDays, isoDate, parseDateInput, today } from '@/lib/plan-dates'
+import { FieldError, FormError } from '@/components/ui/FormErrors'
+import { ListSkeleton } from '@/components/ui/Skeleton'
+import Toast from '@/components/ui/Toast'
+import { Icons } from '@/components/ui/icons'
+import { avatarTint } from '@/lib/avatar'
+import { displayName, formatDate, formatNaira } from '@/lib/format'
+import { blockMinus, nonNegativeString } from '@/lib/numeric'
+import { addDays, isoDate, parseDateInput, today, type Cadence } from '@/lib/plan-dates'
 
 interface Customer {
-  id: string; customerId: string; firstName: string; lastName: string; phone: string
-  savingsBalance: number; savingsPlans: any[]
+  id: string; customerId: string; firstName: string; lastName: string; phone: string; photoUrl?: string | null
+  savingsBalance: number; savingsPlans: { id: string; status: string }[]
 }
 
+const GOALS = ['School Fees', 'Business Capital', 'House Rent', 'Medical Expenses', 'Wedding / Event', 'Other']
+const PERIODS: Record<Cadence, [string, string][]> = {
+  daily: [['31', '31 days'], ['62', '62 days'], ['93', '93 days'], ['186', '186 days'], ['365', '365 days']],
+  weekly: [['28', '4 weeks'], ['56', '8 weeks'], ['84', '12 weeks'], ['168', '24 weeks'], ['364', '52 weeks']],
+  monthly: [['30', '1 month'], ['60', '2 months'], ['90', '3 months'], ['180', '6 months'], ['365', '12 months']],
+}
+const PER: Record<Cadence, string> = { daily: 'a day', weekly: 'a week', monthly: 'a month' }
+const UNIT_DAYS: Record<Cadence, number> = { daily: 1, weekly: 7, monthly: 30 }
+
 export default function AddPlanPage() {
-  return (
-    <Suspense fallback={<div style={{ padding: 40, textAlign: 'center', color: 'var(--mu)' }}>Loading…</div>}>
-      <AddPlanContent />
-    </Suspense>
-  )
+  return <Suspense fallback={<div className="ag-page"><ListSkeleton count={4} /></div>}><AddPlanContent /></Suspense>
 }
 
 function AddPlanContent() {
   const searchParams = useSearchParams()
   const router = useRouter()
   const [customer, setCustomer] = useState<Customer | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [loadError, setLoadError] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
-  const [success, setSuccess] = useState('')
+  const [toast, setToast] = useState('')
+  const [touched, setTouched] = useState(false)
 
-  const [cadence, setCadence] = useState<'daily' | 'weekly' | 'monthly'>('daily')
-  const [dailyAmount, setDailyAmount] = useState('')
+  const [cadence, setCadence] = useState<Cadence>('daily')
+  const [amount, setAmount] = useState('')
   const [periodDays, setPeriodDays] = useState('')
   const [goal, setGoal] = useState('')
   const [startDate, setStartDate] = useState('')
@@ -38,212 +53,176 @@ function AddPlanContent() {
 
   useEffect(() => {
     const cid = searchParams.get('cid')
-    if (!cid) { setLoading(false); setError('No customer specified'); return }
-    fetch(`/api/customers?search=${encodeURIComponent(cid)}&limit=1`)
-      .then(r => r.json())
+    if (!cid) { setLoadError('No customer was chosen.'); return }
+    fetch(`/api/customers?search=${encodeURIComponent(cid)}&limit=5`)
+      .then(r => { if (!r.ok) throw new Error(); return r.json() })
       .then(d => {
-        const c = d.customers?.[0]
-        if (!c) setError('Customer not found')
-        else setCustomer(c)
-        setLoading(false)
+        const c = (d.customers ?? []).find((x: Customer) => x.customerId === cid) ?? d.customers?.[0]
+        if (c) setCustomer(c); else setLoadError('We couldn’t find that customer.')
       })
-      .catch(() => { setError('Could not load customer'); setLoading(false) })
+      .catch(() => setLoadError('No connection. Check your internet and refresh the page.'))
   }, [searchParams])
+
+  const planStart = parseDateInput(startDate) ?? today()
+  const raw = parseFloat(amount) || 0
+  const days = parseInt(periodDays || '0')
+  const total = raw && days ? Math.round((raw / UNIT_DAYS[cadence]) * days) : 0
+  const ends = days ? addDays(planStart, days) : null
+  const errs = {
+    amount: !raw ? `Enter how much they’ll save ${PER[cadence]}` : '',
+    period: !days ? (customEnd ? 'Pick a valid end date' : 'Choose how long the plan runs') : '',
+    goal: !goal ? 'Choose what they’re saving for' : '',
+  }
+
+  function changeCadence(c: Cadence) {
+    setCadence(c); setPeriodDays(''); setCustomEnd('')
+  }
 
   async function submit() {
     if (!customer) return
-    setError('')
-    if (!dailyAmount || !periodDays || !goal) { setError('Fill all required fields.'); return }
-    if (!agreed) { setError('Customer must agree to the terms first.'); return }
+    setTouched(true); setError('')
+    if (errs.amount || errs.period || errs.goal) return
+    if (!agreed) { setError('Confirm the customer has agreed to this plan.'); return }
     setSaving(true)
     try {
       const res = await fetch('/api/customers/plan', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           customerId: customer.id,
-          dailyAmount: String(dailyEquiv),
-          periodDays, goal, cadence,
+          dailyAmount: String(raw / UNIT_DAYS[cadence]),
+          periodDays: String(days), goal, cadence,
           startDate: startDate || undefined,
-          notes: notes || undefined,
+          notes: notes.trim() || undefined,
         }),
       })
-      const data = await res.json()
-      if (!res.ok) { setError(data.error ?? 'Failed to create plan'); setSaving(false); return }
-      setSuccess(`New plan created for ${customer.firstName} ${customer.lastName}.`)
-      setTimeout(() => router.push('/dashboard/customers'), 1500)
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { setError(data.error ?? 'The plan wasn’t created. Please try again.'); return }
+      setToast(`New plan added for ${displayName(customer.firstName)}`)
+      setTimeout(() => router.push(`/dashboard/savings?cid=${encodeURIComponent(customer.customerId)}`), 1200)
     } catch {
-      setError('Network error')
+      setError('We lost the connection. Check the customer’s plans before trying again, so it isn’t added twice.')
+    } finally {
       setSaving(false)
     }
   }
 
-  if (loading) return <div style={{ padding: 40, textAlign: 'center', color: 'var(--mu)' }}>Loading…</div>
-  if (!customer) return (
-    <div style={{ padding: 40, textAlign: 'center' }}>
-      <div style={{ color: 'var(--rd)', marginBottom: 12 }}>{error || 'Customer not found'}</div>
-      <button className="btn btn-out" onClick={() => router.push('/dashboard/customers')}>Back to customers</button>
-    </div>
-  )
+  if (loadError) {
+    return (
+      <div className="ag-page ag-card-page">
+        <section className="ui-card"><EmptyState icon="customers" tone="danger" title="Customer not found" text={loadError}
+          action={<Link href="/dashboard/customers" className="ui-btn ui-btn--primary">Go to customers</Link>} /></section>
+      </div>
+    )
+  }
+  if (!customer) return <div className="ag-page ag-card-page"><ListSkeleton count={4} /></div>
 
-  const isWeekly = cadence === 'weekly'
-  const isMonthly = cadence === 'monthly'
-
-  const planStart = parseDateInput(startDate) ?? today()
-  const rawAmt = parseFloat(dailyAmount) || 0
-  const dailyEquiv = isWeekly ? rawAmt / 7 : isMonthly ? rawAmt / 30 : rawAmt
-  const total = rawAmt && periodDays ? Math.round(dailyEquiv * parseInt(periodDays)) : 0
-  const maturity = startDate && periodDays ? (() => {
-    const d = new Date(startDate); d.setDate(d.getDate() + parseInt(periodDays))
-    return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-  })() : ''
+  const activeCount = customer.savingsPlans.filter(p => p.status === 'Active').length
 
   return (
-    <div style={{ maxWidth: 720, margin: '0 auto', padding: 16 }}>
-      <div style={{ marginBottom: 16 }}>
-        <button className="btn btn-out" onClick={() => router.back()} style={{ fontSize: 12 }}>← Back</button>
-      </div>
+    <div className="ag-page ag-card-page">
+      {toast && <Toast message={toast} onDone={() => setToast('')} />}
+      <button type="button" className="ui-link ag-back-link" onClick={() => router.back()}><Icons.back size={16} aria-hidden="true" /> Back</button>
 
-      <div className="card" style={{ marginBottom: 14 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ width: 48, height: 48, borderRadius: '50%', background: 'var(--gl)', color: 'var(--g)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900, fontSize: 16 }}>
-            {(customer.firstName[0] ?? '') + (customer.lastName[0] ?? '')}
-          </div>
-          <div>
-            <div style={{ fontWeight: 800, fontSize: 16 }}>{customer.firstName} {customer.lastName}</div>
-            <div style={{ fontSize: 12.5, color: 'var(--mu)' }}>{customer.customerId} · {customer.phone}</div>
-            <div style={{ fontSize: 11.5, color: 'var(--mu)', marginTop: 2 }}>
-              {customer.savingsPlans.length} existing plan{customer.savingsPlans.length !== 1 ? 's' : ''} · Balance ₦{customer.savingsBalance.toLocaleString()}
-            </div>
-          </div>
+      <section className="ui-card ag-who ag-addplan-who">
+        {customer.photoUrl
+          ? <img className="ui-avatar ag-av ag-chat-av" src={customer.photoUrl} alt="" />
+          : <span className={`ui-avatar ag-av ag-av--${avatarTint(customer.customerId)} ag-chat-av`} aria-hidden="true">{`${customer.firstName[0] ?? ''}${customer.lastName[0] ?? ''}`.toUpperCase()}</span>}
+        <div className="ag-payee-main">
+          <p className="ui-row-title">{displayName(`${customer.firstName} ${customer.lastName}`)}</p>
+          <p className="ui-row-sub">{customer.customerId} · {activeCount} active plan{activeCount === 1 ? '' : 's'} · {formatNaira(customer.savingsBalance, { minor: false })} saved</p>
         </div>
-      </div>
+      </section>
 
-      <div className="card">
-        <div className="card-title">➕ Add New Savings Plan</div>
+      <section className="ui-card ag-addplan" aria-labelledby="addplan-title">
+        <h2 id="addplan-title" className="ui-card-title ag-card-title">New savings plan</h2>
 
-        {error && <div style={{ background: 'var(--rdl)', color: 'var(--rd)', padding: '10px 12px', borderRadius: 10, fontSize: 13, marginBottom: 12 }}>{error}</div>}
-        {success && <div style={{ background: 'var(--gl)', color: 'var(--g)', padding: '10px 12px', borderRadius: 10, fontSize: 13, marginBottom: 12 }}>{success}</div>}
-
-        <div style={{ marginBottom: 12 }}>
-          <label className="flabel">Saving Frequency *</label>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button onClick={() => { setCadence('daily'); setPeriodDays(''); setCustomEnd('') }} style={cadenceBtn(cadence === 'daily')}>📅 Daily</button>
-            <button onClick={() => { setCadence('weekly'); setPeriodDays(''); setCustomEnd('') }} style={cadenceBtn(cadence === 'weekly')}>📆 Weekly</button>
-            <button onClick={() => { setCadence('monthly'); setPeriodDays(''); setCustomEnd('') }} style={cadenceBtn(cadence === 'monthly')}>🗓️ Monthly</button>
-          </div>
+        <p className="ag-label" id="cad">How often?</p>
+        <div className="ui-segment ag-seg" role="group" aria-labelledby="cad">
+          {(['daily', 'weekly', 'monthly'] as const).map(c => (
+            <button key={c} type="button" aria-pressed={cadence === c} onClick={() => changeCadence(c)}>{c === 'daily' ? 'Daily' : c === 'weekly' ? 'Weekly' : 'Monthly'}</button>
+          ))}
         </div>
 
-        <div className="form-row fr2">
-          <div>
-            <label className="flabel">{isWeekly ? 'Weekly' : isMonthly ? 'Monthly' : 'Daily'} Saving Amount (₦) *</label>
-            <input className="finput" type="tel" inputMode="decimal" placeholder={isWeekly ? '3500' : isMonthly ? '15000' : '500'} value={dailyAmount} onChange={e => setDailyAmount(e.target.value.replace(/[^\d.]/g, ''))} />
-          </div>
-          <div>
-            <label className="flabel">Saving Period {isWeekly ? '(Weeks)' : isMonthly ? '(Months)' : '(Days)'} *</label>
-            <select className="finput" value={customEnd ? 'custom' : periodDays} onChange={e => {
+        <div className="ag-grid-2">
+          <Field id="ap-amt" label={`Amount ${PER[cadence]}`} error={touched ? errs.amount : ''}>
+            <span className="ag-tf-money">
+              <span aria-hidden="true">₦</span>
+              <input id="ap-amt" className="ag-tf-input ag-tf-num" type="tel" inputMode="decimal" onKeyDown={blockMinus}
+                placeholder={cadence === 'weekly' ? '3,500' : cadence === 'monthly' ? '15,000' : '500'}
+                value={amount} onChange={e => setAmount(nonNegativeString(e.target.value))} />
+            </span>
+          </Field>
+          <Field id="ap-per" label="For how long" error={touched && !customEnd ? errs.period : ''}>
+            <select id="ap-per" className="ag-tf-input ag-tf-select" value={customEnd ? 'custom' : periodDays} onChange={e => {
               if (e.target.value === 'custom') {
-                const end = isoDate(addDays(planStart, parseInt(periodDays || (isWeekly ? '56' : isMonthly ? '60' : '62'))))
+                const end = isoDate(addDays(planStart, parseInt(periodDays || PERIODS[cadence][1][0])))
                 setCustomEnd(end)
                 setPeriodDays(String(endDateDays(end, planStart, cadence) ?? ''))
               } else { setCustomEnd(''); setPeriodDays(e.target.value) }
             }}>
-              <option value="">Select…</option>
-              {isWeekly ? (
-                <>
-                  <option value="28">4 Weeks</option><option value="56">8 Weeks</option>
-                  <option value="84">12 Weeks</option><option value="168">24 Weeks</option><option value="364">52 Weeks</option>
-                </>
-              ) : isMonthly ? (
-                <>
-                  <option value="30">1 Month</option><option value="60">2 Months</option>
-                  <option value="90">3 Months</option><option value="180">6 Months</option><option value="365">12 Months</option>
-                </>
-              ) : (
-                <>
-                  <option value="31">31 Days</option><option value="62">62 Days</option>
-                  <option value="93">93 Days</option><option value="186">186 Days</option><option value="365">365 Days</option>
-                </>
-              )}
+              <option value="">Choose</option>
+              {PERIODS[cadence].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
               <option value="custom">Choose an end date…</option>
             </select>
-          </div>
+          </Field>
         </div>
-
         {customEnd && (
           <EndDateField start={planStart} cadence={cadence} value={customEnd}
-            onChange={(v, days) => { setCustomEnd(v); setPeriodDays(days ? String(days) : '') }} />
+            onChange={(v, d) => { setCustomEnd(v); setPeriodDays(d ? String(d) : '') }} />
         )}
 
-        <div className="form-row fr2">
-          <div>
-            <label className="flabel">Saving Goal *</label>
-            <select className="finput" value={goal} onChange={e => setGoal(e.target.value)}>
-              <option value="">Select goal…</option>
-              <option>School Fees</option><option>Business Capital</option><option>House Rent</option>
-              <option>Medical Expenses</option><option>Wedding / Event</option><option>Other</option>
-            </select>
-          </div>
-          <div>
-            <label className="flabel">Start Date</label>
-            <input className="finput" type="date" value={startDate} onChange={e => {
+        <p className="ag-label" id="goal-l">What are they saving for?</p>
+        <div className="ag-goal-chips" role="group" aria-labelledby="goal-l">
+          {GOALS.map(g => <button key={g} type="button" className="ag-chip" aria-pressed={goal === g} onClick={() => setGoal(g)}>{g}</button>)}
+        </div>
+        {touched && errs.goal && <FieldError id="goal-error" message={errs.goal} />}
+
+        <div className="ag-grid-2">
+          <Field id="ap-start" label="Start date" hint="Leave empty to start today.">
+            <input id="ap-start" className="ag-tf-input" type="date" value={startDate} onChange={e => {
               setStartDate(e.target.value)
               // Keep a chosen end date where it is; the length changes instead.
               if (customEnd) setPeriodDays(String(endDateDays(customEnd, parseDateInput(e.target.value) ?? today(), cadence) ?? ''))
             }} />
+          </Field>
+          <Field id="ap-note" label="Note (optional)">
+            <input id="ap-note" className="ag-tf-input" maxLength={200} placeholder="e.g. Saving for the wedding" value={notes} onChange={e => setNotes(e.target.value)} />
+          </Field>
+        </div>
+
+        {total > 0 && ends && (
+          <div className="ag-target">
+            <span className="ui-row-sub ui-block">They’ll have saved</span>
+            <span className="ag-target-amount">{formatNaira(total, { minor: false })}</span>
+            <span className="ui-row-sub ui-block">by {formatDate(ends)}. A platform fee is taken when they collect.</span>
           </div>
+        )}
+
+        <button type="button" role="checkbox" aria-checked={agreed} className={`ag-agree${agreed ? ' is-on' : ''}`} onClick={() => { setAgreed(a => !a); setError('') }}>
+          <span className="ag-agree-box" aria-hidden="true">{agreed && <Icons.check size={16} />}</span>
+          <span>The customer has agreed to this plan and its terms, including the platform fee.</span>
+        </button>
+
+        <FormError message={error} />
+        <div className="ui-stack ag-addplan-actions">
+          <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={saving} onClick={submit}>
+            {saving ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Creating…</> : 'Create plan'}
+          </button>
+          <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" disabled={saving} onClick={() => router.back()}>Cancel</button>
         </div>
-
-        <label className="flabel">Notes (optional)</label>
-        <input className="finput" placeholder="e.g. Second plan for wedding savings" value={notes} onChange={e => setNotes(e.target.value)} />
-
-        {total > 0 && (() => {
-          const deductionPreview = total > 0
-            ? (isWeekly || isMonthly
-              ? Math.round(total * 0.20 * 100) / 100
-              : Math.round(dailyEquiv * (parseInt(periodDays) / 31) * 100) / 100)
-            : 0
-          return (
-            <div style={{ background: 'var(--gl)', border: '1px solid var(--br)', borderRadius: 10, padding: 12, marginTop: 12, fontSize: 13 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', margin: '3px 0' }}>
-                <span style={{ color: 'var(--mu)' }}>Target at maturity</span>
-                <strong style={{ color: 'var(--g)' }}>₦{total.toLocaleString()}</strong>
-              </div>
-              {deductionPreview > 0 && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', margin: '3px 0' }}>
-                  <span style={{ color: 'var(--rd)' }}>Platform deduction at maturity</span>
-                  <strong style={{ color: 'var(--rd)' }}>-₦{deductionPreview.toLocaleString()}</strong>
-                </div>
-              )}
-              {maturity && (
-                <div style={{ display: 'flex', justifyContent: 'space-between', margin: '3px 0' }}>
-                  <span style={{ color: 'var(--mu)' }}>Matures on</span>
-                  <strong>{maturity}</strong>
-                </div>
-              )}
-            </div>
-          )
-        })()}
-
-        <div style={{ marginTop: 14, display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, cursor: 'pointer' }} onClick={() => setAgreed(!agreed)}>
-          <div style={{ width: 20, height: 20, borderRadius: 5, flexShrink: 0, border: `2px solid ${agreed ? 'var(--g)' : 'var(--br)'}`, background: agreed ? 'var(--g)' : 'var(--card)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            {agreed && <span style={{ color: '#fff', fontSize: 13, fontWeight: 900, lineHeight: 1 }}>✓</span>}
-          </div>
-          <label style={{ cursor: 'pointer' }}>Customer has verbally agreed to the terms of this new plan.</label>
-        </div>
-
-        <div className="btn-row" style={{ marginTop: 18 }}>
-          <button className="btn btn-out" onClick={() => router.push('/dashboard/customers')} disabled={saving}>Cancel</button>
-          <button className="btn btn-g" onClick={submit} disabled={saving || !agreed}>{saving ? 'Creating…' : '➕ Create Plan'}</button>
-        </div>
-      </div>
+      </section>
     </div>
   )
 }
 
-const cadenceBtn = (active: boolean): React.CSSProperties => ({
-  padding: '8px 16px', borderRadius: 8,
-  border: `2px solid ${active ? 'var(--g)' : 'var(--br)'}`,
-  background: active ? 'var(--gl)' : 'var(--card)',
-  color: active ? 'var(--g)' : 'var(--txt)',
-  fontWeight: 700, cursor: 'pointer', fontSize: 13,
-})
+function Field({ id, label, hint, error, children }: { id: string; label: string; hint?: string; error?: string; children: ReactNode }) {
+  return (
+    <div className="ag-tf-wrap">
+      <div className={`ag-tf${error ? ' is-invalid' : ''}`}>
+        <label className="ag-tf-label" htmlFor={id}>{label}</label>
+        {children}
+      </div>
+      {error ? <FieldError id={`${id}-error`} message={error} /> : hint ? <p className="ag-fineprint">{hint}</p> : null}
+    </div>
+  )
+}

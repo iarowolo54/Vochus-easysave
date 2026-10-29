@@ -2,6 +2,11 @@
 
 import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
+import EmptyState from '@/components/ui/EmptyState'
+import { FieldError } from '@/components/ui/FormErrors'
+import { ListSkeleton } from '@/components/ui/Skeleton'
+import { Icons } from '@/components/ui/icons'
+import { displayName, formatDate } from '@/lib/format'
 
 interface LinkedCard {
   id: string
@@ -13,233 +18,176 @@ interface LinkedCard {
   linkedAt: string | null
 }
 
+const expired = (iso: string) => new Date(iso).getTime() < Date.now()
+const monthYear = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
+
+/** A QR payload may be the card's URL; the serial is its last path segment. */
+function serialFrom(raw: string) {
+  const s = raw.trim()
+  try {
+    const parts = new URL(s).pathname.split('/').filter(Boolean)
+    return parts[parts.length - 1] ?? s
+  } catch { return s }
+}
+
 export default function CardsPage() {
   const router = useRouter()
-  const [cards, setCards] = useState<LinkedCard[]>([])
-  const [loading, setLoading] = useState(true)
-  const [serialInput, setSerialInput] = useState('')
+  const [cards, setCards] = useState<LinkedCard[] | null>(null)
+  const [failed, setFailed] = useState(false)
+  const [serial, setSerial] = useState('')
   const [serialError, setSerialError] = useState('')
+  const [query, setQuery] = useState('')
 
-  // QR scanner state
-  const [qrScanActive, setQrScanActive] = useState(false)
-  const [qrStreamReady, setQrStreamReady] = useState(false)
-  const [qrError, setQrError] = useState('')
-  const qrVideoRef = useRef<HTMLVideoElement>(null)
-  const qrStreamRef = useRef<MediaStream | null>(null)
-  const qrAnimRef = useRef<number>(0)
+  const [scanning, setScanning] = useState(false)
+  const [streamReady, setStreamReady] = useState(false)
+  const [scanError, setScanError] = useState('')
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const streamRef = useRef<MediaStream | null>(null)
+  const frameRef = useRef(0)
 
   useEffect(() => {
     fetch('/api/cards')
-      .then(r => r.json())
-      .then(d => { setCards(d.cards ?? []); setLoading(false) })
-      .catch(() => setLoading(false))
+      .then(r => { if (!r.ok) throw new Error(); return r.json() })
+      .then(d => setCards(d.cards ?? []))
+      .catch(() => { setFailed(true); setCards([]) })
   }, [])
 
-  function openSerial(raw?: string) {
-    const s = (raw ?? serialInput).trim()
-    if (!s) { setSerialError('Enter a card serial'); return }
-    setSerialError('')
-    // QR payload may be a URL — pull the trailing path segment
-    let serial = s
-    try {
-      const u = new URL(s)
-      const parts = u.pathname.split('/').filter(Boolean)
-      serial = parts[parts.length - 1] ?? s
-    } catch { /* not a URL, use raw */ }
-    router.push(`/dashboard/cards/${encodeURIComponent(serial)}`)
+  function open(raw?: string) {
+    const s = serialFrom(raw ?? serial)
+    if (!s) { setSerialError('Enter the serial printed on the card'); return }
+    router.push(`/dashboard/cards/${encodeURIComponent(s)}`)
   }
 
-  async function startQrScan() {
-    setQrError('')
-    setQrStreamReady(false)
-    setQrScanActive(true)
+  async function startScan() {
+    setScanError(''); setStreamReady(false); setScanning(true)
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
-      })
-      qrStreamRef.current = stream
-      setQrStreamReady(true)
-    } catch {
-      setQrError('Camera access denied — enter the serial manually instead')
-      setQrScanActive(false)
+      streamRef.current = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } } })
+      setStreamReady(true)
+    } catch (e) {
+      setScanning(false)
+      setScanError((e as { name?: string })?.name === 'NotAllowedError'
+        ? 'Camera access is blocked. Allow it in your browser or phone settings, or type the serial instead.'
+        : 'The camera couldn’t be opened. Type the serial instead.')
     }
   }
 
-  function stopQrScan() {
-    cancelAnimationFrame(qrAnimRef.current)
-    qrStreamRef.current?.getTracks().forEach(t => t.stop())
-    qrStreamRef.current = null
-    setQrStreamReady(false)
-    setQrScanActive(false)
+  function stopScan() {
+    cancelAnimationFrame(frameRef.current)
+    streamRef.current?.getTracks().forEach(t => t.stop())
+    streamRef.current = null
+    setStreamReady(false)
+    setScanning(false)
   }
 
   useEffect(() => {
-    if (!qrStreamReady || !qrVideoRef.current || !qrStreamRef.current) return
-    const video = qrVideoRef.current
-    video.srcObject = qrStreamRef.current
-    video.setAttribute('playsinline', 'true')
-    video.muted = true
+    const video = videoRef.current
+    if (!streamReady || !video || !streamRef.current) return
+    video.srcObject = streamRef.current
     video.play().catch(() => {})
-
     const canvas = document.createElement('canvas')
-    const ctx = canvas.getContext('2d')!
+    const ctx = canvas.getContext('2d', { willReadFrequently: true })
     let running = true
+    let decode: ((d: Uint8ClampedArray, w: number, h: number) => { data: string } | null) | null = null
+    import('jsqr').then(m => { decode = m.default })
 
-    function tick() {
+    const tick = () => {
       if (!running) return
-      if (video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth > 0) {
-        canvas.width = video.videoWidth
-        canvas.height = video.videoHeight
+      if (decode && ctx && video.readyState === video.HAVE_ENOUGH_DATA && video.videoWidth) {
+        canvas.width = video.videoWidth; canvas.height = video.videoHeight
         ctx.drawImage(video, 0, 0)
-        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height)
-        import('jsqr').then(({ default: jsQR }) => {
-          const code = jsQR(imageData.data, imageData.width, imageData.height)
-          if (code?.data) {
-            stopQrScan()
-            openSerial(code.data)
-          }
-        })
+        const img = ctx.getImageData(0, 0, canvas.width, canvas.height)
+        const code = decode(img.data, img.width, img.height)
+        if (code?.data) { stopScan(); open(code.data); return }
       }
-      qrAnimRef.current = requestAnimationFrame(tick)
+      frameRef.current = requestAnimationFrame(tick)
     }
-    qrAnimRef.current = requestAnimationFrame(tick)
-    return () => { running = false; cancelAnimationFrame(qrAnimRef.current) }
-  }, [qrStreamReady])
+    frameRef.current = requestAnimationFrame(tick)
+    return () => { running = false; cancelAnimationFrame(frameRef.current) }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streamReady])
 
-  useEffect(() => () => { qrStreamRef.current?.getTracks().forEach(t => t.stop()) }, [])
+  useEffect(() => () => { streamRef.current?.getTracks().forEach(t => t.stop()) }, [])
+
+  const q = query.trim().toLowerCase()
+  const shown = (cards ?? []).filter(c => !q || c.serial.toLowerCase().includes(q)
+    || (c.customer && (`${c.customer.firstName} ${c.customer.lastName}`.toLowerCase().includes(q) || c.customer.customerId.toLowerCase().includes(q))))
 
   return (
-    <>
-      <div className="page-header">
-        <h2>Configure Card</h2>
-        <p>Scan a card QR code to link it to a customer</p>
-      </div>
-
-      <div className="grid g-2-1" style={{ marginBottom: 18 }}>
-        <div className="card" style={{ padding: '28px 24px' }}>
-          <div style={{ textAlign: 'center', marginBottom: 18 }}>
-            <div style={{ fontSize: 48, marginBottom: 10 }}>💳</div>
-            <div style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", fontWeight: 700, fontSize: 18, marginBottom: 6 }}>
-              Link a Card
-            </div>
-            <p style={{ color: 'var(--mu)', fontSize: 13, lineHeight: 1.6, maxWidth: 340, margin: '0 auto' }}>
-              Enter a card serial below, or scan the QR code on the card, to assign it to a customer.
-            </p>
-          </div>
-
-          <label className="flabel" style={{ fontSize: 12 }}>Card Serial</label>
-          <div style={{ display: 'flex', gap: 8, marginBottom: 6 }}>
-            <input
-              className="finput"
-              placeholder="e.g. VES-NFC-00841"
-              value={serialInput}
-              onChange={e => { setSerialInput(e.target.value); setSerialError('') }}
-              onKeyDown={e => e.key === 'Enter' && openSerial()}
-              style={{ flex: 1 }}
-              autoFocus
-            />
-            <button
-              type="button"
-              onClick={() => openSerial()}
-              className="btn btn-g"
-              style={{ whiteSpace: 'nowrap' }}
-            >Continue →</button>
-          </div>
-          {serialError && <div style={{ fontSize: 12, color: '#c0392b' }}>⚠️ {serialError}</div>}
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10, margin: '14px 0 12px', color: 'var(--mu)', fontSize: 12 }}>
-            <div style={{ flex: 1, height: 1, background: 'var(--br)' }} />
-            <span>OR</span>
-            <div style={{ flex: 1, height: 1, background: 'var(--br)' }} />
-          </div>
-
-          <button
-            type="button"
-            onClick={startQrScan}
-            className="btn btn-out"
-            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
-          >
-            <span style={{ fontSize: 18 }}>📷</span> Scan QR Code
-          </button>
-          {qrError && <div style={{ fontSize: 12, color: '#c0392b', marginTop: 8 }}>⚠️ {qrError}</div>}
-          <div style={{ background: 'var(--gl)', border: '1px solid var(--g)', borderRadius: 10, padding: '10px 14px', fontSize: 12.5, color: 'var(--g)', fontWeight: 600, textAlign: 'center', marginTop: 10 }}>
-            💡 The QR code is on the front of each physical card
-          </div>
-        </div>
-
-        <div className="card">
-          <div className="card-title">How It Works</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-            {[
-              { n: '1', t: 'Receive a card', d: 'Admin generates and prints membership cards for distribution' },
-              { n: '2', t: 'Scan the QR code', d: 'Open your phone camera and point it at the QR code on the card' },
-              { n: '3', t: 'Link to customer', d: 'Search for the customer and tap "Link Card" to assign it' },
-              { n: '4', t: 'Card is activated', d: 'The customer can now use their card for savings transactions' },
-            ].map(({ n, t, d }) => (
-              <div key={n} style={{ display: 'flex', gap: 12, alignItems: 'flex-start' }}>
-                <div style={{ width: 28, height: 28, borderRadius: '50%', background: 'var(--g)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 13, flexShrink: 0 }}>{n}</div>
-                <div>
-                  <div style={{ fontWeight: 600, fontSize: 13.5 }}>{t}</div>
-                  <div style={{ fontSize: 12, color: 'var(--mu)', marginTop: 2 }}>{d}</div>
+    <div className="ag-page">
+      <div className="ag-home-grid ag-wallet-grid">
+        <div className="ag-col">
+          <div className="ui-section-head"><h2>Link a card</h2></div>
+          <section className="ui-card ag-card-link">
+            <span className="ag-topup-icon" aria-hidden="true"><Icons.card size={22} /></span>
+            <p className="ui-row-sub">Scan the QR code on the front of a membership card, or type its serial, then choose the customer it belongs to.</p>
+            <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={startScan}><Icons.image size={18} aria-hidden="true" /> Scan the QR code</button>
+            {scanError && <p className="ui-field-error" role="alert"><Icons.error size={16} aria-hidden="true" /> {scanError}</p>}
+            <p className="ag-or"><span>or type it</span></p>
+            <div className="ag-card-row">
+              <div className="ag-tf-wrap">
+                <div className={`ag-tf${serialError ? ' is-invalid' : ''}`}>
+                  <label className="ag-tf-label" htmlFor="card-serial">Card serial</label>
+                  <input id="card-serial" className="ag-tf-input ag-tf-num" autoCapitalize="characters" autoComplete="off" placeholder="e.g. VES-NFC-00841"
+                    value={serial} aria-invalid={serialError ? true : undefined}
+                    onChange={e => { setSerial(e.target.value.toUpperCase()); setSerialError('') }}
+                    onKeyDown={e => { if (e.key === 'Enter') open() }} />
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
-      </div>
-
-      <div className="sec-label">My Linked Cards</div>
-      <div className="card">
-        <div className="table-wrap">
-          <table>
-            <thead>
-              <tr><th>Serial</th><th>Batch</th><th>Customer</th><th>Linked</th><th>Expiry</th><th>Status</th></tr>
-            </thead>
-            <tbody>
-              {loading && <tr><td colSpan={6} style={{ textAlign: 'center', padding: 24, color: 'var(--mu)' }}>Loading…</td></tr>}
-              {!loading && cards.length === 0 && (
-                <tr><td colSpan={6} style={{ textAlign: 'center', padding: 24, color: 'var(--mu)' }}>No cards linked yet — scan a card QR to get started</td></tr>
-              )}
-              {!loading && cards.map(c => (
-                <tr key={c.id}>
-                  <td className="td-mono" style={{ color: 'var(--b)', fontWeight: 600 }}>{c.serial}</td>
-                  <td style={{ color: 'var(--mu)', fontSize: 12.5 }}>{c.batchName}</td>
-                  <td>
-                    {c.customer
-                      ? <><div className="td-name">{c.customer.firstName} {c.customer.lastName}</div><div className="td-sub">{c.customer.customerId}</div></>
-                      : <span style={{ color: 'var(--mu)' }}>—</span>}
-                  </td>
-                  <td style={{ color: 'var(--mu)', fontSize: 12.5 }}>
-                    {c.linkedAt ? new Date(c.linkedAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
-                  </td>
-                  <td style={{ color: 'var(--mu)', fontSize: 12.5 }}>
-                    {new Date(c.expiryDate).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })}
-                  </td>
-                  <td><span className={`bdg ${c.status === 'Linked' ? 'bdg-ok' : c.status === 'Blocked' ? 'bdg-rd' : 'bdg-b'}`}>{c.status}</span></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {qrScanActive && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.92)', zIndex: 9999, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
-          <div style={{ color: '#fff', fontSize: 16, fontWeight: 700, marginBottom: 16 }}>📷 Point camera at card QR code</div>
-          <div style={{ position: 'relative', width: '100%', maxWidth: 360, borderRadius: 12, overflow: 'hidden', background: '#000' }}>
-            <video ref={qrVideoRef} playsInline muted style={{ width: '100%', display: 'block' }} />
-            <div style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', pointerEvents: 'none' }}>
-              <div style={{ width: 200, height: 200, position: 'relative' }}>
-                {[['0','0'],['0','auto'],['auto','0'],['auto','auto']].map(([t,b], i) => (
-                  <div key={i} style={{ position: 'absolute', width: 30, height: 30, top: t === '0' ? 0 : undefined, bottom: b === '0' ? 0 : undefined, left: i < 2 ? 0 : undefined, right: i >= 2 ? 0 : undefined, borderTop: t === '0' ? '3px solid #00e676' : undefined, borderBottom: b === '0' ? '3px solid #00e676' : undefined, borderLeft: i < 2 ? '3px solid #00e676' : undefined, borderRight: i >= 2 ? '3px solid #00e676' : undefined }} />
-                ))}
-              </div>
+              <button type="button" className="ui-btn ui-btn--secondary ag-scan-btn" onClick={() => open()}>Find card</button>
             </div>
+            <FieldError id="card-serial-error" message={serialError} />
+          </section>
+        </div>
+
+        <div className="ag-col">
+          <div className="ui-section-head"><h2>Your linked cards</h2>{cards && cards.length > 0 && <span className="ui-card-meta">{cards.length}</span>}</div>
+          {cards && cards.length > 3 && (
+            <div className="ag-search ag-cal-search">
+              <Icons.search size={20} aria-hidden="true" />
+              <input className="ui-input" type="search" autoComplete="off" placeholder="Serial, customer name or ID" aria-label="Search linked cards" value={query} onChange={e => setQuery(e.target.value)} />
+            </div>
+          )}
+          {cards === null ? (
+            <ListSkeleton count={3} />
+          ) : failed ? (
+            <section className="ui-card"><EmptyState icon="error" tone="danger" title="Couldn’t load your cards" text="Check your connection and refresh the page." /></section>
+          ) : cards.length === 0 ? (
+            <section className="ui-card"><EmptyState icon="card" title="No cards linked yet" text="Cards you link to customers show here." /></section>
+          ) : shown.length === 0 ? (
+            <section className="ui-card"><EmptyState icon="search" title="No cards match" text="Try another serial or name." /></section>
+          ) : (
+            <section className="ui-card ui-card--list" aria-label="Linked cards">
+              {shown.map(c => {
+                const isExpired = expired(c.expiryDate)
+                const tag = c.status === 'Blocked' ? ['Blocked', 'ag-crow-tag--due'] : isExpired ? ['Expired', 'ag-crow-tag--due'] : c.status === 'Linked' ? ['Linked', 'ag-crow-tag--ok'] : [c.status, '']
+                return (
+                  <button key={c.id} type="button" className="ag-crow" onClick={() => router.push(`/dashboard/cards/${encodeURIComponent(c.serial)}`)}>
+                    <span className="ag-doc-icon" aria-hidden="true"><Icons.card size={20} /></span>
+                    <span className="ag-crow-main">
+                      <span className="ag-crow-name">{c.customer ? displayName(`${c.customer.firstName} ${c.customer.lastName}`) : 'Not linked'}</span>
+                      <span className="ag-crow-sub"><span className="ag-mono">{c.serial}</span>{c.customer ? ` · ${c.customer.customerId}` : ''}</span>
+                      <span className="ag-crow-sub">{c.linkedAt ? `Linked ${formatDate(c.linkedAt)} · ` : ''}{isExpired ? 'Expired' : 'Expires'} {monthYear(c.expiryDate)}</span>
+                    </span>
+                    <span className="ag-crow-end"><span className={`ag-crow-tag ${tag[1]}`}>{tag[0]}</span></span>
+                  </button>
+                )
+              })}
+            </section>
+          )}
+        </div>
+      </div>
+
+      {scanning && (
+        <div className="ag-qr" role="dialog" aria-modal="true" aria-label="Scan card QR code">
+          <p className="ag-qr-title">Point the camera at the card’s QR code</p>
+          <div className="ag-qr-frame">
+            <video ref={videoRef} playsInline muted />
+            <span className="ag-qr-target" aria-hidden="true" />
           </div>
-          <div style={{ color: '#aaa', fontSize: 13, marginTop: 12, textAlign: 'center' }}>Scanning automatically…</div>
-          <button onClick={stopQrScan} style={{ marginTop: 20, padding: '12px 32px', background: '#fff', color: '#111', border: 'none', borderRadius: 8, fontWeight: 700, fontSize: 15, cursor: 'pointer' }}>Cancel</button>
+          <p className="ag-qr-hint">{streamReady ? 'Scanning…' : 'Opening camera…'}</p>
+          <button type="button" className="ui-btn ui-btn--secondary ag-qr-cancel" onClick={stopScan}>Cancel</button>
         </div>
       )}
-    </>
+    </div>
   )
 }

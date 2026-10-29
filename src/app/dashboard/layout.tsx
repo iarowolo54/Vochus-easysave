@@ -22,6 +22,7 @@ const navItems: { section: string; items: { label: string; icon: IconName; href:
     { label: 'Enrol customer', icon: 'enrol', href: '/dashboard/enrol' },
     { label: 'Savings calendar', icon: 'calendar', href: '/dashboard/calendar' },
     { label: 'Collections', icon: 'collect', href: '/dashboard/redeem' },
+    { label: 'Cards', icon: 'card', href: '/dashboard/cards' },
   ]},
   { section: 'Loans', items: [
     { label: 'Loan request', icon: 'loan', href: '/dashboard/loan-request' },
@@ -62,6 +63,8 @@ const pageTitles: Record<string, string> = {
   '/dashboard/settings': 'Settings',
   '/dashboard/report': 'Report an issue',
   '/dashboard/documents': 'Documents',
+  '/dashboard/cards': 'Cards',
+  '/dashboard/add-plan': 'Add a plan',
 }
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
@@ -126,14 +129,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const photoUrl: string | null = agent?.photoUrl ?? null
   const initials = name.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase()
   const allHrefs = navItems.flatMap(g => g.items.map(i => i.href))
+  // Pages reached from another one (not in the menu) highlight where they belong.
+  const navPath = pathname.startsWith('/dashboard/add-plan') ? '/dashboard/customers' : pathname
   const activeHref = allHrefs
-    .filter(h => pathname === h || pathname.startsWith(h + '/'))
+    .filter(h => navPath === h || navPath.startsWith(h + '/'))
     .sort((a, b) => b.length - a.length)[0]
   const avatarNode = photoUrl
     ? <img src={photoUrl} alt={name} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 'inherit' }} />
     : initials
 
-  const pageTitle = pageTitles[pathname] ?? (pathname.startsWith('/dashboard/transactions/') ? 'Receipt' : 'Home')
+  const pageTitle = pageTitles[pathname]
+    ?? (pathname.startsWith('/dashboard/transactions/') ? 'Receipt' : pathname.startsWith('/dashboard/cards/') ? 'Card' : 'Home')
 
   // Close the mobile menu with Escape, and whenever the page changes.
   useEffect(() => {

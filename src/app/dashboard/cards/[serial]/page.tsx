@@ -1,276 +1,187 @@
 'use client'
 
-import { useEffect, useState, useCallback } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useEffect, useState } from 'react'
+import Link from 'next/link'
+import { useParams } from 'next/navigation'
+import Logo from '@/components/Logo'
+import EmptyState from '@/components/ui/EmptyState'
+import { FormError } from '@/components/ui/FormErrors'
+import { ListSkeleton } from '@/components/ui/Skeleton'
+import { Icons } from '@/components/ui/icons'
+import { avatarTint } from '@/lib/avatar'
+import { displayName } from '@/lib/format'
 
 type CardInfo = {
-  id: string
-  serial: string
-  status: string
-  batchName: string
-  expiryDate: string
+  id: string; serial: string; status: string; batchName?: string; expiryDate?: string
   customer: { name: string; customerId: string } | null
 }
+type Found = { id: string; customerId: string; firstName: string; lastName: string; phone: string; photoUrl?: string | null }
 
-type CustomerResult = {
-  id: string
-  customerId: string
-  firstName: string
-  lastName: string
-  phone: string
-}
+const monthYear = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' })
+const initials = (f: string, l: string) => `${f[0] ?? ''}${l[0] ?? ''}`.toUpperCase()
 
 export default function CardSetupPage() {
-  const params = useParams()
-  const router = useRouter()
-  const serial = params.serial as string
-
+  const serial = decodeURIComponent(String(useParams().serial ?? ''))
   const [card, setCard] = useState<CardInfo | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
+  const [loadError, setLoadError] = useState('')
 
   const [search, setSearch] = useState('')
-  const [results, setResults] = useState<CustomerResult[]>([])
+  const [results, setResults] = useState<Found[] | null>(null)
   const [searching, setSearching] = useState(false)
-  const [selected, setSelected] = useState<CustomerResult | null>(null)
+  const [selected, setSelected] = useState<Found | null>(null)
   const [linking, setLinking] = useState(false)
-  const [linked, setLinked] = useState(false)
   const [linkError, setLinkError] = useState('')
+  const [justLinked, setJustLinked] = useState(false)
 
   useEffect(() => {
-    fetch(`/api/cards/${serial}`)
-      .then(r => r.json())
-      .then(d => {
-        if (d.error) setError(d.error)
-        else setCard(d)
+    fetch(`/api/cards/${encodeURIComponent(serial)}`)
+      .then(async r => {
+        const d = await r.json().catch(() => ({}))
+        if (!r.ok) throw new Error(r.status === 404 ? 'There’s no card with this serial. Check it and try again.' : d.error ?? 'We couldn’t load this card.')
+        setCard(d)
       })
-      .catch(() => setError('Failed to load card'))
-      .finally(() => setLoading(false))
+      .catch(e => setLoadError(e instanceof Error && e.message !== 'Failed to fetch' ? e.message : 'No connection. Check your internet and try again.'))
   }, [serial])
 
-  const doSearch = useCallback(async (q: string) => {
-    if (!q.trim()) { setResults([]); return }
-    setSearching(true)
-    try {
-      const r = await fetch(`/api/customers?search=${encodeURIComponent(q)}&limit=10`)
-      const d = await r.json()
-      setResults(d.customers ?? [])
-    } catch { setResults([]) }
-    finally { setSearching(false) }
-  }, [])
-
   useEffect(() => {
-    const t = setTimeout(() => doSearch(search), 300)
-    return () => clearTimeout(t)
-  }, [search, doSearch])
+    const q = search.trim()
+    if (!q) { setResults(null); return }
+    const ctrl = new AbortController()
+    setSearching(true)
+    const t = setTimeout(async () => {
+      try {
+        const r = await fetch(`/api/customers?search=${encodeURIComponent(q)}&limit=10`, { signal: ctrl.signal })
+        const d = await r.json()
+        setResults(d.customers ?? [])
+      } catch (e) {
+        if ((e as { name?: string })?.name !== 'AbortError') setResults([])
+      } finally { setSearching(false) }
+    }, 300)
+    return () => { clearTimeout(t); ctrl.abort() }
+  }, [search])
 
-  const handleLink = async () => {
+  async function link() {
     if (!selected) return
-    setLinking(true)
-    setLinkError('')
+    setLinking(true); setLinkError('')
     try {
-      const r = await fetch(`/api/cards/${serial}`, {
+      const r = await fetch(`/api/cards/${encodeURIComponent(serial)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ customerId: selected.id }),
       })
-      const d = await r.json()
-      if (!r.ok) { setLinkError(d.error ?? 'Link failed'); return }
-      setCard(d)
-      setLinked(true)
-    } catch { setLinkError('Network error') }
-    finally { setLinking(false) }
+      const d = await r.json().catch(() => ({}))
+      if (!r.ok) {
+        setLinkError(r.status === 409 ? 'This card was just linked to someone else.' : d.error === 'Customer not found' ? 'That customer isn’t one of yours.' : d.error ?? 'The card wasn’t linked. Please try again.')
+        return
+      }
+      setCard(c => ({ ...(c as CardInfo), ...d }))
+      setJustLinked(true)
+    } catch {
+      setLinkError('We lost the connection. Refresh to check whether the card was linked before trying again.')
+    } finally {
+      setLinking(false)
+    }
   }
 
-  if (loading) {
-    return (
-      <div style={{ padding: 60, textAlign: 'center', color: 'var(--mu)' }}>Loading card…</div>
-    )
-  }
+  const back = <Link href="/dashboard/cards" className="ui-link ag-back-link"><Icons.back size={16} aria-hidden="true" /> Cards</Link>
 
-  if (error) {
+  if (loadError) {
     return (
-      <div style={{ maxWidth: 560, margin: '0 auto', padding: 24 }}>
-        <button onClick={() => router.push('/dashboard/cards')} style={backLinkStyle}>← Back to Configure Card</button>
-        <div className="card" style={{ padding: 32, textAlign: 'center' }}>
-          <div style={{ fontSize: 44, marginBottom: 12 }}>⚠️</div>
-          <div style={{ fontWeight: 700, fontSize: 16, marginBottom: 6 }}>Card not found</div>
-          <div style={{ color: 'var(--mu)', fontSize: 13.5, marginBottom: 20, lineHeight: 1.6 }}>{error}</div>
-          <button className="btn btn-g" onClick={() => router.push('/dashboard/cards')}>Try Another Serial</button>
-        </div>
+      <div className="ag-page ag-card-page">
+        {back}
+        <section className="ui-card"><EmptyState icon="card" tone="danger" title="Card not found" text={loadError}
+          action={<Link href="/dashboard/cards" className="ui-btn ui-btn--primary">Try another serial</Link>} /></section>
       </div>
     )
   }
+  if (!card) return <div className="ag-page ag-card-page">{back}<ListSkeleton count={3} /></div>
 
-  const isAlreadyLinked = card?.status === 'Linked' || linked
+  const linked = card.status === 'Linked'
+  const blocked = card.status === 'Blocked'
+  const isExpired = !!card.expiryDate && new Date(card.expiryDate).getTime() < Date.now()
+  const statusLabel = linked ? 'Linked' : blocked ? 'Blocked' : isExpired ? 'Expired' : 'Not linked'
 
   return (
-    <div style={{ maxWidth: 640, margin: '0 auto', padding: '16px 0' }}>
-      <button onClick={() => router.push('/dashboard/cards')} style={backLinkStyle}>← Back to Configure Card</button>
+    <div className="ag-page ag-card-page">
+      {back}
 
-      {/* Card preview */}
-      <div style={{
-        background: 'linear-gradient(135deg,#0e4d24,#1a6b3a)',
-        color: '#fff',
-        borderRadius: 16,
-        padding: '22px 22px 18px',
-        marginBottom: 18,
-        boxShadow: '0 10px 30px rgba(14,77,36,.25)',
-        position: 'relative',
-        overflow: 'hidden',
-      }}>
-        <div style={{ position: 'absolute', top: -30, right: -30, width: 140, height: 140, borderRadius: '50%', background: 'rgba(255,255,255,.08)' }} />
-        <div style={{ position: 'absolute', bottom: -40, left: -10, width: 100, height: 100, borderRadius: '50%', background: 'rgba(255,255,255,.05)' }} />
-
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 22, position: 'relative' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <span style={{ fontSize: 22 }}>💳</span>
-            <span style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", fontWeight: 800, fontSize: 14, letterSpacing: 1 }}>VOCHUS EASY SAVE</span>
-          </div>
-          <span style={{
-            fontSize: 11, fontWeight: 700, padding: '3px 10px', borderRadius: 20,
-            background: isAlreadyLinked ? 'rgba(255,255,255,.2)' : 'rgba(255,200,0,.25)',
-            color: '#fff', border: '1px solid rgba(255,255,255,.3)',
-          }}>{isAlreadyLinked ? '✓ LINKED' : '⏳ UNLINKED'}</span>
+      <div className={`ag-member-card${linked ? ' is-linked' : ''}${blocked || isExpired ? ' is-off' : ''}`} aria-label={`Card ${card.serial}, ${statusLabel}`}>
+        <div className="ag-member-card-top">
+          <span className="ag-member-card-brand"><Logo size={26} variant="mono" /> Vochus Easy Save</span>
+          <span className="ag-member-card-status">{statusLabel}</span>
         </div>
-
-        <div style={{ fontFamily: 'monospace', fontSize: 20, fontWeight: 700, letterSpacing: 3, marginBottom: 18, position: 'relative' }}>
-          {serial}
-        </div>
-
-        <div style={{ display: 'flex', gap: 18, fontSize: 11, opacity: .85, position: 'relative' }}>
-          <div>
-            <div style={{ textTransform: 'uppercase', letterSpacing: 1, marginBottom: 2 }}>Batch</div>
-            <div style={{ fontWeight: 700, fontSize: 13 }}>{card?.batchName ?? '—'}</div>
-          </div>
-          <div>
-            <div style={{ textTransform: 'uppercase', letterSpacing: 1, marginBottom: 2 }}>Expires</div>
-            <div style={{ fontWeight: 700, fontSize: 13 }}>{card?.expiryDate ? new Date(card.expiryDate).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }) : '—'}</div>
-          </div>
+        <p className="ag-member-card-serial">{card.serial}</p>
+        <div className="ag-member-card-meta">
+          <div><span>Batch</span><strong>{card.batchName ?? '—'}</strong></div>
+          <div><span>{isExpired ? 'Expired' : 'Expires'}</span><strong>{card.expiryDate ? monthYear(card.expiryDate) : '—'}</strong></div>
+          {linked && card.customer && <div><span>Customer</span><strong>{displayName(card.customer.name)}</strong></div>}
         </div>
       </div>
 
-      {isAlreadyLinked ? (
-        <div className="card" style={{ padding: 28, textAlign: 'center' }}>
-          <div style={{ fontSize: 50, marginBottom: 12 }}>✅</div>
-          <div style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", fontWeight: 800, fontSize: 18, marginBottom: 6 }}>Card Activated</div>
-          <div style={{ color: 'var(--mu)', fontSize: 13.5, lineHeight: 1.6, marginBottom: 18 }}>
-            This card is linked to <strong style={{ color: 'var(--text)' }}>{card?.customer?.name}</strong>
-            {card?.customer?.customerId && <span> · {card.customer.customerId}</span>}
-            <br />The customer can now use it for savings transactions.
-          </div>
-          <button className="btn btn-out" onClick={() => router.push('/dashboard/cards')}>Configure Another Card</button>
-        </div>
+      {linked ? (
+        <section className="ui-card ag-card-done">
+          <span className="ag-verified-icon" aria-hidden="true"><Icons.check size={22} /></span>
+          <h2 className="ag-card-done-title">{justLinked ? 'Card linked' : 'This card is already linked'}</h2>
+          <p className="ui-row-sub">
+            {card.customer ? <>It belongs to <strong>{displayName(card.customer.name)}</strong> · {card.customer.customerId}.</> : 'It belongs to a customer.'}
+            {!justLinked && ' It can’t be moved to someone else in the app; contact support if it’s wrong.'}
+          </p>
+          <Link href="/dashboard/cards" className="ui-btn ui-btn--secondary ui-btn--block">Link another card</Link>
+        </section>
+      ) : blocked || isExpired ? (
+        <section className="ui-card"><EmptyState icon="error" tone="danger" title={blocked ? 'This card is blocked' : 'This card has expired'}
+          text={`It can’t be given to a customer. Ask your admin for a new card.`}
+          action={<Link href="/dashboard/cards" className="ui-btn ui-btn--secondary">Try another card</Link>} /></section>
       ) : (
-        <div className="card" style={{ padding: 22 }}>
-          <div style={{ fontFamily: "'Plus Jakarta Sans',sans-serif", fontWeight: 700, fontSize: 16, marginBottom: 4 }}>Link to Customer</div>
-          <div style={{ color: 'var(--mu)', fontSize: 12.5, marginBottom: 14 }}>Search by name, phone, or customer ID, then tap to select.</div>
-
-          <div style={{ position: 'relative' }}>
-            <input
-              className="finput"
-              type="text"
-              placeholder="e.g. Ngozi, 08023404253, or CUS-00012"
-              value={search}
-              onChange={e => { setSearch(e.target.value); setSelected(null) }}
-              style={{ paddingLeft: 38 }}
-              autoFocus
-            />
-            <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--mu)', fontSize: 16 }}>🔍</span>
-          </div>
-
-          {searching && <div style={{ fontSize: 12.5, color: 'var(--mu)', marginTop: 6 }}>Searching…</div>}
-
-          {results.length > 0 && !selected && (
-            <div style={{
-              border: '1px solid var(--br)',
-              borderRadius: 10,
-              marginTop: 10,
-              maxHeight: 280,
-              overflowY: 'auto',
-            }}>
-              {results.map((c, i) => (
-                <button
-                  key={c.id}
-                  onClick={() => { setSelected(c); setResults([]); setSearch('') }}
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 12,
-                    width: '100%',
-                    textAlign: 'left',
-                    padding: '12px 14px',
-                    border: 'none',
-                    borderBottom: i < results.length - 1 ? '1px solid var(--br)' : 'none',
-                    background: 'var(--card)',
-                    cursor: 'pointer',
-                    color: 'var(--text)',
-                  }}
-                >
-                  <div style={{ width: 36, height: 36, borderRadius: '50%', background: 'var(--gl)', color: 'var(--g)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 13, flexShrink: 0 }}>
-                    {(c.firstName[0] ?? '?')}{(c.lastName[0] ?? '')}
-                  </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 700, fontSize: 14 }}>{c.firstName} {c.lastName}</div>
-                    <div style={{ fontSize: 12, color: 'var(--mu)' }}>{c.customerId} · {c.phone}</div>
-                  </div>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {!searching && search.trim().length > 0 && results.length === 0 && !selected && (
-            <div style={{ fontSize: 12.5, color: 'var(--mu)', marginTop: 10, padding: '12px 14px', background: 'var(--bg)', borderRadius: 8 }}>
-              No customers match &ldquo;{search}&rdquo;. Try a different search.
-            </div>
-          )}
-
-          {selected && (
-            <div style={{
-              padding: 14,
-              borderRadius: 12,
-              background: '#dcfce7',
-              border: '1.5px solid #16a34a',
-              marginTop: 12,
-              display: 'flex',
-              alignItems: 'center',
-              gap: 12,
-            }}>
-              <div style={{ width: 40, height: 40, borderRadius: '50%', background: '#16a34a', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 14, flexShrink: 0 }}>
-                {(selected.firstName[0] ?? '?')}{(selected.lastName[0] ?? '')}
+        <section className="ui-card ag-card-pick" aria-labelledby="pick-title">
+          <h2 id="pick-title" className="ui-card-title ag-card-title">Who is this card for?</h2>
+          {!selected ? (
+            <>
+              <div className="ag-search">
+                <Icons.search size={20} aria-hidden="true" />
+                <input className="ui-input" type="search" autoComplete="off" autoFocus placeholder="Name, phone or customer ID" aria-label="Find a customer"
+                  value={search} onChange={e => setSearch(e.target.value)} />
               </div>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 800, color: '#0e4d24', fontSize: 14.5 }}>{selected.firstName} {selected.lastName}</div>
-                <div style={{ fontSize: 12, color: '#1a6b3a' }}>{selected.customerId} · {selected.phone}</div>
+              {searching && results === null ? <ListSkeleton count={3} /> : results && (
+                results.length === 0
+                  ? <p className="ag-chat-none">No customers match “{search}”.</p>
+                  : <div className="ag-card-results">
+                      {results.map(c => (
+                        <button key={c.id} type="button" className="ag-chat-thread" onClick={() => { setSelected(c); setLinkError('') }}>
+                          {c.photoUrl
+                            ? <img className="ui-avatar ag-av ag-chat-av" src={c.photoUrl} alt="" />
+                            : <span className={`ui-avatar ag-av ag-av--${avatarTint(c.customerId)} ag-chat-av`} aria-hidden="true">{initials(c.firstName, c.lastName)}</span>}
+                          <span className="ag-chat-thread-main">
+                            <span className="ag-chat-thread-name">{displayName(`${c.firstName} ${c.lastName}`)}</span>
+                            <span className="ag-chat-thread-last">{c.customerId} · {c.phone}</span>
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+              )}
+              {!search && <p className="ui-note">Search for the customer you’re giving this card to.</p>}
+            </>
+          ) : (
+            <>
+              <div className="ag-who ag-card-who">
+                {selected.photoUrl
+                  ? <img className="ui-avatar ag-av ag-chat-av" src={selected.photoUrl} alt="" />
+                  : <span className={`ui-avatar ag-av ag-av--${avatarTint(selected.customerId)} ag-chat-av`} aria-hidden="true">{initials(selected.firstName, selected.lastName)}</span>}
+                <div className="ag-payee-main">
+                  <p className="ui-row-title">{displayName(`${selected.firstName} ${selected.lastName}`)}</p>
+                  <p className="ui-row-sub">{selected.customerId} · {selected.phone}</p>
+                </div>
+                <button type="button" className="ui-link" onClick={() => setSelected(null)}>Change</button>
               </div>
-              <button
-                onClick={() => setSelected(null)}
-                style={{ background: 'rgba(0,0,0,.06)', border: 'none', cursor: 'pointer', color: '#0e4d24', fontSize: 16, width: 28, height: 28, borderRadius: '50%' }}
-                title="Choose another"
-              >×</button>
-            </div>
+              <p className="ag-set-note ag-set-note--warn"><Icons.locked size={16} aria-hidden="true" /> Check it’s the right person. A linked card can’t be moved to someone else in the app.</p>
+              <FormError message={linkError} />
+              <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={linking} onClick={link}>
+                {linking ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Linking…</> : `Link card to ${displayName(selected.firstName)}`}
+              </button>
+            </>
           )}
-
-          {linkError && (
-            <div className="alert alert-rd" style={{ marginTop: 12 }}>🔴 {linkError}</div>
-          )}
-
-          <button
-            className="btn btn-g"
-            onClick={handleLink}
-            disabled={!selected || linking}
-            style={{ width: '100%', marginTop: 16, opacity: selected && !linking ? 1 : .55 }}
-          >
-            {linking ? '⏳ Linking…' : selected ? `🔗 Link to ${selected.firstName} ${selected.lastName}` : '🔗 Select a Customer First'}
-          </button>
-        </div>
+        </section>
       )}
     </div>
   )
-}
-
-const backLinkStyle: React.CSSProperties = {
-  background: 'none', border: 'none', cursor: 'pointer',
-  color: 'var(--mu)', fontSize: 13, padding: '4px 0', marginBottom: 16,
-  display: 'flex', alignItems: 'center', gap: 4,
 }
