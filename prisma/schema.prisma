@@ -33,6 +33,7 @@ model Agent {
   status             String       @default("Active")
   loginAttempts      Int          @default(0)
   lockedAt           DateTime?
+  tokenVersion       Int          @default(0)
   profileUnlocked    Boolean      @default(false)
   transactionPin     String?
   unlockToken        String?

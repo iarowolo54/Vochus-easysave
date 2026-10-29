@@ -57,13 +57,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Current password is incorrect' }, { status: 400 })
   }
 
-  // On success: set the password, clear the lockout, and revoke biometric tokens
-  // — a persistent credential that would otherwise keep logging in with the old
-  // password. (NextAuth JWTs are stateless, so existing web sessions are not
-  // force-expired; documented as a follow-up.)
+  // On success: set the password, clear the lockout, revoke biometric tokens,
+  // and bump tokenVersion so existing NextAuth JWT sessions are rejected on their
+  // next request — no stale credential survives a password change.
   const hashed = await bcrypt.hash(newPassword, 10)
   await prisma.$transaction([
-    prisma.agent.update({ where: { id: agent.id }, data: { password: hashed, loginAttempts: 0, lockedAt: null } }),
+    // Bump tokenVersion so existing NextAuth JWTs are rejected on their next
+    // request (see the session callback in auth.ts).
+    prisma.agent.update({ where: { id: agent.id }, data: { password: hashed, loginAttempts: 0, lockedAt: null, tokenVersion: { increment: 1 } } }),
     prisma.biometricToken.updateMany({ where: { agentId: agent.id, revokedAt: null }, data: { revokedAt: new Date() } }),
   ])
 

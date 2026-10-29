@@ -119,6 +119,7 @@ export const authOptions: NextAuthOptions = {
           agentId: agent.agentId,
           location: agent.location,
           walletBalance: agent.walletBalance,
+          tokenVersion: agent.tokenVersion,
           // photoUrl deliberately NOT returned — can be huge base64; session callback loads from DB
         }
       },
@@ -131,6 +132,7 @@ export const authOptions: NextAuthOptions = {
         token.agentId = (user as any).agentId
         token.location = (user as any).location
         token.walletBalance = (user as any).walletBalance
+        token.tokenVersion = (user as any).tokenVersion ?? 0
         // photoUrl intentionally not stored in JWT (cookie size limit)
       }
       return token
@@ -143,6 +145,12 @@ export const authOptions: NextAuthOptions = {
           where: { agentId: token.agentId as string },
           include: { documents: { select: { docType: true, docApprovalStatus: true } } },
         })
+        // Revoke tokens issued before the agent's last password change: if the
+        // stored tokenVersion has moved on, clear the user so protected routes
+        // (which all check session.user) treat this session as logged out.
+        if (agent && (agent.tokenVersion ?? 0) !== ((token.tokenVersion as number) ?? 0)) {
+          return { ...session, user: undefined } as unknown as typeof session
+        }
         ;(session.user as any).id = agent?.id
         ;(session.user as any).walletBalance = agent?.walletBalance ?? token.walletBalance
         ;(session.user as any).photoUrl = agent?.photoUrl ?? token.photoUrl
