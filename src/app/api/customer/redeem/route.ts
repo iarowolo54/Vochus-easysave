@@ -9,6 +9,7 @@ import { sendSMS } from '@/lib/kudisms'
 import { sendMail } from '@/lib/mail'
 import crypto from 'crypto'
 import { hashRedemptionToken, redemptionTokenMatches } from '@/lib/redemption-token'
+import { reserveRedemptionAttempt } from '@/lib/redemption-attempts'
 
 export async function GET() {
   const session = await getCustomerSession()
@@ -152,10 +153,21 @@ export async function PATCH(req: NextRequest) {
   }
   if (redemption.status !== 'Pending') return NextResponse.json({ error: 'Already processed' }, { status: 409 })
 
-  if (!redemptionTokenMatches(redemption.token, token)) return NextResponse.json({ error: 'Invalid token' }, { status: 400 })
+  // Expiry first, so an expired code doesn't burn a guess attempt.
   if (!redemption.tokenExpiry || redemption.tokenExpiry < new Date()) {
     return NextResponse.json({ error: 'Token expired' }, { status: 400 })
   }
+
+  // Cap wrong guesses: reserve an attempt atomically BEFORE comparing, so a
+  // hijacked session that doesn't control the customer's phone/email can't
+  // brute-force the 6-digit confirmation code. 0 reserved => locked / over cap.
+  if (!(await reserveRedemptionAttempt(prisma, ref))) {
+    return NextResponse.json(
+      { error: 'Too many incorrect attempts. This code is locked — request a new redemption.' },
+      { status: 429 },
+    )
+  }
+  if (!redemptionTokenMatches(redemption.token, token)) return NextResponse.json({ error: 'Invalid token' }, { status: 400 })
 
   await prisma.earlyRedemption.update({
     where: { ref },

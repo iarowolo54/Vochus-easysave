@@ -299,6 +299,7 @@ model EarlyRedemption {
   netPayout     Float
   token         String?   @unique
   tokenExpiry   DateTime?
+  attempts      Int       @default(0)
   agentApprovedAt        DateTime?
   agentApprovedBy        String?
   payoutMethod           String    @default("Cash")

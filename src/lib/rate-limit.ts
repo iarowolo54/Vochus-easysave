@@ -40,6 +40,12 @@ export function createRateLimiter() {
 // (e.g. `phone-available:<ip>`) so budgets don't bleed across endpoints.
 export const enrolRateLimiter = createRateLimiter()
 
+// Limiter for the agent code-only redemption lookup (`lookup-token`). That route
+// resolves a redemption from the 6-digit code alone, so a wrong guess matches no
+// record and can't be capped per-redemption the way `verify-token` is — a soft
+// per-agent cap bounds brute-forcing the code space. Keyed by agent id.
+export const redemptionLookupRateLimiter = createRateLimiter()
+
 // Best-effort client IP from proxy headers. Uses the RIGHTMOST X-Forwarded-For
 // entry (the one our own proxy appended) to resist client-supplied spoofing,
 // matching how the customer login route derives the IP.
