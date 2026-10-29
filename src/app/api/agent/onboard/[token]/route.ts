@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import bcrypt from 'bcryptjs'
 import { logAudit } from '@/lib/audit'
+import { validatePhoto } from '@/lib/photo'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params
@@ -25,6 +26,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   if (!firstName || !lastName || !phone || !state || !address || !nokName || !nokPhone || !password) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
   }
+  const photoCheck = validatePhoto(photoUrl)
+  if (!photoCheck.ok) return NextResponse.json({ error: photoCheck.error }, { status: 400 })
 
   const existing = await prisma.agent.findFirst({ where: { OR: [{ phone }, { email: invite.email }] } })
   if (existing) return NextResponse.json({ error: 'Phone or email already registered' }, { status: 409 })

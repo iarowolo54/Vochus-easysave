@@ -7,6 +7,7 @@ import { logAudit } from '@/lib/audit'
 import { resolveBvn } from '@/lib/paystack'
 import { normalizeEmail } from '@/lib/email'
 import { resolvePlanStartDate, maturityFrom } from '@/lib/saving-plan'
+import { validatePhoto } from '@/lib/photo'
 
 function genId(prefix: string, pad = 5) {
   return `${prefix}-${String(Math.floor(Math.random() * (10 ** pad - 10 ** (pad - 1)) + 10 ** (pad - 1)))}`
@@ -38,6 +39,8 @@ export async function POST(req: NextRequest) {
   if (String(password).length < 6) {
     return NextResponse.json({ error: 'Password must be at least 6 characters' }, { status: 400 })
   }
+  const photoCheck = validatePhoto(photoUrl)
+  if (!photoCheck.ok) return NextResponse.json({ error: photoCheck.error }, { status: 400 })
   if (dailyAmount !== undefined && dailyAmount !== null && dailyAmount !== '') {
     const da = Number(dailyAmount)
     if (!isFinite(da) || da < 0) return NextResponse.json({ error: 'Daily amount cannot be negative' }, { status: 400 })
