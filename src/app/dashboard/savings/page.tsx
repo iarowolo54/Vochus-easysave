@@ -7,7 +7,7 @@ import Link from 'next/link'
 import { blockMinus, nonNegativeString } from '@/lib/numeric'
 import { avatarTint } from '@/lib/avatar'
 import { waLink } from '@/lib/whatsapp'
-import { displayName, formatNaira, formatTime } from '@/lib/format'
+import { displayName, formatDate, formatNaira, formatTime } from '@/lib/format'
 import { addDays, isoDate, parseDateInput, today } from '@/lib/plan-dates'
 import BottomSheet from '@/components/ui/BottomSheet'
 import EmptyState from '@/components/ui/EmptyState'
@@ -25,7 +25,7 @@ interface Customer {
   savingsPlans?: SavingsPlan[]
 }
 /** `dailyAmount` is stored as a per-day equivalent; weekly / monthly plans pay 7 or 30 times that each time. */
-interface SavingsPlan { id: string; goal: string; status: string; maturityDate: string | null; dailyAmount: number; cadence?: string | null; balance: number }
+interface SavingsPlan { id: string; goal: string; status: string; startDate?: string | null; maturityDate: string | null; dailyAmount: number; cadence?: string | null; balance: number }
 const UNIT_DAYS: Record<string, number> = { daily: 1, weekly: 7, monthly: 30 }
 const perPayment = (p: SavingsPlan) => Math.round(p.dailyAmount * (UNIT_DAYS[p.cadence ?? 'daily'] ?? 1) * 100) / 100
 const planUnit = (p: SavingsPlan) => p.cadence === 'weekly' ? 'week' : p.cadence === 'monthly' ? 'month' : 'day'
@@ -549,7 +549,7 @@ function SavingsContent() {
                           onClick={() => { setPlanId(p.id); setError(''); setSelectedDates([]) }}>
                           <span className="ag-payee-main">
                             <span className="ui-row-title ui-block">{p.goal}</span>
-                            <span className="ui-row-sub ui-block">{formatNaira(perPayment(p), { minor: false })} a {planUnit(p)} · {formatNaira(p.balance, { minor: false })} saved</span>
+                            <span className="ui-row-sub ui-block">{formatNaira(perPayment(p), { minor: false })} a {planUnit(p)}{p.startDate ? ` · ${formatDate(p.startDate)}${p.maturityDate ? ` to ${formatDate(p.maturityDate)}` : ''}` : ''} · {formatNaira(p.balance, { minor: false })} saved</span>
                           </span>
                           <span className="ui-radio" aria-hidden="true" />
                         </button>
