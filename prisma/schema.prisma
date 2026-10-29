@@ -126,7 +126,6 @@ model SavingsPlan {
   transactions      Transaction[]
   earlyRedemptions  EarlyRedemption[]
 
-  @@unique([customerId, startDate], name: "uniq_plan_per_start")
 }
 
 model Transaction {

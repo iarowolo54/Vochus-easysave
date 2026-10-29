@@ -1,5 +1,6 @@
 import { prisma } from './prisma'
 import bcrypt from 'bcryptjs'
+import { randomBytes } from 'node:crypto'
 
 const HOUSE_AGENT_CODE = 'AGT-HOUSE'
 
@@ -13,7 +14,7 @@ export async function getHouseAgentId(): Promise<string> {
       phone: '+000-HOUSE',
       email: 'house@vochus.internal',
       location: 'Vochus HQ',
-      password: await bcrypt.hash(Math.random().toString(36), 10),
+      password: await bcrypt.hash(randomBytes(24).toString('hex'), 10),
       status: 'System',
       emailVerified: true,
     },

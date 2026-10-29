@@ -27,16 +27,6 @@ function getExpiryDate(years: number): string {
   return d.toISOString().slice(0, 10)
 }
 
-function generateBatchId(): string {
-  return Math.random().toString(36).toUpperCase().slice(2, 6)
-}
-
-function generateSerials(batchId: string, quantity: number): string[] {
-  return Array.from({ length: quantity }, (_, i) =>
-    `VES-${batchId}${String(i + 1).padStart(4, '0')}`
-  )
-}
-
 function hexToRgb(hex: string): [number, number, number] {
   const h = hex.replace('#', '')
   return [parseInt(h.slice(0,2),16), parseInt(h.slice(2,4),16), parseInt(h.slice(4,6),16)]
@@ -316,13 +306,13 @@ export default function GenerateCardsPage() {
     if (!batchName.trim()) { setGenError('Batch name is required'); return }
     if (quantity < 1 || quantity > 500) { setGenError('Quantity must be 1–500'); return }
     setGenError(''); setGenerating(true)
-    const bid = generateBatchId()
-    const serials = generateSerials(bid, quantity)
     try {
+      // Serials and the batch id are generated server-side (unguessable); the
+      // page renders whatever the server returns in `d.cards`.
       const r = await fetch('/api/admin/cards/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ batchName: batchName.trim(), quantity, expiryDate: getExpiryDate(expiryYears), serials, batchId: bid }),
+        body: JSON.stringify({ batchName: batchName.trim(), quantity, expiryDate: getExpiryDate(expiryYears) }),
       })
       const d = await r.json()
       if (!r.ok) { setGenError(d.error ?? 'Generation failed'); return }

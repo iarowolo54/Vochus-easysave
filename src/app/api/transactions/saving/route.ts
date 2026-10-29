@@ -6,6 +6,7 @@ import { logAudit } from '@/lib/audit'
 import { assertSufficient, insufficientResponse, InsufficientFundsError, money } from '@/lib/wallet-guard'
 import { debitAgentBalance } from '@/lib/wallet-debit'
 import { creditRegistrationReward } from '@/lib/reward'
+import { selectActivePlan } from '@/lib/saving-plan'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -15,7 +16,7 @@ export async function POST(req: NextRequest) {
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
 
   const body = await req.json()
-  const { customerId, amount, method, date } = body
+  const { customerId, amount, method, date, planId } = body
   const amt = parseFloat(amount)
 
   if (!customerId || !amt || amt <= 0) {
@@ -25,11 +26,16 @@ export async function POST(req: NextRequest) {
   const customer = await prisma.customer.findFirst({ where: { id: customerId, agentId: agent.id } })
   if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
 
-  const plan = await prisma.savingsPlan.findFirst({
-    where: { customerId: customer.id, status: 'Active' },
-    orderBy: { startDate: 'desc' },
-  })
-  if (!plan) return NextResponse.json({ error: 'No active savings plan' }, { status: 400 })
+  // Save into the explicitly chosen plan. With no planId it only works when the
+  // customer has exactly one Active plan — otherwise the caller must say which,
+  // instead of money silently landing on "the newest plan".
+  const selected = await selectActivePlan(prisma, customer.id, planId)
+  if ('error' in selected) {
+    if (selected.error === 'none') return NextResponse.json({ error: 'No active savings plan' }, { status: 400 })
+    if (selected.error === 'not_found') return NextResponse.json({ error: 'Plan not found for this customer' }, { status: 404 })
+    return NextResponse.json({ error: 'This customer has more than one active plan — choose which plan to save into' }, { status: 400 })
+  }
+  const plan = selected.plan
 
   const rounded = money(amt)
 

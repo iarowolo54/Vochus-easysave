@@ -6,6 +6,7 @@ import { sendMail } from '@/lib/mail'
 import { logAudit } from '@/lib/audit'
 import { resolveBvn } from '@/lib/paystack'
 import { normalizeEmail } from '@/lib/email'
+import { resolvePlanStartDate, maturityFrom } from '@/lib/saving-plan'
 
 function genId(prefix: string, pad = 5) {
   return `${prefix}-${String(Math.floor(Math.random() * (10 ** pad - 10 ** (pad - 1)) + 10 ** (pad - 1)))}`
@@ -14,7 +15,7 @@ function genId(prefix: string, pad = 5) {
 export async function POST(req: NextRequest) {
   const body = await req.json()
   const { ref, aid, firstName, lastName, phone, email, dob, address, gender, bvn,
-          nokName, nokRelation, nokPhone, photoUrl, dailyAmount, periodDays, goal, password, cadence, plans } = body
+          nokName, nokRelation, nokPhone, photoUrl, dailyAmount, periodDays, goal, password, cadence, plans, startDate } = body
 
   if (!firstName || !lastName || !phone || !email || !address || !nokName || !nokRelation || !nokPhone || !password) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
@@ -103,12 +104,14 @@ export async function POST(req: NextRequest) {
     customerId = genId('CST')
   }
 
-  const startDate = new Date()
+  // Optional start date (today or later) for the first plan; defaults to today.
+  const started = resolvePlanStartDate(startDate)
+  if ('error' in started) return NextResponse.json({ error: started.error }, { status: 400 })
+  const planStart = started.date
   const rawAmt = Number(dailyAmount ?? 500)
   const actualDailyAmount = cadence === 'weekly' ? rawAmt / 7 : cadence === 'monthly' ? rawAmt / 30 : rawAmt
   const days = Number(periodDays ?? 90)
-  const maturityDate = new Date(startDate)
-  maturityDate.setDate(maturityDate.getDate() + days)
+  const maturityDate = maturityFrom(planStart, days)
 
   const customer = await prisma.customer.create({
     data: {
@@ -134,7 +137,7 @@ export async function POST(req: NextRequest) {
           goal: goal ?? 'General Savings',
           cadence: cadence ?? 'daily',
           source: 'self',
-          startDate,
+          startDate: planStart,
           maturityDate,
           balance: 0,
           status: 'Active',
@@ -156,10 +159,12 @@ export async function POST(req: NextRequest) {
       const pCadence: string = p.cadence ?? 'daily'
       const pDaily = pCadence === 'weekly' ? pRawAmt / 7 : pCadence === 'monthly' ? pRawAmt / 30 : pRawAmt
       const pDays = pCadence === 'weekly' ? pPeriod * 7 : pCadence === 'monthly' ? pPeriod * 30 : pPeriod
-      // Bump startDate by (i+1)s so (customerId, startDate) unique index doesn't collide with the first plan
-      const pStart = new Date()
-      pStart.setSeconds(pStart.getSeconds() + i + 1)
-      const pMat = new Date(pStart); pMat.setDate(pMat.getDate() + pDays)
+      // Optional per-plan start date (today or later); defaults to today. Plans
+      // may now share a start date — the (customerId, startDate) unique index is gone.
+      const pStarted = resolvePlanStartDate(p?.startDate)
+      if ('error' in pStarted) continue
+      const pStart = pStarted.date
+      const pMat = maturityFrom(pStart, pDays)
       await prisma.savingsPlan.create({
         data: {
           customerId: customer.id,

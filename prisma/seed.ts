@@ -240,27 +240,22 @@ async function main() {
       },
     })
 
-    const plan = await prisma.savingsPlan.upsert({
-      where: { uniq_plan_per_start: { customerId: cust.id, startDate } },
-      update: {
-        dailyAmount: c.planDaily,
-        periodDays: c.planDays,
-        goal: c.planGoal,
-        maturityDate,
-        balance: c.planBalance,
-        status: (c as any).planStatus ?? 'Active',
-      },
-      create: {
-        customerId: cust.id,
-        dailyAmount: c.planDaily,
-        periodDays: c.planDays,
-        goal: c.planGoal,
-        startDate,
-        maturityDate,
-        balance: c.planBalance,
-        status: (c as any).planStatus ?? 'Active',
-      },
+    // The (customerId, startDate) unique index is gone, so upsert by it no longer
+    // works. Find this demo plan by (customer + goal) and update, else create.
+    const existingPlan = await prisma.savingsPlan.findFirst({
+      where: { customerId: cust.id, goal: c.planGoal },
     })
+    const planData = {
+      dailyAmount: c.planDaily,
+      periodDays: c.planDays,
+      goal: c.planGoal,
+      maturityDate,
+      balance: c.planBalance,
+      status: (c as any).planStatus ?? 'Active',
+    }
+    const plan = existingPlan
+      ? await prisma.savingsPlan.update({ where: { id: existingPlan.id }, data: planData })
+      : await prisma.savingsPlan.create({ data: { customerId: cust.id, startDate, ...planData } })
 
     createdCustomers[c.customerId] = { id: cust.id, planId: plan.id }
   }
