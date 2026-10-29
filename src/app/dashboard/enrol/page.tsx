@@ -19,7 +19,7 @@ interface PlanDraft {
 }
 
 interface FormData {
-  firstName: string; lastName: string; phone: string; email: string; dob: string
+  firstName: string; lastName: string; gender: string; phone: string; email: string; dob: string
   address: string; state: string; language: string; bvn: string
   nokName: string; nokRelation: string; nokPhone: string
   dailyAmount: string; periodDays: string; goal: string; startDate: string; notes: string; cadence: Cadence
@@ -29,7 +29,7 @@ interface FormData {
 }
 
 const empty: FormData = {
-  firstName: '', lastName: '', phone: '', email: '', dob: '',
+  firstName: '', lastName: '', gender: '', phone: '', email: '', dob: '',
   address: '', state: '', language: 'English', bvn: '',
   nokName: '', nokRelation: 'Spouse', nokPhone: '',
   dailyAmount: '', periodDays: '', goal: '', startDate: '', notes: '', cadence: 'daily',
@@ -344,7 +344,7 @@ export default function EnrolPage() {
   }
 
   const fullName = displayName(`${form.firstName} ${form.lastName}`.trim())
-  const req1 = { firstName: form.firstName, lastName: form.lastName, phone: form.phone, address: form.address, state: form.state }
+  const req1 = { firstName: form.firstName, lastName: form.lastName, gender: form.gender, phone: form.phone, address: form.address, state: form.state }
   const missing = (k: keyof typeof req1) => showMissing && !req1[k]
   const phoneShort = showMissing && form.phone.length > 0 && form.phone.length < 11
 
@@ -457,6 +457,15 @@ export default function EnrolPage() {
                       aria-invalid={missing('lastName') || undefined} onChange={e => set('lastName', e.target.value)} />
                   </Field>
                 </div>
+                <div className="ag-tf-wrap">
+                  <p className="ag-label" id="gd-label">Gender <span className="ag-req" aria-hidden="true">*</span></p>
+                  <div className="ag-goal-chips ag-gender" role="radiogroup" aria-labelledby="gd-label" aria-describedby={missing('gender') ? 'gd-error' : undefined}>
+                    {['Female', 'Male'].map(g => (
+                      <button key={g} type="button" role="radio" aria-checked={form.gender === g} className="ag-chip" onClick={() => set('gender', g)}>{g}</button>
+                    ))}
+                  </div>
+                  {missing('gender') && <FieldError id="gd-error" message="Choose their gender" />}
+                </div>
                 <Field id="ph" label="Phone number" required hint="We’ll text a code to this number next."
                   error={missing('phone') ? 'Enter their phone number' : phoneShort ? 'Phone numbers have 11 digits' : ''}>
                   <input id="ph" className="ag-tf-input ag-tf-num" type="tel" inputMode="numeric" maxLength={11} placeholder="080 0000 0000"
@@ -512,7 +521,7 @@ export default function EnrolPage() {
                 </details>
 
                 <FlowActions primary={<button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={() => {
-                  if (!form.firstName || !form.lastName || !form.phone || form.phone.length < 11 || !form.address || !form.state) {
+                  if (!form.firstName || !form.lastName || !form.gender || !form.phone || form.phone.length < 11 || !form.address || !form.state) {
                     setShowMissing(true)
                     setError('Some details are missing. Check the fields marked in red.')
                     return
@@ -766,6 +775,7 @@ export default function EnrolPage() {
                 </div>
 
                 <ReviewSection title="Personal details" onEdit={() => go(1)}>
+                  <Row k="Gender" v={form.gender} />
                   <Row k="Address" v={`${form.address}, ${form.state}`} />
                   <Row k="Language" v={form.language} />
                   {form.nokName && <Row k="Next of kin" v={`${form.nokName} (${form.nokRelation})`} />}

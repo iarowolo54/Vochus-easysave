@@ -2484,3 +2484,5 @@ a.ag-crow { text-decoration: none; color: inherit; }
 .ag-addplan .ag-label:first-of-type { margin-top: 0; }
 .ag-addplan .ag-agree { margin-top: var(--ui-s4); }
 .ag-addplan-actions { margin-top: var(--ui-s4); }
+.ag-gender { margin-bottom: 0; }
+.ag-chip[role="radio"][aria-checked="true"] { border-color: var(--ui-ink); background: var(--ui-ink); color: #fff; }

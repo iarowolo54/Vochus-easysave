@@ -217,7 +217,7 @@ function EnrollContent() {
   function continueDraft(d: Draft) {
     setFirstName(d.firstName); setLastName(d.lastName); setPhone(d.phone); setEmail(d.email)
     setEmailVerified(!!d.verifiedEmail && d.verifiedEmail === d.email)
-    setDob(d.dob); setGender(d.gender); setAddress(d.address)
+    setDob(d.dob); setGender(d.gender === 'Female' || d.gender === 'Male' ? d.gender : ''); setAddress(d.address)
     setNokName(d.nokName); setNokRelation(d.nokRelation); setNokPhone(d.nokPhone)
     setPlans(d.plans); loadPlan(d.plan); setStartGoal(d.startGoal ?? '')
     setResume(null)
@@ -312,6 +312,7 @@ function EnrollContent() {
     em: !email.trim() ? 'Enter your email address' : /^\S+@\S+\.\S+$/.test(email.trim()) ? '' : 'Check your email. It should look like name@example.com',
     addr: !address.trim() ? 'Enter your home address' : address.trim().length < 8 ? 'Add more detail, like the street and area' : '',
     dob: dob && new Date(dob) > new Date() ? 'Your date of birth can’t be in the future' : '',
+    gd: gender ? '' : 'Choose your gender',
     bvn: bvn && bvn.length < 11 ? `A BVN has 11 digits. This has ${bvn.length}.` : bvnMismatch ? 'This BVN is in a different name' : '',
     nok: nokName.trim() ? '' : 'Enter their name',
     nokp: phoneError(nokPhone, 'their') || (nokPhone === phone ? 'Use a different number from your own' : ''),
@@ -329,7 +330,7 @@ function EnrollContent() {
     'aria-describedby': err(k) ? `${k}-error` : undefined,
   })
   const FIELDS: Partial<Record<Screen, string[]>> = {
-    name: ['fn', 'ln'], contact: ['ph', 'em'], home: ['addr', 'dob'], bvn: ['bvn'], nok: ['nok', 'nokp'], password: ['pw', 'pw2'],
+    name: ['fn', 'ln'], contact: ['ph', 'em'], home: ['addr', 'dob', 'gd'], bvn: ['bvn'], nok: ['nok', 'nokp'], password: ['pw', 'pw2'],
   }
 
   /** Checks the current screen; shows every problem on it instead of moving on. */
@@ -728,8 +729,9 @@ function EnrollContent() {
             <Field id="dob" label="Date of birth (optional)" error={err('dob')}>
               <input id="dob" className="ag-tf-input" type="date" value={dob} {...v('dob')} max={new Date().toISOString().slice(0, 10)} onChange={e => setDob(e.target.value)} />
             </Field>
-            <p className="cu-label" id="gd-label">Gender (optional)</p>
-            <Choices labelledBy="gd-label" options={['Female', 'Male', 'Prefer not to say']} value={gender} onChange={v => setGender(v === gender ? '' : v)} />
+            <p className="cu-label" id="gd-label">Gender</p>
+            <Choices labelledBy="gd-label" options={['Female', 'Male']} value={gender} onChange={v => { setGender(v); setTouched(t => ({ ...t, gd: true })) }} />
+            {err('gd') && <FieldError id="gd-error" message={err('gd')} />}
             <div className="cu-actions">{cta('Continue', nextIfOk)}</div>
           </>
         )}
