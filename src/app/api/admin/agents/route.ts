@@ -5,6 +5,7 @@ import bcrypt from 'bcryptjs'
 import { randomBytes } from 'crypto'
 import { sendMail } from '@/lib/mail'
 import { logAudit } from '@/lib/audit'
+import { validatePhoto } from '@/lib/photo'
 
 export async function GET(req: NextRequest) {
   const guard = await requireSuperAdmin()
@@ -77,6 +78,8 @@ export async function POST(req: NextRequest) {
   if (!name || !phone || !email || !location || !password || !nokName || !nokPhone) {
     return NextResponse.json({ error: 'Name, phone, email, next of kin name/phone and password are required' }, { status: 400 })
   }
+  const photoCheck = validatePhoto(photoUrl)
+  if (!photoCheck.ok) return NextResponse.json({ error: photoCheck.error }, { status: 400 })
   if (floatLimit !== undefined && floatLimit !== null && floatLimit !== '') {
     const fl = parseFloat(floatLimit)
     if (!isFinite(fl) || fl < 0) {
