@@ -134,6 +134,7 @@ function SavingsContent() {
   }, [refreshKey])
 
   useEffect(() => {
+    if (!planId) { setPlanStartDate(null); setPaidDates([]); setSelectedDates([]) }
     if (!bulkMode || !planId) return
     setPaidDatesLoading(true)
     const n = new Date()
@@ -564,7 +565,9 @@ function SavingsContent() {
                   )}
 
                   {bulkMode && !recordDate ? (
-                    <DayPicker
+                    !plan ? (
+                      <p className="ui-note ui-note--center">{choosePlan ? 'Choose a plan above, then tap the days they’re paying for.' : 'This customer has no active plan.'}</p>
+                    ) : <DayPicker
                       loading={paidDatesLoading}
                       planStartDate={planStartDate}
                       paidDates={paidDates}
