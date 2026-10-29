@@ -2489,3 +2489,5 @@ a.ag-crow { text-decoration: none; color: inherit; }
 .cu-grid-2 { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 0 var(--ui-s3); }
 @media (max-width: 380px) { .cu-grid-2 { grid-template-columns: minmax(0, 1fr); } }
 .cu-tf .ag-tf-select:disabled { opacity: .6; cursor: not-allowed; }
+.ag-profile-details { margin-bottom: var(--ui-s2); }
+.ag-profile-details dd { max-width: 65%; }

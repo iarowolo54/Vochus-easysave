@@ -25,6 +25,10 @@ interface Customer {
   phone: string
   email?: string
   address: string
+  /** Stored since #18; older customers may not have them. */
+  gender?: string | null
+  state?: string | null
+  lga?: string | null
   status: string
   savingsBalance: number
   planDays: number | null
@@ -438,6 +442,14 @@ function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, g
         <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/loan-request')}><Icons.loan size={18} aria-hidden="true" /> Loan</button>
         <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/loan-repay')}><Icons.repay size={18} aria-hidden="true" /> Repay</button>
       </div>
+
+      <h3 className="ag-profile-section">Details</h3>
+      <dl className="ag-set-rows ag-profile-details">
+        <div><dt>Gender</dt><dd>{c.gender || 'Not recorded'}</dd></div>
+        <div><dt>Address</dt><dd>{[c.address, c.lga, c.state].filter(Boolean).join(', ') || 'Not recorded'}</dd></div>
+        {c.language && <div><dt>Language</dt><dd>{c.language}</dd></div>}
+        <div><dt>Next of kin</dt><dd>{c.nokName ? <>{c.nokName}{c.nokRelation ? ` (${c.nokRelation})` : ''}{c.nokPhone ? <><br /><a className="ui-link" href={`tel:${c.nokPhone}`}>{c.nokPhone}</a></> : null}</> : 'Not recorded'}</dd></div>
+      </dl>
 
       <h3 className="ag-profile-section">Savings plans</h3>
       {c.savingsPlans.length === 0 ? (
