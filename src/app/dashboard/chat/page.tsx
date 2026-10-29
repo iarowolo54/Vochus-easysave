@@ -11,7 +11,8 @@ import { displayName, formatDate } from '@/lib/format'
 
 type Thread = {
   id: string; customerId: string; firstName: string; lastName: string
-  photoUrl: string | null; unread: number; lastMessage: string | null; lastAt: string | null
+  /** The list API sends no photos (they made it slow); threads show coloured initials. */
+  photoUrl?: string | null; unread: number; lastMessage: string | null; lastAt: string | null
 }
 type Msg = {
   id: string; sender: string; senderName: string | null; message: string; imageUrl?: string | null; createdAt: string
