@@ -10,6 +10,7 @@ import CodeBoxes from '@/components/ui/CodeBoxes'
 import { FieldError, FormError } from '@/components/ui/FormErrors'
 import { Icons, type IconName } from '@/components/ui/icons'
 import { formatDate, formatNaira } from '@/lib/format'
+import { NG_STATES, lgasOf } from '@/lib/ng-lgas'
 import { addDays, isoDate, parseDateInput, today } from '@/lib/plan-dates'
 
 type Cadence = 'daily' | 'weekly' | 'monthly'
@@ -80,6 +81,8 @@ function EnrollContent() {
   const [dob, setDob] = useState('')
   const [gender, setGender] = useState('')
   const [address, setAddress] = useState('')
+  const [state, setState] = useState('')
+  const [lga, setLga] = useState('')
   const [bvn, setBvn] = useState('')
   const [bvnResult, setBvnResult] = useState<null | { ok: boolean; firstName?: string; lastName?: string; dob?: string | null; error?: string }>(null)
   const [bvnChecking, setBvnChecking] = useState(false)
@@ -208,16 +211,16 @@ function EnrollContent() {
     if (!draftReady.current || result || screen === 'intro') return
     const t = setTimeout(() => writeDraft({
       v: 1, savedAt: Date.now(), aid, ref, screen,
-      firstName, lastName, phone, email, verifiedEmail: emailVerified ? email : '', dob, gender, address,
+      firstName, lastName, phone, email, verifiedEmail: emailVerified ? email : '', dob, gender, address, state, lga,
       nokName, nokRelation, nokPhone, plans, plan: { daily, period, goal, cadence, start: planStart }, startGoal,
     }), 400)
     return () => clearTimeout(t)
-  }, [aid, ref, screen, firstName, lastName, phone, email, emailVerified, dob, gender, address, nokName, nokRelation, nokPhone, plans, daily, period, goal, cadence, startGoal, result])
+  }, [aid, ref, screen, firstName, lastName, phone, email, emailVerified, dob, gender, address, state, lga, nokName, nokRelation, nokPhone, plans, daily, period, goal, cadence, startGoal, result])
 
   function continueDraft(d: Draft) {
     setFirstName(d.firstName); setLastName(d.lastName); setPhone(d.phone); setEmail(d.email)
     setEmailVerified(!!d.verifiedEmail && d.verifiedEmail === d.email)
-    setDob(d.dob); setGender(d.gender === 'Female' || d.gender === 'Male' ? d.gender : ''); setAddress(d.address)
+    setDob(d.dob); setGender(d.gender === 'Female' || d.gender === 'Male' ? d.gender : ''); setAddress(d.address); setState(d.state ?? ''); setLga(d.lga ?? '')
     setNokName(d.nokName); setNokRelation(d.nokRelation); setNokPhone(d.nokPhone)
     setPlans(d.plans); loadPlan(d.plan); setStartGoal(d.startGoal ?? '')
     setResume(null)
@@ -311,6 +314,8 @@ function EnrollContent() {
     ph: phoneError(phone, 'your') || (phoneTaken === phone ? 'This number already has an account.' : ''),
     em: !email.trim() ? 'Enter your email address' : /^\S+@\S+\.\S+$/.test(email.trim()) ? '' : 'Check your email. It should look like name@example.com',
     addr: !address.trim() ? 'Enter your home address' : address.trim().length < 8 ? 'Add more detail, like the street and area' : '',
+    st: state ? '' : 'Choose your state',
+    lga: !state ? 'Choose your state first' : lga ? '' : 'Choose your local government',
     dob: dob && new Date(dob) > new Date() ? 'Your date of birth can’t be in the future' : '',
     gd: gender ? '' : 'Choose your gender',
     bvn: bvn && bvn.length < 11 ? `A BVN has 11 digits. This has ${bvn.length}.` : bvnMismatch ? 'This BVN is in a different name' : '',
@@ -330,7 +335,7 @@ function EnrollContent() {
     'aria-describedby': err(k) ? `${k}-error` : undefined,
   })
   const FIELDS: Partial<Record<Screen, string[]>> = {
-    name: ['fn', 'ln'], contact: ['ph', 'em'], home: ['addr', 'dob', 'gd'], bvn: ['bvn'], nok: ['nok', 'nokp'], password: ['pw', 'pw2'],
+    name: ['fn', 'ln'], contact: ['ph', 'em'], home: ['addr', 'st', 'lga', 'dob', 'gd'], bvn: ['bvn'], nok: ['nok', 'nokp'], password: ['pw', 'pw2'],
   }
 
   /** Checks the current screen; shows every problem on it instead of moving on. */
@@ -465,7 +470,7 @@ function EnrollContent() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ref, aid, firstName, lastName, phone, email, dob, address, gender, bvn,
+          ref, aid, firstName, lastName, phone, email, dob, address, state, lga, gender, bvn,
           nokName, nokRelation, nokPhone, photoUrl: photo, password,
           // This API takes the amount per payment and divides weekly / monthly amounts itself. It reads the first
           // plan's length as days but the other plans' lengths in weeks or months, so send each the way it reads it.
@@ -723,9 +728,25 @@ function EnrollContent() {
             <p className="cu-lead">So your agent knows where to find you.</p>
             <FormError message={error} />
             <Field id="addr" label="Home address" error={err('addr')} valid={ok('addr')}>
-              <input id="addr" className="ag-tf-input" placeholder="House number, street, area, city" autoComplete="street-address"
+              <input id="addr" className="ag-tf-input" placeholder="House number, street and area" autoComplete="street-address"
                 value={address} {...v('addr')} onChange={e => setAddress(e.target.value)} />
             </Field>
+            <div className="cu-grid-2">
+              <Field id="st" label="State" error={err('st')} valid={ok('st')}>
+                <select id="st" className="ag-tf-input ag-tf-select" value={state} {...v('st')}
+                  onChange={e => { setState(e.target.value); setLga(''); setTouched(t => ({ ...t, st: true })) }}>
+                  <option value="">Choose</option>
+                  {NG_STATES.map(s => <option key={s}>{s}</option>)}
+                </select>
+              </Field>
+              <Field id="lga" label="Local government" error={err('lga')} valid={ok('lga')}>
+                <select id="lga" className="ag-tf-input ag-tf-select" value={lga} disabled={!state} {...v('lga')}
+                  onChange={e => { setLga(e.target.value); setTouched(t => ({ ...t, lga: true })) }}>
+                  <option value="">{state ? 'Choose' : 'Choose a state first'}</option>
+                  {lgasOf(state).map(l => <option key={l}>{l}</option>)}
+                </select>
+              </Field>
+            </div>
             <Field id="dob" label="Date of birth (optional)" error={err('dob')}>
               <input id="dob" className="ag-tf-input" type="date" value={dob} {...v('dob')} max={new Date().toISOString().slice(0, 10)} onChange={e => setDob(e.target.value)} />
             </Field>
@@ -956,7 +977,7 @@ function EnrollContent() {
             <dl className="cu-list">
               <Row k="Name" v={`${firstName} ${lastName}`.trim()} onEdit={() => editFromReview('name')} />
               <Row k="Phone and email" v={<>{phone}<br />{email}</>} onEdit={() => editFromReview('contact')} />
-              <Row k="Home" v={<>{address}{(dob || gender) && <><br />{[dob && formatDate(dob), gender].filter(Boolean).join(' · ')}</>}</>} onEdit={() => editFromReview('home')} />
+              <Row k="Home" v={<>{address}{state && <><br />{lga ? `${lga}, ` : ''}{state}</>}{(dob || gender) && <><br />{[dob && formatDate(dob), gender].filter(Boolean).join(' · ')}</>}</>} onEdit={() => editFromReview('home')} />
               <Row k="BVN" v={bvn ? `•••••••${bvn.slice(-4)}` : 'Not added'} onEdit={() => editFromReview('bvn')} />
               <Row k="Emergency contact" v={<>{nokName} ({nokRelation}){nokPhone && <><br />{nokPhone}</>}</>} onEdit={() => editFromReview('nok')} />
             </dl>
@@ -1013,7 +1034,7 @@ const DRAFT_TTL = 24 * 60 * 60 * 1000
 type Draft = {
   v: 1; savedAt: number; aid: string; ref: string; screen: Screen
   firstName: string; lastName: string; phone: string; email: string; verifiedEmail: string
-  dob: string; gender: string; address: string; nokName: string; nokRelation: string; nokPhone: string
+  dob: string; gender: string; address: string; state?: string; lga?: string; nokName: string; nokRelation: string; nokPhone: string
   plans: PlanDraft[]; plan: PlanDraft; startGoal?: string
 }
 

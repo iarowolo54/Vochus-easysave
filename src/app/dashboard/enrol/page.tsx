@@ -8,6 +8,7 @@ import { blockMinus, blockNonDigit, digitsOnly, nonNegativeString } from '@/lib/
 import { displayName, formatNaira } from '@/lib/format'
 import { addDays, isoDate, parseDateInput, today } from '@/lib/plan-dates'
 import EmptyState from '@/components/ui/EmptyState'
+import { NG_STATES, lgasOf } from '@/lib/ng-lgas'
 import EndDateField, { endDateDays } from '@/components/ui/EndDateField'
 import { FieldError, FormError } from '@/components/ui/FormErrors'
 import { Icons } from '@/components/ui/icons'
@@ -20,7 +21,7 @@ interface PlanDraft {
 
 interface FormData {
   firstName: string; lastName: string; gender: string; phone: string; email: string; dob: string
-  address: string; state: string; language: string; bvn: string
+  address: string; state: string; lga: string; language: string; bvn: string
   nokName: string; nokRelation: string; nokPhone: string
   dailyAmount: string; periodDays: string; goal: string; startDate: string; notes: string; cadence: Cadence
   plans: PlanDraft[]
@@ -30,7 +31,7 @@ interface FormData {
 
 const empty: FormData = {
   firstName: '', lastName: '', gender: '', phone: '', email: '', dob: '',
-  address: '', state: '', language: 'English', bvn: '',
+  address: '', state: '', lga: '', language: 'English', bvn: '',
   nokName: '', nokRelation: 'Spouse', nokPhone: '',
   dailyAmount: '', periodDays: '', goal: '', startDate: '', notes: '', cadence: 'daily',
   plans: [],
@@ -39,7 +40,6 @@ const empty: FormData = {
 }
 
 const STEPS = ['Personal details', 'Verify phone', 'Photo', 'Savings plan', 'Card and fee', 'Review']
-const STATES = ['Abia', 'Adamawa', 'Akwa Ibom', 'Anambra', 'Bauchi', 'Bayelsa', 'Benue', 'Borno', 'Cross River', 'Delta', 'Ebonyi', 'Edo', 'Ekiti', 'Enugu', 'FCT', 'Gombe', 'Imo', 'Jigawa', 'Kaduna', 'Kano', 'Katsina', 'Kebbi', 'Kogi', 'Kwara', 'Lagos', 'Nasarawa', 'Niger', 'Ogun', 'Ondo', 'Osun', 'Oyo', 'Plateau', 'Rivers', 'Sokoto', 'Taraba', 'Yobe', 'Zamfara']
 const GOALS = ['School Fees', 'Business Capital', 'House Rent', 'Medical Expenses', 'Wedding / Event', 'Other']
 const PERIODS: Record<Cadence, [string, string][]> = {
   daily: [['31', '31 days'], ['62', '62 days'], ['93', '93 days'], ['186', '186 days'], ['365', '365 days']],
@@ -344,7 +344,7 @@ export default function EnrolPage() {
   }
 
   const fullName = displayName(`${form.firstName} ${form.lastName}`.trim())
-  const req1 = { firstName: form.firstName, lastName: form.lastName, gender: form.gender, phone: form.phone, address: form.address, state: form.state }
+  const req1 = { firstName: form.firstName, lastName: form.lastName, gender: form.gender, phone: form.phone, address: form.address, state: form.state, lga: form.lga }
   const missing = (k: keyof typeof req1) => showMissing && !req1[k]
   const phoneShort = showMissing && form.phone.length > 0 && form.phone.length < 11
 
@@ -477,11 +477,19 @@ export default function EnrolPage() {
                 </Field>
                 <div className="ag-grid-2">
                   <Field id="st" label="State" required error={missing('state') ? 'Choose a state' : ''}>
-                    <select id="st" className="ag-tf-input ag-tf-select" value={form.state} aria-invalid={missing('state') || undefined} onChange={e => set('state', e.target.value)}>
+                    <select id="st" className="ag-tf-input ag-tf-select" value={form.state} aria-invalid={missing('state') || undefined} onChange={e => setForm(f => ({ ...f, state: e.target.value, lga: '' }))}>
                       <option value="">Choose</option>
-                      {STATES.map(s => <option key={s}>{s}</option>)}
+                      {NG_STATES.map(s => <option key={s}>{s}</option>)}
                     </select>
                   </Field>
+                  <Field id="lga" label="Local government" required error={missing('lga') ? (form.state ? 'Choose their LGA' : 'Choose a state first') : ''}>
+                    <select id="lga" className="ag-tf-input ag-tf-select" value={form.lga} disabled={!form.state} aria-invalid={missing('lga') || undefined} onChange={e => set('lga', e.target.value)}>
+                      <option value="">{form.state ? 'Choose' : 'Choose a state first'}</option>
+                      {lgasOf(form.state).map(l => <option key={l}>{l}</option>)}
+                    </select>
+                  </Field>
+                </div>
+                <div className="ag-grid-2">
                   <Field id="lang" label="Language">
                     <select id="lang" className="ag-tf-input ag-tf-select" value={form.language} onChange={e => set('language', e.target.value)}>
                       <option>English</option><option>Yoruba</option><option>Igbo</option><option>Hausa</option>
@@ -521,7 +529,7 @@ export default function EnrolPage() {
                 </details>
 
                 <FlowActions primary={<button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={() => {
-                  if (!form.firstName || !form.lastName || !form.gender || !form.phone || form.phone.length < 11 || !form.address || !form.state) {
+                  if (!form.firstName || !form.lastName || !form.gender || !form.phone || form.phone.length < 11 || !form.address || !form.state || !form.lga) {
                     setShowMissing(true)
                     setError('Some details are missing. Check the fields marked in red.')
                     return
@@ -776,7 +784,7 @@ export default function EnrolPage() {
 
                 <ReviewSection title="Personal details" onEdit={() => go(1)}>
                   <Row k="Gender" v={form.gender} />
-                  <Row k="Address" v={`${form.address}, ${form.state}`} />
+                  <Row k="Address" v={`${form.address}, ${form.lga}, ${form.state}`} />
                   <Row k="Language" v={form.language} />
                   {form.nokName && <Row k="Next of kin" v={`${form.nokName} (${form.nokRelation})`} />}
                 </ReviewSection>
