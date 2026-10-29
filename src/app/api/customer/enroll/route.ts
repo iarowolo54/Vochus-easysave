@@ -8,6 +8,7 @@ import { resolveBvn } from '@/lib/paystack'
 import { normalizeEmail } from '@/lib/email'
 import { resolvePlanStartDate, maturityFrom } from '@/lib/saving-plan'
 import { validatePhoto } from '@/lib/photo'
+import { validateGender, validateState, normalizeLga } from '@/lib/customer-fields'
 
 function genId(prefix: string, pad = 5) {
   return `${prefix}-${String(Math.floor(Math.random() * (10 ** pad - 10 ** (pad - 1)) + 10 ** (pad - 1)))}`
@@ -15,7 +16,7 @@ function genId(prefix: string, pad = 5) {
 
 export async function POST(req: NextRequest) {
   const body = await req.json()
-  const { ref, aid, firstName, lastName, phone, email, dob, address, gender, bvn,
+  const { ref, aid, firstName, lastName, phone, email, dob, address, gender, state, lga, bvn,
           nokName, nokRelation, nokPhone, photoUrl, dailyAmount, periodDays, goal, password, cadence, plans, startDate } = body
 
   if (!firstName || !lastName || !phone || !email || !address || !nokName || !nokRelation || !nokPhone || !password) {
@@ -41,6 +42,12 @@ export async function POST(req: NextRequest) {
   }
   const photoCheck = validatePhoto(photoUrl)
   if (!photoCheck.ok) return NextResponse.json({ error: photoCheck.error }, { status: 400 })
+
+  // Gender is required (Female/Male); state is optional but validated (#18).
+  const genderCheck = validateGender(gender)
+  if (!genderCheck.ok) return NextResponse.json({ error: genderCheck.error }, { status: 400 })
+  const stateCheck = validateState(state)
+  if (!stateCheck.ok) return NextResponse.json({ error: stateCheck.error }, { status: 400 })
   if (dailyAmount !== undefined && dailyAmount !== null && dailyAmount !== '') {
     const da = Number(dailyAmount)
     if (!isFinite(da) || da < 0) return NextResponse.json({ error: 'Daily amount cannot be negative' }, { status: 400 })
@@ -126,6 +133,9 @@ export async function POST(req: NextRequest) {
       email: email || null,
       dob: dob ? new Date(dob) : null,
       address,
+      gender: genderCheck.value,
+      state: stateCheck.value,
+      lga: normalizeLga(lga),
       bvn: bvn || null,
       nokName,
       nokRelation,
