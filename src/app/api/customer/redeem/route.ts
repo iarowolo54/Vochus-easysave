@@ -7,8 +7,8 @@ import { money } from '@/lib/wallet-guard'
 import { resolveAccount } from '@/lib/paystack'
 import { sendSMS } from '@/lib/kudisms'
 import { sendMail } from '@/lib/mail'
-import crypto from 'crypto'
-import { hashRedemptionToken, redemptionTokenMatches } from '@/lib/redemption-token'
+import { redemptionTokenMatches } from '@/lib/redemption-token'
+import { createRedemptionWithUniqueCode } from '@/lib/redemption-create'
 import { reserveRedemptionAttempt } from '@/lib/redemption-attempts'
 
 export async function GET() {
@@ -84,30 +84,28 @@ export async function POST(req: NextRequest) {
   const deduction = money(rates.total)
   const netPayout = money(plan.balance - deduction)
 
-  // Crypto-random token (finding #6 — not Math.random).
-  const token = crypto.randomInt(100000, 1000000).toString()
   const tokenExpiry = new Date(now.getTime() + 30 * 60 * 1000)
   const ref = `RED-${customer.customerId}-${Date.now()}`
 
-  const redemption = await prisma.earlyRedemption.create({
-    data: {
-      ref,
-      savingsPlanId: plan.id,
-      type: isEarly ? 'early' : 'maturity',
-      reason,
-      status: 'Pending',
-      balance: plan.balance,
-      penalty: deduction,
-      netPayout,
-      token: hashRedemptionToken(token),
-      tokenExpiry,
-      payoutMethod,
-      accountNumber: accountNumber || null,
-      accountName: resolvedAccountName,
-      bankCode: bankCode || null,
-      bankName: bankName || null,
-    },
-  })
+  // Crypto-random 6-digit code (finding #6 — not Math.random), created
+  // collision-safe: retries if the code's hash is already taken (token @unique).
+  const { redemption, code: token } = await createRedemptionWithUniqueCode(prisma, (tokenHash) => ({
+    ref,
+    savingsPlanId: plan.id,
+    type: isEarly ? 'early' : 'maturity',
+    reason,
+    status: 'Pending',
+    balance: plan.balance,
+    penalty: deduction,
+    netPayout,
+    token: tokenHash,
+    tokenExpiry,
+    payoutMethod,
+    accountNumber: accountNumber || null,
+    accountName: resolvedAccountName,
+    bankCode: bankCode || null,
+    bankName: bankName || null,
+  }))
 
   logAudit({
     action: 'customer_redeem',
