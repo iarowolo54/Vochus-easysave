@@ -27,7 +27,7 @@ interface Loan {
 
 interface Customer {
   id: string; customerId: string; firstName: string; lastName: string
-  phone: string; email: string | null; address: string; status: string; createdAt: string; photoUrl?: string | null
+  phone: string; email: string | null; address: string; status: string; createdAt: string
   savingsPlans: Plan[]; loans: Loan[]
   memberCards: { serial: string; status: string; linkedAt: string | null }[]
 }
@@ -35,8 +35,7 @@ interface Customer {
 interface AgentDetail {
   id: string; agentId: string; name: string; phone: string; email: string | null
   location: string; walletBalance: number; status: string; createdAt: string
-  photoUrl?: string | null
-  boundDeviceId?: string | null
+  deviceBound?: boolean
   bankName?: string | null
   accountNumber?: string | null
   accountName?: string | null
@@ -194,7 +193,7 @@ export default function AgentDetailPage() {
       {back}
 
       <header className="am-hero">
-        <Avatar name={agent.name} photoUrl={agent.photoUrl} tone={agent.status === 'Active' ? 'green' : 'amber'} />
+        <Avatar name={agent.name} tone={agent.status === 'Active' ? 'green' : 'amber'} />
         <div className="am-hero-main">
           <h1>{agent.name}</h1>
           <p className="am-hero-meta">{[agent.agentId, agent.location, agent.phone].filter(Boolean).join(' · ')}</p>
@@ -207,7 +206,7 @@ export default function AgentDetailPage() {
         </div>
         <div className="am-hero-end">
           <StatusBadge s={agent.status} />
-          {agent.boundDeviceId && (
+          {agent.deviceBound && (
             <button type="button" className="btn btn-outline btn-sm" onClick={() => { setResetError(''); setConfirmReset(true) }}>
               <Icons.device size={16} aria-hidden="true" /> Reset device
             </button>
@@ -258,7 +257,7 @@ export default function AgentDetailPage() {
                   <section key={c.id} className="card am-cust" aria-label={fullName(c)}>
                     <button type="button" className="am-cust-hd" aria-expanded={expanded} aria-controls={`cust-${c.id}`}
                       onClick={() => setExpandedCustomer(expanded ? null : c.id)}>
-                      <Avatar name={fullName(c)} photoUrl={c.photoUrl} />
+                      <Avatar name={fullName(c)} />
                       <span className="am-cust-name">
                         <span className="row-title ui-block">{fullName(c)}</span>
                         <span className="row-sub ui-block">{c.customerId} · {c.phone}</span>
@@ -444,10 +443,10 @@ export default function AgentDetailPage() {
         )}
       </div>
 
-      {confirmReset && agent.boundDeviceId && (
+      {confirmReset && agent.deviceBound && (
         <ConfirmModal icon="device"
           title={`Reset ${agent.name}’s device?`}
-          body={<>Their account is tied to one phone (device {agent.boundDeviceId.slice(0, 8)}…). After a reset, the next phone they sign in on becomes their device. Do this if they’ve lost or changed their phone.</>}
+          body={<>Their account is tied to one phone. After a reset, the next phone they sign in on becomes their device. Do this if they’ve lost or changed their phone.</>}
           confirmLabel="Reset device"
           busy={resetting} error={resetError}
           onConfirm={resetDevice} onClose={() => setConfirmReset(false)}
