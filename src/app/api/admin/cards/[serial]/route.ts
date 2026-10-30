@@ -19,18 +19,31 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ se
   const card = await prisma.memberCard.findUnique({ where: { serial } })
   if (!card) return NextResponse.json({ error: 'Card not found' }, { status: 404 })
 
+  // Unlink/relink would otherwise silently make a blocked or expired card usable again.
+  if (card.status === 'Blocked') {
+    return NextResponse.json({ error: 'Card is blocked and cannot be unlinked or relinked' }, { status: 400 })
+  }
+  if (card.expiryDate.getTime() < Date.now()) {
+    return NextResponse.json({ error: 'Card has expired and cannot be unlinked or relinked' }, { status: 400 })
+  }
+
+  const actor = guard.session.user as { id?: string; name?: string | null }
+  const actorId = actor.id
+  const actorName = actor.name ?? undefined
+
   if (action === 'unlink') {
     const updated = await prisma.memberCard.update({
       where: { serial },
       data: { customerId: null, agentId: null, status: 'Unlinked', linkedAt: null },
     })
-    logAudit({
+    await logAudit({
       action: 'card_unlink',
       entity: 'MemberCard',
       entityId: updated.id,
       details: `Admin unlinked card ${serial} (was customer ${card.customerId ?? 'none'})`,
       actorType: 'admin',
-      actorName: 'SuperAdmin',
+      actorId,
+      actorName,
     })
     return NextResponse.json({ id: updated.id, serial: updated.serial, status: updated.status, customer: null })
   }
@@ -42,17 +55,23 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ se
     })
     if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
 
+    const existing = await prisma.memberCard.findFirst({ where: { customerId: customer.id }, select: { serial: true } })
+    if (existing) {
+      return NextResponse.json({ error: `Customer already has a linked card (${existing.serial})` }, { status: 409 })
+    }
+
     const updated = await prisma.memberCard.update({
       where: { serial },
       data: { customerId: customer.id, agentId: customer.agentId, status: 'Linked', linkedAt: new Date() },
     })
-    logAudit({
+    await logAudit({
       action: 'card_relink',
       entity: 'MemberCard',
       entityId: updated.id,
       details: `Admin relinked card ${serial} to ${customer.firstName} ${customer.lastName} (${customer.customerId})`,
       actorType: 'admin',
-      actorName: 'SuperAdmin',
+      actorId,
+      actorName,
     })
     return NextResponse.json({
       id: updated.id,
