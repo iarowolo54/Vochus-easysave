@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
+import { accruedInterestForPlan } from '@/lib/savings-interest-plan'
 import { resolveAccount } from '@/lib/paystack'
 import { sendSMS } from '@/lib/kudisms'
 import { sendMail } from '@/lib/mail'
@@ -82,7 +83,8 @@ export async function POST(req: NextRequest) {
   const hasCashDeposit = await planHasCashDeposit(prisma, plan.id)
   const rates = redemptionDeduction({ balance: plan.balance, dailyAmount: plan.dailyAmount, cadence: plan.cadence, hasCashDeposit, initiator: 'customer', source: (plan as any).source })
   const deduction = money(rates.total)
-  const netPayout = money(plan.balance - deduction)
+  const interest = await accruedInterestForPlan(prisma, plan, now)
+  const netPayout = money(plan.balance - deduction + interest)
 
   const tokenExpiry = new Date(now.getTime() + 30 * 60 * 1000)
   const ref = `RED-${customer.customerId}-${Date.now()}`
@@ -98,6 +100,7 @@ export async function POST(req: NextRequest) {
     balance: plan.balance,
     penalty: deduction,
     netPayout,
+    interestAmount: interest,
     token: tokenHash,
     tokenExpiry,
     payoutMethod,
@@ -131,7 +134,7 @@ export async function POST(req: NextRequest) {
     }).catch(() => {})
   }
 
-  return NextResponse.json({ ref: redemption.ref, isEarly, deduction, netPayout, balance: plan.balance })
+  return NextResponse.json({ ref: redemption.ref, isEarly, deduction, interest, netPayout, balance: plan.balance })
 }
 
 export async function PATCH(req: NextRequest) {
