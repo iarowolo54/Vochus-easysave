@@ -26,10 +26,41 @@ export async function createMandateFromAuthorization(
   if (plan.source !== 'self') return { error: 'not_self' }
   if (!authorization.reusable) return { error: 'not_reusable' }
 
-  const existing = await client.autoDebitMandate.findUnique({ where: { savingsPlanId: plan.id }, select: { id: true } })
-  if (existing) return { error: 'exists' }
-
   const now = new Date()
+
+  // Reactivation data shared by the re-enroll path and (potentially) a race loser.
+  // Reuse the SAME row (unique savingsPlanId); refresh auth + masked fields from the
+  // card the customer just re-authorized with. Never log authorization.authorization_code.
+  const reactivationData = {
+    channel: 'card',
+    authorizationCode: authorization.authorization_code,
+    authSignature: authorization.signature,
+    authEmail: input.email,
+    reusable: true,
+    last4: authorization.last4 ?? null,
+    cardType: authorization.card_type ?? null,
+    bankName: authorization.bank ?? null,
+    expMonth: authorization.exp_month ?? null,
+    expYear: authorization.exp_year ?? null,
+    status: 'active',
+    consecutiveFailures: 0,
+    amountPerCycle: plan.dailyAmount,
+    nextRunAt: nextRunAt(now, autoDebitCadence(plan.cadence)),
+    consentAt: now,
+  }
+
+  const existing = await client.autoDebitMandate.findUnique({
+    where: { savingsPlanId: plan.id },
+    select: { id: true, status: true },
+  })
+  if (existing) {
+    // A genuine duplicate: already active. init 409s on active anyway.
+    if (existing.status === 'active') return { error: 'exists' }
+    // paused (3 failed charges) or cancelled: re-authorization resumes the SAME mandate.
+    await client.autoDebitMandate.update({ where: { id: existing.id }, data: reactivationData })
+    return { id: existing.id }
+  }
+
   try {
     const m = await client.autoDebitMandate.create({
       data: {
