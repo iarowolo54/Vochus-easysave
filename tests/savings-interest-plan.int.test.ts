@@ -2,7 +2,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { prisma } from '../src/lib/prisma'
-import { accruedInterestForPlan } from '../src/lib/savings-interest'
+import { accruedInterestForPlan } from '../src/lib/savings-interest-plan'
 
 const rid = Math.random().toString(36).slice(2, 8)
 let agentId = ''

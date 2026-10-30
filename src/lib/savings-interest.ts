@@ -1,6 +1,4 @@
-import type { PrismaClient } from '@prisma/client'
 import { money } from '@/lib/wallet-guard'
-import { getSavingsRateSchedule } from '@/lib/savings-interest-rate'
 
 export const DEFAULT_ANNUAL_RATE = 12
 
@@ -49,27 +47,4 @@ export function accruedInterest(input: {
     total += money(principal * (rateOn(input.rateSchedule, a) / 12 / 100))
   }
   return money(total)
-}
-
-type PlanClient = Pick<PrismaClient, 'transaction' | 'savingsInterestRate'>
-
-/**
- * Interest accrued on a plan. Only self-service plans earn interest; offline/agent
- * plans return 0 without touching the DB. Reads only amount + createdAt of the
- * plan's completed `saving` deposits.
- */
-export async function accruedInterestForPlan(
-  client: PlanClient,
-  plan: { id: string; source: string; startDate: Date; maturityDate: Date },
-  asOf: Date,
-): Promise<number> {
-  if (plan.source !== 'self') return 0
-  const [deposits, rateSchedule] = await Promise.all([
-    client.transaction.findMany({
-      where: { planId: plan.id, type: 'saving', status: 'Done' },
-      select: { amount: true, createdAt: true },
-    }),
-    getSavingsRateSchedule(client),
-  ])
-  return accruedInterest({ startDate: plan.startDate, maturityDate: plan.maturityDate, deposits, asOf, rateSchedule })
 }
