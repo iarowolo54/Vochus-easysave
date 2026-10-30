@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { accruedInterest, rateOn, DEFAULT_ANNUAL_RATE } from '../src/lib/savings-interest'
+import { accruedInterest, rateOn, interestProjection, DEFAULT_ANNUAL_RATE } from '../src/lib/savings-interest'
 
 const d = (y: number, m: number, day: number) => new Date(Date.UTC(y, m - 1, day))
 
@@ -84,3 +84,52 @@ test('month-end clamp: Jan 31 start', () => {
 })
 
 function money2(n: number) { return Math.round(n * 100) / 100 }
+
+// --- interestProjection: the forward-looking "next credit" nudge ---
+const proj = {
+  startDate: d(2026, 1, 1),
+  maturityDate: d(2026, 12, 1),
+  balance: 31000,
+  rateSchedule: [] as { effectiveFrom: Date; annualRate: number }[],
+}
+
+test('projection: mid-month -> whole days to next anniversary + next credit at 12%', () => {
+  const p = interestProjection({ ...proj, asOf: d(2026, 1, 15) })
+  assert.deepEqual(p, { daysToNextInterest: 17, nextInterestAmount: 310 })
+})
+
+test('projection: on an anniversary counts to the NEXT one, not today', () => {
+  const p = interestProjection({ ...proj, asOf: d(2026, 2, 1) })
+  assert.deepEqual(p, { daysToNextInterest: 28, nextInterestAmount: 310 })
+})
+
+test('projection: part-day remainder rounds up (never promise it early)', () => {
+  const p = interestProjection({ ...proj, asOf: new Date(Date.UTC(2026, 0, 15, 12)) })
+  assert.equal(p?.daysToNextInterest, 17) // 16.5 days -> 17
+})
+
+test('projection: next anniversary exactly at maturity still earns', () => {
+  const p = interestProjection({ ...proj, maturityDate: d(2026, 3, 1), asOf: d(2026, 2, 15) })
+  assert.deepEqual(p, { daysToNextInterest: 14, nextInterestAmount: 310 })
+})
+
+test('projection: no anniversary before maturity -> null', () => {
+  const p = interestProjection({ ...proj, maturityDate: d(2026, 2, 20), asOf: d(2026, 2, 15) })
+  assert.equal(p, null)
+})
+
+test('projection: matured plan (asOf >= maturity) -> null', () => {
+  assert.equal(interestProjection({ ...proj, maturityDate: d(2026, 3, 1), asOf: d(2026, 3, 1) }), null)
+  assert.equal(interestProjection({ ...proj, maturityDate: d(2026, 3, 1), asOf: d(2026, 4, 1) }), null)
+})
+
+test('projection: uses the rate in effect on the next anniversary (forward-only)', () => {
+  const rateSchedule = [{ effectiveFrom: d(2026, 1, 20), annualRate: 24 }]
+  const p = interestProjection({ ...proj, rateSchedule, asOf: d(2026, 2, 1) })
+  assert.deepEqual(p, { daysToNextInterest: 28, nextInterestAmount: 620 })
+})
+
+test('projection: zero balance -> zero next credit (UI suppresses)', () => {
+  const p = interestProjection({ ...proj, balance: 0, asOf: d(2026, 1, 15) })
+  assert.deepEqual(p, { daysToNextInterest: 17, nextInterestAmount: 0 })
+})

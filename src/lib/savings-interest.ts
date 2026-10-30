@@ -48,3 +48,33 @@ export function accruedInterest(input: {
   }
   return money(total)
 }
+
+const MS_PER_DAY = 86_400_000
+
+export type InterestProjection = { daysToNextInterest: number; nextInterestAmount: number }
+
+/**
+ * Forward-looking nudge for the NEXT interest credit: the whole days until the plan's next
+ * monthly anniversary (month-end clamped, same as accrual) and the credit it will earn at that
+ * date — `balance x rate-in-effect-then / 12`. A floor that grows as the customer keeps saving.
+ * Returns null when the plan has matured or has no further anniversary before maturity.
+ */
+export function interestProjection(input: {
+  startDate: Date
+  maturityDate: Date
+  balance: number
+  asOf: Date
+  rateSchedule: RateEntry[]
+}): InterestProjection | null {
+  if (!Number.isFinite(input.startDate.getTime()) || !Number.isFinite(input.maturityDate.getTime())) return null
+  if (input.asOf.getTime() >= input.maturityDate.getTime()) return null
+  let anniversary: Date = input.maturityDate
+  for (let k = 1; ; k++) {
+    const a = addMonthsClamped(input.startDate, k)
+    if (a.getTime() > input.asOf.getTime()) { anniversary = a; break }
+  }
+  if (anniversary.getTime() > input.maturityDate.getTime()) return null
+  const daysToNextInterest = Math.ceil((anniversary.getTime() - input.asOf.getTime()) / MS_PER_DAY)
+  const nextInterestAmount = money(input.balance * (rateOn(input.rateSchedule, anniversary) / 12 / 100))
+  return { daysToNextInterest, nextInterestAmount }
+}

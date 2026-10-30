@@ -60,6 +60,9 @@ test('self plan: fresh interest (1000 at 12%/yr, one month = 10) on plan and pla
   assert.equal(body.plan.interest, 10)
   assert.equal(body.plan.source, 'self')
   assert.equal(body.plans[0].interest, 10)
+  // Forward-looking nudge: next 1% credit on the 1000 balance = 10, with a positive day count.
+  assert.equal(body.plan.nextInterestAmount, 10)
+  assert.ok(body.plan.daysToNextInterest > 0 && body.plan.daysToNextInterest <= 35, `days=${body.plan.daysToNextInterest}`)
 })
 
 test('agent plan: interest is 0', async () => {
@@ -68,4 +71,7 @@ test('agent plan: interest is 0', async () => {
   assert.equal(body.plan.interest, 0)
   assert.equal(body.plans[0].interest, 0)
   assert.equal(body.plans[0].source, 'agent')
+  // Offline plans earn nothing and show no nudge.
+  assert.equal(body.plan.nextInterestAmount, 0)
+  assert.equal(body.plan.daysToNextInterest, null)
 })

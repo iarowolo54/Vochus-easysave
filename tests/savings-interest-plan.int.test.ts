@@ -2,7 +2,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { prisma } from '../src/lib/prisma'
-import { accruedInterestForPlan } from '../src/lib/savings-interest-plan'
+import { accruedInterestForPlan, interestProjectionForPlan } from '../src/lib/savings-interest-plan'
 
 const rid = Math.random().toString(36).slice(2, 8)
 let agentId = ''
@@ -72,4 +72,24 @@ test('non-saving ledger rows are excluded from the base', async () => {
   assert.equal(v, 40)
   await prisma.transaction.create({ data: { ref: `TX-${rid}-big`, agentId, customerId, planId: p.id, type: 'redemption', amount: 100000, status: 'Done', createdAt: new Date('2026-01-11T00:00:00Z') } })
   assert.equal(await accruedInterestForPlan(client, p, AS_OF), 40)
+})
+
+// --- interestProjectionForPlan: forward-looking nudge, source-gated like accrual ---
+
+// A rate client that throws if touched, to prove offline plans never read the DB.
+const throwingClient = {
+  transaction: prisma.transaction,
+  savingsInterestRate: { findMany: async () => { throw new Error('should not read rate for offline plan') } },
+} as unknown as Parameters<typeof interestProjectionForPlan>[0]
+
+test('self plan: next credit = balance x rate-at-next-anniversary /12, with days', async () => {
+  const p = await mkPlan('self')
+  // Next anniversary after May 10 12:00 is Jun 10 (31 days out); rate on Jun 10 is 6% => 1500*6/12/100 = 7.5
+  const proj = await interestProjectionForPlan(client, { ...p, balance: 1500 }, AS_OF)
+  assert.deepEqual(proj, { daysToNextInterest: 31, nextInterestAmount: 7.5 })
+})
+
+test('agent plan: null projection, no rate read (scope gate)', async () => {
+  const p = await mkPlan('agent')
+  assert.equal(await interestProjectionForPlan(throwingClient, { ...p, balance: 1500 }, AS_OF), null)
 })
