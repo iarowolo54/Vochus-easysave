@@ -8,6 +8,7 @@ import { resolveBvn } from '@/lib/paystack'
 import { normalizeEmail } from '@/lib/email'
 import { normalizePhone } from '@/lib/phone'
 import { findIdentityConflict } from '@/lib/identity'
+import { identityConflictResponse } from '@/lib/identity-response'
 import { resolvePlanStartDate, maturityFrom } from '@/lib/saving-plan'
 import { validatePhoto } from '@/lib/photo'
 import { validateGender, validateState, validateLga } from '@/lib/customer-fields'
@@ -110,8 +111,7 @@ export async function POST(req: NextRequest) {
 
   // One identity, one account: the phone/email must not belong to any account.
   const conflict = await findIdentityConflict(prisma, { phone: String(phone), email: String(email) })
-  if (conflict === 'phone') return NextResponse.json({ error: 'This phone number is already registered.' }, { status: 409 })
-  if (conflict === 'email') return NextResponse.json({ error: 'This email is already registered.' }, { status: 409 })
+  if (conflict) return identityConflictResponse(conflict)
 
   const hashed = await bcrypt.hash(password, 10)
 

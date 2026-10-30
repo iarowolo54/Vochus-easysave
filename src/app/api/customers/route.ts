@@ -7,6 +7,7 @@ import { logAudit } from '@/lib/audit'
 import { normalizePhone } from '@/lib/phone'
 import { normalizeEmail } from '@/lib/email'
 import { findIdentityConflict } from '@/lib/identity'
+import { identityConflictResponse } from '@/lib/identity-response'
 import { PLATFORM_SAVINGS_FEE, AGENT_SAVINGS_COMMISSION } from '@/lib/wallet-rates'
 import { assertSufficient, insufficientResponse, InsufficientFundsError, money } from '@/lib/wallet-guard'
 
@@ -140,8 +141,7 @@ export async function POST(req: NextRequest) {
 
   // One identity, one account: the phone/email must not belong to any account.
   const conflict = await findIdentityConflict(prisma, { phone, email })
-  if (conflict === 'phone') return NextResponse.json({ error: 'This phone number is already registered.' }, { status: 409 })
-  if (conflict === 'email') return NextResponse.json({ error: 'This email is already registered.' }, { status: 409 })
+  if (conflict) return identityConflictResponse(conflict)
 
   const customer = await prisma.customer.create({
     data: {

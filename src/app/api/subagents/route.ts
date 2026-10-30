@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { findIdentityConflict } from '@/lib/identity'
+import { identityConflictResponse } from '@/lib/identity-response'
 
 export async function GET() {
   const session = await getServerSession(authOptions)
@@ -39,12 +40,7 @@ export async function POST(req: NextRequest) {
   }
 
   const conflict = await findIdentityConflict(prisma, { phone })
-  if (conflict) {
-    return NextResponse.json(
-      { error: conflict === 'phone' ? 'This phone number is already registered.' : 'This email is already registered.' },
-      { status: 409 },
-    )
-  }
+  if (conflict) return identityConflictResponse(conflict)
 
   let subAgent
   try {

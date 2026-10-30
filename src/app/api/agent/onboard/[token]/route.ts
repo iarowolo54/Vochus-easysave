@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs'
 import { logAudit } from '@/lib/audit'
 import { validatePhoto } from '@/lib/photo'
 import { findIdentityConflict } from '@/lib/identity'
+import { identityConflictResponse } from '@/lib/identity-response'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
   const { token } = await params
@@ -30,16 +31,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   const photoCheck = validatePhoto(photoUrl)
   if (!photoCheck.ok) return NextResponse.json({ error: photoCheck.error }, { status: 400 })
 
-  const existing = await prisma.agent.findFirst({ where: { OR: [{ phone }, { email: invite.email }] } })
-  if (existing) return NextResponse.json({ error: 'Phone or email already registered' }, { status: 409 })
-
   const conflict = await findIdentityConflict(prisma, { phone, email: invite.email })
-  if (conflict) {
-    return NextResponse.json(
-      { error: conflict === 'phone' ? 'This phone number is already registered.' : 'This email is already registered.' },
-      { status: 409 },
-    )
-  }
+  if (conflict) return identityConflictResponse(conflict)
 
   const hashed = await bcrypt.hash(password, 10)
 
