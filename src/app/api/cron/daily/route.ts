@@ -3,6 +3,8 @@ import { timingSafeEqual } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { accruedInterestForPlan } from '@/lib/savings-interest-plan'
 import { runDueAutoDebits, reconcileProcessingAttempts } from '@/lib/auto-debit-run'
+import { sendWeeklySummaries } from '@/lib/weekly-summary-run'
+import { isSummaryDay } from '@/lib/summary-day'
 
 export const dynamic = 'force-dynamic'
 
@@ -68,8 +70,22 @@ export async function GET(req: Request) {
     console.error('[cron/daily] auto-debit reconcile failed', err instanceof Error ? err.message : 'unknown')
   }
 
-  // SEAM (Feature 3): Friday summary sending will be added to this same route,
-  // after the accrual pass above. Intentionally no summary logic yet.
+  // Pass 4 (Fridays only): weekly savings summaries by email/SMS.
+  let emailed = 0
+  let smsed = 0
+  let summarySkipped = 0
+  let summaryFailed = 0
+  if (isSummaryDay(now)) {
+    try {
+      const s = await sendWeeklySummaries(prisma, now)
+      emailed = s.emailed
+      smsed = s.smsed
+      summarySkipped = s.skipped
+      summaryFailed = s.failed
+    } catch (err) {
+      console.error('[cron/daily] weekly summary failed', err instanceof Error ? err.message : 'unknown')
+    }
+  }
 
-  return NextResponse.json({ accrued, failed, charged, skipped, debitFailed, pending, settled })
+  return NextResponse.json({ accrued, failed, charged, skipped, debitFailed, pending, settled, emailed, smsed, summarySkipped, summaryFailed })
 }
