@@ -1,7 +1,13 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
 import { blockMinus, nonNegativeString } from '@/lib/numeric'
+import { Icons } from '@/components/ui/icons'
+import {
+  Avatar, ConfirmModal, Empty, Field, LoadError, Modal, PageHeader, Pager, RowMenu, SearchField, Segmented,
+  TableSkeleton, naira, useDebounced, useToast,
+} from '../_components/admin-ui'
 
 interface Agent {
   id: string; agentId: string; name: string; phone: string
@@ -12,24 +18,48 @@ interface Agent {
   docStatus?: string; documents?: Array<{ docType: string; fileName: string; docApprovalStatus: string }>
 }
 
+type Filter = 'all' | 'action' | 'active' | 'suspended'
+
 const PAGE_SIZE = 25
-const REGIONS = ['Lagos Central','Lagos North','Lagos South','Lagos East','Lagos West','Abuja Central','Rivers','Kano','Oyo','Anambra','Delta','Enugu','Ogun','Kaduna','Other']
+const REGIONS = ['Lagos Central', 'Lagos North', 'Lagos South', 'Lagos East', 'Lagos West', 'Abuja Central', 'Rivers', 'Kano', 'Oyo', 'Anambra', 'Delta', 'Enugu', 'Ogun', 'Kaduna', 'Other']
 const DOCS = [
-  { id: 'id',    icon: '🪪', label: 'Government-Issued ID',   sub: 'NIN slip, Passport, Driver\'s Licence or Voter\'s Card', required: true },
-  { id: 'addr',  icon: '🏠', label: 'Proof of Address',        sub: 'Utility bill or bank statement (not older than 3 months)', required: true },
-  { id: 'guar',  icon: '✍️', label: 'Signed Guarantor Form',   sub: 'Completed and signed Vochus Easy Save guarantor form', required: true },
-  { id: 'agree', icon: '📋', label: 'Signed Agent Agreement',  sub: 'Signed Vochus Easy Save Agent Terms & Conditions', required: true },
-  { id: 'bank',  icon: '💳', label: 'Bank Statement',          sub: 'Optional — for commission payout purposes', required: false },
+  { id: 'id', label: 'Government-issued ID', sub: 'NIN slip, passport, driver’s licence or voter’s card', required: true },
+  { id: 'addr', label: 'Proof of address', sub: 'Utility bill or bank statement from the last 3 months', required: true },
+  { id: 'guar', label: 'Signed guarantor form', sub: 'Completed and signed Vochus Easy Save guarantor form', required: true },
+  { id: 'agree', label: 'Signed agent agreement', sub: 'Signed Vochus Easy Save agent terms and conditions', required: true },
+  { id: 'bank', label: 'Bank statement', sub: 'Optional, for commission payouts', required: false },
 ]
+const docLabel = (t: string) => DOCS.find(d => d.id === t)?.label ?? t
+
+const needsAction = (a: Agent) => a.status === 'PendingActivation' || a.docStatus === 'pending_approval' || !!a.lockedAt
+const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+
+async function errorOf(res: Response, fallback: string) {
+  const d = await res.json().catch(() => ({})) as { error?: string }
+  return d.error ?? fallback
+}
+
+function StatusBadge({ a }: { a: Agent }) {
+  if (a.docStatus === 'pending_approval') return <span className="bdg bdg-a">Documents to review</span>
+  if (a.docStatus === 'rejected') return <span className="bdg bdg-r">Documents rejected</span>
+  if (a.lockedAt) return <span className="bdg bdg-r">Locked out</span>
+  if (a.status === 'PendingActivation') return <span className="bdg bdg-a">Waiting to activate</span>
+  if (a.status === 'Suspended') return <span className="bdg bdg-r">Suspended</span>
+  if (a.email && !a.emailVerified) return <span className="bdg bdg-grey">Email not verified</span>
+  return <span className="bdg bdg-g">Active</span>
+}
 
 export default function AgentsPage() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [search, setSearch] = useState('')
+  const q = useDebounced(search.trim())
+  const [filter, setFilter] = useState<Filter>('all')
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
-  const [toast, setToast] = useState('')
+  const [failed, setFailed] = useState(false)
+  const [toastNode, toast] = useToast()
 
-  // Invite modal
+  // Invite
   const [showInvite, setShowInvite] = useState(false)
   const [inviteEmail, setInviteEmail] = useState('')
   const [inviting, setInviting] = useState(false)
@@ -37,150 +67,185 @@ export default function AgentsPage() {
   const [inviteError, setInviteError] = useState('')
   const [copied, setCopied] = useState(false)
 
-  // Activate modal
+  // Activate
   const [activatingAgent, setActivatingAgent] = useState<Agent | null>(null)
   const [floatLimit, setFloatLimit] = useState('')
+  const [floatError, setFloatError] = useState('')
   const [region, setRegion] = useState('')
   const [activateNotes, setActivateNotes] = useState('')
   const [activating, setActivating] = useState(false)
   const [activateError, setActivateError] = useState('')
   const [checkedDocs, setCheckedDocs] = useState<string[]>([])
 
-  // Document review modal
+  // Document review
   const [reviewingAgent, setReviewingAgent] = useState<Agent | null>(null)
   const [docApproving, setDocApproving] = useState(false)
   const [selectedDocType, setSelectedDocType] = useState('')
   const [rejectionReason, setRejectionReason] = useState('')
-  const [viewingAgreement, setViewingAgreement] = useState<{ agentId: string; signatureUrl: string } | null>(null)
+  const [reviewError, setReviewError] = useState('')
+  const [viewingAgreement, setViewingAgreement] = useState<{ name: string; agentId: string; signatureUrl: string } | null>(null)
+
+  // Suspend / reactivate confirmation
+  const [statusTarget, setStatusTarget] = useState<Agent | null>(null)
+  const [statusBusy, setStatusBusy] = useState(false)
+  const [statusError, setStatusError] = useState('')
 
   const load = useCallback(async () => {
-    setLoading(true)
-    const q = search ? `?search=${encodeURIComponent(search)}` : ''
-    const res = await fetch(`/api/admin/agents${q}`)
-    const d = res.ok ? await res.json() : {}
-    setAgents(d.agents ?? [])
-    setPage(1)
-    setLoading(false)
-  }, [search])
+    setLoading(true); setFailed(false)
+    try {
+      const res = await fetch(`/api/admin/agents${q ? `?search=${encodeURIComponent(q)}` : ''}`)
+      if (!res.ok) throw new Error()
+      const d = await res.json()
+      setAgents(d.agents ?? [])
+    } catch {
+      setFailed(true)
+    } finally {
+      setLoading(false)
+    }
+  }, [q])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => { setPage(1) }, [q, filter])
 
-  function showToast(msg: string) { setToast(msg); setTimeout(() => setToast(''), 5000) }
-
-  async function toggleStatus(agent: Agent) {
-    const newStatus = agent.status === 'Active' ? 'Suspended' : 'Active'
-    const res = await fetch(`/api/admin/agents/${agent.id}/status`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: newStatus }),
-    })
-    if (res.ok) { showToast(`${agent.name} ${newStatus === 'Active' ? 'activated' : 'suspended'}`); load() }
+  async function changeStatus() {
+    if (!statusTarget) return
+    const newStatus = statusTarget.status === 'Active' ? 'Suspended' : 'Active'
+    setStatusBusy(true); setStatusError('')
+    try {
+      const res = await fetch(`/api/admin/agents/${statusTarget.id}/status`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      })
+      if (!res.ok) { setStatusError(await errorOf(res, 'That didn’t go through. Try again.')); return }
+      toast(`${statusTarget.name} ${newStatus === 'Active' ? 'reactivated' : 'suspended'}`, 'success')
+      setStatusTarget(null)
+      load()
+    } catch {
+      setStatusError('No connection. Check your internet and try again.')
+    } finally {
+      setStatusBusy(false)
+    }
   }
 
-  async function toggleProfileLock(agent: Agent) {
-    const res = await fetch(`/api/admin/agents/${agent.id}/profile-lock`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ unlock: !agent.profileUnlocked }),
-    })
-    if (res.ok) { showToast(`${agent.name}'s profile ${agent.profileUnlocked ? 'locked' : 'unlocked'}`); load() }
+  async function simpleAction(url: string, init: RequestInit, done: string) {
+    try {
+      const res = await fetch(url, init)
+      if (!res.ok) { toast(await errorOf(res, 'That didn’t go through. Try again.'), 'error'); return }
+      toast(done, 'success')
+      load()
+    } catch {
+      toast('No connection. Check your internet and try again.', 'error')
+    }
   }
 
-  async function resendVerification(agentId: string) {
-    await fetch(`/api/admin/agents/${agentId}/resend-verification`, { method: 'POST' })
-    showToast('Verification email resent')
-  }
+  const toggleProfileLock = (a: Agent) => simpleAction(`/api/admin/agents/${a.id}/profile-lock`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ unlock: !a.profileUnlocked }),
+  }, a.profileUnlocked ? `${a.name} can no longer edit their profile` : `${a.name} can edit their profile once`)
+  const resendVerification = (a: Agent) => simpleAction(`/api/admin/agents/${a.id}/resend-verification`, { method: 'POST' }, `Verification email sent to ${a.email}`)
+  const unblockAgent = (a: Agent) => simpleAction(`/api/admin/agents/${a.id}/unblock`, { method: 'POST' }, `${a.name} can sign in again`)
 
-  async function unblockAgent(agent: Agent) {
-    const res = await fetch(`/api/admin/agents/${agent.id}/unblock`, { method: 'POST' })
-    if (res.ok) { showToast(`${agent.name}'s account unblocked`); load() }
+  function openInvite() {
+    setShowInvite(true); setInviteEmail(''); setInviteLink(''); setInviteError(''); setCopied(false)
   }
 
   async function sendInvite() {
+    const email = inviteEmail.trim()
+    if (!EMAIL_RE.test(email)) { setInviteError('Enter a valid email, like name@example.com.'); return }
     setInviteError(''); setInviting(true)
     try {
       const res = await fetch('/api/superadmin/agent-invite', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: inviteEmail.trim() }),
+        body: JSON.stringify({ email }),
       })
-      const d = await res.json()
-      if (!res.ok) { setInviteError(d.error ?? 'Failed to generate invite'); return }
+      const d = await res.json().catch(() => ({}))
+      if (!res.ok) { setInviteError(d.error ?? 'The invite wasn’t created. Try again.'); return }
       setInviteLink(d.link)
-    } catch { setInviteError('Network error') }
-    finally { setInviting(false) }
+    } catch {
+      setInviteError('No connection. Check your internet and try again.')
+    } finally {
+      setInviting(false)
+    }
   }
 
-  function copyLink() {
-    navigator.clipboard.writeText(inviteLink)
-    setCopied(true); setTimeout(() => setCopied(false), 2000)
+  async function copyLink() {
+    try {
+      await navigator.clipboard.writeText(inviteLink)
+      setCopied(true); setTimeout(() => setCopied(false), 2000)
+    } catch {
+      toast('Couldn’t copy. Select the link and copy it yourself.', 'error')
+    }
   }
 
   function openActivate(agent: Agent) {
-    setActivatingAgent(agent); setFloatLimit(''); setRegion(''); setActivateNotes(''); setActivateError(''); setCheckedDocs([])
-  }
-
-  function toggleDoc(id: string) {
-    setCheckedDocs(prev => prev.includes(id) ? prev.filter(d => d !== id) : [...prev, id])
+    setActivatingAgent(agent); setFloatLimit(''); setFloatError(''); setRegion(''); setActivateNotes(''); setActivateError(''); setCheckedDocs([])
   }
 
   async function activateAgent() {
-    if (!floatLimit) { setActivateError('Float limit is required'); return }
+    if (!activatingAgent) return
+    if (!floatLimit || Number(floatLimit) <= 0) { setFloatError('Enter the float limit for this agent.'); return }
     setActivating(true); setActivateError('')
     try {
-      const res = await fetch(`/api/admin/agents/${activatingAgent!.id}/activate`, {
+      const res = await fetch(`/api/admin/agents/${activatingAgent.id}/activate`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ floatLimit, region, notes: activateNotes, requiredDocs: checkedDocs }),
       })
-      const d = await res.json()
-      if (!res.ok) { setActivateError(d.error ?? 'Failed'); return }
+      if (!res.ok) { setActivateError(await errorOf(res, 'The account wasn’t activated. Try again.')); return }
+      toast(`${activatingAgent.name} is now active`, 'success')
       setActivatingAgent(null)
-      showToast(`${activatingAgent!.name} activated successfully`)
       load()
-    } catch { setActivateError('Network error') }
-    finally { setActivating(false) }
+    } catch {
+      setActivateError('No connection. Check your internet and try again.')
+    } finally {
+      setActivating(false)
+    }
+  }
+
+  function closeReview() {
+    if (docApproving) return
+    setReviewingAgent(null); setRejectionReason(''); setSelectedDocType(''); setReviewError('')
+  }
+
+  function markDoc(docType: string, status: string) {
+    setReviewingAgent(prev => prev ? { ...prev, documents: prev.documents?.map(d => d.docType === docType ? { ...d, docApprovalStatus: status } : d) } : null)
+  }
+
+  async function postDocDecision(agentId: string, body: Record<string, string>) {
+    return fetch(`/api/superadmin/agents/${agentId}/documents/approve`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+    })
   }
 
   async function approveDocument(docType: string) {
     if (!reviewingAgent) return
-    setDocApproving(true)
+    setDocApproving(true); setReviewError('')
     try {
-      const res = await fetch(`/api/superadmin/agents/${reviewingAgent.id}/documents/approve`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ docType, action: 'approve' }),
-      })
-      if (res.ok) {
-        showToast(`Document approved`)
-        setReviewingAgent(prev => prev ? {
-          ...prev,
-          documents: prev.documents?.map(d => d.docType === docType ? { ...d, docApprovalStatus: 'approved' } : d)
-        } : null)
-        load()
-      } else {
-        const err = await res.json().catch(() => ({}))
-        showToast((err as any).error ?? 'Failed to approve document')
-      }
-    } catch (e) {
-      showToast('Error approving document')
+      const res = await postDocDecision(reviewingAgent.id, { docType, action: 'approve' })
+      if (!res.ok) { setReviewError(await errorOf(res, 'That document wasn’t approved. Try again.')); return }
+      markDoc(docType, 'approved')
+      toast(`${docLabel(docType)} approved`, 'success')
+      load()
+    } catch {
+      setReviewError('No connection. Check your internet and try again.')
+    } finally {
+      setDocApproving(false)
     }
-    finally { setDocApproving(false) }
   }
 
   async function approveAll() {
     if (!reviewingAgent?.documents) return
     const pending = reviewingAgent.documents.filter(d => d.docApprovalStatus !== 'approved')
-    setDocApproving(true)
+    setDocApproving(true); setReviewError('')
     try {
-      await Promise.all(pending.map(doc =>
-        fetch(`/api/superadmin/agents/${reviewingAgent.id}/documents/approve`, {
-          method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ docType: doc.docType, action: 'approve' }),
-        })
-      ))
-      showToast('All documents approved')
+      const results = await Promise.all(pending.map(async doc => {
+        const res = await postDocDecision(reviewingAgent.id, { docType: doc.docType, action: 'approve' }).catch(() => null)
+        if (res?.ok) markDoc(doc.docType, 'approved')
+        return res?.ok ?? false
+      }))
+      const failedCount = results.filter(ok => !ok).length
       await load()
-      setReviewingAgent(null)
-      setRejectionReason('')
-      setSelectedDocType('')
-    } catch {
-      showToast('Error approving all documents')
+      if (failedCount) { setReviewError(`${failedCount} document${failedCount === 1 ? '' : 's'} weren’t approved. Try again.`); return }
+      toast('All documents approved', 'success')
+      setReviewingAgent(null); setRejectionReason(''); setSelectedDocType('')
     } finally {
       setDocApproving(false)
     }
@@ -188,421 +253,288 @@ export default function AgentsPage() {
 
   async function rejectDocument(docType: string) {
     if (!reviewingAgent || !rejectionReason.trim()) return
-    setDocApproving(true)
+    setDocApproving(true); setReviewError('')
     try {
-      const res = await fetch(`/api/superadmin/agents/${reviewingAgent.id}/documents/approve`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ docType, action: 'reject', reason: rejectionReason.trim() }),
-      })
-      if (res.ok) {
-        showToast(`Document rejected and agent notified`)
-        if (reviewingAgent.documents) {
-          setReviewingAgent(prev => prev ? {
-            ...prev,
-            documents: prev.documents?.map(d => d.docType === docType ? { ...d, docApprovalStatus: 'rejected' } : d)
-          } : null)
-        }
-        await load()
-        setTimeout(() => setReviewingAgent(null), 500)
-      } else {
-        const err = await res.json().catch(() => ({}))
-        showToast((err as any).error ?? 'Failed to reject document')
-      }
-    } catch (e) {
-      showToast('Error rejecting document')
+      const res = await postDocDecision(reviewingAgent.id, { docType, action: 'reject', reason: rejectionReason.trim() })
+      if (!res.ok) { setReviewError(await errorOf(res, 'That document wasn’t rejected. Try again.')); return }
+      markDoc(docType, 'rejected')
+      toast(`${docLabel(docType)} rejected. The agent has been told why.`, 'success')
+      setSelectedDocType(''); setRejectionReason('')
+      load()
+    } catch {
+      setReviewError('No connection. Check your internet and try again.')
+    } finally {
+      setDocApproving(false)
     }
-    finally { setDocApproving(false) }
   }
 
-  const fmt = (n: number) => `₦${n.toLocaleString()}`
-  const paginated = agents.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
-  const totalPages = Math.ceil(agents.length / PAGE_SIZE)
-  const pendingCount = agents.filter(a => a.status === 'PendingActivation').length
+  const counts = {
+    all: agents.length,
+    action: agents.filter(needsAction).length,
+    active: agents.filter(a => a.status === 'Active' && !needsAction(a)).length,
+    suspended: agents.filter(a => a.status === 'Suspended').length,
+  }
+  const shown = agents.filter(a =>
+    filter === 'all' ? true : filter === 'action' ? needsAction(a) : filter === 'active' ? a.status === 'Active' && !needsAction(a) : a.status === 'Suspended')
+  const paginated = shown.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
-  const statusBadge = (a: Agent) => {
-    if (a.docStatus === 'pending_approval') return <span className="bdg" style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a' }}>📋 Docs Pending</span>
-    if (a.docStatus === 'rejected') return <span className="bdg bdg-r">📋 Docs Rejected</span>
-    if (a.lockedAt) return <span className="bdg bdg-r">🔒 Locked</span>
-    if (a.status === 'PendingActivation') return <span className="bdg" style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a' }}>⏳ Pending</span>
-    if (a.status === 'Suspended') return <span className="bdg bdg-r">Suspended</span>
-    if (a.email && !a.emailVerified) return <span className="bdg bdg-a">Unverified</span>
-    return <span className="bdg bdg-g">Active</span>
+  function primaryAction(a: Agent) {
+    if (a.docStatus === 'pending_approval') return <button type="button" className="btn btn-sm btn-green" onClick={() => { setReviewError(''); setReviewingAgent(a) }}>Review documents</button>
+    if (a.status === 'PendingActivation') return <button type="button" className="btn btn-sm btn-green" onClick={() => openActivate(a)}>Activate</button>
+    if (a.lockedAt) return <button type="button" className="btn btn-sm btn-soft" onClick={() => unblockAgent(a)}>Unlock sign-in</button>
+    return null
   }
 
   return (
     <>
-      <div className="pg-hd">
-        <div>
-          <h1>All Agents</h1>
-          <p>Manage agent accounts, wallets and commissions{pendingCount > 0 && <strong style={{ color: '#92400e', marginLeft: 8 }}>· {pendingCount} pending activation</strong>}</p>
-        </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-          <div className="a-topbar-search" style={{ minWidth: 260 }}>
-            <span style={{ color: 'var(--text3)' }}>🔍</span>
-            <input type="text" placeholder="Search agents…" value={search} onChange={e => setSearch(e.target.value)} />
-          </div>
-          <button className="btn btn-green" onClick={() => { setShowInvite(true); setInviteEmail(''); setInviteLink(''); setInviteError(''); setCopied(false) }}>
-            ✉️ Invite Agent
-          </button>
-        </div>
+      <PageHeader
+        title="Agents"
+        sub={loading && !agents.length ? 'Loading…' : failed && !agents.length ? 'Everyone who collects savings for Vochus.' : `${counts.all.toLocaleString('en-NG')} agent${counts.all === 1 ? '' : 's'}${counts.action ? ` · ${counts.action} need${counts.action === 1 ? 's' : ''} your attention` : ''}`}
+        actions={<button type="button" className="btn btn-green" onClick={openInvite}><Icons.add size={18} aria-hidden="true" /> Invite an agent</button>}
+      />
+
+      <div className="toolbar">
+        <SearchField value={search} onChange={setSearch} placeholder="Name, agent ID or location" label="Search agents" />
+        <Segmented<Filter> label="Filter agents" value={filter} onChange={setFilter} options={[
+          { value: 'all', label: 'All', count: failed && !agents.length ? undefined : counts.all },
+          { value: 'action', label: 'Needs action', count: failed && !agents.length ? undefined : counts.action },
+          { value: 'active', label: 'Active', count: failed && !agents.length ? undefined : counts.active },
+          { value: 'suspended', label: 'Suspended', count: failed && !agents.length ? undefined : counts.suspended },
+        ]} />
       </div>
 
-      <div className="card">
-        <div className="tbl-wrap">
-          <table>
-            <thead>
-              <tr><th>Agent</th><th>Phone</th><th>Email</th><th>Location</th><th>Customers</th><th>Wallet</th><th>Status</th><th>Actions</th></tr>
-            </thead>
-            <tbody>
-              {loading && <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>Loading…</td></tr>}
-              {!loading && agents.length === 0 && <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>No agents found</td></tr>}
-              {!loading && paginated.map(a => (
-                <tr key={a.id} style={{ background: a.status === 'PendingActivation' ? '#fffbeb' : undefined }}>
-                  <td><div className="td-av"><div className="av av-green" style={{ overflow: 'hidden', padding: 0 }}>{a.photoUrl ? <img src={a.photoUrl} alt={a.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : a.name.split(' ').map(w => w[0]).join('').slice(0,2)}</div><div><div className="td-name">{a.name}</div><div className="td-sub">{a.agentId}</div></div></div></td>
-                  <td>{a.phone}</td>
-                  <td>{a.email
-                    ? <div><div style={{ fontSize: 13 }}>{a.email}</div>{a.emailVerified ? <span style={{ fontSize: 11, color: 'var(--g)', fontWeight: 600 }}>✓ Verified</span> : <span style={{ fontSize: 11, color: '#e67e22', fontWeight: 600 }}>⚠ Pending</span>}</div>
-                    : <span style={{ color: 'var(--text3)', fontSize: 12 }}>—</span>}</td>
-                  <td>{a.location}</td>
-                  <td>{a.customerCount}</td>
-                  <td>{fmt(a.walletBalance)}</td>
-                  <td>{statusBadge(a)}</td>
-                  <td><div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {a.docStatus === 'pending_approval' ? (
-                      <button className="btn btn-xs btn-green" onClick={() => setReviewingAgent(a)}>📋 Review Docs</button>
-                    ) : a.status === 'PendingActivation' ? (
-                      <button className="btn btn-xs btn-green" onClick={() => openActivate(a)}>✓ Activate</button>
-                    ) : (
-                      <>
-                        <a href={`/superadmin/agents/${a.id}`} className="btn btn-xs btn-outline" style={{ textDecoration: 'none' }}>View</a>
-                        <button className="btn btn-xs btn-outline" onClick={() => toggleProfileLock(a)}>{a.profileUnlocked ? '🔒 Lock' : '🔓 Unlock'}</button>
-                        {a.lockedAt && <button className="btn btn-xs btn-green" onClick={() => unblockAgent(a)}>🔓 Unblock</button>}
-                        {!a.lockedAt && a.email && !a.emailVerified && <button className="btn btn-xs btn-outline" onClick={() => resendVerification(a.id)}>Resend</button>}
-                        {!a.lockedAt && <button className={`btn btn-xs ${a.status === 'Active' ? 'btn-danger' : 'btn-green'}`} onClick={() => toggleStatus(a)}>{a.status === 'Active' ? 'Suspend' : 'Activate'}</button>}
-                      </>
-                    )}
-                  </div></td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-          {totalPages > 1 && (
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0 0', borderTop: '1px solid var(--border)', marginTop: 4 }}>
-              <div style={{ fontSize: 12, color: 'var(--text3)' }}>Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, agents.length)} of {agents.length}</div>
-              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                <button className="btn btn-xs btn-outline" disabled={page === 1} onClick={() => setPage(p => p - 1)}>← Prev</button>
-                <span style={{ fontSize: 12, color: 'var(--text2)', minWidth: 80, textAlign: 'center' }}>Page {page} of {totalPages}</span>
-                <button className="btn btn-xs btn-outline" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>Next →</button>
+      <section className="card" aria-label="Agents">
+        {loading && !agents.length ? <TableSkeleton rows={8} cols={6} />
+          : failed ? <LoadError what="agents" onRetry={load} />
+          : shown.length === 0 ? (
+            q ? <Empty icon="search" title={`No agents match “${q}”`} text="Check the spelling, or search by agent ID or location." />
+              : filter !== 'all' ? <Empty icon="check" title="Nothing here" text="No agents are in this group right now." />
+              : <Empty icon="customers" title="No agents yet" text="Invite your first agent. They’ll show here once they’ve registered."
+                  action={<button type="button" className="btn btn-green" onClick={openInvite}>Invite an agent</button>} />
+          ) : (
+            <>
+              <div className="tbl-wrap tbl-stack">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Agent</th><th>Contact</th><th>Location</th>
+                      <th className="num">Customers</th><th className="num">Wallet</th>
+                      <th>Status</th><th><span className="sr-only">Actions</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginated.map(a => (
+                      <tr key={a.id}>
+                        <td>
+                          <Link href={`/superadmin/agents/${a.id}`} className="td-av ag-link">
+                            <Avatar name={a.name} photoUrl={a.photoUrl} tone={needsAction(a) ? 'amber' : 'green'} />
+                            <span>
+                              <span className="td-name ui-block">{a.name}</span>
+                              <span className="td-sub ui-block">{a.agentId}</span>
+                            </span>
+                          </Link>
+                        </td>
+                        <td data-label="Contact">
+                          <div>
+                            <div>{a.phone}</div>
+                          {a.email && <div className="td-sub ag-email">{a.email}{!a.emailVerified && <span className="ag-unverified"> · not verified</span>}</div>}
+                          </div>
+                        </td>
+                        <td data-label="Location">{a.location || '—'}</td>
+                        <td className="num" data-label="Customers">{a.customerCount.toLocaleString('en-NG')}</td>
+                        <td className="num" data-label="Wallet">{naira(a.walletBalance)}</td>
+                        <td data-label="Status"><StatusBadge a={a} /></td>
+                        <td>
+                          <div className="a-row-actions">
+                            {primaryAction(a)}
+                            <RowMenu label={`More actions for ${a.name}`} items={[
+                              { label: 'View profile', href: `/superadmin/agents/${a.id}` },
+                              a.status !== 'PendingActivation' && { label: a.profileUnlocked ? 'Lock profile editing' : 'Allow one profile edit', onSelect: () => toggleProfileLock(a) },
+                              !!a.email && !a.emailVerified && { label: 'Resend verification email', onSelect: () => resendVerification(a) },
+                              a.status === 'Active' && { label: 'Suspend agent', danger: true, onSelect: () => { setStatusError(''); setStatusTarget(a) } },
+                              a.status === 'Suspended' && { label: 'Reactivate agent', onSelect: () => { setStatusError(''); setStatusTarget(a) } },
+                            ]} />
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <Pager page={page} pageSize={PAGE_SIZE} total={shown.length} onPage={setPage} />
+            </>
+          )}
+      </section>
+
+      {showInvite && (
+        <Modal icon="send" title="Invite an agent" onClose={() => setShowInvite(false)} busy={inviting}
+          sub={inviteLink ? undefined : 'They’ll get a link to register themselves: details, photo, documents and email check.'}
+          footer={inviteLink ? <>
+            <button type="button" className="btn btn-outline" onClick={() => { setInviteLink(''); setInviteEmail('') }}>Invite someone else</button>
+            <button type="button" className="btn btn-green" onClick={() => setShowInvite(false)}>Done</button>
+          </> : <>
+            <button type="button" className="btn btn-outline" onClick={() => setShowInvite(false)} disabled={inviting}>Cancel</button>
+            <button type="button" className="btn btn-green" disabled={inviting} onClick={sendInvite}>{inviting ? 'Sending…' : 'Send invite'}</button>
+          </>}>
+          {!inviteLink ? (
+            <form onSubmit={e => { e.preventDefault(); sendInvite() }} noValidate>
+              <Field id="inv-email" label="Agent’s email address" error={inviteError}>
+                <input id="inv-email" className="a-input" type="email" inputMode="email" autoComplete="off" autoCapitalize="none" spellCheck={false}
+                  placeholder="name@example.com" value={inviteEmail} aria-invalid={!!inviteError}
+                  onChange={e => { setInviteEmail(e.target.value); setInviteError('') }} />
+              </Field>
+            </form>
+          ) : (
+            <>
+              <div className="ag-sent">
+                <span className="ag-sent-ic" aria-hidden="true"><Icons.check size={20} /></span>
+                <div>
+                  <strong>Invite sent to {inviteEmail.trim()}</strong>
+                  <p>You can also share this link with them directly.</p>
+                </div>
+              </div>
+              <Field id="inv-link" label="Invite link">
+                <div className="ag-copy">
+                  <input id="inv-link" className="a-input ag-mono" readOnly value={inviteLink} onFocus={e => e.target.select()} />
+                  <button type="button" className="btn btn-outline" onClick={copyLink}>{copied ? <><Icons.check size={16} aria-hidden="true" /> Copied</> : 'Copy'}</button>
+                </div>
+              </Field>
+              <p className="a-hint">They’ll show under <strong>Needs action</strong> once they finish registering. Then you can activate them and set their float limit.</p>
+            </>
+          )}
+        </Modal>
+      )}
+
+      {activatingAgent && (
+        <Modal error={activateError || undefined} icon="check" tone="money" title={`Activate ${activatingAgent.name}`} onClose={() => setActivatingAgent(null)} busy={activating}
+          sub={[activatingAgent.agentId, activatingAgent.phone, activatingAgent.email].filter(Boolean).join(' · ')}
+          footer={<>
+            <button type="button" className="btn btn-outline" onClick={() => setActivatingAgent(null)} disabled={activating}>Cancel</button>
+            <button type="button" className="btn btn-green" disabled={activating} onClick={activateAgent}>{activating ? 'Activating…' : 'Activate account'}</button>
+          </>}>
+          <Field id="act-float" label="Float limit" hint="The most cash this agent can hold for customers." error={floatError}>
+            <div className="ag-money">
+              <span aria-hidden="true">₦</span>
+              <input id="act-float" className="a-input" type="tel" inputMode="decimal" placeholder="200,000" value={floatLimit} aria-invalid={!!floatError}
+                onKeyDown={blockMinus} onChange={e => { setFloatLimit(nonNegativeString(e.target.value)); setFloatError('') }} />
+            </div>
+          </Field>
+          <Field id="act-region" label="Region (optional)">
+            <select id="act-region" className="a-input" value={region} onChange={e => setRegion(e.target.value)}>
+              <option value="">Choose a region</option>
+              {REGIONS.map(r => <option key={r}>{r}</option>)}
+            </select>
+          </Field>
+          <Field id="act-notes" label="Internal note (optional)">
+            <textarea id="act-notes" className="a-input" rows={2} placeholder="Only admins see this" value={activateNotes} onChange={e => setActivateNotes(e.target.value)} />
+          </Field>
+          <fieldset className="ag-docs">
+            <legend className="a-label">Documents you’ve checked</legend>
+            {DOCS.filter(d => d.required).map(doc => (
+              <label key={doc.id} className="ag-doc-check">
+                <input type="checkbox" checked={checkedDocs.includes(doc.id)}
+                  onChange={() => setCheckedDocs(prev => prev.includes(doc.id) ? prev.filter(d => d !== doc.id) : [...prev, doc.id])} />
+                <span>
+                  <span className="ag-doc-title">{doc.label}</span>
+                  <span className="ag-doc-sub">{doc.sub}</span>
+                </span>
+              </label>
+            ))}
+          </fieldset>
+          <p className="a-hint">Commission uses the platform rates set under <Link href="/superadmin/commission">Commission</Link>. The agent is emailed and can sign in straight away.</p>
+        </Modal>
+      )}
+
+      {reviewingAgent && (
+        <Modal error={reviewError || undefined} icon="enrol" title="Review documents" sub={`${reviewingAgent.name} · ${reviewingAgent.agentId}`} onClose={closeReview} busy={docApproving}
+          footer={<>
+            <button type="button" className="btn btn-outline" onClick={closeReview} disabled={docApproving}>Close</button>
+            {reviewingAgent.documents?.some(d => d.docApprovalStatus !== 'approved') && (
+              <button type="button" className="btn btn-green" onClick={approveAll} disabled={docApproving}>{docApproving ? 'Saving…' : 'Approve all'}</button>
+            )}
+          </>}>
+          {reviewingAgent.documents && reviewingAgent.documents.length > 0 ? (
+            <div className="rows">
+              {reviewingAgent.documents.map(doc => {
+                const s = doc.docApprovalStatus
+                const href = `/api/agent/documents/${doc.docType}?agentId=${reviewingAgent.id}`
+                return (
+                  <div key={doc.docType} className="row ag-review-row">
+                    <span className="row-ic" aria-hidden="true"><Icons.enrol size={18} /></span>
+                    <div className="row-main">
+                      <div className="row-title">{docLabel(doc.docType)}</div>
+                      <div className="row-sub">{doc.fileName}</div>
+                      <span className={`bdg ${s === 'approved' ? 'bdg-g' : s === 'rejected' ? 'bdg-r' : 'bdg-a'}`}>{s === 'approved' ? 'Approved' : s === 'rejected' ? 'Rejected' : 'To review'}</span>
+                    </div>
+                    <div className="row-actions">
+                      {doc.docType === 'agree'
+                        ? <button type="button" className="btn btn-xs btn-outline" onClick={() => setViewingAgreement({ name: reviewingAgent.name, agentId: reviewingAgent.agentId, signatureUrl: href })}>View</button>
+                        : <a href={href} target="_blank" rel="noopener noreferrer" className="btn btn-xs btn-outline">View</a>}
+                      {s !== 'approved' && <button type="button" className="btn btn-xs btn-green" disabled={docApproving} onClick={() => approveDocument(doc.docType)}>Approve</button>}
+                      {s !== 'rejected' && <button type="button" className="btn btn-xs btn-outline ag-reject" disabled={docApproving} aria-pressed={selectedDocType === doc.docType}
+                        onClick={() => { setSelectedDocType(doc.docType); setRejectionReason('') }}>Reject</button>}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          ) : <Empty icon="enrol" title="No documents yet" text="This agent hasn’t uploaded anything." />}
+
+          {selectedDocType && (
+            <div className="ag-reject-box">
+              <Field id="rej-reason" label={`Why are you rejecting the ${docLabel(selectedDocType).toLowerCase()}?`} hint="The agent sees this, so say what to fix.">
+                <textarea id="rej-reason" className="a-input" rows={3} autoFocus placeholder="e.g. The photo is blurry. Upload a clearer picture of the whole ID." value={rejectionReason} onChange={e => setRejectionReason(e.target.value)} />
+              </Field>
+              <div className="a-row-actions">
+                <button type="button" className="btn btn-sm btn-outline" onClick={() => { setSelectedDocType(''); setRejectionReason('') }} disabled={docApproving}>Cancel</button>
+                <button type="button" className="btn btn-sm btn-danger" disabled={docApproving || !rejectionReason.trim()} onClick={() => rejectDocument(selectedDocType)}>Reject and tell the agent</button>
               </div>
             </div>
           )}
-        </div>
-      </div>
-
-      {/* Invite Agent Modal */}
-      {showInvite && (
-        <div className="a-modal-bg" onClick={() => setShowInvite(false)}>
-          <div className="a-modal" style={{ maxWidth: 500 }} onClick={e => e.stopPropagation()}>
-            <div className="a-modal-hd">
-              <h2>✉️ Invite Agent</h2>
-              <button className="a-modal-close" onClick={() => setShowInvite(false)}>✕</button>
-            </div>
-
-            {!inviteLink ? (
-              <>
-                <p style={{ fontSize: 13.5, color: 'var(--text2)', marginBottom: 20, lineHeight: 1.6 }}>
-                  Enter the agent's email address. They will receive a unique link to complete their own registration — including personal details, photo, documents, and email verification.
-                </p>
-                {inviteError && <div className="a-alert a-alert-r" style={{ marginBottom: 14 }}>{inviteError}</div>}
-                <label className="a-label">Agent Email Address *</label>
-                <input className="a-input" type="email" placeholder="agent@example.com" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)}
-                  onKeyDown={e => e.key === 'Enter' && sendInvite()} autoFocus />
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, paddingTop: 16, borderTop: '1px solid var(--border)', marginTop: 8 }}>
-                  <button className="btn btn-outline" onClick={() => setShowInvite(false)}>Cancel</button>
-                  <button className="btn btn-green" disabled={inviting || !inviteEmail.trim()} onClick={sendInvite}>
-                    {inviting ? 'Generating…' : '🔗 Generate Invite Link'}
-                  </button>
-                </div>
-              </>
-            ) : (
-              <>
-                <div style={{ background: '#f0faf4', border: '1px solid #b6e8c8', borderRadius: 10, padding: '12px 14px', fontSize: 13, color: '#2e7d4f', marginBottom: 20 }}>
-                  ✅ Invite link generated and email sent to <strong>{inviteEmail}</strong>
-                </div>
-                <label className="a-label">Invite Link (share this with the agent)</label>
-                <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-                  <input className="a-input" readOnly value={inviteLink} style={{ flex: 1, fontSize: 12, fontFamily: 'monospace', marginBottom: 0 }} onClick={e => (e.target as HTMLInputElement).select()} />
-                  <button className="btn btn-green" style={{ flexShrink: 0 }} onClick={copyLink}>
-                    {copied ? '✓ Copied!' : '📋 Copy'}
-                  </button>
-                </div>
-                <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, padding: '10px 14px', fontSize: 12.5, color: '#92400e', marginBottom: 16 }}>
-                  ⏳ The agent will appear in this list as <strong>"Pending Activation"</strong> after completing their registration. You can then activate their account and set their float limit.
-                </div>
-                <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-                  <button className="btn btn-outline" onClick={() => { setInviteLink(''); setInviteEmail('') }}>Send Another</button>
-                  <button className="btn btn-green" onClick={() => setShowInvite(false)}>Done</button>
-                </div>
-              </>
-            )}
-          </div>
-        </div>
-      )}
-
-      {/* Activate Agent Modal */}
-      {activatingAgent && (
-        <div className="a-modal-bg" onClick={() => setActivatingAgent(null)}>
-          <div className="a-modal" style={{ maxWidth: 480 }} onClick={e => e.stopPropagation()}>
-            <div className="a-modal-hd">
-              <h2>✓ Activate Agent</h2>
-              <button className="a-modal-close" onClick={() => setActivatingAgent(null)}>✕</button>
-            </div>
-
-            <div style={{ background: '#f0faf4', border: '1px solid #b6e8c8', borderRadius: 10, padding: '12px 14px', fontSize: 13, marginBottom: 20 }}>
-              <div style={{ fontWeight: 700, marginBottom: 4 }}>{activatingAgent.name}</div>
-              <div style={{ color: '#555', fontSize: 12 }}>{activatingAgent.agentId} · {activatingAgent.phone} · {activatingAgent.email}</div>
-            </div>
-
-            {activateError && <div className="a-alert a-alert-r" style={{ marginBottom: 14 }}>{activateError}</div>}
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
-              <div style={{ gridColumn: '1 / -1' }}>
-                <label className="a-label">Float Limit (₦) *</label>
-                <input className="a-input" type="tel" inputMode="decimal" placeholder="e.g. 200000" value={floatLimit} onKeyDown={blockMinus} onChange={e => setFloatLimit(nonNegativeString(e.target.value))} autoFocus />
-              </div>
-              <div style={{ gridColumn: '1 / -1' }}>
-                <label className="a-label">Commission Rate</label>
-                <div className="a-input" style={{ background: 'var(--surface2)', color: 'var(--text3)', cursor: 'not-allowed', marginBottom: 0 }}>
-                  0.4% of savings volume (platform default)
-                </div>
-              </div>
-              <div style={{ gridColumn: '1 / -1' }}>
-                <label className="a-label">Assigned Region</label>
-                <select className="a-input" value={region} onChange={e => setRegion(e.target.value)}>
-                  <option value="">Select Region (optional)</option>
-                  {REGIONS.map(r => <option key={r}>{r}</option>)}
-                </select>
-              </div>
-              <div style={{ gridColumn: '1 / -1' }}>
-                <label className="a-label">Internal Notes</label>
-                <textarea className="a-input" rows={2} placeholder="Any notes about this agent…" value={activateNotes} onChange={e => setActivateNotes(e.target.value)} style={{ resize: 'vertical' }} />
-              </div>
-            </div>
-
-            <div style={{ marginBottom: 16 }}>
-              <label className="a-label" style={{ marginBottom: 8 }}>Documents Received</label>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                {DOCS.filter(doc => doc.required).map(doc => {
-                  const checked = checkedDocs.includes(doc.id)
-                  return (
-                    <div key={doc.id} onClick={() => toggleDoc(doc.id)} style={{ border: `1.5px solid ${checked ? '#1a5c35' : 'var(--border)'}`, borderRadius: 10, padding: '9px 12px', display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer', background: checked ? '#f0faf4' : 'var(--surface)', transition: 'all .15s' }}>
-                      <div style={{ width: 18, height: 18, borderRadius: 4, border: `2px solid ${checked ? '#1a5c35' : '#d1d5db'}`, background: checked ? '#1a5c35' : '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                        {checked && <span style={{ color: '#fff', fontSize: 10, fontWeight: 700 }}>✓</span>}
-                      </div>
-                      <span style={{ fontSize: 16, flexShrink: 0 }}>{doc.icon}</span>
-                      <div style={{ flex: 1, minWidth: 0 }}>
-                        <div style={{ fontSize: 12.5, fontWeight: 600, color: 'var(--text1)' }}>{doc.label}</div>
-                        <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 1 }}>{doc.sub}</div>
-                      </div>
-                    </div>
-                  )
-                })}
-              </div>
-            </div>
-
-            <div style={{ background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 10, padding: '10px 14px', fontSize: 12.5, color: '#92400e', marginBottom: 16 }}>
-              The agent will be notified by email and can immediately log in to the agent portal.
-            </div>
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-              <button className="btn btn-outline" onClick={() => setActivatingAgent(null)}>Cancel</button>
-              <button className="btn btn-green" disabled={activating} onClick={activateAgent}>
-                {activating ? 'Activating…' : '✓ Activate Account'}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Document Review Modal */}
-      {reviewingAgent && (
-        <div className="a-modal-bg" onClick={() => setReviewingAgent(null)}>
-          <div className="a-modal" style={{ maxWidth: 520 }} onClick={e => e.stopPropagation()}>
-            <div className="a-modal-hd">
-              <h2>📋 Review Documents</h2>
-              <button className="a-modal-close" onClick={() => { setReviewingAgent(null); setRejectionReason(''); setSelectedDocType('') }}>✕</button>
-            </div>
-
-            <div style={{ background: '#f0faf4', border: '1px solid #b6e8c8', borderRadius: 10, padding: '12px 14px', fontSize: 13, marginBottom: 20 }}>
-              <div style={{ fontWeight: 700, marginBottom: 4 }}>{reviewingAgent.name}</div>
-              <div style={{ color: '#555', fontSize: 12 }}>{reviewingAgent.agentId} · {reviewingAgent.phone}</div>
-            </div>
-
-            <label className="a-label" style={{ marginBottom: 12 }}>Submitted Documents</label>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 24 }}>
-              {reviewingAgent.documents && reviewingAgent.documents.length > 0 ? (
-                reviewingAgent.documents.map(doc => {
-                  const status = doc.docApprovalStatus
-                  const isApproved = status === 'approved'
-                  const isRejected = status === 'rejected'
-                  return (
-                  <div key={doc.docType} style={{
-                    padding: '12px 14px',
-                    border: `1px solid ${isApproved ? '#b6e8c8' : isRejected ? '#fca5a5' : '#d1d5db'}`,
-                    borderRadius: 8,
-                    display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                    background: isApproved ? '#f0faf4' : isRejected ? '#fff5f5' : '#fff',
-                  }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, flex: 1 }}>
-                      <span style={{ fontSize: 18, flexShrink: 0 }}>{DOCS.find(d => d.id === doc.docType)?.icon || '📄'}</span>
-                      <div style={{ minWidth: 0, flex: 1 }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                          <span style={{ fontSize: 12, fontWeight: 600 }}>{DOCS.find(d => d.id === doc.docType)?.label || doc.docType}</span>
-                          {isApproved && <span style={{ fontSize: 10, fontWeight: 700, color: '#2e7d4f', background: '#d1fae5', padding: '1px 6px', borderRadius: 4 }}>✓ Approved</span>}
-                          {isRejected && <span style={{ fontSize: 10, fontWeight: 700, color: '#b91c1c', background: '#fee2e2', padding: '1px 6px', borderRadius: 4 }}>✕ Rejected</span>}
-                          {!isApproved && !isRejected && <span style={{ fontSize: 10, fontWeight: 700, color: '#92400e', background: '#fef3c7', padding: '1px 6px', borderRadius: 4 }}>⏳ Pending</span>}
-                        </div>
-                        <div style={{ fontSize: 11, color: '#666', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{doc.fileName}</div>
-                      </div>
-                    </div>
-                    <div style={{ display: 'flex', gap: 6, flexShrink: 0 }}>
-                      {doc.docType === 'agree' ? (
-                        <button
-                          type="button"
-                          className="btn btn-xs btn-outline"
-                          onClick={() => setViewingAgreement({
-                            agentId: reviewingAgent.id,
-                            signatureUrl: `/api/agent/documents/${doc.docType}?agentId=${reviewingAgent.id}`,
-                          })}
-                        >
-                          View
-                        </button>
-                      ) : (
-                        <a href={`/api/agent/documents/${doc.docType}?agentId=${reviewingAgent.id}`} target="_blank" rel="noopener noreferrer" className="btn btn-xs btn-outline">
-                          View
-                        </a>
-                      )}
-                      {!isApproved && (
-                        <button
-                          className="btn btn-xs btn-green"
-                          disabled={docApproving}
-                          onClick={() => approveDocument(doc.docType)}
-                        >
-                          ✓
-                        </button>
-                      )}
-                      {!isRejected && (
-                        <button
-                          className="btn btn-xs btn-danger"
-                          disabled={docApproving}
-                          onClick={() => setSelectedDocType(doc.docType)}
-                          style={{ opacity: selectedDocType === doc.docType ? 1 : 0.6 }}
-                        >
-                          ✕
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                  )
-                })
-              ) : (
-                <div style={{ textAlign: 'center', padding: '20px', color: '#999', fontSize: 13 }}>No documents submitted</div>
-              )}
-            </div>
-
-            {selectedDocType && (
-              <div style={{ marginBottom: 16 }}>
-                <label className="a-label" style={{ marginBottom: 8 }}>Reason for Rejection</label>
-                <textarea
-                  className="a-input"
-                  placeholder="Provide feedback for the agent…"
-                  rows={3}
-                  value={rejectionReason}
-                  onChange={e => setRejectionReason(e.target.value)}
-                  style={{ resize: 'vertical' }}
-                  autoFocus
-                />
-                <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
-                  <button
-                    className="btn btn-outline"
-                    onClick={() => {
-                      setSelectedDocType('')
-                      setRejectionReason('')
-                    }}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    className="btn btn-danger"
-                    disabled={docApproving || !rejectionReason.trim()}
-                    onClick={() => rejectDocument(selectedDocType)}
-                  >
-                    ✕ Reject & Send Feedback
-                  </button>
-                </div>
-              </div>
-            )}
-
-            <div style={{ display: 'flex', justifyContent: 'space-between', paddingTop: 16, borderTop: '1px solid var(--border)' }}>
-              <button className="btn btn-outline" onClick={() => { setReviewingAgent(null); setRejectionReason(''); setSelectedDocType('') }} disabled={docApproving}>Cancel</button>
-              {reviewingAgent.documents?.some(d => d.docApprovalStatus !== 'approved') && (
-                <button className="btn btn-green" onClick={approveAll} disabled={docApproving}>
-                  ✓ Approve All
-                </button>
-              )}
-            </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
       {viewingAgreement && (
-        <div
-          style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 1100, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20 }}
-          onClick={() => setViewingAgreement(null)}
-        >
-          <div
-            style={{ background: '#fff', borderRadius: 16, width: '100%', maxWidth: 720, maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 20px 60px rgba(0,0,0,.3)' }}
-            onClick={e => e.stopPropagation()}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px 24px', borderBottom: '1px solid #e5e7eb' }}>
-              <div>
-                <div style={{ fontSize: 17, fontWeight: 800, color: '#1a1a2e' }}>Signed Agent Agreement</div>
-                <div style={{ fontSize: 12, color: '#666', marginTop: 2 }}>Vochus Easy Save Agent Terms & Conditions</div>
-              </div>
-              <button onClick={() => setViewingAgreement(null)} style={{ background: 'none', border: 'none', fontSize: 22, cursor: 'pointer', color: '#999', width: 32, height: 32 }}>✕</button>
-            </div>
-            <div style={{ overflowY: 'auto', padding: '20px 24px', fontSize: 13, lineHeight: 1.7, color: '#333' }}>
-              <p><strong>1. AGREEMENT TO TERMS</strong></p>
-              <p>By becoming an agent for Vochus Easy Save, you agree to comply with all terms and conditions outlined in this agreement. This includes all operational guidelines, compliance requirements, and financial obligations.</p>
-              <p><strong>2. AGENT RESPONSIBILITIES</strong></p>
-              <p>As an agent, you are responsible for: enrolling customers, recording savings transactions, maintaining accurate records, safeguarding customer funds, and reporting all transactions promptly. You must conduct all activities in accordance with applicable laws and platform policies.</p>
-              <p><strong>3. COMMISSION STRUCTURE</strong></p>
-              <p>Agents earn commission based on savings volume (0.4% of savings amount) and customer enrolments (₦2 per enrolment). Commission is calculated monthly and deposited into your agent wallet.</p>
-              <p><strong>4. FLOAT LIMIT</strong></p>
-              <p>You are allocated a float limit as specified during activation. You are responsible for safeguarding all funds up to this limit and must account for every transaction.</p>
-              <p><strong>5. COMPLIANCE & CONDUCT</strong></p>
-              <p>You must comply with all KYC/AML requirements, maintain confidentiality of customer information, and conduct business with integrity. Any fraudulent activity will result in immediate account suspension and legal action.</p>
-              <p><strong>6. TERMINATION</strong></p>
-              <p>Vochus reserves the right to terminate this agreement at any time if you violate terms, engage in misconduct, or fail to meet performance standards.</p>
-              <p><strong>7. LIABILITY</strong></p>
-              <p>You acknowledge that you are an independent agent and not an employee. You are solely responsible for any losses or disputes arising from your activities.</p>
-
-              <div style={{ marginTop: 24, paddingTop: 20, borderTop: '1px solid #e5e7eb' }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: '#1a1a2e', marginBottom: 8 }}>Signed by {reviewingAgent?.name}</div>
-                <div style={{ border: '1.5px solid #d1d5db', borderRadius: 10, background: '#fafafa', padding: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: 160 }}>
-                  <img src={viewingAgreement.signatureUrl} alt="Agent signature" style={{ maxWidth: '100%', maxHeight: 200, objectFit: 'contain' }} />
-                </div>
-                <div style={{ fontSize: 11, color: '#666', marginTop: 8, textAlign: 'center' }}>{reviewingAgent?.agentId} · Signature captured on registration</div>
-              </div>
-            </div>
-            <div style={{ padding: '14px 24px', borderTop: '1px solid #e5e7eb', display: 'flex', justifyContent: 'flex-end' }}>
-              <button className="btn btn-outline" onClick={() => setViewingAgreement(null)}>Close</button>
+        <Modal size="lg" icon="audit" title="Signed agent agreement" sub="Vochus Easy Save agent terms and conditions" onClose={() => setViewingAgreement(null)}
+          footer={<button type="button" className="btn btn-outline" onClick={() => setViewingAgreement(null)}>Close</button>}>
+          <div className="ag-agreement">
+            <h4>1. Agreement to terms</h4>
+            <p>By becoming an agent for Vochus Easy Save, you agree to comply with all terms and conditions outlined in this agreement. This includes all operational guidelines, compliance requirements, and financial obligations.</p>
+            <h4>2. Agent responsibilities</h4>
+            <p>As an agent, you are responsible for: enrolling customers, recording savings transactions, maintaining accurate records, safeguarding customer funds, and reporting all transactions promptly. You must conduct all activities in accordance with applicable laws and platform policies.</p>
+            <h4>3. Commission structure</h4>
+            <p>Agents earn commission based on savings volume (0.4% of savings amount) and customer enrolments (₦2 per enrolment). Commission is calculated monthly and deposited into your agent wallet.</p>
+            <h4>4. Float limit</h4>
+            <p>You are allocated a float limit as specified during activation. You are responsible for safeguarding all funds up to this limit and must account for every transaction.</p>
+            <h4>5. Compliance and conduct</h4>
+            <p>You must comply with all KYC/AML requirements, maintain confidentiality of customer information, and conduct business with integrity. Any fraudulent activity will result in immediate account suspension and legal action.</p>
+            <h4>6. Termination</h4>
+            <p>Vochus reserves the right to terminate this agreement at any time if you violate terms, engage in misconduct, or fail to meet performance standards.</p>
+            <h4>7. Liability</h4>
+            <p>You acknowledge that you are an independent agent and not an employee. You are solely responsible for any losses or disputes arising from your activities.</p>
+            <div className="ag-signature">
+              <p className="a-label">Signed by {viewingAgreement.name}</p>
+              <div className="ag-signature-box"><img src={viewingAgreement.signatureUrl} alt={`${viewingAgreement.name}’s signature`} /></div>
+              <p className="a-hint">{viewingAgreement.agentId} · Signed during registration</p>
             </div>
           </div>
-        </div>
+        </Modal>
       )}
 
-      <div className={`a-toast${toast ? ' show' : ''}`}>{toast}</div>
+      {statusTarget && (
+        <ConfirmModal
+          title={statusTarget.status === 'Active' ? `Suspend ${statusTarget.name}?` : `Reactivate ${statusTarget.name}?`}
+          body={statusTarget.status === 'Active'
+            ? <>They won’t be able to sign in or record savings until you reactivate them. Their {statusTarget.customerCount} customer{statusTarget.customerCount === 1 ? '' : 's'} and balances stay as they are.</>
+            : <>They’ll be able to sign in and record savings again.</>}
+          confirmLabel={statusTarget.status === 'Active' ? 'Suspend agent' : 'Reactivate agent'}
+          danger={statusTarget.status === 'Active'}
+          busy={statusBusy} error={statusError}
+          onConfirm={changeStatus} onClose={() => setStatusTarget(null)}
+        />
+      )}
+
+      {toastNode}
     </>
   )
 }

@@ -1,6 +1,10 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { Icons, type IconName } from '@/components/ui/icons'
+import {
+  Empty, LoadError, PageHeader, Pager, SearchField, Segmented, TableSkeleton, dateTime, useDebounced,
+} from '../_components/admin-ui'
 
 interface AuditLog {
   id: string
@@ -14,154 +18,130 @@ interface AuditLog {
   createdAt: string
 }
 
-const ACTION_FILTERS = [
-  { key: '', label: 'All' },
-  { key: 'Saving', label: 'Saving' },
-  { key: 'Redemption', label: 'Redemption' },
-  { key: 'Loan', label: 'Loan' },
-  { key: 'Enrolment', label: 'Enrolment' },
-  { key: 'Agent', label: 'Agent' },
+type ActionKey = '' | 'Saving' | 'Redemption' | 'Loan' | 'Enrolment' | 'Agent'
+
+const ACTION_FILTERS: { value: ActionKey; label: string }[] = [
+  { value: '', label: 'All' },
+  { value: 'Saving', label: 'Savings' },
+  { value: 'Redemption', label: 'Redemptions' },
+  { value: 'Loan', label: 'Loans' },
+  { value: 'Enrolment', label: 'Enrolments' },
+  { value: 'Agent', label: 'Agents' },
 ]
 
-const ACTION_EMOJI: Record<string, string> = {
-  saving: '💰',
-  redemption: '🎯',
-  loan: '🏦',
-  enrolment: '📋',
-  agent: '🤝',
-  repayment: '🔄',
-  disbursement: '💸',
-}
+// Most specific first, so "loan_repayment" gets the repayment icon rather than the loan one.
+const ACTION_ICON: [string, IconName][] = [
+  ['repayment', 'repay'],
+  ['disburse', 'cash'],
+  ['saving', 'deposit'],
+  ['redemption', 'redeem'],
+  ['loan', 'loan'],
+  ['enrol', 'enrol'],
+  ['agent', 'customers'],
+]
 
-const ACTION_BG: Record<string, string> = {
-  saving: 'var(--green)',
-  redemption: 'var(--red)',
-  loan: 'var(--purple)',
-  enrolment: 'var(--teal)',
-  agent: 'var(--amber)',
-  repayment: 'var(--blue)',
-  disbursement: 'var(--purple)',
-}
-
-function getEmoji(action: string): string {
+function iconFor(action: string): IconName {
   const key = action.toLowerCase()
-  for (const k of Object.keys(ACTION_EMOJI)) {
-    if (key.includes(k)) return ACTION_EMOJI[k]
-  }
-  return '📝'
+  return ACTION_ICON.find(([k]) => key.includes(k))?.[1] ?? 'audit'
 }
 
-function getBg(action: string): string {
-  const key = action.toLowerCase()
-  for (const k of Object.keys(ACTION_BG)) {
-    if (key.includes(k)) return ACTION_BG[k]
-  }
-  return 'var(--text3)'
+/** "loan_approve" → "Loan approve" */
+function humanise(action: string) {
+  const s = action.replace(/[_-]+/g, ' ').trim()
+  return s ? s[0].toUpperCase() + s.slice(1) : action
 }
 
 const PAGE_SIZE = 30
+const API_LIMIT = 200
 
 export default function AuditPage() {
   const [logs, setLogs] = useState<AuditLog[]>([])
   const [search, setSearch] = useState('')
-  const [action, setAction] = useState('')
+  const q = useDebounced(search.trim())
+  const [action, setAction] = useState<ActionKey>('')
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
+  const [loaded, setLoaded] = useState(false)
+  const [failed, setFailed] = useState(false)
 
   const load = useCallback(async () => {
-    setLoading(true)
-    const params = new URLSearchParams()
-    if (search) params.set('search', search)
-    if (action) params.set('action', action)
-    const res = await fetch(`/api/admin/audit?${params}`)
-    const d = res.ok ? await res.json() : {}
-    setLogs(d.logs ?? [])
-    setPage(1)
-    setLoading(false)
-  }, [search, action])
+    setLoading(true); setFailed(false)
+    try {
+      const params = new URLSearchParams()
+      if (q) params.set('search', q)
+      if (action) params.set('action', action)
+      const res = await fetch(`/api/admin/audit?${params}`)
+      if (!res.ok) throw new Error()
+      const d = await res.json() as { logs?: AuditLog[] }
+      setLogs(d.logs ?? [])
+      setLoaded(true)
+    } catch {
+      setFailed(true)
+    } finally {
+      setLoading(false)
+    }
+  }, [q, action])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => { setPage(1) }, [q, action])
 
-  const fmtDate = (d: string) =>
-    new Date(d).toLocaleDateString('en-GB', {
-      day: 'numeric', month: 'short', year: 'numeric',
-      hour: '2-digit', minute: '2-digit',
-    })
+  const paginated = logs.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  const filtering = !!(q || action)
 
   return (
     <>
-      <div className="pg-hd">
-        <div>
-          <h1>Audit Log</h1>
-          <p>System-wide audit trail</p>
-        </div>
+      <PageHeader
+        title="Audit log"
+        sub="A permanent record of what admins, agents and the system did. Entries can’t be edited or deleted."
+        actions={<button type="button" className="btn btn-outline" onClick={load} disabled={loading}>
+          <Icons.retry size={16} aria-hidden="true" /> {loading && loaded ? 'Refreshing…' : 'Refresh'}
+        </button>}
+      />
+
+      <div className="toolbar">
+        <SearchField value={search} onChange={setSearch} placeholder="Action, name, ID or details" label="Search the audit log" />
+        <Segmented<ActionKey> label="Filter by type" value={action} onChange={setAction} options={ACTION_FILTERS} />
       </div>
 
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-          <input
-            type="text"
-            placeholder="Search…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            style={{ padding: '7px 12px', borderRadius: 8, border: '1.5px solid var(--border)', fontSize: 13, fontFamily: 'IBM Plex Sans', background: 'var(--surface2)', color: 'var(--text)', minWidth: 180 }}
-          />
-          <select
-            value={action}
-            onChange={e => setAction(e.target.value)}
-            style={{ padding: '7px 12px', borderRadius: 8, border: '1.5px solid var(--border)', fontSize: 13, fontFamily: 'IBM Plex Sans', background: 'var(--surface2)', color: 'var(--text)' }}
-          >
-            {ACTION_FILTERS.map(f => (
-              <option key={f.key} value={f.key}>{f.label}</option>
-            ))}
-          </select>
-          <button className="btn btn-sm btn-primary" onClick={load} style={{ marginLeft: 'auto' }}>
-            Refresh
-          </button>
-        </div>
-      </div>
-
-      <div className="card">
-        {loading && (
-          <div style={{ textAlign: 'center', color: 'var(--text3)', padding: 32 }}>Loading…</div>
-        )}
-        {!loading && logs.length === 0 && (
-          <div style={{ textAlign: 'center', color: 'var(--text3)', padding: 32 }}>No audit entries found</div>
-        )}
-        {!loading && logs.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(log => (
-          <div key={log.id} className="audit-row">
-            <div
-              className="audit-ic"
-              style={{ background: getBg(log.action) }}
-            >
-              {getEmoji(log.action)}
-            </div>
-            <div className="audit-text">
-              <div style={{ fontWeight: 600, fontSize: 14 }}>{log.action}</div>
-              <div style={{ fontSize: 12, color: 'var(--text2)' }}>
-                {log.entity}{log.entityId ? ` · ${log.entityId}` : ''}
-                {log.details ? ` — ${log.details}` : ''}
-              </div>
-              {(log.actorName || log.actorId) && (
-                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>
-                  {log.actorType}: {log.actorName ?? log.actorId}
-                </div>
-              )}
-            </div>
-            <div className="audit-time">{fmtDate(log.createdAt)}</div>
-          </div>
-        ))}
-        {!loading && Math.ceil(logs.length / PAGE_SIZE) > 1 && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0 0', borderTop: '1px solid var(--border)', marginTop: 4 }}>
-            <div style={{ fontSize: 12, color: 'var(--text3)' }}>Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, logs.length)} of {logs.length}</div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <button className="btn btn-xs btn-outline" disabled={page === 1} onClick={() => setPage(p => p - 1)}>← Prev</button>
-              <span style={{ fontSize: 12, color: 'var(--text2)', minWidth: 80, textAlign: 'center' }}>Page {page} of {Math.ceil(logs.length / PAGE_SIZE)}</span>
-              <button className="btn btn-xs btn-outline" disabled={page === Math.ceil(logs.length / PAGE_SIZE)} onClick={() => setPage(p => p + 1)}>Next →</button>
-            </div>
-          </div>
-        )}
-      </div>
+      <section className="card lo-audit" aria-label="Audit entries">
+        {loading && !loaded ? <TableSkeleton rows={10} cols={4} />
+          : failed ? <LoadError what="the audit log" onRetry={load} />
+          : logs.length === 0 ? (
+            filtering
+              ? <Empty icon="search" title="No entries match" text={q ? `Nothing found for “${q}”. Try a name, ID or a different type.` : 'Nothing of this type has been recorded yet.'} />
+              : <Empty icon="audit" title="No entries yet" text="Actions like approving loans, saving and enrolling customers are recorded here." />
+          ) : (
+            <>
+              <p className="lo-count" aria-live="polite">
+                {logs.length >= API_LIMIT
+                  ? `Showing the latest ${API_LIMIT} entries${filtering ? ' that match' : ''}. Search or filter to find older ones.`
+                  : `${logs.length.toLocaleString('en-NG')} entr${logs.length === 1 ? 'y' : 'ies'}${filtering ? ' match' : ''}`}
+              </p>
+              <ol className="rows">
+                {paginated.map(log => {
+                  const Icon = Icons[iconFor(log.action)]
+                  return (
+                    <li key={log.id} className="row">
+                      <span className="row-ic" aria-hidden="true"><Icon size={18} /></span>
+                      <div className="row-main">
+                        <div className="row-title">{humanise(log.action)}</div>
+                        <div className="row-sub">
+                          {log.entity}{log.entityId ? ` · ${log.entityId}` : ''}
+                          {log.details ? ` · ${log.details}` : ''}
+                        </div>
+                        {(log.actorName || log.actorId) && (
+                          <div className="lo-audit-actor">By {log.actorName ?? log.actorId} ({log.actorType})</div>
+                        )}
+                      </div>
+                      <time className="row-end" dateTime={log.createdAt}>{dateTime(log.createdAt)}</time>
+                    </li>
+                  )
+                })}
+              </ol>
+              <Pager page={page} pageSize={PAGE_SIZE} total={logs.length} onPage={setPage} />
+            </>
+          )}
+      </section>
     </>
   )
 }

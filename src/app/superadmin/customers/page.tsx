@@ -1,6 +1,10 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, type ReactNode } from 'react'
+import {
+  Avatar, ConfirmModal, Empty, LoadError, Modal, PageHeader, Pager, SearchField, Segmented,
+  TableSkeleton, naira, shortDate, useDebounced, useToast,
+} from '../_components/admin-ui'
 
 interface Customer {
   id: string
@@ -16,204 +20,247 @@ interface Customer {
   activePlans: number
   createdAt: string
   photoUrl?: string | null
+  // Newer profile fields. The list API may not send them yet; older customers have null.
+  gender?: string | null
+  state?: string | null
+  lga?: string | null
 }
+
+type Filter = 'all' | 'active' | 'locked'
+
+const PAGE_SIZE = 20
+
+async function errorOf(res: Response, fallback: string) {
+  const d = await res.json().catch(() => ({})) as { error?: string }
+  return d.error ?? fallback
+}
+
+function StatusBadge({ status }: { status: string }) {
+  if (status === 'Active') return <span className="bdg bdg-g">Active</span>
+  if (status === 'Locked') return <span className="bdg bdg-r">Locked</span>
+  return <span className="bdg bdg-grey">{status}</span>
+}
+
+function DlRow({ label, children }: { label: string; children: ReactNode }) {
+  return <div><dt>{label}</dt><dd>{children}</dd></div>
+}
+
+const orNotRecorded = (v: string | null | undefined) => v ? v : <span className="cm-not-recorded">Not recorded</span>
+const orDash = (v: string | null | undefined) => v ? v : <span className="cm-not-recorded">—</span>
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([])
   const [search, setSearch] = useState('')
-  const [loading, setLoading] = useState(true)
+  const q = useDebounced(search.trim())
+  const [filter, setFilter] = useState<Filter>('all')
   const [page, setPage] = useState(1)
-  const [toggling, setToggling] = useState<string | null>(null)
-  const [toast, setToast] = useState('')
-  const [detailRecord, setDetailRecord] = useState<Customer | null>(null)
-  const perPage = 20
+  const [loading, setLoading] = useState(true)
+  const [failed, setFailed] = useState(false)
+  const [toastNode, toast] = useToast()
+  const [detail, setDetail] = useState<Customer | null>(null)
 
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 3500) }
+  // Lock / unlock confirmation
+  const [lockTarget, setLockTarget] = useState<Customer | null>(null)
+  const [lockBusy, setLockBusy] = useState(false)
+  const [lockError, setLockError] = useState('')
 
-  async function toggleLock(c: Customer) {
+  const load = useCallback(async () => {
+    setLoading(true); setFailed(false)
+    try {
+      const res = await fetch(`/api/admin/customers${q ? `?search=${encodeURIComponent(q)}` : ''}`)
+      if (!res.ok) throw new Error()
+      const d = await res.json() as { customers?: Customer[] }
+      setCustomers(d.customers ?? [])
+    } catch {
+      setFailed(true)
+    } finally {
+      setLoading(false)
+    }
+  }, [q])
+
+  useEffect(() => { load() }, [load])
+  useEffect(() => { setPage(1) }, [q, filter])
+
+  function askLock(c: Customer) {
+    setLockError(''); setLockTarget(c)
+  }
+
+  async function toggleLock() {
+    const c = lockTarget
+    if (!c) return
     const next = c.status === 'Active' ? 'Locked' : 'Active'
-    const verb = next === 'Locked' ? 'Lock' : 'Unlock'
-    if (!confirm(`${verb} ${c.name} (${c.customerId})?\n\n${next === 'Locked' ? 'They will not be able to sign in until unlocked.' : 'They will be able to sign in again.'}`)) return
-    setToggling(c.id)
-    const res = await fetch(`/api/admin/customers/${c.id}/status`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: next }),
-    })
-    setToggling(null)
-    if (res.ok) {
+    setLockBusy(true); setLockError('')
+    try {
+      const res = await fetch(`/api/admin/customers/${c.id}/status`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: next }),
+      })
+      if (!res.ok) { setLockError(await errorOf(res, 'The account wasn’t changed. Try again.')); return }
       const updated = { ...c, status: next }
       setCustomers(prev => prev.map(x => x.id === c.id ? updated : x))
-      if (detailRecord?.id === c.id) setDetailRecord(updated)
-      showToast(`✅ ${c.name} ${next === 'Locked' ? 'locked' : 'unlocked'}`)
-    } else {
-      const d = await res.json().catch(() => ({}))
-      showToast(d.error ?? `${verb} failed`)
+      setDetail(prev => prev?.id === c.id ? updated : prev)
+      toast(next === 'Locked' ? `${c.name} is locked out` : `${c.name} can sign in again`, 'success')
+      setLockTarget(null)
+    } catch {
+      setLockError('No connection. Check your internet and try again.')
+    } finally {
+      setLockBusy(false)
     }
   }
 
-  const load = useCallback(async () => {
-    setLoading(true)
-    const q = search ? `?search=${encodeURIComponent(search)}` : ''
-    const res = await fetch(`/api/admin/customers${q}`)
-    const d = res.ok ? await res.json() : {}
-    setCustomers(d.customers ?? [])
-    setLoading(false)
-    setPage(1)
-  }, [search])
-
-  useEffect(() => { load() }, [load])
-
-  const fmt = (n: number) => `₦${n.toLocaleString()}`
-  const paginated = customers.slice((page - 1) * perPage, page * perPage)
-  const totalPages = Math.ceil(customers.length / perPage)
-
-  const Section = ({ title }: { title: string }) => (
-    <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '.8px', textTransform: 'uppercase', color: 'var(--text3)', margin: '20px 0 8px', paddingBottom: 6, borderBottom: '1px solid var(--border)' }}>{title}</div>
-  )
-  const Row = ({ label, value }: { label: string; value: React.ReactNode }) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 0', borderBottom: '1px solid var(--border)', gap: 12 }}>
-      <span style={{ fontSize: 12, color: 'var(--text3)', whiteSpace: 'nowrap' }}>{label}</span>
-      <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', textAlign: 'right' }}>{value ?? '—'}</span>
-    </div>
-  )
+  const counts = {
+    all: customers.length,
+    active: customers.filter(c => c.status === 'Active').length,
+    locked: customers.filter(c => c.status === 'Locked').length,
+  }
+  const shown = customers.filter(c => filter === 'all' ? true : filter === 'active' ? c.status === 'Active' : c.status === 'Locked')
+  const paginated = shown.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  const hasProfileFields = (c: Customer) => 'gender' in c || 'state' in c || 'lga' in c
 
   return (
     <>
-      <div className="pg-hd">
-        <div>
-          <h1>All Customers</h1>
-          <p>Platform-wide customer directory across all agents</p>
-        </div>
-        <div className="a-topbar-search" style={{ minWidth: 260 }}>
-          <span style={{ color: 'var(--text3)' }}>🔍</span>
-          <input
-            type="text"
-            placeholder="Search customers…"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-          />
-        </div>
+      <PageHeader
+        title="Customers"
+        sub={loading && !customers.length ? 'Loading…' : failed && !customers.length ? 'Customers across all agents.' : `${counts.all.toLocaleString('en-NG')} customer${counts.all === 1 ? '' : 's'} across all agents${counts.locked ? ` · ${counts.locked} locked` : ''}`}
+      />
+
+      <div className="toolbar">
+        <SearchField value={search} onChange={setSearch} placeholder="Name, customer ID or phone" label="Search customers" />
+        <Segmented<Filter> label="Filter customers" value={filter} onChange={setFilter} options={[
+          { value: 'all', label: 'All', count: failed && !customers.length ? undefined : counts.all },
+          { value: 'active', label: 'Active', count: failed && !customers.length ? undefined : counts.active },
+          { value: 'locked', label: 'Locked', count: failed && !customers.length ? undefined : counts.locked },
+        ]} />
       </div>
 
-      <div className="card">
-        <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 14 }}>{customers.length} customer{customers.length !== 1 ? 's' : ''} found</div>
-        <div className="tbl-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Customer</th>
-                <th>Phone</th>
-                <th>Agent</th>
-                <th>Savings Balance</th>
-                <th>Active Plans</th>
-                <th>Status</th>
-                <th>Enrolled</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && (
-                <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>Loading…</td></tr>
-              )}
-              {!loading && paginated.length === 0 && (
-                <tr><td colSpan={8} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>No customers found</td></tr>
-              )}
-              {!loading && paginated.map(c => (
-                <tr key={c.id} style={{ cursor: 'pointer' }} onClick={e => { if ((e.target as HTMLElement).closest('button')) return; setDetailRecord(c) }}>
-                  <td>
-                    <div className="td-av">
-                      {c.photoUrl ? <img src={c.photoUrl} className="av" style={{ objectFit: 'cover', borderRadius: '50%' }} alt="" /> : <div className="av av-blue">{c.name.split(' ').map(w => w[0]).join('').slice(0,2)}</div>}
-                      <div>
-                        <div className="td-name">{c.name}</div>
-                        <div className="td-sub">{c.customerId}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td>{c.phone}</td>
-                  <td>
-                    <div className="td-name">{c.agentName}</div>
-                    <div className="td-sub">{c.agentId}</div>
-                  </td>
-                  <td style={{ fontWeight: 600, color: 'var(--green)' }}>{fmt(c.totalBalance)}</td>
-                  <td>{c.activePlans}</td>
-                  <td><span className={`bdg ${c.status === 'Active' ? 'bdg-g' : 'bdg-r'}`}>{c.status}</span></td>
-                  <td style={{ color: 'var(--text3)', fontSize: 12 }}>{new Date(c.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
-                  <td>
-                    <button
-                      className={`btn btn-xs ${c.status === 'Active' ? 'btn-danger' : 'btn-green'}`}
-                      onClick={() => toggleLock(c)}
-                      disabled={toggling === c.id}
-                      title={c.status === 'Active' ? 'Prevent this customer from signing in' : 'Allow this customer to sign in again'}
-                    >
-                      {toggling === c.id ? '…' : c.status === 'Active' ? '🔒 Lock' : '🔓 Unlock'}
-                    </button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        <div className={`a-toast${toast ? ' show' : ''}`}>{toast}</div>
-        {totalPages > 1 && (
-          <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginTop: 16 }}>
-            <button className="btn btn-outline btn-sm" disabled={page === 1} onClick={() => setPage(p => p - 1)}>← Prev</button>
-            <span style={{ fontSize: 13, color: 'var(--text2)', alignSelf: 'center' }}>Page {page} of {totalPages}</span>
-            <button className="btn btn-outline btn-sm" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>Next →</button>
-          </div>
-        )}
-      </div>
-
-      {detailRecord && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex' }} onClick={() => setDetailRecord(null)}>
-          <div style={{ flex: 1, background: 'rgba(0,0,0,.45)' }} />
-          <div style={{ width: 420, background: 'var(--surface)', height: '100%', overflowY: 'auto', padding: 28, boxShadow: '-8px 0 40px rgba(0,0,0,.25)' }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
-              <div>
-                <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text)' }}>{detailRecord.name}</div>
-                <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 2 }}>{detailRecord.customerId}</div>
+      <section className="card" aria-label="Customers">
+        {loading && !customers.length ? <TableSkeleton rows={8} cols={6} />
+          : failed ? <LoadError what="customers" onRetry={load} />
+          : shown.length === 0 ? (
+            q ? <Empty icon="search" title={`No customers match “${q}”`} text="Check the spelling, or search by customer ID or phone number." />
+              : filter !== 'all' ? <Empty icon="check" title="Nothing here" text={filter === 'locked' ? 'No customers are locked right now.' : 'No active customers right now.'} />
+              : <Empty icon="customers" title="No customers yet" text="Customers show here once an agent enrols them." />
+          ) : (
+            <>
+              <div className="tbl-wrap tbl-stack">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Customer</th><th>Phone</th><th>Agent</th>
+                      <th className="num">Savings balance</th><th className="num">Active plans</th>
+                      <th>Status</th><th>Enrolled</th><th><span className="sr-only">Actions</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginated.map(c => (
+                      <tr key={c.id}>
+                        <td>
+                          <button type="button" className="cm-cell-btn" onClick={() => setDetail(c)} aria-label={`View ${c.name}`}>
+                            <Avatar name={c.name} photoUrl={c.photoUrl} tone={c.status === 'Active' ? 'blue' : 'red'} />
+                            <span>
+                              <span className="td-name">{c.name}</span>
+                              <span className="td-sub">{c.customerId}</span>
+                            </span>
+                          </button>
+                        </td>
+                        <td data-label="Phone" className="cm-nowrap">{c.phone}</td>
+                        <td data-label="Agent">
+                          <div className="td-name">{c.agentName}</div>
+                          <div className="td-sub">{c.agentId}</div>
+                        </td>
+                        <td className="num cm-strong" data-label="Savings balance">{naira(c.totalBalance)}</td>
+                        <td className="num" data-label="Active plans">{c.activePlans}</td>
+                        <td data-label="Status"><StatusBadge status={c.status} /></td>
+                        <td data-label="Enrolled" className="cm-nowrap cm-sub2">{shortDate(c.createdAt)}</td>
+                        <td>
+                          <div className="a-row-actions">
+                            <button type="button" className="btn btn-sm btn-outline" onClick={() => setDetail(c)}>View</button>
+                            {(c.status === 'Active' || c.status === 'Locked') && (
+                              <button type="button" className={`btn btn-sm ${c.status === 'Active' ? 'btn-outline' : 'btn-soft'}`} onClick={() => askLock(c)}>
+                                {c.status === 'Active' ? 'Lock' : 'Unlock'}
+                              </button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              <button className="btn btn-outline btn-xs" onClick={() => setDetailRecord(null)}>✕</button>
-            </div>
+              <Pager page={page} pageSize={PAGE_SIZE} total={shown.length} onPage={setPage} />
+            </>
+          )}
+      </section>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 4 }}>
-              {detailRecord.photoUrl
-                ? <img src={detailRecord.photoUrl} style={{ width: 56, height: 56, borderRadius: '50%', objectFit: 'cover' }} alt="" />
-                : <div className="av av-blue" style={{ width: 56, height: 56, fontSize: 22 }}>{detailRecord.name.split(' ').map(w => w[0]).join('').slice(0,2)}</div>
-              }
-              <span className={`bdg ${detailRecord.status === 'Active' ? 'bdg-g' : 'bdg-r'}`}>{detailRecord.status}</span>
-            </div>
-
-            <Section title="Contact" />
-            <Row label="Phone" value={detailRecord.phone} />
-            <Row label="Email" value={detailRecord.email} />
-            <Row label="Address" value={detailRecord.address} />
-
-            <Section title="Agent" />
-            <Row label="Agent Name" value={detailRecord.agentName} />
-            <Row label="Agent ID" value={detailRecord.agentId} />
-
-            <Section title="Savings" />
-            <Row label="Total Balance" value={<span style={{ color: 'var(--green)', fontWeight: 700 }}>{fmt(detailRecord.totalBalance)}</span>} />
-            <Row label="Active Plans" value={detailRecord.activePlans} />
-
-            <Section title="Account" />
-            <Row label="Enrolled" value={new Date(detailRecord.createdAt).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })} />
-
-            <div style={{ marginTop: 24 }}>
-              <button
-                className={`btn ${detailRecord.status === 'Active' ? 'btn-danger' : 'btn-green'}`}
-                style={{ width: '100%' }}
-                disabled={toggling === detailRecord.id}
-                onClick={() => toggleLock(detailRecord)}
-              >
-                {toggling === detailRecord.id ? '…' : detailRecord.status === 'Active' ? '🔒 Lock Account' : '🔓 Unlock Account'}
+      {detail && (
+        <Modal icon="customers" title={detail.name} sub={detail.customerId} onClose={() => setDetail(null)}
+          footer={<>
+            <button type="button" className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>
+            {(detail.status === 'Active' || detail.status === 'Locked') && (
+              <button type="button" className={`btn ${detail.status === 'Active' ? 'btn-danger' : 'btn-green'}`} onClick={() => { const c = detail; setDetail(null); askLock(c) }}>
+                {detail.status === 'Active' ? 'Lock account' : 'Unlock account'}
               </button>
-            </div>
+            )}
+          </>}>
+          <div className="cm-detail-hd">
+            <Avatar name={detail.name} photoUrl={detail.photoUrl} tone={detail.status === 'Active' ? 'blue' : 'red'} />
+            <StatusBadge status={detail.status} />
           </div>
-        </div>
+
+          <div className="cm-sec">
+            <h3 className="cm-sec-title">Contact</h3>
+            <dl className="dlg-ledger">
+              <DlRow label="Phone">{detail.phone}</DlRow>
+              <DlRow label="Email">{orDash(detail.email)}</DlRow>
+              <DlRow label="Address">{orDash(detail.address)}</DlRow>
+            </dl>
+          </div>
+
+          {hasProfileFields(detail) && (
+            <div className="cm-sec">
+              <h3 className="cm-sec-title">Profile</h3>
+              <dl className="dlg-ledger">
+                <DlRow label="Gender">{orNotRecorded(detail.gender)}</DlRow>
+                <DlRow label="State">{orNotRecorded(detail.state)}</DlRow>
+                <DlRow label="LGA">{orNotRecorded(detail.lga)}</DlRow>
+              </dl>
+            </div>
+          )}
+
+          <div className="cm-sec">
+            <h3 className="cm-sec-title">Agent</h3>
+            <dl className="dlg-ledger">
+              <DlRow label="Name">{detail.agentName}</DlRow>
+              <DlRow label="Agent ID">{detail.agentId}</DlRow>
+            </dl>
+          </div>
+
+          <div className="cm-sec">
+            <h3 className="cm-sec-title">Savings</h3>
+            <dl className="dlg-ledger">
+              <DlRow label="Total balance"><span className="cm-strong">{naira(detail.totalBalance)}</span></DlRow>
+              <DlRow label="Active plans">{detail.activePlans}</DlRow>
+              <DlRow label="Enrolled">{shortDate(detail.createdAt)}</DlRow>
+            </dl>
+          </div>
+        </Modal>
       )}
+
+      {lockTarget && (
+        <ConfirmModal icon="locked"
+          title={lockTarget.status === 'Active' ? `Lock ${lockTarget.name}?` : `Unlock ${lockTarget.name}?`}
+          body={lockTarget.status === 'Active'
+            ? <>{lockTarget.name} ({lockTarget.customerId}) won’t be able to sign in until you unlock them. Their {naira(lockTarget.totalBalance)} in savings stays as it is.</>
+            : <>{lockTarget.name} ({lockTarget.customerId}) will be able to sign in again.</>}
+          confirmLabel={lockTarget.status === 'Active' ? 'Lock account' : 'Unlock account'}
+          danger={lockTarget.status === 'Active'}
+          busy={lockBusy} error={lockError}
+          onConfirm={toggleLock} onClose={() => setLockTarget(null)}
+        />
+      )}
+
+      {toastNode}
     </>
   )
 }

@@ -1,6 +1,10 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import {
+  Avatar, ConfirmModal, Empty, LoadError, Modal, PageHeader, Pager, SearchField, Segmented,
+  TableSkeleton, naira, shortDate, useToast, AmountHero, Ledger, LedgerRow, DialogNote,
+} from '../_components/admin-ui'
 
 interface Loan {
   id: string
@@ -19,199 +23,249 @@ interface Loan {
   agentId: string
 }
 
-const TABS = ['All', 'Pending', 'Approved', 'Rejected', 'Disbursed']
+type Tab = 'All' | 'Pending' | 'Approved' | 'Rejected' | 'Disbursed'
+type Decision = { loan: Loan; action: 'approve' | 'reject' }
 
 const PAGE_SIZE = 25
 
+const STATUS: Record<string, { label: string; cls: string }> = {
+  Pending: { label: 'Waiting for decision', cls: 'bdg-a' },
+  Approved: { label: 'Approved', cls: 'bdg-g' },
+  Rejected: { label: 'Rejected', cls: 'bdg-r' },
+  Disbursed: { label: 'Paid out', cls: 'bdg-b' },
+  Repaid: { label: 'Repaid', cls: 'bdg-p' },
+}
+
+function StatusBadge({ status }: { status: string }) {
+  const s = STATUS[status] ?? { label: status, cls: 'bdg-grey' }
+  return <span className={`bdg ${s.cls}`}>{s.label}</span>
+}
+
+async function errorOf(res: Response, fallback: string) {
+  const d = await res.json().catch(() => ({})) as { error?: string }
+  return d.error ?? fallback
+}
+
+const EMPTY: Record<Tab, { title: string; text: string }> = {
+  All: { title: 'No loan requests yet', text: 'When an agent requests a loan for a customer, it shows here for you to approve or reject.' },
+  Pending: { title: 'You’re all caught up', text: 'No loan requests are waiting for a decision.' },
+  Approved: { title: 'No approved loans', text: 'Loans you approve show here until the agent pays them out.' },
+  Rejected: { title: 'No rejected loans', text: 'Loans you reject show here.' },
+  Disbursed: { title: 'No loans paid out', text: 'Approved loans show here once the money has been paid out.' },
+}
+
 export default function LoanRequestsPage() {
   const [loans, setLoans] = useState<Loan[]>([])
-  const [activeTab, setActiveTab] = useState('All')
+  const [activeTab, setActiveTab] = useState<Tab>('All')
+  const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
-  const [toast, setToast] = useState('')
-  const [toastColor, setToastColor] = useState('')
+  const [failed, setFailed] = useState(false)
   const [detailRecord, setDetailRecord] = useState<Loan | null>(null)
+  const [decision, setDecision] = useState<Decision | null>(null)
+  const [deciding, setDeciding] = useState(false)
+  const [decisionError, setDecisionError] = useState('')
+  const [toastNode, toast] = useToast()
 
   const load = useCallback(async () => {
-    setLoading(true)
-    const q = activeTab !== 'All' ? `?status=${activeTab}` : ''
-    const res = await fetch(`/api/admin/loans${q}`)
-    const d = res.ok ? await res.json() : {}
-    setLoans(d.loans ?? [])
-    setPage(1)
-    setLoading(false)
+    setLoading(true); setFailed(false)
+    try {
+      const q = activeTab !== 'All' ? `?status=${activeTab}` : ''
+      const res = await fetch(`/api/admin/loans${q}`)
+      if (!res.ok) throw new Error()
+      const d = await res.json() as { loans?: Loan[] }
+      setLoans(d.loans ?? [])
+    } catch {
+      setFailed(true)
+    } finally {
+      setLoading(false)
+    }
   }, [activeTab])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => { setPage(1) }, [activeTab, search])
 
-  async function handleAction(id: string, action: 'approve' | 'reject') {
-    const res = await fetch(`/api/admin/loans/${id}/${action}`, { method: 'PATCH' })
-    if (res.ok) {
-      const msg = action === 'approve' ? 'Loan approved successfully' : 'Loan rejected'
-      setToast(msg)
-      setToastColor(action === 'approve' ? 'var(--green)' : 'var(--red)')
+  function askDecision(loan: Loan, action: 'approve' | 'reject') {
+    setDecisionError('')
+    setDecision({ loan, action })
+  }
+
+  async function handleAction() {
+    if (!decision) return
+    const { loan, action } = decision
+    setDeciding(true); setDecisionError('')
+    try {
+      const res = await fetch(`/api/admin/loans/${loan.id}/${action}`, { method: 'PATCH' })
+      if (!res.ok) {
+        setDecisionError(await errorOf(res, action === 'approve' ? 'The loan wasn’t approved. Try again.' : 'The loan wasn’t rejected. Try again.'))
+        return
+      }
+      toast(action === 'approve'
+        ? `Loan ${loan.ref} approved. ${naira(loan.principal)} for ${loan.customerName}.`
+        : `Loan ${loan.ref} for ${loan.customerName} rejected.`, 'success')
+      setDecision(null)
       setDetailRecord(null)
       load()
-      setTimeout(() => setToast(''), 4000)
+    } catch {
+      setDecisionError('No connection. Check your internet and try again.')
+    } finally {
+      setDeciding(false)
     }
   }
 
-  const fmt = (n: number) => `₦${n.toLocaleString()}`
-  const fmtDate = (d: string) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-
-  const statusClass: Record<string, string> = {
-    Pending: 'bdg-a',
-    Approved: 'bdg-g',
-    Rejected: 'bdg-r',
-    Disbursed: 'bdg-b',
-    Repaid: 'bdg-p',
-  }
-
-  const Section = ({ title }: { title: string }) => (
-    <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '.8px', textTransform: 'uppercase', color: 'var(--text3)', margin: '20px 0 8px', paddingBottom: 6, borderBottom: '1px solid var(--border)' }}>{title}</div>
-  )
-  const Row = ({ label, value }: { label: string; value: React.ReactNode }) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 0', borderBottom: '1px solid var(--border)', gap: 12 }}>
-      <span style={{ fontSize: 12, color: 'var(--text3)', whiteSpace: 'nowrap' }}>{label}</span>
-      <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', textAlign: 'right' }}>{value ?? '—'}</span>
-    </div>
-  )
+  const term = search.trim().toLowerCase()
+  const shown = term
+    ? loans.filter(l => [l.ref, l.customerName, l.customerId, l.agentName, l.agentId].some(v => v.toLowerCase().includes(term)))
+    : loans
+  const paginated = shown.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  const pendingCount = loans.filter(l => l.status === 'Pending').length
 
   return (
     <>
-      <div className="pg-hd">
-        <div>
-          <h1>Loan Requests</h1>
-          <p>Review and approve loan applications from agents</p>
-        </div>
+      <PageHeader
+        title="Loan requests"
+        sub={activeTab === 'Pending' && !loading && !failed
+          ? `${pendingCount} waiting for your decision`
+          : 'Approve or reject loans agents have requested for their customers.'}
+      />
+
+      <div className="toolbar">
+        <SearchField value={search} onChange={setSearch} placeholder="Loan ref, customer or agent" label="Search loan requests" />
+        <Segmented<Tab> label="Filter by status" value={activeTab} onChange={setActiveTab} options={[
+          { value: 'All', label: 'All' },
+          { value: 'Pending', label: 'Waiting' },
+          { value: 'Approved', label: 'Approved' },
+          { value: 'Rejected', label: 'Rejected' },
+          { value: 'Disbursed', label: 'Paid out' },
+        ]} />
       </div>
 
-      <div className="card">
-        <div className="tab-bar">
-          {TABS.map(tab => (
-            <button
-              key={tab}
-              className={`tab${activeTab === tab ? ' active' : ''}`}
-              onClick={() => setActiveTab(tab)}
-            >
-              {tab}
-            </button>
-          ))}
-        </div>
-
-        <div className="tbl-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Ref</th>
-                <th>Customer</th>
-                <th>Agent</th>
-                <th>Amount</th>
-                <th>Rate</th>
-                <th>Duration</th>
-                <th>Due Date</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && (
-                <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>Loading…</td></tr>
-              )}
-              {!loading && loans.length === 0 && (
-                <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>No loans found</td></tr>
-              )}
-              {!loading && loans.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE).map(l => (
-                <tr key={l.id} style={{ cursor: 'pointer' }} onClick={e => { if ((e.target as HTMLElement).closest('button')) return; setDetailRecord(l) }}>
-                  <td><strong style={{ color: 'var(--blue)', fontSize: 12 }}>{l.ref}</strong></td>
-                  <td>
-                    <div className="td-name">{l.customerName}</div>
-                    <div className="td-sub">{l.customerId}</div>
-                  </td>
-                  <td>
-                    <div className="td-name">{l.agentName}</div>
-                    <div className="td-sub">{l.agentId}</div>
-                  </td>
-                  <td>
-                    <div style={{ fontWeight: 700, color: 'var(--green)' }}>{fmt(l.principal)}</div>
-                    <div className="td-sub">Total: {fmt(l.totalAmount)}</div>
-                  </td>
-                  <td>{l.interestRate}%</td>
-                  <td>{l.durationDays}d</td>
-                  <td>{fmtDate(l.dueDate)}</td>
-                  <td>
-                    <span className={`bdg ${statusClass[l.status] ?? 'bdg-grey'}`}>{l.status}</span>
-                    {l.approvedBy && <div className="td-sub">by {l.approvedBy}</div>}
-                  </td>
-                  <td>
-                    {l.status === 'Pending' ? (
-                      <div style={{ display: 'flex', gap: 5 }}>
-                        <button className="btn btn-green btn-xs" onClick={() => handleAction(l.id, 'approve')}>Approve</button>
-                        <button className="btn btn-danger btn-xs" onClick={() => handleAction(l.id, 'reject')}>Reject</button>
-                      </div>
-                    ) : (
-                      <span style={{ fontSize: 12, color: 'var(--text3)' }}>—</span>
-                    )}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        {!loading && Math.ceil(loans.length / PAGE_SIZE) > 1 && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0 0', borderTop: '1px solid var(--border)', marginTop: 4 }}>
-            <div style={{ fontSize: 12, color: 'var(--text3)' }}>Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, loans.length)} of {loans.length}</div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <button className="btn btn-xs btn-outline" disabled={page === 1} onClick={() => setPage(p => p - 1)}>← Prev</button>
-              <span style={{ fontSize: 12, color: 'var(--text2)', minWidth: 80, textAlign: 'center' }}>Page {page} of {Math.ceil(loans.length / PAGE_SIZE)}</span>
-              <button className="btn btn-xs btn-outline" disabled={page === Math.ceil(loans.length / PAGE_SIZE)} onClick={() => setPage(p => p + 1)}>Next →</button>
-            </div>
-          </div>
-        )}
-        </div>
-      </div>
-
-      <div className={`a-toast${toast ? ' show' : ''}`} style={{ background: toastColor || '#071a0e' }}>{toast}</div>
-
-      {detailRecord && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex' }} onClick={() => setDetailRecord(null)}>
-          <div style={{ flex: 1, background: 'rgba(0,0,0,.45)' }} />
-          <div style={{ width: 420, background: 'var(--surface)', height: '100%', overflowY: 'auto', padding: 28, boxShadow: '-8px 0 40px rgba(0,0,0,.25)' }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--blue)', fontFamily: 'monospace' }}>{detailRecord.ref}</div>
-                <div style={{ marginTop: 6 }}>
-                  <span className={`bdg ${statusClass[detailRecord.status] ?? 'bdg-grey'}`}>{detailRecord.status}</span>
-                </div>
+      <section className="card" aria-label="Loan requests">
+        {loading && !loans.length ? <TableSkeleton rows={8} cols={6} />
+          : failed ? <LoadError what="loan requests" onRetry={load} />
+          : shown.length === 0 ? (
+            term ? <Empty icon="search" title={`No loans match “${search.trim()}”`} text="Check the spelling, or search by loan ref, customer ID or agent ID." />
+              : <Empty icon={activeTab === 'Pending' ? 'check' : 'loan'} title={EMPTY[activeTab].title} text={EMPTY[activeTab].text} />
+          ) : (
+            <>
+              <div className="tbl-wrap tbl-stack">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Customer</th><th>Agent</th><th className="num">Amount</th><th>Term</th>
+                      <th>Due</th><th>Status</th><th><span className="sr-only">Actions</span></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginated.map(l => (
+                      <tr key={l.id}>
+                        <td>
+                          <button type="button" className="lo-open" onClick={() => setDetailRecord(l)} aria-label={`View loan ${l.ref} for ${l.customerName}`}>
+                            <Avatar name={l.customerName} tone={l.status === 'Pending' ? 'amber' : 'grey'} />
+                            <span>
+                              <span className="td-name ui-block">{l.customerName}</span>
+                              <span className="td-sub ui-block"><span className="lo-ref">{l.ref}</span> · {l.customerId}</span>
+                            </span>
+                          </button>
+                        </td>
+                        <td data-label="Agent">
+                          <div>
+                            <div>{l.agentName}</div>
+                            <div className="td-sub">{l.agentId}</div>
+                          </div>
+                        </td>
+                        <td className="num" data-label="Amount">
+                          <div>
+                            <div className="lo-strong">{naira(l.principal)}</div>
+                            <div className="td-sub">{naira(l.totalAmount)} to repay</div>
+                          </div>
+                        </td>
+                        <td data-label="Term">{l.durationDays} days · {l.interestRate}%</td>
+                        <td data-label="Due">{shortDate(l.dueDate)}</td>
+                        <td data-label="Status">
+                          <div>
+                            <StatusBadge status={l.status} />
+                            {l.approvedBy && <div className="td-sub">By {l.approvedBy}</div>}
+                          </div>
+                        </td>
+                        <td>
+                          <div className="a-row-actions">
+                            {l.status === 'Pending' ? <>
+                              <button type="button" className="btn btn-sm btn-green" onClick={() => askDecision(l, 'approve')}>Approve</button>
+                              <button type="button" className="btn btn-sm btn-outline" onClick={() => askDecision(l, 'reject')}>Reject</button>
+                            </> : (
+                              <button type="button" className="btn btn-sm btn-outline" onClick={() => setDetailRecord(l)}>Details</button>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              <button className="btn btn-outline btn-xs" onClick={() => setDetailRecord(null)}>✕</button>
-            </div>
+              <Pager page={page} pageSize={PAGE_SIZE} total={shown.length} onPage={setPage} />
+            </>
+          )}
+      </section>
 
-            <Section title="Customer & Agent" />
-            <Row label="Customer" value={detailRecord.customerName} />
-            <Row label="Customer ID" value={detailRecord.customerId} />
-            <Row label="Agent" value={detailRecord.agentName} />
-            <Row label="Agent ID" value={detailRecord.agentId} />
+      {detailRecord && !decision && (
+        <Modal icon="loan" title={`Loan ${detailRecord.ref}`} sub={`${detailRecord.customerName} · requested ${shortDate(detailRecord.createdAt)}`}
+          onClose={() => setDetailRecord(null)}
+          footer={detailRecord.status === 'Pending' ? <>
+            <button type="button" className="btn btn-outline" onClick={() => askDecision(detailRecord, 'reject')}>Reject</button>
+            <button type="button" className="btn btn-green" onClick={() => askDecision(detailRecord, 'approve')}>Approve {naira(detailRecord.principal)}</button>
+          </> : <button type="button" className="btn btn-outline" onClick={() => setDetailRecord(null)}>Close</button>}>
+          <div className="lo-sheet-badges"><StatusBadge status={detailRecord.status} /></div>
 
-            <Section title="Loan Terms" />
-            <Row label="Principal" value={<span style={{ color: 'var(--green)', fontWeight: 700 }}>{fmt(detailRecord.principal)}</span>} />
-            <Row label="Interest Rate" value={`${detailRecord.interestRate}%`} />
-            <Row label="Total Repayable" value={<span style={{ color: 'var(--red)', fontWeight: 700 }}>{fmt(detailRecord.totalAmount)}</span>} />
-            <Row label="Duration" value={`${detailRecord.durationDays} days`} />
-            <Row label="Due Date" value={fmtDate(detailRecord.dueDate)} />
+          <h3 className="dlg-sec-h">Who it’s for</h3>
+          <dl className="dlg-ledger">
+            <div><dt>Customer</dt><dd>{detailRecord.customerName}</dd></div>
+            <div><dt>Customer ID</dt><dd>{detailRecord.customerId}</dd></div>
+            <div><dt>Agent</dt><dd>{detailRecord.agentName}</dd></div>
+            <div><dt>Agent ID</dt><dd>{detailRecord.agentId}</dd></div>
+          </dl>
 
-            <Section title="Decision" />
-            <Row label="Requested" value={fmtDate(detailRecord.createdAt)} />
-            <Row label="Approved By" value={detailRecord.approvedBy} />
+          <h3 className="dlg-sec-h">Loan terms</h3>
+          <dl className="dlg-ledger">
+            <div><dt>Amount borrowed</dt><dd>{naira(detailRecord.principal)}</dd></div>
+            <div><dt>Interest rate</dt><dd>{detailRecord.interestRate}%</dd></div>
+            <div><dt>Total to repay</dt><dd>{naira(detailRecord.totalAmount)}</dd></div>
+            <div><dt>Term</dt><dd>{detailRecord.durationDays} days</dd></div>
+            <div><dt>Due date</dt><dd>{shortDate(detailRecord.dueDate)}</dd></div>
+          </dl>
 
-            {detailRecord.status === 'Pending' && (
-              <div style={{ marginTop: 24, display: 'flex', gap: 10 }}>
-                <button className="btn btn-green" style={{ flex: 1 }} onClick={() => handleAction(detailRecord.id, 'approve')}>✅ Approve</button>
-                <button className="btn btn-danger" style={{ flex: 1 }} onClick={() => handleAction(detailRecord.id, 'reject')}>Reject</button>
-              </div>
-            )}
-          </div>
-        </div>
+          <h3 className="dlg-sec-h">Decision</h3>
+          <dl className="dlg-ledger">
+            <div><dt>Requested</dt><dd>{shortDate(detailRecord.createdAt)}</dd></div>
+            <div><dt>Approved by</dt><dd>{detailRecord.approvedBy ?? '—'}</dd></div>
+          </dl>
+        </Modal>
       )}
+
+      {decision && (
+        <ConfirmModal
+          title={decision.action === 'approve' ? `Approve loan ${decision.loan.ref}?` : `Reject loan ${decision.loan.ref}?`}
+          body={<>
+            <AmountHero label={decision.action === 'approve' ? 'Loan to approve' : 'Loan to reject'} amount={naira(decision.loan.principal)}
+              sub={<>For <strong>{decision.loan.customerName}</strong> ({decision.loan.customerId}), requested by {decision.loan.agentName}</>} />
+            <Ledger>
+              <LedgerRow label="Term">{decision.loan.durationDays} days at {decision.loan.interestRate}%</LedgerRow>
+              <LedgerRow label="Due">{shortDate(decision.loan.dueDate)}</LedgerRow>
+              <LedgerRow label="Total to repay" total>{naira(decision.loan.totalAmount)}</LedgerRow>
+            </Ledger>
+            <DialogNote warn={decision.action === 'reject'}>{decision.action === 'approve'
+              ? `${decision.loan.agentName} can then pay it out to the customer from their wallet.`
+              : 'The request is closed. The agent will need to send a new request if the customer still needs a loan.'}</DialogNote>
+          </>}
+          icon="loan" tone={decision.action === 'approve' ? 'money' : 'danger'}
+          confirmLabel={decision.action === 'approve' ? `Approve ${naira(decision.loan.principal)}` : 'Reject loan'}
+          danger={decision.action === 'reject'}
+          busy={deciding} error={decisionError}
+          onConfirm={handleAction} onClose={() => setDecision(null)}
+        />
+      )}
+
+      {toastNode}
     </>
   )
 }

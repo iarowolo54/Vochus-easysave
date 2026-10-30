@@ -1,6 +1,9 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import {
+  Avatar, Empty, LoadError, Modal, PageHeader, Pager, SearchField, Segmented, TableSkeleton, naira, shortDate,
+} from '../_components/admin-ui'
 
 interface DisbursedLoan {
   id: string
@@ -20,196 +23,186 @@ interface DisbursedLoan {
   isOverdue: boolean
 }
 
-const TABS = ['All Disbursed', 'Overdue']
+interface Stats { totalDisbursed: number; totalDisbursedAmount: number; totalOutstanding: number; overdueCount: number }
+type Tab = 'all' | 'overdue'
+
+const PAGE_SIZE = 25
+const DAY = 1000 * 60 * 60 * 24
+
+function dueState(loan: DisbursedLoan): { label: string; cls: string } {
+  if (loan.outstanding <= 0) return { label: 'Settled', cls: 'bdg-g' }
+  if (loan.isOverdue) return { label: 'Overdue', cls: 'bdg-r' }
+  const diff = Math.floor((new Date(loan.dueDate).getTime() - Date.now()) / DAY)
+  if (diff <= 7) return { label: 'Due soon', cls: 'bdg-a' }
+  return { label: 'On track', cls: 'bdg-b' }
+}
+
+function DueBadge({ loan }: { loan: DisbursedLoan }) {
+  const s = dueState(loan)
+  return <span className={`bdg ${s.cls}`}>{s.label}</span>
+}
 
 export default function LoanDisbursePage() {
   const [loans, setLoans] = useState<DisbursedLoan[]>([])
-  const [stats, setStats] = useState({ totalDisbursed: 0, totalDisbursedAmount: 0, totalOutstanding: 0, overdueCount: 0 })
-  const [tab, setTab] = useState('All Disbursed')
+  const [stats, setStats] = useState<Stats>({ totalDisbursed: 0, totalDisbursedAmount: 0, totalOutstanding: 0, overdueCount: 0 })
+  const [tab, setTab] = useState<Tab>('all')
+  const [search, setSearch] = useState('')
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
+  const [failed, setFailed] = useState(false)
   const [detailRecord, setDetailRecord] = useState<DisbursedLoan | null>(null)
 
   const load = useCallback(async () => {
-    setLoading(true)
-    const res = await fetch('/api/admin/loan-disbursements')
-    const d = res.ok ? await res.json() : {}
-    setLoans(d.loans ?? [])
-    setStats({
-      totalDisbursed: d.totalDisbursed ?? 0,
-      totalDisbursedAmount: d.totalDisbursedAmount ?? 0,
-      totalOutstanding: d.totalOutstanding ?? 0,
-      overdueCount: d.overdueCount ?? 0,
-    })
-    setLoading(false)
+    setLoading(true); setFailed(false)
+    try {
+      const res = await fetch('/api/admin/loan-disbursements')
+      if (!res.ok) throw new Error()
+      const d = await res.json() as Partial<Stats> & { loans?: DisbursedLoan[] }
+      setLoans(d.loans ?? [])
+      setStats({
+        totalDisbursed: d.totalDisbursed ?? 0,
+        totalDisbursedAmount: d.totalDisbursedAmount ?? 0,
+        totalOutstanding: d.totalOutstanding ?? 0,
+        overdueCount: d.overdueCount ?? 0,
+      })
+    } catch {
+      setFailed(true)
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => { setPage(1) }, [tab, search])
 
-  const filtered = tab === 'Overdue' ? loans.filter(l => l.isOverdue) : loans
-  const PAGE_SIZE = 25
+  const term = search.trim().toLowerCase()
+  const filtered = (tab === 'overdue' ? loans.filter(l => l.isOverdue) : loans)
+    .filter(l => !term || [l.ref, l.customerName, l.customerId, l.agentName, l.agentId].some(v => v.toLowerCase().includes(term)))
   const paginated = filtered.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
-  const totalPages = Math.ceil(filtered.length / PAGE_SIZE)
-
-  const fmt = (n: number) => `₦${n.toLocaleString()}`
-  const fmtDate = (d: string) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
-
-  function dueBadge(loan: DisbursedLoan) {
-    if (loan.outstanding <= 0) return <span className="bdg bdg-g">Settled</span>
-    if (loan.isOverdue) return <span className="bdg bdg-r">Overdue</span>
-    const diff = Math.floor((new Date(loan.dueDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24))
-    if (diff <= 7) return <span className="bdg bdg-a">Due Soon</span>
-    return <span className="bdg bdg-b">Active</span>
-  }
-
-  const Section = ({ title }: { title: string }) => (
-    <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '.8px', textTransform: 'uppercase', color: 'var(--text3)', margin: '20px 0 8px', paddingBottom: 6, borderBottom: '1px solid var(--border)' }}>{title}</div>
-  )
-  const Row = ({ label, value }: { label: string; value: React.ReactNode }) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 0', borderBottom: '1px solid var(--border)', gap: 12 }}>
-      <span style={{ fontSize: 12, color: 'var(--text3)', whiteSpace: 'nowrap' }}>{label}</span>
-      <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', textAlign: 'right' }}>{value ?? '—'}</span>
-    </div>
-  )
+  const firstLoad = loading && !loans.length
 
   return (
     <>
-      <div className="pg-hd">
-        <div>
-          <h1>Loan Disbursements</h1>
-          <p>All disbursed loans across agents</p>
-        </div>
-      </div>
+      <PageHeader title="Disbursements" sub="Loans agents have paid out to customers, and what’s still owed on them." />
 
-      <div className="stats-grid">
-        <div className="stat">
-          <span className="stat-ic">📊</span>
-          <div className="stat-lbl">Total Disbursed</div>
-          <div className="stat-val blue">{stats.totalDisbursed.toLocaleString()}</div>
-          <div className="stat-sub">Loans disbursed</div>
-        </div>
-        <div className="stat">
-          <span className="stat-ic">💵</span>
-          <div className="stat-lbl">Portfolio Value</div>
-          <div className="stat-val green">{fmt(stats.totalDisbursedAmount)}</div>
-          <div className="stat-sub">Total principal</div>
-        </div>
-        <div className="stat">
-          <span className="stat-ic">⏳</span>
-          <div className="stat-lbl">Outstanding</div>
-          <div className="stat-val amber">{fmt(stats.totalOutstanding)}</div>
-          <div className="stat-sub">Unpaid balance</div>
-        </div>
-        <div className="stat">
-          <span className="stat-ic">🚨</span>
-          <div className="stat-lbl">Overdue</div>
-          <div className="stat-val red">{stats.overdueCount}</div>
-          <div className="stat-sub">Past due date</div>
-        </div>
-      </div>
-
-      <div className="card">
-        <div className="tab-bar">
-          {TABS.map(t => (
-            <button key={t} className={`tab${tab === t ? ' active' : ''}`} onClick={() => setTab(t)}>
-              {t}
-              {t === 'Overdue' && stats.overdueCount > 0 && <span className="bdg bdg-r" style={{ marginLeft: 6 }}>{stats.overdueCount}</span>}
-            </button>
-          ))}
-        </div>
-
-        <div className="tbl-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Ref</th>
-                <th>Customer</th>
-                <th>Agent</th>
-                <th>Principal</th>
-                <th>Total Due</th>
-                <th>Rate</th>
-                <th>Due Date</th>
-                <th>Outstanding</th>
-                <th>Approved By</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && <tr><td colSpan={10} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>Loading…</td></tr>}
-              {!loading && filtered.length === 0 && <tr><td colSpan={10} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>No loans found</td></tr>}
-              {!loading && paginated.map(l => (
-                <tr key={l.id} style={{ cursor: 'pointer' }} onClick={() => setDetailRecord(l)}>
-                  <td><strong style={{ fontSize: 12, color: 'var(--blue)' }}>{l.ref}</strong></td>
-                  <td>
-                    <div className="td-av">
-                      <div className="av av-purple">{l.customerName.split(' ').map(w => w[0]).join('').slice(0, 2)}</div>
-                      <div>
-                        <div className="td-name">{l.customerName}</div>
-                        <div className="td-sub">{l.customerId}</div>
-                      </div>
-                    </div>
-                  </td>
-                  <td>
-                    <div className="td-name">{l.agentName}</div>
-                    <div className="td-sub">{l.agentId}</div>
-                  </td>
-                  <td style={{ fontWeight: 600 }}>{fmt(l.principal)}</td>
-                  <td style={{ fontWeight: 600, color: 'var(--red)' }}>{fmt(l.totalAmount)}</td>
-                  <td style={{ color: 'var(--text2)' }}>{l.interestRate}%</td>
-                  <td>
-                    <span style={{ fontSize: 12, color: l.isOverdue ? 'var(--red)' : 'var(--text3)' }}>{fmtDate(l.dueDate)}</span>
-                  </td>
-                  <td style={{ fontWeight: 700, color: l.outstanding > 0 ? 'var(--amber)' : 'var(--green)' }}>{fmt(l.outstanding)}</td>
-                  <td style={{ color: 'var(--text2)', fontSize: 12 }}>{l.approvedBy ?? '—'}</td>
-                  <td>{dueBadge(l)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        {totalPages > 1 && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0 0', borderTop: '1px solid var(--border)', marginTop: 4 }}>
-            <div style={{ fontSize: 12, color: 'var(--text3)' }}>Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, filtered.length)} of {filtered.length}</div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <button className="btn btn-xs btn-outline" disabled={page === 1} onClick={() => setPage(p => p - 1)}>← Prev</button>
-              <span style={{ fontSize: 12, color: 'var(--text2)', minWidth: 80, textAlign: 'center' }}>Page {page} of {totalPages}</span>
-              <button className="btn btn-xs btn-outline" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>Next →</button>
-            </div>
+      {failed && !loans.length ? null : (
+        <div className="stats-grid" aria-busy={firstLoad}>
+          <div className="stat">
+            <div className="stat-lbl">Loans paid out</div>
+            <div className="stat-val">{firstLoad ? '—' : stats.totalDisbursed.toLocaleString('en-NG')}</div>
+            <div className="stat-sub">Currently with customers</div>
           </div>
-        )}
+          <div className="stat">
+            <div className="stat-lbl">Amount lent</div>
+            <div className="stat-val">{firstLoad ? '—' : naira(stats.totalDisbursedAmount)}</div>
+            <div className="stat-sub">Total borrowed</div>
+          </div>
+          <div className="stat">
+            <div className="stat-lbl">Still owed</div>
+            <div className="stat-val">{firstLoad ? '—' : naira(stats.totalOutstanding)}</div>
+            <div className="stat-sub">Including interest</div>
+          </div>
+          <div className="stat">
+            <div className="stat-lbl">Overdue</div>
+            <div className={`stat-val${stats.overdueCount > 0 ? ' red' : ''}`}>{firstLoad ? '—' : stats.overdueCount.toLocaleString('en-NG')}</div>
+            <div className="stat-sub">{stats.overdueCount === 1 ? 'Loan past its due date' : 'Loans past their due date'}</div>
+          </div>
         </div>
+      )}
+
+      <div className="toolbar">
+        <SearchField value={search} onChange={setSearch} placeholder="Loan ref, customer or agent" label="Search disbursed loans" />
+        <Segmented<Tab> label="Filter loans" value={tab} onChange={setTab} options={[
+          { value: 'all', label: 'All', count: loans.length },
+          { value: 'overdue', label: 'Overdue', count: stats.overdueCount },
+        ]} />
       </div>
+
+      <section className="card" aria-label="Disbursed loans">
+        {firstLoad ? <TableSkeleton rows={8} cols={7} />
+          : failed ? <LoadError what="disbursed loans" onRetry={load} />
+          : filtered.length === 0 ? (
+            term ? <Empty icon="search" title={`No loans match “${search.trim()}”`} text="Check the spelling, or search by loan ref, customer ID or agent ID." />
+              : tab === 'overdue' ? <Empty icon="check" title="No overdue loans" text="Every paid-out loan is within its due date or settled." />
+              : <Empty icon="cash" title="No loans paid out yet" text="Once an agent pays out an approved loan, it shows here." />
+          ) : (
+            <>
+              <div className="tbl-wrap tbl-stack">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Customer</th><th>Agent</th><th className="num">Borrowed</th><th className="num">To repay</th>
+                      <th className="num">Still owed</th><th>Due</th><th>Status</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginated.map(l => (
+                      <tr key={l.id}>
+                        <td>
+                          <button type="button" className="lo-open" onClick={() => setDetailRecord(l)} aria-label={`View loan ${l.ref} for ${l.customerName}`}>
+                            <Avatar name={l.customerName} tone={l.isOverdue ? 'red' : 'grey'} />
+                            <span>
+                              <span className="td-name ui-block">{l.customerName}</span>
+                              <span className="td-sub ui-block"><span className="lo-ref">{l.ref}</span> · {l.customerId}</span>
+                            </span>
+                          </button>
+                        </td>
+                        <td data-label="Agent">
+                          <div>
+                            <div>{l.agentName}</div>
+                            <div className="td-sub">{l.agentId}</div>
+                          </div>
+                        </td>
+                        <td className="num" data-label="Borrowed">{naira(l.principal)}</td>
+                        <td className="num" data-label="To repay">
+                          <div>
+                            <div>{naira(l.totalAmount)}</div>
+                            <div className="td-sub">{l.interestRate}% interest</div>
+                          </div>
+                        </td>
+                        <td className="num lo-strong" data-label="Still owed">{naira(l.outstanding)}</td>
+                        <td data-label="Due" className={l.isOverdue ? 'lo-bad' : undefined}>{shortDate(l.dueDate)}</td>
+                        <td data-label="Status"><DueBadge loan={l} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <Pager page={page} pageSize={PAGE_SIZE} total={filtered.length} onPage={setPage} />
+            </>
+          )}
+      </section>
 
       {detailRecord && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex' }} onClick={() => setDetailRecord(null)}>
-          <div style={{ flex: 1, background: 'rgba(0,0,0,.45)' }} />
-          <div style={{ width: 420, background: 'var(--surface)', height: '100%', overflowY: 'auto', padding: 28, boxShadow: '-8px 0 40px rgba(0,0,0,.25)' }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--blue)', fontFamily: 'monospace' }}>{detailRecord.ref}</div>
-                <div style={{ marginTop: 6 }}>{dueBadge(detailRecord)}</div>
-              </div>
-              <button className="btn btn-outline btn-xs" onClick={() => setDetailRecord(null)}>✕</button>
-            </div>
+        <Modal icon="cash" title={`Loan ${detailRecord.ref}`} sub={`${detailRecord.customerName} · requested ${shortDate(detailRecord.createdAt)}`}
+          onClose={() => setDetailRecord(null)}
+          footer={<button type="button" className="btn btn-outline" onClick={() => setDetailRecord(null)}>Close</button>}>
+          <div className="lo-sheet-badges"><DueBadge loan={detailRecord} /></div>
 
-            <Section title="Customer & Agent" />
-            <Row label="Customer" value={detailRecord.customerName} />
-            <Row label="Customer ID" value={detailRecord.customerId} />
-            <Row label="Agent" value={detailRecord.agentName} />
-            <Row label="Agent ID" value={detailRecord.agentId} />
+          <h3 className="dlg-sec-h">Who it’s for</h3>
+          <dl className="dlg-ledger">
+            <div><dt>Customer</dt><dd>{detailRecord.customerName}</dd></div>
+            <div><dt>Customer ID</dt><dd>{detailRecord.customerId}</dd></div>
+            <div><dt>Agent</dt><dd>{detailRecord.agentName}</dd></div>
+            <div><dt>Agent ID</dt><dd>{detailRecord.agentId}</dd></div>
+          </dl>
 
-            <Section title="Loan Details" />
-            <Row label="Principal" value={<span style={{ color: 'var(--green)', fontWeight: 700 }}>{fmt(detailRecord.principal)}</span>} />
-            <Row label="Interest Rate" value={`${detailRecord.interestRate}%`} />
-            <Row label="Total Due" value={<span style={{ color: 'var(--red)', fontWeight: 700 }}>{fmt(detailRecord.totalAmount)}</span>} />
-            <Row label="Duration" value={`${detailRecord.durationDays} days`} />
-            <Row label="Outstanding" value={<span style={{ color: detailRecord.outstanding > 0 ? 'var(--amber)' : 'var(--green)', fontWeight: 700 }}>{fmt(detailRecord.outstanding)}</span>} />
+          <h3 className="dlg-sec-h">Loan</h3>
+          <dl className="dlg-ledger">
+            <div><dt>Amount borrowed</dt><dd>{naira(detailRecord.principal)}</dd></div>
+            <div><dt>Interest rate</dt><dd>{detailRecord.interestRate}%</dd></div>
+            <div><dt>Total to repay</dt><dd>{naira(detailRecord.totalAmount)}</dd></div>
+            <div><dt>Term</dt><dd>{detailRecord.durationDays} days</dd></div>
+            <div><dt>Still owed</dt><dd>{naira(detailRecord.outstanding)}</dd></div>
+          </dl>
 
-            <Section title="Dates & Decision" />
-            <Row label="Disbursed" value={fmtDate(detailRecord.createdAt)} />
-            <Row label="Due Date" value={<span style={{ color: detailRecord.isOverdue ? 'var(--red)' : 'var(--text)' }}>{fmtDate(detailRecord.dueDate)}</span>} />
-            <Row label="Approved By" value={detailRecord.approvedBy} />
-          </div>
-        </div>
+          <h3 className="dlg-sec-h">Dates and decision</h3>
+          <dl className="dlg-ledger">
+            <div><dt>Requested</dt><dd>{shortDate(detailRecord.createdAt)}</dd></div>
+            <div><dt>Due date</dt><dd className={detailRecord.isOverdue ? 'lo-bad' : undefined}>{shortDate(detailRecord.dueDate)}{detailRecord.isOverdue ? ' (overdue)' : ''}</dd></div>
+            <div><dt>Approved by</dt><dd>{detailRecord.approvedBy ?? '—'}</dd></div>
+          </dl>
+        </Modal>
       )}
     </>
   )

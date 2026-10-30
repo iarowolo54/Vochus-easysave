@@ -1,6 +1,12 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, type ReactNode } from 'react'
+import { digitsOnly, blockNonDigit } from '@/lib/numeric'
+import { Icons } from '@/components/ui/icons'
+import {
+  AmountHero, Empty, Field, Ledger, LedgerRow, LoadError, Modal, PageHeader, Pager, TableSkeleton, dateTime, naira, useToast,
+  ResultModal, type Result,
+} from '../_components/admin-ui'
 
 interface WithdrawalRecord {
   id: string
@@ -33,20 +39,49 @@ interface PageData {
   records: WithdrawalRecord[]
 }
 
-const fmt = (n: number) => `₦${n.toLocaleString('en-NG', { minimumFractionDigits: 0 })}`
-const fmtDate = (d: string) =>
-  new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+type Tab = 'pending' | 'history'
+
+const PENDING_STATUSES = ['Pending', 'AwaitingOTP', 'Processing']
+const PAGE_SIZE = 25
+
+const STATUS: Record<string, [cls: string, label: string]> = {
+  Pending: ['bdg-a', 'Waiting for approval'],
+  AwaitingOTP: ['bdg-a', 'Waiting for OTP'],
+  Processing: ['bdg-b', 'Paystack is processing'],
+  Approved: ['bdg-g', 'Paid'],
+  Rejected: ['bdg-r', 'Rejected'],
+}
+function StatusBadge({ s }: { s: string }) {
+  const [cls, label] = STATUS[s] ?? ['bdg-grey', s]
+  return <span className={`bdg ${cls}`}>{label}</span>
+}
+
+const PAYSTACK: Record<string, string> = {
+  success: 'Sent', pending: 'Pending', otp: 'Needs OTP', failed: 'Failed', reversed: 'Reversed', processing: 'Processing',
+}
+const paystackLabel = (s: string | null) => s ? (PAYSTACK[s] ?? s) : '—'
+const last4 = (n: string | null) => n ? `••••${n.slice(-4)}` : '—'
+
+async function readJson(res: Response) {
+  return await res.json().catch(() => ({})) as { error?: string; status?: string; bankTransferStatus?: string }
+}
 
 export default function AgentWithdrawalsPage() {
   const [data, setData] = useState<PageData>({ pending: 0, approved: 0, rejected: 0, totalPaidOut: 0, records: [] })
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'pending' | 'history'>('pending')
-  const [toast, setToast] = useState('')
+  const [failed, setFailed] = useState(false)
+  const [loaded, setLoaded] = useState(false)
+  const [tab, setTab] = useState<Tab>('pending')
+  const [histPage, setHistPage] = useState(1)
+  const [toastNode, toast] = useToast()
   const [detailRecord, setDetailRecord] = useState<WithdrawalRecord | null>(null)
+  const [verifying, setVerifying] = useState<string | null>(null)
 
   const [pinModal, setPinModal] = useState<WithdrawalRecord | null>(null)
   const [pinValue, setPinValue] = useState('')
   const [pinError, setPinError] = useState('')
+  const [approveError, setApproveError] = useState('')
+  const [result, setResult] = useState<Result | null>(null)
   const [pinLoading, setPinLoading] = useState(false)
 
   const [rejectModal, setRejectModal] = useState<WithdrawalRecord | null>(null)
@@ -54,382 +89,365 @@ export default function AgentWithdrawalsPage() {
   const [rejectLoading, setRejectLoading] = useState(false)
   const [rejectError, setRejectError] = useState('')
 
-  const [otpModal, setOtpModal] = useState<{ id: string; ref: string; agentName: string } | null>(null)
+  const [otpModal, setOtpModal] = useState<{ id: string; ref: string; agentName: string; amount: number } | null>(null)
   const [otpValue, setOtpValue] = useState('')
   const [otpError, setOtpError] = useState('')
   const [otpLoading, setOtpLoading] = useState(false)
 
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 4000) }
-
   const load = useCallback(async () => {
-    setLoading(true)
-    const res = await fetch('/api/admin/agent-withdrawal')
-    if (res.ok) { const d = await res.json(); setData(d) }
-    setLoading(false)
+    setLoading(true); setFailed(false)
+    try {
+      const res = await fetch('/api/admin/agent-withdrawal')
+      if (!res.ok) throw new Error()
+      const d = await res.json() as Partial<PageData>
+      setData({ pending: d.pending ?? 0, approved: d.approved ?? 0, rejected: d.rejected ?? 0, totalPaidOut: d.totalPaidOut ?? 0, records: d.records ?? [] })
+      setLoaded(true)
+    } catch {
+      setFailed(true)
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
   useEffect(() => { load() }, [load])
 
-  const PENDING_STATUSES = ['Pending', 'AwaitingOTP', 'Processing']
   const pending = data.records.filter(r => PENDING_STATUSES.includes(r.status))
   const history = data.records.filter(r => !PENDING_STATUSES.includes(r.status))
+  const historyPage = history.slice((histPage - 1) * PAGE_SIZE, histPage * PAGE_SIZE)
+
+  function openApprove(r: WithdrawalRecord) { setDetailRecord(null); setPinModal(r); setPinValue(''); setPinError(''); setApproveError('') }
+  function openReject(r: WithdrawalRecord) { setDetailRecord(null); setRejectModal(r); setRejectNote(''); setRejectError('') }
+  function openOtp(r: WithdrawalRecord) { setDetailRecord(null); setOtpModal({ id: r.id, ref: r.ref, agentName: r.agentName, amount: r.amount }); setOtpValue(''); setOtpError('') }
 
   async function confirmApprove() {
     if (!pinModal) return
-    if (!pinValue.trim()) { setPinError('Enter your approval PIN'); return }
-    setPinLoading(true); setPinError('')
-    const res = await fetch(`/api/admin/agent-withdrawal/${pinModal.id}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'approve', pin: pinValue }),
-    })
-    setPinLoading(false)
-    const d = await res.json().catch(() => ({}))
-    if (res.ok) {
+    if (!pinValue.trim()) { setPinError('Enter your approval PIN.'); return }
+    setPinLoading(true); setPinError(''); setApproveError('')
+    try {
+      const res = await fetch(`/api/admin/agent-withdrawal/${pinModal.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'approve', pin: pinValue }),
+      })
+      const d = await readJson(res)
+      if (!res.ok) {
+        const msg = d.error ?? 'The withdrawal wasn’t approved. Nothing was sent. Try again.'
+        if (/pin/i.test(msg)) setPinError(msg); else setApproveError(msg)
+        return
+      }
       const pend = pinModal
       setPinModal(null); setPinValue('')
       if (d.status === 'AwaitingOTP') {
-        setOtpModal({ id: pend.id, ref: pend.ref, agentName: pend.agentName })
-        showToast('📩 Paystack sent an OTP — enter it to finish the payout')
-        load()
-        return
+        setOtpModal({ id: pend.id, ref: pend.ref, agentName: pend.agentName, amount: pend.amount }); setOtpValue(''); setOtpError('')
+        toast('Paystack sent an OTP. Enter it to finish the payout.')
+      } else {
+        const sent = d.bankTransferStatus === 'success'
+        setResult({
+          heading: sent ? 'Withdrawal paid' : 'Withdrawal approved',
+          title: sent ? `${naira(pend.amount)} sent` : 'Paystack is sending the money',
+          pending: !sent,
+          text: sent
+            ? <>Paystack has paid {pend.agentName}’s bank account.</>
+            : <>It usually lands within minutes. Use <strong>Check status</strong> on the request to confirm it’s paid.</>,
+          rows: [
+            { label: 'Agent', value: `${pend.agentName} · ${pend.agentDisplayId}` },
+            { label: 'Account', value: `${pend.accountName ?? '—'} · ${pend.bankName ?? '—'} ${last4(pend.accountNumber)}` },
+            { label: 'Reference', value: pend.ref },
+            { label: 'Amount', value: naira(pend.amount), total: true },
+          ],
+        })
       }
-      showToast(d.bankTransferStatus === 'success'
-        ? '✅ Approved — Paystack transfer sent'
-        : '✅ Approved — Bank transfer initiated')
       load()
-    } else {
-      setPinError(d.error ?? 'Approval failed')
+    } catch {
+      setApproveError('No connection. We can’t tell if this went through, so close this and reload before trying again.')
+    } finally {
+      setPinLoading(false)
     }
   }
 
   async function confirmReject() {
     if (!rejectModal) return
     setRejectLoading(true); setRejectError('')
-    const res = await fetch(`/api/admin/agent-withdrawal/${rejectModal.id}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'reject', adminNote: rejectNote }),
-    })
-    setRejectLoading(false)
-    const d = await res.json().catch(() => ({}))
-    if (res.ok) {
+    try {
+      const res = await fetch(`/api/admin/agent-withdrawal/${rejectModal.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reject', adminNote: rejectNote }),
+      })
+      const d = await readJson(res)
+      if (!res.ok) { setRejectError(d.error ?? 'The withdrawal wasn’t rejected. Try again.'); return }
+      toast(`Rejected. ${naira(rejectModal.amount)} is back in ${rejectModal.agentName}’s commission balance.`, 'success')
       setRejectModal(null); setRejectNote('')
-      showToast('❌ Rejected — commission refunded to agent')
       load()
-    } else {
-      setRejectError(d.error ?? 'Rejection failed')
+    } catch {
+      setRejectError('No connection. Check your internet and try again.')
+    } finally {
+      setRejectLoading(false)
     }
   }
 
   async function verify(id: string) {
-    const res = await fetch(`/api/admin/agent-withdrawal/${id}/verify`, { method: 'POST' })
-    const d = await res.json().catch(() => ({}))
-    if (res.ok) {
-      showToast(`Paystack: ${d.bankTransferStatus} → ${d.status}`)
+    setVerifying(id)
+    try {
+      const res = await fetch(`/api/admin/agent-withdrawal/${id}/verify`, { method: 'POST' })
+      const d = await readJson(res)
+      if (!res.ok) { toast(d.error ?? 'We couldn’t check with Paystack. Try again.', 'error'); return }
+      const label = d.status ? (STATUS[d.status]?.[1] ?? d.status) : 'unchanged'
+      toast(`Paystack says: ${paystackLabel(d.bankTransferStatus ?? null).toLowerCase()}. This request is now: ${label.toLowerCase()}.`)
       load()
-    } else {
-      showToast(d.error ?? 'Verify failed')
+    } catch {
+      toast('No connection. Check your internet and try again.', 'error')
+    } finally {
+      setVerifying(null)
     }
   }
 
   async function submitOtp() {
     if (!otpModal) return
-    if (!otpValue.trim()) { setOtpError('Enter the OTP Paystack sent you'); return }
+    if (!otpValue.trim()) { setOtpError('Enter the code Paystack sent you.'); return }
     setOtpLoading(true); setOtpError('')
-    const res = await fetch(`/api/admin/agent-withdrawal/${otpModal.id}/finalize-otp`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ otp: otpValue.trim() }),
-    })
-    setOtpLoading(false)
-    const d = await res.json().catch(() => ({}))
-    if (res.ok) {
+    try {
+      const res = await fetch(`/api/admin/agent-withdrawal/${otpModal.id}/finalize-otp`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ otp: otpValue.trim() }),
+      })
+      const d = await readJson(res)
+      if (!res.ok) { setOtpError(d.error ?? 'Paystack didn’t accept the code. Check it and try again.'); return }
+      setResult({
+        heading: 'Withdrawal paid', title: `${naira(otpModal.amount)} sent`,
+        text: <>Paystack accepted the code and paid {otpModal.agentName}.</>,
+        rows: [{ label: 'Agent', value: otpModal.agentName }, { label: 'Reference', value: otpModal.ref }, { label: 'Amount', value: naira(otpModal.amount), total: true }],
+      })
       setOtpModal(null); setOtpValue('')
-      showToast('✅ OTP accepted — Paystack transfer completed')
       load()
-    } else {
-      setOtpError(d.error ?? 'OTP finalisation failed')
+    } catch {
+      setOtpError('No connection. Check your internet and try again.')
+    } finally {
+      setOtpLoading(false)
     }
   }
 
-  const Section = ({ title }: { title: string }) => (
-    <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '.8px', textTransform: 'uppercase', color: 'var(--text3)', margin: '20px 0 8px', paddingBottom: 6, borderBottom: '1px solid var(--border)' }}>{title}</div>
-  )
-  const Row = ({ label, value }: { label: string; value: React.ReactNode }) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 0', borderBottom: '1px solid var(--border)', gap: 12 }}>
-      <span style={{ fontSize: 12, color: 'var(--text3)', whiteSpace: 'nowrap' }}>{label}</span>
-      <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', textAlign: 'right' }}>{value ?? '—'}</span>
-    </div>
-  )
+  function pendingActions(r: WithdrawalRecord) {
+    if (r.status === 'AwaitingOTP') return <button type="button" className="btn btn-sm btn-green" onClick={() => openOtp(r)}>Enter OTP</button>
+    if (r.status === 'Processing') return (
+      <button type="button" className="btn btn-sm btn-outline" disabled={verifying === r.id} onClick={() => verify(r.id)}>
+        {verifying === r.id ? 'Checking…' : 'Check status'}
+      </button>
+    )
+    return <>
+      <button type="button" className="btn btn-sm btn-green" onClick={() => openApprove(r)} aria-label={`Approve ${naira(r.amount)} for ${r.agentName}`}>Approve</button>
+      <button type="button" className="btn btn-sm btn-outline" onClick={() => openReject(r)} aria-label={`Reject ${naira(r.amount)} for ${r.agentName}`}>Reject</button>
+    </>
+  }
+
+  const firstLoad = loading && !loaded
+  const statVal = (v: ReactNode) => firstLoad ? '—' : v
 
   return (
     <>
-      <div className="pg-hd">
-        <div>
-          <h1>Agent Withdrawals</h1>
-          <p>Approve and pay out agent commission requests</p>
-        </div>
+      <PageHeader title="Agent withdrawals" sub="Agents asking to withdraw their commission to a bank account. Approving sends the money through Paystack." />
+
+      <div className="stats-grid">
+        <div className="stat"><div className="stat-lbl">Waiting for you</div><div className={`stat-val${data.pending ? ' amber' : ''}`}>{statVal(data.pending.toLocaleString('en-NG'))}</div><div className="stat-sub">Need approval</div></div>
+        <div className="stat"><div className="stat-lbl">Paid</div><div className="stat-val">{statVal(data.approved.toLocaleString('en-NG'))}</div><div className="stat-sub">All time</div></div>
+        <div className="stat"><div className="stat-lbl">Rejected</div><div className="stat-val">{statVal(data.rejected.toLocaleString('en-NG'))}</div><div className="stat-sub">All time</div></div>
+        <div className="stat"><div className="stat-lbl">Total paid out</div><div className="stat-val">{statVal(naira(data.totalPaidOut))}</div></div>
       </div>
 
-      <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(4,1fr)', marginBottom: 22 }}>
-        <div className="stat"><span className="stat-ic">⏳</span><div className="stat-lbl">Pending Approval</div><div className="stat-val amber">{data.pending}</div><div className="stat-sub">Awaiting super admin action</div></div>
-        <div className="stat"><span className="stat-ic">✅</span><div className="stat-lbl">Approved</div><div className="stat-val green">{data.approved}</div><div className="stat-sub">All time</div></div>
-        <div className="stat"><span className="stat-ic">❌</span><div className="stat-lbl">Rejected</div><div className="stat-val red">{data.rejected}</div></div>
-        <div className="stat"><span className="stat-ic">💸</span><div className="stat-lbl">Total Paid Out</div><div className="stat-val blue">{fmt(data.totalPaidOut)}</div></div>
+      <div className="tab-bar am-tabs" role="tablist" aria-label="Withdrawals">
+        <button type="button" role="tab" id="tab-pending" aria-selected={tab === 'pending'} aria-controls="panel-wd" className={`tab${tab === 'pending' ? ' active' : ''}`} onClick={() => setTab('pending')}>
+          To do<span className="am-tab-count">{pending.length}</span>
+        </button>
+        <button type="button" role="tab" id="tab-history" aria-selected={tab === 'history'} aria-controls="panel-wd" className={`tab${tab === 'history' ? ' active' : ''}`} onClick={() => setTab('history')}>
+          History<span className="am-tab-count">{history.length}</span>
+        </button>
       </div>
 
-      <div className="tab-bar">
-        <button className={`tab${tab === 'pending' ? ' active' : ''}`} onClick={() => setTab('pending')}>⏳ Pending ({pending.length})</button>
-        <button className={`tab${tab === 'history' ? ' active' : ''}`} onClick={() => setTab('history')}>📋 History ({history.length})</button>
-      </div>
-
-      {tab === 'pending' && (
-        <div className="card">
-          <div className="card-hd">
-            <h3>Pending Withdrawal Requests</h3>
-            <span className="bdg bdg-a">{pending.length} awaiting</span>
-          </div>
-          <div className="tbl-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Ref</th><th>Agent</th><th>Amount</th><th>Payout Bank</th><th>Note</th><th>Requested</th><th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading && <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>Loading…</td></tr>}
-                {!loading && pending.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>No pending requests</td></tr>}
-                {!loading && pending.map(r => (
-                  <tr key={r.id} style={{ cursor: 'pointer' }} onClick={e => { if ((e.target as HTMLElement).closest('button')) return; setDetailRecord(r) }}>
-                    <td style={{ fontFamily: "'IBM Plex Serif', serif", fontWeight: 700, fontSize: 12, color: 'var(--blue)' }}>{r.ref}</td>
-                    <td>
-                      <div className="td-name">{r.agentName}</div>
-                      <div className="td-sub">{r.agentDisplayId} · {r.agentPhone}</div>
-                    </td>
-                    <td style={{ fontFamily: "'IBM Plex Serif', serif", fontWeight: 800, color: 'var(--green)' }}>{fmt(r.amount)}</td>
-                    <td style={{ fontSize: 12 }}>
-                      <div style={{ fontWeight: 600 }}>{r.accountName}</div>
-                      <div style={{ color: 'var(--text3)' }}>{r.bankName} · ****{r.accountNumber?.slice(-4)}</div>
-                    </td>
-                    <td style={{ fontSize: 12, color: 'var(--text2)', maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.note ?? '—'}</td>
-                    <td style={{ fontSize: 11, color: 'var(--text3)' }}>{fmtDate(r.requestedAt)}</td>
-                    <td>
-                      {r.status === 'AwaitingOTP' ? (
-                        <div style={{ display: 'flex', gap: 5, flexDirection: 'column', alignItems: 'flex-start' }}>
-                          <span className="bdg bdg-a" style={{ fontSize: 10 }}>📩 Awaiting OTP</span>
-                          <button className="btn btn-xs btn-blue" onClick={() => setOtpModal({ id: r.id, ref: r.ref, agentName: r.agentName })}>
-                            Enter OTP →
-                          </button>
-                        </div>
-                      ) : r.status === 'Processing' ? (
-                        <div style={{ display: 'flex', gap: 5, flexDirection: 'column', alignItems: 'flex-start' }}>
-                          <span className="bdg bdg-b" style={{ fontSize: 10 }}>⏳ Paystack Processing</span>
-                          <button className="btn btn-xs btn-blue" onClick={() => verify(r.id)}>
-                            🔄 Verify with Paystack
-                          </button>
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', gap: 5 }}>
-                          <button className="btn btn-xs btn-green" onClick={() => { setPinModal(r); setPinValue(''); setPinError('') }}>
-                            ✅ Approve
-                          </button>
-                          <button className="btn btn-xs btn-danger" onClick={() => { setRejectModal(r); setRejectNote(''); setRejectError('') }}>
-                            Reject
-                          </button>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {tab === 'history' && (
-        <div className="card">
-          <div className="card-hd">
-            <h3>Decided Requests</h3>
-            <span className="bdg bdg-b">{history.length} records</span>
-          </div>
-          <div className="tbl-wrap">
-            <table>
-              <thead>
-                <tr><th>Ref</th><th>Agent</th><th>Amount</th><th>Payout Bank</th><th>Decision</th><th>Paystack</th><th>Decided By</th><th>Date</th><th>Actions</th></tr>
-              </thead>
-              <tbody>
-                {history.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>No records</td></tr>}
-                {history.map(r => (
-                  <tr key={r.id} style={{ cursor: 'pointer' }} onClick={e => { if ((e.target as HTMLElement).closest('button')) return; setDetailRecord(r) }}>
-                    <td style={{ fontFamily: "'IBM Plex Serif', serif", fontWeight: 700, fontSize: 12, color: 'var(--blue)' }}>{r.ref}</td>
-                    <td><div className="td-name">{r.agentName}</div><div className="td-sub">{r.agentDisplayId}</div></td>
-                    <td style={{ fontWeight: 700 }}>{fmt(r.amount)}</td>
-                    <td style={{ fontSize: 12, color: 'var(--text2)' }}>{r.bankName} · ****{r.accountNumber?.slice(-4)}</td>
-                    <td><span className={`bdg ${r.status === 'Approved' ? 'bdg-g' : 'bdg-r'}`}>{r.status}</span></td>
-                    <td style={{ fontSize: 11, color: 'var(--text3)' }}>{r.bankTransferStatus ?? '—'}</td>
-                    <td style={{ fontSize: 12, color: 'var(--text2)' }}>{r.decidedBy ?? '—'}</td>
-                    <td style={{ fontSize: 11, color: 'var(--text3)' }}>{r.decidedAt ? fmtDate(r.decidedAt) : '—'}</td>
-                    <td>
-                      {r.paystackTransferCode && (
-                        <button className="btn btn-xs btn-outline" onClick={() => verify(r.id)}>🔄 Verify</button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      <div className={`a-toast${toast ? ' show' : ''}`}>{toast}</div>
+      <section className="card" id="panel-wd" role="tabpanel" aria-labelledby={`tab-${tab}`}>
+        {firstLoad ? <TableSkeleton rows={6} cols={6} />
+          : failed && !loaded ? <LoadError what="withdrawals" onRetry={load} />
+          : tab === 'pending' ? (
+            pending.length === 0 ? <Empty icon="check" title="You’re all caught up" text="New withdrawal requests from agents will show here." /> : (
+              <div className="tbl-wrap tbl-stack">
+                <table>
+                  <thead>
+                    <tr><th>Agent</th><th>Reference</th><th className="num">Amount</th><th>Pay to</th><th>Note</th><th>Requested</th><th><span className="sr-only">Actions</span></th></tr>
+                  </thead>
+                  <tbody>
+                    {pending.map(r => (
+                      <tr key={r.id}>
+                        <td>
+                          <span className="td-name ui-block">{r.agentName}</span>
+                          <span className="td-sub ui-block">{r.agentDisplayId} · {r.agentPhone}</span>
+                        </td>
+                        <td data-label="Reference">
+                          <button type="button" className="am-ref-btn" onClick={() => setDetailRecord(r)} aria-label={`View details of ${r.ref}`}>{r.ref}</button>
+                        </td>
+                        <td className="num am-strong" data-label="Amount">{naira(r.amount)}</td>
+                        <td data-label="Pay to">
+                          <span className="ui-block am-strong">{r.accountName ?? '—'}</span>
+                          <span className="td-sub ui-block">{r.bankName ?? 'No bank'} · {last4(r.accountNumber)}</span>
+                        </td>
+                        <td className="am-muted" data-label="Note"><span className="am-clip" title={r.note ?? undefined}>{r.note ?? '—'}</span></td>
+                        <td className="am-muted am-nowrap" data-label="Requested">{dateTime(r.requestedAt)}</td>
+                        <td>
+                          <div className="am-state">
+                            {r.status !== 'Pending' && <StatusBadge s={r.status} />}
+                            <div className="a-row-actions">{pendingActions(r)}</div>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )
+          ) : (
+            history.length === 0 ? <Empty icon="history" title="No decisions yet" text="Withdrawals you approve or reject will show here." /> : (
+              <>
+                <div className="tbl-wrap tbl-stack">
+                  <table>
+                    <thead>
+                      <tr><th>Agent</th><th>Reference</th><th className="num">Amount</th><th>Pay to</th><th>Outcome</th><th>Paystack</th><th>Decided by</th><th>Date</th><th><span className="sr-only">Actions</span></th></tr>
+                    </thead>
+                    <tbody>
+                      {historyPage.map(r => (
+                        <tr key={r.id}>
+                          <td>
+                            <span className="td-name ui-block">{r.agentName}</span>
+                            <span className="td-sub ui-block">{r.agentDisplayId}</span>
+                          </td>
+                          <td data-label="Reference">
+                            <button type="button" className="am-ref-btn" onClick={() => setDetailRecord(r)} aria-label={`View details of ${r.ref}`}>{r.ref}</button>
+                          </td>
+                          <td className="num am-strong" data-label="Amount">{naira(r.amount)}</td>
+                          <td className="am-muted" data-label="Pay to">{r.bankName ?? '—'} · {last4(r.accountNumber)}</td>
+                          <td data-label="Outcome"><StatusBadge s={r.status} /></td>
+                          <td className="am-muted" data-label="Paystack">{paystackLabel(r.bankTransferStatus)}</td>
+                          <td className="am-muted" data-label="Decided by">{r.decidedBy ?? '—'}</td>
+                          <td className="am-muted am-nowrap" data-label="Date">{r.decidedAt ? dateTime(r.decidedAt) : '—'}</td>
+                          <td>
+                            {r.paystackTransferCode && (
+                              <div className="a-row-actions">
+                                <button type="button" className="btn btn-sm btn-outline" disabled={verifying === r.id} onClick={() => verify(r.id)}>
+                                  {verifying === r.id ? 'Checking…' : 'Check status'}
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <Pager page={histPage} pageSize={PAGE_SIZE} total={history.length} onPage={setHistPage} />
+              </>
+            )
+          )}
+        {failed && loaded && <p className="a-alert a-alert-a am-refresh-err" role="status">We couldn’t refresh this list. What you see may be out of date. <button type="button" className="card-link" onClick={load}>Try again</button></p>}
+      </section>
 
       {detailRecord && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex' }} onClick={() => setDetailRecord(null)}>
-          <div style={{ flex: 1, background: 'rgba(0,0,0,.45)' }} />
-          <div style={{ width: 440, background: 'var(--surface)', height: '100%', overflowY: 'auto', padding: 28, boxShadow: '-8px 0 40px rgba(0,0,0,.25)' }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--blue)', fontFamily: 'monospace' }}>{detailRecord.ref}</div>
-                <div style={{ marginTop: 6 }}>
-                  <span className={`bdg ${detailRecord.status === 'Approved' ? 'bdg-g' : detailRecord.status === 'Rejected' ? 'bdg-r' : 'bdg-a'}`}>{detailRecord.status}</span>
-                </div>
-              </div>
-              <button className="btn btn-outline btn-xs" onClick={() => setDetailRecord(null)}>✕</button>
-            </div>
-
-            <Section title="Agent" />
-            <Row label="Name" value={detailRecord.agentName} />
-            <Row label="Agent ID" value={detailRecord.agentDisplayId} />
-            <Row label="Phone" value={detailRecord.agentPhone} />
-            <Row label="Commission Balance" value={fmt(detailRecord.agentCommissionBalance)} />
-
-            <Section title="Withdrawal" />
-            <Row label="Amount" value={<span style={{ color: 'var(--green)', fontWeight: 700, fontSize: 15 }}>{fmt(detailRecord.amount)}</span>} />
-            <Row label="Note" value={detailRecord.note} />
-            <Row label="Requested" value={fmtDate(detailRecord.requestedAt)} />
-
-            <Section title="Bank Details" />
-            <Row label="Account Name" value={detailRecord.accountName} />
-            <Row label="Bank" value={detailRecord.bankName} />
-            <Row label="Account No." value={detailRecord.accountNumber} />
-
-            {(detailRecord.decidedBy || detailRecord.decidedAt || detailRecord.adminNote) && (
-              <>
-                <Section title="Decision" />
-                <Row label="Decided By" value={detailRecord.decidedBy} />
-                <Row label="Decided At" value={detailRecord.decidedAt ? fmtDate(detailRecord.decidedAt) : null} />
-                {detailRecord.adminNote && <Row label="Admin Note" value={detailRecord.adminNote} />}
-                {detailRecord.bankTransferStatus && <Row label="Paystack Status" value={detailRecord.bankTransferStatus} />}
+        <Modal icon="withdraw" title={detailRecord.ref} sub={<StatusBadge s={detailRecord.status} />} onClose={() => setDetailRecord(null)}
+          footer={PENDING_STATUSES.includes(detailRecord.status) ? (
+            detailRecord.status === 'AwaitingOTP' ? <button type="button" className="btn btn-green" onClick={() => openOtp(detailRecord)}>Enter OTP</button>
+              : detailRecord.status === 'Processing' ? <button type="button" className="btn btn-outline" disabled={verifying === detailRecord.id} onClick={() => { const id = detailRecord.id; setDetailRecord(null); verify(id) }}>Check status with Paystack</button>
+              : <>
+                <button type="button" className="btn btn-outline" onClick={() => openReject(detailRecord)}>Reject</button>
+                <button type="button" className="btn btn-green" onClick={() => openApprove(detailRecord)}>Approve {naira(detailRecord.amount)}</button>
               </>
-            )}
-
-            {PENDING_STATUSES.includes(detailRecord.status) && (
-              <div style={{ marginTop: 24 }}>
-                {detailRecord.status === 'AwaitingOTP' ? (
-                  <button className="btn btn-blue" style={{ width: '100%' }} onClick={() => { setDetailRecord(null); setOtpModal({ id: detailRecord.id, ref: detailRecord.ref, agentName: detailRecord.agentName }) }}>
-                    📩 Enter OTP
-                  </button>
-                ) : detailRecord.status === 'Processing' ? (
-                  <button className="btn btn-outline" style={{ width: '100%' }} onClick={() => { setDetailRecord(null); verify(detailRecord.id) }}>
-                    🔄 Verify with Paystack
-                  </button>
-                ) : (
-                  <div style={{ display: 'flex', gap: 10 }}>
-                    <button className="btn btn-green" style={{ flex: 1 }} onClick={() => { setDetailRecord(null); setPinModal(detailRecord); setPinValue(''); setPinError('') }}>✅ Approve</button>
-                    <button className="btn btn-danger" style={{ flex: 1 }} onClick={() => { setDetailRecord(null); setRejectModal(detailRecord); setRejectNote(''); setRejectError('') }}>Reject</button>
-                  </div>
-                )}
-              </div>
-            )}
-          </div>
-        </div>
+          ) : <button type="button" className="btn btn-outline" onClick={() => setDetailRecord(null)}>Close</button>}>
+          <h3 className="dlg-sec-h">Withdrawal</h3>
+          <dl className="dlg-ledger">
+            <div><dt>Amount</dt><dd className="dlg-strong">{naira(detailRecord.amount)}</dd></div>
+            <div><dt>Agent’s note</dt><dd>{detailRecord.note ?? '—'}</dd></div>
+            <div><dt>Requested</dt><dd>{dateTime(detailRecord.requestedAt)}</dd></div>
+          </dl>
+          <h3 className="dlg-sec-h">Agent</h3>
+          <dl className="dlg-ledger">
+            <div><dt>Name</dt><dd>{detailRecord.agentName}</dd></div>
+            <div><dt>Agent ID</dt><dd>{detailRecord.agentDisplayId}</dd></div>
+            <div><dt>Phone</dt><dd>{detailRecord.agentPhone}</dd></div>
+            <div><dt>Commission balance</dt><dd>{naira(detailRecord.agentCommissionBalance)}</dd></div>
+          </dl>
+          <h3 className="dlg-sec-h">Pay to</h3>
+          <dl className="dlg-ledger">
+            <div><dt>Account name</dt><dd>{detailRecord.accountName ?? '—'}</dd></div>
+            <div><dt>Bank</dt><dd>{detailRecord.bankName ?? '—'}</dd></div>
+            <div><dt>Account number</dt><dd className="am-mono">{detailRecord.accountNumber ?? '—'}</dd></div>
+          </dl>
+          {(detailRecord.decidedBy || detailRecord.decidedAt || detailRecord.adminNote || detailRecord.bankTransferStatus) && (
+            <>
+              <h3 className="dlg-sec-h">Decision</h3>
+              <dl className="dlg-ledger">
+                <div><dt>Decided by</dt><dd>{detailRecord.decidedBy ?? '—'}</dd></div>
+                <div><dt>Decided on</dt><dd>{detailRecord.decidedAt ? dateTime(detailRecord.decidedAt) : '—'}</dd></div>
+                {detailRecord.adminNote && <div><dt>Reason given</dt><dd>{detailRecord.adminNote}</dd></div>}
+                {detailRecord.bankTransferStatus && <div><dt>Paystack</dt><dd>{paystackLabel(detailRecord.bankTransferStatus)}</dd></div>}
+              </dl>
+            </>
+          )}
+        </Modal>
       )}
 
       {pinModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 32, width: 380, boxShadow: '0 24px 60px rgba(0,0,0,.3)' }}>
-            <div style={{ textAlign: 'center', marginBottom: 20 }}>
-              <div style={{ fontSize: 36, marginBottom: 8 }}>🔐</div>
-              <div style={{ fontSize: 17, fontWeight: 800, color: 'var(--text)', marginBottom: 6 }}>Approval PIN Required</div>
-              <div style={{ fontSize: 13, color: 'var(--text3)', lineHeight: 1.5 }}>
-                Approving <strong style={{ color: 'var(--green)' }}>{fmt(pinModal.amount)}</strong> payout to <strong>{pinModal.agentName}</strong>
-              </div>
-              <div style={{ marginTop: 12, background: 'var(--surface2)', border: '1.5px solid var(--border)', borderRadius: 10, padding: '10px 14px', fontSize: 12, textAlign: 'left' }}>
-                <div style={{ color: 'var(--text3)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.6px', fontSize: 10, fontWeight: 700 }}>💳 Paystack Transfer</div>
-                <div style={{ fontWeight: 700, color: 'var(--text)' }}>{pinModal.accountName}</div>
-                <div style={{ color: 'var(--text2)' }}>{pinModal.bankName} · ****{pinModal.accountNumber?.slice(-4)}</div>
-              </div>
-            </div>
-            <input
-              type="password" inputMode="numeric" maxLength={6}
-              value={pinValue}
-              onChange={e => { setPinValue(e.target.value); setPinError('') }}
-              onKeyDown={e => e.key === 'Enter' && confirmApprove()}
-              autoFocus placeholder="••••"
-              style={{ width: '100%', padding: '14px 16px', border: `2px solid ${pinError ? 'var(--red)' : 'var(--border)'}`, borderRadius: 10, fontSize: 24, textAlign: 'center', letterSpacing: 8, fontFamily: 'monospace', background: 'var(--surface2)', color: 'var(--text)', outline: 'none', boxSizing: 'border-box', marginBottom: 12 }}
-            />
-            {pinError && <div style={{ fontSize: 12, color: 'var(--red)', marginBottom: 12, textAlign: 'center' }}>{pinError}</div>}
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button className="btn btn-outline" style={{ flex: 1 }} onClick={() => { setPinModal(null); setPinValue(''); setPinError('') }}>Cancel</button>
-              <button className="btn btn-green" style={{ flex: 1 }} disabled={pinLoading || !pinValue} onClick={confirmApprove}>
-                {pinLoading ? '…' : '✅ Confirm'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <Modal error={approveError || undefined} icon="withdraw" tone="money" title="Approve this withdrawal?" sub="Enter your approval PIN. The money is sent through Paystack straight away."
+          onClose={() => { setPinModal(null); setPinValue(''); setPinError(''); setApproveError('') }} busy={pinLoading}
+          footnote={<><Icons.audit size={14} aria-hidden="true" /> Recorded in the audit log</>}
+          footer={<>
+            <button type="button" className="btn btn-outline" onClick={() => { setPinModal(null); setPinValue(''); setPinError(''); setApproveError('') }} disabled={pinLoading}>Cancel</button>
+            <button type="button" className="btn btn-green" disabled={pinLoading || !pinValue} onClick={confirmApprove}>{pinLoading ? 'Sending…' : `Approve and send ${naira(pinModal.amount)}`}</button>
+          </>}>
+          <AmountHero label="You’re sending" amount={naira(pinModal.amount)} sub={<>to <strong>{pinModal.agentName}</strong> · {pinModal.agentDisplayId}</>} />
+          <Ledger>
+            <LedgerRow label="Account name">{pinModal.accountName ?? '—'}</LedgerRow>
+            <LedgerRow label="Bank">{pinModal.bankName ?? '—'} · {last4(pinModal.accountNumber)}</LedgerRow>
+          </Ledger>
+          <form onSubmit={e => { e.preventDefault(); confirmApprove() }} noValidate>
+            <Field id="wd-pin" label="Approval PIN" error={pinError}>
+              <input id="wd-pin" className="a-input am-pin" type="password" inputMode="numeric" maxLength={6} autoComplete="off"
+                value={pinValue} aria-invalid={!!pinError} placeholder="••••"
+                onChange={e => { setPinValue(e.target.value); setPinError('') }} />
+            </Field>
+          </form>
+        </Modal>
       )}
 
       {rejectModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 28, width: 400 }}>
-            <div style={{ fontSize: 16, fontWeight: 800, marginBottom: 6 }}>Reject Withdrawal</div>
-            <div style={{ fontSize: 13, color: 'var(--text3)', marginBottom: 14 }}>
-              Reject {fmt(rejectModal.amount)} withdrawal for <strong>{rejectModal.agentName}</strong>? The amount will be refunded to their commission balance.
-            </div>
-            <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>Reason (visible to agent)</label>
-            <textarea
-              value={rejectNote}
-              onChange={e => setRejectNote(e.target.value)}
-              rows={3}
-              placeholder="e.g. Bank details unverified — please update account"
-              style={{ width: '100%', padding: '9px 12px', borderRadius: 8, border: '1.5px solid var(--border)', fontSize: 13, fontFamily: 'IBM Plex Sans', background: 'var(--surface2)', color: 'var(--text)', resize: 'vertical', boxSizing: 'border-box', marginBottom: 12 }}
-            />
-            {rejectError && <div style={{ fontSize: 12, color: 'var(--red)', marginBottom: 10 }}>{rejectError}</div>}
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button className="btn btn-outline" style={{ flex: 1 }} onClick={() => setRejectModal(null)}>Cancel</button>
-              <button className="btn btn-danger" style={{ flex: 1 }} disabled={rejectLoading} onClick={confirmReject}>
-                {rejectLoading ? '…' : 'Reject & Refund'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <Modal error={rejectError || undefined} icon="report" tone="danger" title="Reject this withdrawal?" onClose={() => setRejectModal(null)} busy={rejectLoading}
+          footer={<>
+            <button type="button" className="btn btn-outline" onClick={() => setRejectModal(null)} disabled={rejectLoading}>Cancel</button>
+            <button type="button" className="btn btn-danger" disabled={rejectLoading} onClick={confirmReject}>{rejectLoading ? 'Rejecting…' : `Reject and refund ${naira(rejectModal.amount)}`}</button>
+          </>}>
+          <dl className="dlg-ledger">
+            <div><dt>Amount</dt><dd className="dlg-strong">{naira(rejectModal.amount)}</dd></div>
+            <div><dt>Agent</dt><dd>{rejectModal.agentName} · {rejectModal.agentDisplayId}</dd></div>
+          </dl>
+          <p className="dlg-note">Nothing is sent. The {naira(rejectModal.amount)} goes back into their commission balance.</p>
+          <Field id="wd-reason" label="Reason (optional)" hint="The agent sees this, so say what to fix.">
+            <textarea id="wd-reason" className="a-input" rows={3} value={rejectNote} onChange={e => setRejectNote(e.target.value)}
+              placeholder="e.g. The account name doesn’t match yours. Update your bank details and ask again." />
+          </Field>
+        </Modal>
       )}
 
       {otpModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }} onClick={() => setOtpModal(null)}>
-          <div className="card" style={{ maxWidth: 460, width: '100%', padding: 24 }} onClick={e => e.stopPropagation()}>
-            <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 4 }}>Finalise Paystack Payout</div>
-            <div style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16 }}>
-              Paystack requires an OTP to release the transfer for <strong>{otpModal.agentName}</strong> ({otpModal.ref}). Enter the 6-digit code from SMS.
-            </div>
-            <input
-              autoFocus type="tel" inputMode="numeric" maxLength={6}
-              value={otpValue}
-              onChange={e => { setOtpValue(e.target.value.replace(/\D/g, '').slice(0, 6)); setOtpError('') }}
-              onKeyDown={e => { if (e.key === 'Enter') submitOtp() }}
-              placeholder="000000"
-              style={{ width: '100%', padding: '14px 16px', border: `2px solid ${otpError ? 'var(--red)' : 'var(--border)'}`, borderRadius: 10, fontSize: 24, textAlign: 'center', letterSpacing: 8, fontFamily: 'monospace', background: 'var(--surface2)', color: 'var(--text)', outline: 'none', boxSizing: 'border-box' }}
-            />
-            {otpError && <div style={{ fontSize: 12, color: 'var(--red)', marginTop: 6, textAlign: 'center' }}>{otpError}</div>}
-            <div style={{ display: 'flex', gap: 8, marginTop: 18 }}>
-              <button className="btn btn-outline" style={{ flex: 1 }} disabled={otpLoading} onClick={() => { setOtpModal(null); setOtpValue('') }}>Cancel</button>
-              <button className="btn btn-green" style={{ flex: 1 }} disabled={otpLoading || otpValue.length < 4} onClick={submitOtp}>
-                {otpLoading ? '…' : '✅ Complete Transfer'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <Modal icon="locked" tone="money" title="Finish the Paystack payout" sub={`Paystack needs a one-time code to release ${naira(otpModal.amount)} to ${otpModal.agentName} (${otpModal.ref}). Paystack sends it by SMS to the phone on the Paystack account.`}
+          onClose={() => { setOtpModal(null); setOtpValue('') }} busy={otpLoading}
+          footer={<>
+            <button type="button" className="btn btn-outline" disabled={otpLoading} onClick={() => { setOtpModal(null); setOtpValue('') }}>Later</button>
+            <button type="button" className="btn btn-green" disabled={otpLoading || otpValue.length < 4} onClick={submitOtp}>{otpLoading ? 'Sending…' : 'Complete transfer'}</button>
+          </>}>
+          <form onSubmit={e => { e.preventDefault(); submitOtp() }} noValidate>
+            <Field id="wd-otp" label="Code from Paystack" error={otpError} hint="If you close this, use Enter OTP on the request to come back.">
+              <input id="wd-otp" className="a-input am-pin" type="tel" inputMode="numeric" maxLength={6} autoComplete="one-time-code"
+                value={otpValue} aria-invalid={!!otpError} placeholder="000000" onKeyDown={blockNonDigit}
+                onChange={e => { setOtpValue(digitsOnly(e.target.value).slice(0, 6)); setOtpError('') }} />
+            </Field>
+          </form>
+        </Modal>
       )}
+
+      {result && <ResultModal result={result} onClose={() => setResult(null)} />}
+      {toastNode}
     </>
   )
 }

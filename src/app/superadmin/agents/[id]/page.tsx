@@ -1,18 +1,22 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams } from 'next/navigation'
 import Link from 'next/link'
+import { Icons } from '@/components/ui/icons'
+import {
+  Avatar, ConfirmModal, Empty, LoadError, Segmented, TableSkeleton, nairaKobo, shortDate, useToast,
+} from '../../_components/admin-ui'
+
+interface Tx {
+  id: string; ref: string; type: string; amount: number; method: string | null
+  status: string; note: string | null; createdAt: string
+}
 
 interface Plan {
   id: string; goal: string; dailyAmount: number; periodDays: number
   balance: number; status: string; startDate: string; maturityDate: string; notes: string | null
   transactions: Tx[]
-}
-
-interface Tx {
-  id: string; ref: string; type: string; amount: number; method: string | null
-  status: string; note: string | null; createdAt: string
 }
 
 interface Loan {
@@ -41,413 +45,416 @@ interface AgentDetail {
   memberCards: { serial: string; status: string }[]
 }
 
-function fmt(d: string) {
-  return new Date(d).toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+type Tab = 'customers' | 'transactions' | 'loans' | 'cards'
+type CustTab = 'plans' | 'loans' | 'cards'
+
+const PLAN_TX_LIMIT = 20
+
+const BADGE: Record<string, [cls: string, label: string]> = {
+  Active: ['bdg-g', 'Active'], Suspended: ['bdg-r', 'Suspended'], PendingActivation: ['bdg-a', 'Waiting to activate'],
+  Done: ['bdg-g', 'Done'], Pending: ['bdg-a', 'Pending'], Failed: ['bdg-r', 'Failed'],
+  Approved: ['bdg-b', 'Approved'], Rejected: ['bdg-r', 'Rejected'], Repaid: ['bdg-g', 'Repaid'], Overdue: ['bdg-r', 'Overdue'],
+  Linked: ['bdg-g', 'Linked'], Unlinked: ['bdg-a', 'Not linked'],
+  Completed: ['bdg-g', 'Completed'], Withdrawn: ['bdg-grey', 'Withdrawn'], Matured: ['bdg-b', 'Matured'],
 }
 
-function ngn(n: number) {
-  return '₦' + n.toLocaleString('en-NG', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+function StatusBadge({ s }: { s: string }) {
+  const [cls, label] = BADGE[s] ?? ['bdg-grey', s]
+  return <span className={`bdg ${cls}`}>{label}</span>
 }
 
-function badge(s: string) {
-  const map: Record<string, [string, string]> = {
-    Active: ['#dcfce7', '#16a34a'], Suspended: ['#fee2e2', '#dc2626'],
-    Done: ['#dcfce7', '#16a34a'], Pending: ['#fef3c7', '#d97706'],
-    Approved: ['#dbeafe', '#1d4ed8'], Rejected: ['#fee2e2', '#dc2626'],
-    Linked: ['#dcfce7', '#16a34a'], Unlinked: ['#fef3c7', '#d97706'],
-    Completed: ['#dcfce7', '#16a34a'], Withdrawn: ['#f1f5f9', '#64748b'],
-  }
-  const [bg, color] = map[s] ?? ['#f1f5f9', '#64748b']
-  return <span style={{ fontSize: 11, fontWeight: 700, padding: '2px 9px', borderRadius: 20, background: bg, color }}>{s}</span>
+const TX_LABELS: Record<string, string> = {
+  saving: 'Savings', Deposit: 'Deposit', Withdrawal: 'Withdrawal', withdrawal: 'Withdrawal',
+  wallet_funding: 'Wallet top-up', commission_payout: 'Commission payout', commission: 'Commission',
+  loan_disbursement: 'Loan paid out', loan_repayment: 'Loan repayment',
 }
+function txLabel(t: string) {
+  if (TX_LABELS[t]) return TX_LABELS[t]
+  const s = t.replace(/_/g, ' ')
+  return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase()
+}
+function TxType({ t }: { t: string }) {
+  const out = /withdraw/i.test(t)
+  const inn = t === 'Deposit' || t === 'saving'
+  return <span className={out ? 'am-neg' : inn ? 'am-pos' : undefined}>{txLabel(t)}</span>
+}
+
+const repaidOf = (l: Loan) => l.repayments.reduce((s, r) => s + r.amount, 0)
+const fullName = (c: Customer) => `${c.firstName} ${c.lastName}`.trim()
 
 export default function AgentDetailPage() {
   const { id } = useParams<{ id: string }>()
-  const router = useRouter()
   const [agent, setAgent] = useState<AgentDetail | null>(null)
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'customers' | 'transactions' | 'loans' | 'cards'>('customers')
+  const [failed, setFailed] = useState(false)
+  const [notFound, setNotFound] = useState(false)
+  const [tab, setTab] = useState<Tab>('customers')
   const [expandedCustomer, setExpandedCustomer] = useState<string | null>(null)
-  const [customerTab, setCustomerTab] = useState<Record<string, 'plans' | 'loans' | 'cards'>>({})
+  const [customerTab, setCustomerTab] = useState<Record<string, CustTab>>({})
+  const [toastNode, toast] = useToast()
+
+  const [confirmReset, setConfirmReset] = useState(false)
+  const [resetting, setResetting] = useState(false)
+  const [resetError, setResetError] = useState('')
 
   const load = useCallback(async () => {
-    setLoading(true)
-    const res = await fetch(`/api/admin/agents/${id}/detail`)
-    if (res.ok) {
-      const d = await res.json()
+    setLoading(true); setFailed(false); setNotFound(false)
+    try {
+      const res = await fetch(`/api/admin/agents/${id}/detail`)
+      if (res.status === 404) { setNotFound(true); return }
+      if (!res.ok) throw new Error()
+      const d = await res.json() as { agent?: AgentDetail }
+      if (!d.agent) { setNotFound(true); return }
       setAgent(d.agent)
+    } catch {
+      setFailed(true)
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }, [id])
 
   useEffect(() => { load() }, [load])
 
-  if (loading) return <div style={{ padding: 60, textAlign: 'center', color: 'var(--text3)' }}>Loading agent details…</div>
-  if (!agent) return <div style={{ padding: 60, textAlign: 'center', color: 'var(--text3)' }}>Agent not found. <Link href="/superadmin/agents" style={{ color: 'var(--accent)' }}>Back to agents</Link></div>
+  async function resetDevice() {
+    setResetting(true); setResetError('')
+    try {
+      const res = await fetch(`/api/admin/agents/${id}/reset-device`, { method: 'POST' })
+      if (!res.ok) {
+        const d = await res.json().catch(() => ({})) as { error?: string }
+        setResetError(d.error ?? 'The device wasn’t reset. Try again.')
+        return
+      }
+      setConfirmReset(false)
+      toast('Device reset. The agent can now sign in on a new phone.', 'success')
+      load()
+    } catch {
+      setResetError('No connection. Check your internet and try again.')
+    } finally {
+      setResetting(false)
+    }
+  }
+
+  const back = (
+    <Link href="/superadmin/agents" className="am-back"><Icons.back size={18} aria-hidden="true" /> Agents</Link>
+  )
+
+  if (loading && !agent) {
+    return (
+      <>
+        {back}
+        <div className="am-hero" aria-hidden="true">
+          <span className="skel av" />
+          <div className="am-hero-main">
+            <div className="skel am-skel-title" />
+            <div className="skel am-skel-line am-skel-sub" />
+          </div>
+        </div>
+        <section className="card"><TableSkeleton rows={6} cols={5} /></section>
+      </>
+    )
+  }
+
+  if (notFound) {
+    return (
+      <>
+        {back}
+        <section className="card">
+          <Empty icon="customers" title="We couldn’t find this agent" text="They may have been removed, or the link is wrong."
+            action={<Link href="/superadmin/agents" className="btn btn-outline">Back to agents</Link>} />
+        </section>
+      </>
+    )
+  }
+
+  if (failed || !agent) {
+    return (
+      <>
+        {back}
+        <section className="card"><LoadError what="this agent" onRetry={load} /></section>
+      </>
+    )
+  }
 
   const totalSavings = agent.customers.reduce((s, c) => s + c.savingsPlans.reduce((a, p) => a + p.balance, 0), 0)
   const totalLoans = agent.customers.reduce((s, c) => s + c.loans.filter(l => l.status === 'Approved').reduce((a, l) => a + l.principal, 0), 0)
-  const allLoans = agent.customers.flatMap(c => c.loans.map(l => ({ ...l, customerName: `${c.firstName} ${c.lastName}`, customerId: c.customerId })))
+  const allLoans = agent.customers.flatMap(c => c.loans.map(l => ({ ...l, customerName: fullName(c), customerId: c.customerId })))
 
-  function getCustTab(cid: string) { return customerTab[cid] ?? 'plans' }
-  function setCustTab(cid: string, t: 'plans' | 'loans' | 'cards') {
-    setCustomerTab(prev => ({ ...prev, [cid]: t }))
-  }
+  const custTabOf = (cid: string) => customerTab[cid] ?? 'plans'
+  const setCustTab = (cid: string, t: CustTab) => setCustomerTab(prev => ({ ...prev, [cid]: t }))
+
+  const tabs: { key: Tab; label: string; count: number }[] = [
+    { key: 'customers', label: 'Customers', count: agent.customers.length },
+    { key: 'transactions', label: 'Transactions', count: agent.transactions.length },
+    { key: 'loans', label: 'Loans', count: allLoans.length },
+    { key: 'cards', label: 'Cards', count: agent.memberCards.length },
+  ]
 
   return (
     <>
-      {/* Header */}
-      <div style={{ marginBottom: 24 }}>
-        <button onClick={() => router.back()} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text3)', fontSize: 13, padding: '4px 0', marginBottom: 12, display: 'flex', alignItems: 'center', gap: 4 }}>
-          ← Back to Agents
-        </button>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
-          <div style={{ width: 52, height: 52, borderRadius: '50%', background: 'var(--accent)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 18, flexShrink: 0, overflow: 'hidden' }}>
-            {agent.photoUrl
-              ? <img src={agent.photoUrl} alt={agent.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-              : agent.name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}
-          </div>
-          <div>
-            <h1 style={{ fontSize: 22, fontWeight: 700, margin: 0, color: 'var(--text)' }}>{agent.name}</h1>
-            <div style={{ fontSize: 13, color: 'var(--text3)', marginTop: 3 }}>{agent.agentId} · {agent.location} · {agent.phone}</div>
-            {agent.accountName && (
-              <div style={{ fontSize: 12, color: 'var(--green)', marginTop: 4, fontWeight: 600 }}>
-                🏦 {agent.accountName} · {agent.bankName} · {agent.accountNumber}
-              </div>
-            )}
-          </div>
-          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: 10 }}>
-            {agent.boundDeviceId && (
-              <button
-                onClick={async () => {
-                  if (!confirm('Reset device binding? The agent will be able to log in from a new mobile device.')) return
-                  const res = await fetch(`/api/admin/agents/${id}/reset-device`, { method: 'POST' })
-                  if (res.ok) load()
-                  else alert('Failed to reset device')
-                }}
-                style={{ padding: '7px 12px', fontSize: 12, fontWeight: 700, background: '#fff', color: 'var(--accent)', border: '1.5px solid var(--accent)', borderRadius: 8, cursor: 'pointer' }}
-                title={`Bound device: ${agent.boundDeviceId.slice(0, 8)}…`}
-              >
-                📱 Reset Device
-              </button>
-            )}
-            {badge(agent.status)}
-          </div>
+      {back}
+
+      <header className="am-hero">
+        <Avatar name={agent.name} photoUrl={agent.photoUrl} tone={agent.status === 'Active' ? 'green' : 'amber'} />
+        <div className="am-hero-main">
+          <h1>{agent.name}</h1>
+          <p className="am-hero-meta">{[agent.agentId, agent.location, agent.phone].filter(Boolean).join(' · ')}</p>
+          {agent.accountName && (
+            <p className="am-bank">
+              <Icons.loan size={16} aria-hidden="true" />
+              <span><span className="sr-only">Payout account: </span>{[agent.accountName, agent.bankName, agent.accountNumber].filter(Boolean).join(' · ')}</span>
+            </p>
+          )}
+        </div>
+        <div className="am-hero-end">
+          <StatusBadge s={agent.status} />
+          {agent.boundDeviceId && (
+            <button type="button" className="btn btn-outline btn-sm" onClick={() => { setResetError(''); setConfirmReset(true) }}>
+              <Icons.device size={16} aria-hidden="true" /> Reset device
+            </button>
+          )}
+        </div>
+      </header>
+
+      <div className="stats-grid">
+        <div className="stat">
+          <div className="stat-lbl">Customers</div>
+          <div className="stat-val">{agent.customers.length.toLocaleString('en-NG')}</div>
+        </div>
+        <div className="stat">
+          <div className="stat-lbl">Customer savings</div>
+          <div className="stat-val">{nairaKobo(totalSavings)}</div>
+        </div>
+        <div className="stat">
+          <div className="stat-lbl">Active loans</div>
+          <div className="stat-val">{nairaKobo(totalLoans)}</div>
+          <div className="stat-sub">Approved, not yet repaid</div>
+        </div>
+        <div className="stat">
+          <div className="stat-lbl">Wallet balance</div>
+          <div className="stat-val">{nairaKobo(agent.walletBalance)}</div>
         </div>
       </div>
 
-      {/* Stats */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14, marginBottom: 26 }}>
-        {[
-          { icon: '👥', label: 'Customers', value: agent.customers.length, color: 'var(--blue)' },
-          { icon: '💰', label: 'Total Savings', value: ngn(totalSavings), color: 'var(--green)' },
-          { icon: '🏦', label: 'Active Loans', value: ngn(totalLoans), color: '#7c3aed' },
-          { icon: '💼', label: 'Wallet Balance', value: ngn(agent.walletBalance), color: 'var(--accent)' },
-        ].map(({ icon, label, value, color }) => (
-          <div key={label} className="stat">
-            <span className="stat-ic">{icon}</span>
-            <div className="stat-lbl">{label}</div>
-            <div className="stat-val" style={{ color, fontSize: typeof value === 'string' ? 16 : undefined }}>{value}</div>
-          </div>
+      <div className="tab-bar am-tabs" role="tablist" aria-label="Agent records">
+        {tabs.map(t => (
+          <button key={t.key} type="button" role="tab" id={`tab-${t.key}`} aria-selected={tab === t.key} aria-controls={`panel-${t.key}`}
+            className={`tab${tab === t.key ? ' active' : ''}`} onClick={() => setTab(t.key)}>
+            {t.label}<span className="am-tab-count">{t.count}</span>
+          </button>
         ))}
       </div>
 
-      {/* Tabs */}
-      <div style={{ display: 'flex', gap: 0, marginBottom: 20, borderBottom: '2px solid var(--border)' }}>
-        {([
-          { key: 'customers', label: `Customers (${agent.customers.length})` },
-          { key: 'transactions', label: `Transactions (${agent.transactions.length})` },
-          { key: 'loans', label: `Loans (${allLoans.length})` },
-          { key: 'cards', label: `Cards (${agent.memberCards.length})` },
-        ] as const).map(({ key, label }) => (
-          <button key={key} onClick={() => setTab(key as typeof tab)} style={{
-            padding: '10px 20px', background: 'none', border: 'none',
-            borderBottom: tab === key ? '2px solid var(--accent)' : '2px solid transparent',
-            marginBottom: -2, fontWeight: tab === key ? 700 : 400,
-            color: tab === key ? 'var(--accent)' : 'var(--text2)',
-            cursor: 'pointer', fontSize: 13, whiteSpace: 'nowrap',
-          }}>{label}</button>
-        ))}
-      </div>
+      <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`}>
+        {tab === 'customers' && (
+          agent.customers.length === 0 ? (
+            <section className="card"><Empty icon="customers" title="No customers yet" text="Customers this agent registers will show here." /></section>
+          ) : (
+            <div className="am-custs">
+              {agent.customers.map(c => {
+                const expanded = expandedCustomer === c.id
+                const ct = custTabOf(c.id)
+                const bal = c.savingsPlans.reduce((s, p) => s + p.balance, 0)
+                return (
+                  <section key={c.id} className="card am-cust" aria-label={fullName(c)}>
+                    <button type="button" className="am-cust-hd" aria-expanded={expanded} aria-controls={`cust-${c.id}`}
+                      onClick={() => setExpandedCustomer(expanded ? null : c.id)}>
+                      <Avatar name={fullName(c)} photoUrl={c.photoUrl} />
+                      <span className="am-cust-name">
+                        <span className="row-title ui-block">{fullName(c)}</span>
+                        <span className="row-sub ui-block">{c.customerId} · {c.phone}</span>
+                      </span>
+                      <span className="am-figs">
+                        <span className="am-fig"><span className="am-fig-lbl">Savings</span><span className="am-fig-val">{nairaKobo(bal)}</span></span>
+                        <span className="am-fig"><span className="am-fig-lbl">Plans</span><span className="am-fig-val">{c.savingsPlans.length}</span></span>
+                        <span className="am-fig"><span className="am-fig-lbl">Loans</span><span className="am-fig-val">{c.loans.length}</span></span>
+                        <StatusBadge s={c.status} />
+                      </span>
+                      <Icons.expand size={20} className="am-chev" aria-hidden="true" />
+                    </button>
 
-      {/* Customers tab */}
-      {tab === 'customers' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-          {agent.customers.length === 0 ? (
-            <div className="card" style={{ textAlign: 'center', padding: 40, color: 'var(--text3)' }}>No customers registered under this agent</div>
-          ) : agent.customers.map(c => {
-            const expanded = expandedCustomer === c.id
-            const ct = getCustTab(c.id)
-            const totalBal = c.savingsPlans.reduce((s, p) => s + p.balance, 0)
-            return (
-              <div key={c.id} className="card" style={{ padding: 0, overflow: 'hidden' }}>
-                {/* Customer header */}
-                <div
-                  onClick={() => setExpandedCustomer(expanded ? null : c.id)}
-                  style={{ padding: '16px 20px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 14, background: expanded ? 'var(--hover)' : 'transparent', transition: 'background .15s' }}
-                >
-                  {c.photoUrl
-                    ? <img src={c.photoUrl} alt="" style={{ width: 38, height: 38, borderRadius: '50%', objectFit: 'cover', flexShrink: 0 }} />
-                    : <div style={{ width: 38, height: 38, borderRadius: '50%', background: 'var(--green)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 700, fontSize: 13, flexShrink: 0 }}>{`${c.firstName[0]}${c.lastName[0]}`.toUpperCase()}</div>}
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 600, fontSize: 14 }}>{c.firstName} {c.lastName}</div>
-                    <div style={{ fontSize: 12, color: 'var(--text3)' }}>{c.customerId} · {c.phone}</div>
-                  </div>
-                  <div style={{ display: 'flex', gap: 20, alignItems: 'center', flexShrink: 0 }}>
-                    <div style={{ textAlign: 'right' }}>
-                      <div style={{ fontSize: 11, color: 'var(--text3)' }}>Savings</div>
-                      <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--green)' }}>{ngn(totalBal)}</div>
-                    </div>
-                    <div style={{ textAlign: 'center', minWidth: 40 }}>
-                      <div style={{ fontSize: 11, color: 'var(--text3)' }}>Plans</div>
-                      <div style={{ fontWeight: 700, fontSize: 14 }}>{c.savingsPlans.length}</div>
-                    </div>
-                    <div style={{ textAlign: 'center', minWidth: 40 }}>
-                      <div style={{ fontSize: 11, color: 'var(--text3)' }}>Loans</div>
-                      <div style={{ fontWeight: 700, fontSize: 14 }}>{c.loans.length}</div>
-                    </div>
-                    {badge(c.status)}
-                    <span style={{ color: 'var(--text3)', fontSize: 16 }}>{expanded ? '▲' : '▼'}</span>
-                  </div>
-                </div>
+                    {expanded && (
+                      <div className="am-cust-body" id={`cust-${c.id}`}>
+                        <Segmented<CustTab> label={`${fullName(c)}’s records`} value={ct} onChange={t => setCustTab(c.id, t)} options={[
+                          { value: 'plans', label: 'Savings plans', count: c.savingsPlans.length },
+                          { value: 'loans', label: 'Loans', count: c.loans.length },
+                          { value: 'cards', label: 'Cards', count: c.memberCards.length },
+                        ]} />
 
-                {/* Expanded content */}
-                {expanded && (
-                  <div style={{ borderTop: '1px solid var(--border)' }}>
-                    {/* Sub-tabs */}
-                    <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', background: 'var(--hover)' }}>
-                      {(['plans', 'loans', 'cards'] as const).map(t => (
-                        <button key={t} onClick={() => setCustTab(c.id, t)} style={{
-                          padding: '8px 18px', background: 'none', border: 'none',
-                          borderBottom: ct === t ? '2px solid var(--accent)' : '2px solid transparent',
-                          fontWeight: ct === t ? 700 : 400,
-                          color: ct === t ? 'var(--accent)' : 'var(--text3)',
-                          cursor: 'pointer', fontSize: 12, textTransform: 'capitalize',
-                        }}>
-                          {t === 'plans' ? `Savings Plans (${c.savingsPlans.length})` : t === 'loans' ? `Loans (${c.loans.length})` : `Cards (${c.memberCards.length})`}
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Savings Plans */}
-                    {ct === 'plans' && (
-                      <div style={{ padding: 16 }}>
-                        {c.savingsPlans.length === 0 ? (
-                          <p style={{ color: 'var(--text3)', fontSize: 13, textAlign: 'center', padding: 20 }}>No savings plans</p>
-                        ) : c.savingsPlans.map(plan => (
-                          <div key={plan.id} style={{ border: '1px solid var(--border)', borderRadius: 10, marginBottom: 12, overflow: 'hidden' }}>
-                            <div style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', background: 'var(--surface2)' }}>
-                              <div style={{ flex: 1, minWidth: 0 }}>
-                                <div style={{ fontWeight: 600, fontSize: 13 }}>{plan.goal || 'Savings Plan'}</div>
-                                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 2 }}>{ngn(plan.dailyAmount)}/day · {plan.periodDays} days · {fmt(plan.startDate)} → {fmt(plan.maturityDate)}</div>
-                              </div>
-                              <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-                                <div>
-                                  <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', fontWeight: 600 }}>Balance</div>
-                                  <div style={{ fontWeight: 700, color: 'var(--green)', fontSize: 15 }}>{ngn(plan.balance)}</div>
+                        {ct === 'plans' && (c.savingsPlans.length === 0
+                          ? <p className="am-inline-empty">No savings plans yet.</p>
+                          : c.savingsPlans.map(plan => (
+                            <div key={plan.id} className="am-plan">
+                              <div className="am-plan-hd">
+                                <div className="row-main">
+                                  <div className="row-title">{plan.goal || 'Savings plan'}</div>
+                                  <div className="row-sub">{nairaKobo(plan.dailyAmount)} a day · {plan.periodDays} days · {shortDate(plan.startDate)} to {shortDate(plan.maturityDate)}</div>
                                 </div>
-                                {badge(plan.status)}
+                                <div className="am-plan-end">
+                                  <span className="am-fig"><span className="am-fig-lbl">Balance</span><span className="am-fig-val">{nairaKobo(plan.balance)}</span></span>
+                                  <StatusBadge s={plan.status} />
+                                </div>
                               </div>
+                              {plan.transactions.length > 0 && (
+                                <div className="am-plan-body">
+                                  <h4 className="am-sub-h">Transactions ({plan.transactions.length})</h4>
+                                  <div className="am-tbl-wrap">
+                                    <table>
+                                      <thead><tr><th>Reference</th><th>Type</th><th className="num">Amount</th><th>Method</th><th>Date</th></tr></thead>
+                                      <tbody>
+                                        {plan.transactions.slice(0, PLAN_TX_LIMIT).map(tx => (
+                                          <tr key={tx.id}>
+                                            <td className="am-mono am-muted">{tx.ref}</td>
+                                            <td><TxType t={tx.type} /></td>
+                                            <td className="num am-strong">{nairaKobo(tx.amount)}</td>
+                                            <td className="am-muted">{tx.method ?? '—'}</td>
+                                            <td className="am-muted am-nowrap">{shortDate(tx.createdAt)}</td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                  {plan.transactions.length > PLAN_TX_LIMIT && (
+                                    <p className="am-more">Showing the latest {PLAN_TX_LIMIT}. {plan.transactions.length - PLAN_TX_LIMIT} older transactions aren’t shown.</p>
+                                  )}
+                                </div>
+                              )}
                             </div>
-                            {plan.transactions.length > 0 && (
-                              <div style={{ padding: '8px 0' }}>
-                                <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: 0.6, padding: '4px 16px 8px' }}>Transactions ({plan.transactions.length})</div>
-                                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                                  <thead>
-                                    <tr style={{ background: 'var(--hover)' }}>
-                                      <th style={{ textAlign: 'left', padding: '6px 16px', fontSize: 11, fontWeight: 600, color: 'var(--text3)' }}>Ref</th>
-                                      <th style={{ textAlign: 'left', padding: '6px 16px', fontSize: 11, fontWeight: 600, color: 'var(--text3)' }}>Type</th>
-                                      <th style={{ textAlign: 'left', padding: '6px 16px', fontSize: 11, fontWeight: 600, color: 'var(--text3)' }}>Amount</th>
-                                      <th style={{ textAlign: 'left', padding: '6px 16px', fontSize: 11, fontWeight: 600, color: 'var(--text3)' }}>Method</th>
-                                      <th style={{ textAlign: 'left', padding: '6px 16px', fontSize: 11, fontWeight: 600, color: 'var(--text3)' }}>Date</th>
+                          )))}
+
+                        {ct === 'loans' && (c.loans.length === 0
+                          ? <p className="am-inline-empty">No loans.</p>
+                          : (
+                            <div className="am-tbl-wrap">
+                              <table>
+                                <thead><tr><th>Reference</th><th className="num">Principal</th><th className="num">Total to repay</th><th className="num">Rate</th><th>Due</th><th className="num">Repaid</th><th>Status</th></tr></thead>
+                                <tbody>
+                                  {c.loans.map(l => (
+                                    <tr key={l.id}>
+                                      <td className="am-mono am-muted">{l.ref}</td>
+                                      <td className="num am-strong">{nairaKobo(l.principal)}</td>
+                                      <td className="num">{nairaKobo(l.totalAmount)}</td>
+                                      <td className="num am-muted">{l.interestRate}%</td>
+                                      <td className="am-muted am-nowrap">{shortDate(l.dueDate)}</td>
+                                      <td className="num am-pos">{nairaKobo(repaidOf(l))}</td>
+                                      <td><StatusBadge s={l.status} /></td>
                                     </tr>
-                                  </thead>
-                                  <tbody>
-                                    {plan.transactions.slice(0, 20).map(tx => (
-                                      <tr key={tx.id} style={{ borderTop: '1px solid var(--border)' }}>
-                                        <td style={{ padding: '7px 16px', fontFamily: 'monospace', fontSize: 11, color: 'var(--text3)' }}>{tx.ref}</td>
-                                        <td style={{ padding: '7px 16px' }}><span style={{ fontWeight: 600, color: tx.type === 'Deposit' ? 'var(--green)' : tx.type === 'Withdrawal' ? '#dc2626' : 'var(--text2)' }}>{tx.type}</span></td>
-                                        <td style={{ padding: '7px 16px', fontWeight: 700 }}>{ngn(tx.amount)}</td>
-                                        <td style={{ padding: '7px 16px', fontSize: 12, color: 'var(--text3)' }}>{tx.method ?? '—'}</td>
-                                        <td style={{ padding: '7px 16px', fontSize: 12, color: 'var(--text3)' }}>{fmt(tx.createdAt)}</td>
-                                      </tr>
-                                    ))}
-                                  </tbody>
-                                </table>
-                                {plan.transactions.length > 20 && <div style={{ fontSize: 12, color: 'var(--text3)', padding: '6px 16px' }}>+ {plan.transactions.length - 20} more transactions</div>}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
+                                  ))}
+                                </tbody>
+                              </table>
+                            </div>
+                          ))}
 
-                    {/* Loans */}
-                    {ct === 'loans' && (
-                      <div style={{ padding: 16 }}>
-                        {c.loans.length === 0 ? (
-                          <p style={{ color: 'var(--text3)', fontSize: 13, textAlign: 'center', padding: 20 }}>No loans</p>
-                        ) : (
-                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                            <thead>
-                              <tr>
-                                {['Ref', 'Principal', 'Total', 'Rate', 'Due Date', 'Repaid', 'Status'].map(h => (
-                                  <th key={h} style={{ textAlign: 'left', padding: '7px 12px', fontSize: 11, fontWeight: 600, color: 'var(--text3)', borderBottom: '1px solid var(--border)' }}>{h}</th>
-                                ))}
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {c.loans.map(l => {
-                                const repaid = l.repayments.reduce((s, r) => s + r.amount, 0)
-                                return (
-                                  <tr key={l.id} style={{ borderBottom: '1px solid var(--border)' }}>
-                                    <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontSize: 11, color: 'var(--text3)' }}>{l.ref}</td>
-                                    <td style={{ padding: '8px 12px', fontWeight: 700 }}>{ngn(l.principal)}</td>
-                                    <td style={{ padding: '8px 12px' }}>{ngn(l.totalAmount)}</td>
-                                    <td style={{ padding: '8px 12px', color: 'var(--text3)' }}>{l.interestRate}%</td>
-                                    <td style={{ padding: '8px 12px', color: 'var(--text3)' }}>{fmt(l.dueDate)}</td>
-                                    <td style={{ padding: '8px 12px', color: 'var(--green)', fontWeight: 600 }}>{ngn(repaid)}</td>
-                                    <td style={{ padding: '8px 12px' }}>{badge(l.status)}</td>
-                                  </tr>
-                                )
-                              })}
-                            </tbody>
-                          </table>
-                        )}
+                        {ct === 'cards' && (c.memberCards.length === 0
+                          ? <p className="am-inline-empty">No cards linked.</p>
+                          : (
+                            <ul className="am-chips">
+                              {c.memberCards.map(card => (
+                                <li key={card.serial} className="am-chip">
+                                  <span className="am-mono am-strong">{card.serial}</span>
+                                  <StatusBadge s={card.status} />
+                                  {card.linkedAt && <span className="am-chip-date">Linked {shortDate(card.linkedAt)}</span>}
+                                </li>
+                              ))}
+                            </ul>
+                          ))}
                       </div>
                     )}
+                  </section>
+                )
+              })}
+            </div>
+          )
+        )}
 
-                    {/* Cards */}
-                    {ct === 'cards' && (
-                      <div style={{ padding: 16 }}>
-                        {c.memberCards.length === 0 ? (
-                          <p style={{ color: 'var(--text3)', fontSize: 13, textAlign: 'center', padding: 20 }}>No cards linked</p>
-                        ) : (
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10 }}>
-                            {c.memberCards.map(card => (
-                              <div key={card.serial} style={{ padding: '8px 14px', borderRadius: 8, border: '1px solid var(--border)', display: 'flex', gap: 10, alignItems: 'center' }}>
-                                <span style={{ fontFamily: 'monospace', fontWeight: 700, fontSize: 13 }}>{card.serial}</span>
-                                {badge(card.status)}
-                                {card.linkedAt && <span style={{ fontSize: 11, color: 'var(--text3)' }}>{fmt(card.linkedAt)}</span>}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                )}
+        {tab === 'transactions' && (
+          <section className="card" aria-label="Transactions">
+            {agent.transactions.length === 0 ? <Empty icon="history" title="No transactions yet" text="Savings, top-ups and payouts for this agent will show here." /> : (
+              <>
+                <div className="tbl-wrap">
+                  <table>
+                    <thead><tr><th>Reference</th><th>Type</th><th className="num">Amount</th><th>Method</th><th>Status</th><th>Note</th><th>Date</th></tr></thead>
+                    <tbody>
+                      {agent.transactions.map(tx => (
+                        <tr key={tx.id}>
+                          <td className="am-mono am-muted">{tx.ref}</td>
+                          <td><TxType t={tx.type} /></td>
+                          <td className="num am-strong">{nairaKobo(tx.amount)}</td>
+                          <td className="am-muted">{tx.method ?? '—'}</td>
+                          <td><StatusBadge s={tx.status} /></td>
+                          <td className="am-muted"><span className="am-clip" title={tx.note ?? undefined}>{tx.note ?? '—'}</span></td>
+                          <td className="am-muted am-nowrap">{shortDate(tx.createdAt)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                {agent.transactions.length >= 200 && <p className="am-more">Showing the latest 200 transactions.</p>}
+              </>
+            )}
+          </section>
+        )}
+
+        {tab === 'loans' && (
+          <section className="card" aria-label="Loans">
+            {allLoans.length === 0 ? <Empty icon="loan" title="No loans yet" text="Loans for this agent’s customers will show here." /> : (
+              <div className="tbl-wrap tbl-stack">
+                <table>
+                  <thead><tr><th>Customer</th><th>Reference</th><th className="num">Principal</th><th className="num">Total to repay</th><th className="num">Rate</th><th>Due</th><th className="num">Repaid</th><th>Status</th></tr></thead>
+                  <tbody>
+                    {allLoans.map(l => (
+                      <tr key={l.id}>
+                        <td>
+                          <span className="td-name ui-block">{l.customerName}</span>
+                          <span className="td-sub ui-block">{l.customerId}</span>
+                        </td>
+                        <td className="am-mono am-muted" data-label="Reference">{l.ref}</td>
+                        <td className="num am-strong" data-label="Principal">{nairaKobo(l.principal)}</td>
+                        <td className="num" data-label="Total to repay">{nairaKobo(l.totalAmount)}</td>
+                        <td className="num am-muted" data-label="Rate">{l.interestRate}%</td>
+                        <td className="am-muted am-nowrap" data-label="Due">{shortDate(l.dueDate)}</td>
+                        <td className="num am-pos" data-label="Repaid">{nairaKobo(repaidOf(l))}</td>
+                        <td data-label="Status"><StatusBadge s={l.status} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-            )
-          })}
-        </div>
+            )}
+          </section>
+        )}
+
+        {tab === 'cards' && (
+          <section className="card" aria-label="Cards">
+            {agent.memberCards.length === 0 ? <Empty icon="card" title="No cards issued" text="Member cards given to this agent will show here." /> : (
+              <div className="tbl-wrap tbl-stack">
+                <table>
+                  <thead><tr><th>Serial</th><th>Status</th></tr></thead>
+                  <tbody>
+                    {agent.memberCards.map(card => (
+                      <tr key={card.serial}>
+                        <td className="am-mono am-strong">{card.serial}</td>
+                        <td data-label="Status"><StatusBadge s={card.status} /></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </section>
+        )}
+      </div>
+
+      {confirmReset && agent.boundDeviceId && (
+        <ConfirmModal icon="device"
+          title={`Reset ${agent.name}’s device?`}
+          body={<>Their account is tied to one phone (device {agent.boundDeviceId.slice(0, 8)}…). After a reset, the next phone they sign in on becomes their device. Do this if they’ve lost or changed their phone.</>}
+          confirmLabel="Reset device"
+          busy={resetting} error={resetError}
+          onConfirm={resetDevice} onClose={() => setConfirmReset(false)}
+        />
       )}
 
-      {/* Transactions tab */}
-      {tab === 'transactions' && (
-        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <div className="tbl-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Ref</th>
-                  <th>Type</th>
-                  <th>Amount</th>
-                  <th>Method</th>
-                  <th>Status</th>
-                  <th>Note</th>
-                  <th>Date</th>
-                </tr>
-              </thead>
-              <tbody>
-                {agent.transactions.length === 0 ? (
-                  <tr><td colSpan={7} style={{ textAlign: 'center', padding: 40, color: 'var(--text3)' }}>No transactions</td></tr>
-                ) : agent.transactions.map(tx => (
-                  <tr key={tx.id}>
-                    <td style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text3)' }}>{tx.ref}</td>
-                    <td><span style={{ fontWeight: 600, color: tx.type === 'Deposit' ? 'var(--green)' : tx.type === 'Withdrawal' ? '#dc2626' : 'var(--text2)' }}>{tx.type}</span></td>
-                    <td style={{ fontWeight: 700 }}>{ngn(tx.amount)}</td>
-                    <td style={{ fontSize: 12, color: 'var(--text3)' }}>{tx.method ?? '—'}</td>
-                    <td>{badge(tx.status)}</td>
-                    <td style={{ fontSize: 12, color: 'var(--text3)', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{tx.note ?? '—'}</td>
-                    <td style={{ fontSize: 12, color: 'var(--text3)', whiteSpace: 'nowrap' }}>{fmt(tx.createdAt)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Loans tab */}
-      {tab === 'loans' && (
-        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <div className="tbl-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Ref</th>
-                  <th>Customer</th>
-                  <th>Principal</th>
-                  <th>Total</th>
-                  <th>Rate</th>
-                  <th>Due Date</th>
-                  <th>Repaid</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {allLoans.length === 0 ? (
-                  <tr><td colSpan={8} style={{ textAlign: 'center', padding: 40, color: 'var(--text3)' }}>No loans</td></tr>
-                ) : allLoans.map(l => {
-                  const repaid = l.repayments.reduce((s, r) => s + r.amount, 0)
-                  return (
-                    <tr key={l.id}>
-                      <td style={{ fontFamily: 'monospace', fontSize: 11, color: 'var(--text3)' }}>{l.ref}</td>
-                      <td>
-                        <div style={{ fontWeight: 600, fontSize: 13 }}>{l.customerName}</div>
-                        <div style={{ fontSize: 11, color: 'var(--text3)' }}>{l.customerId}</div>
-                      </td>
-                      <td style={{ fontWeight: 700 }}>{ngn(l.principal)}</td>
-                      <td>{ngn(l.totalAmount)}</td>
-                      <td style={{ color: 'var(--text3)' }}>{l.interestRate}%</td>
-                      <td style={{ fontSize: 12, color: 'var(--text3)', whiteSpace: 'nowrap' }}>{fmt(l.dueDate)}</td>
-                      <td style={{ color: 'var(--green)', fontWeight: 600 }}>{ngn(repaid)}</td>
-                      <td>{badge(l.status)}</td>
-                    </tr>
-                  )
-                })}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Cards tab */}
-      {tab === 'cards' && (
-        <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
-          <div className="tbl-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Serial</th>
-                  <th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {agent.memberCards.length === 0 ? (
-                  <tr><td colSpan={2} style={{ textAlign: 'center', padding: 40, color: 'var(--text3)' }}>No cards issued to this agent</td></tr>
-                ) : agent.memberCards.map(card => (
-                  <tr key={card.serial}>
-                    <td style={{ fontFamily: 'monospace', fontWeight: 700, letterSpacing: 1 }}>{card.serial}</td>
-                    <td>{badge(card.status)}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+      {toastNode}
     </>
   )
 }

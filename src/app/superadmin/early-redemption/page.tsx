@@ -1,6 +1,14 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, type ReactNode } from 'react'
+import { Icons } from '@/components/ui/icons'
+import { digitsOnly } from '@/lib/numeric'
+import { redemptionDeduction } from '@/lib/wallet-rates'
+import {
+  ConfirmModal, Empty, Field, LoadError, Modal, PageHeader, Pager, SearchField, Segmented,
+  TableSkeleton, dateTime, nairaKobo, useDebounced, useToast,
+  ResultModal, type Result, type ResultRow,
+} from '../_components/admin-ui'
 
 interface RedemptionRecord {
   id: string
@@ -58,6 +66,18 @@ interface CompletedStats {
   todayAmount: number
 }
 
+interface ActivePlan {
+  id: string; customerName: string; customerId: string; balance: number; status: string; periodDays: number; dailyAmount: number; cadence: string
+}
+
+interface PinTarget {
+  id: string; ref: string; customerName: string; customerId: string; amount: number
+  payoutMethod: string; accountName: string | null; bankName: string | null; accountNumber: string | null
+}
+
+type Tab = 'pending' | 'completed' | 'history'
+type HistoryStatus = 'all' | 'approved' | 'rejected'
+
 const REASONS = [
   'Medical emergency',
   'Family bereavement',
@@ -68,723 +88,825 @@ const REASONS = [
   'Other (see note)',
 ]
 
+const PAGE_SIZE = 25
+const PLAN_LIMIT = 100 // the plan picker asks the savings API for up to this many active plans
+const PENDING_STATUSES = ['Pending', 'TokenValidated', 'AgentApproved', 'AwaitingOTP']
+const DECIDABLE = ['Pending', 'TokenValidated', 'AgentApproved']
+const NO_CONNECTION = 'No connection. Check your internet and try again.'
+
+const isBank = (method: string | null | undefined) => method === 'Bank Transfer' || method === 'BankTransfer'
+const last4 = (acct: string | null) => acct ? `••••${acct.slice(-4)}` : ''
+const typeLabel = (t: string) => t === 'early' ? 'Early exit' : 'After maturity'
+
+async function errorOf(res: Response, fallback: string) {
+  const d = await res.json().catch(() => ({})) as { error?: string }
+  return d.error ?? fallback
+}
+
+function StatusBadge({ status }: { status: string }) {
+  switch (status) {
+    case 'Pending': return <span className="bdg bdg-grey">Waiting for customer code</span>
+    case 'TokenValidated': return <span className="bdg bdg-a">Waiting for agent</span>
+    case 'AgentApproved': return <span className="bdg bdg-b">Agent approved</span>
+    case 'AwaitingOTP': return <span className="bdg bdg-a">Waiting for Paystack code</span>
+    case 'Approved': return <span className="bdg bdg-g">Approved</span>
+    case 'Rejected': return <span className="bdg bdg-r">Rejected</span>
+    default: return <span className="bdg bdg-grey">{status}</span>
+  }
+}
+
+function TypeBadge({ type }: { type: string }) {
+  return <span className={`bdg ${type === 'early' ? 'bdg-a' : 'bdg-b'}`}>{typeLabel(type)}</span>
+}
+
+function DlRow({ label, children, total }: { label: string; children: ReactNode; total?: boolean }) {
+  return <div className={total ? 'is-total' : undefined}><dt>{label}</dt><dd>{children}</dd></div>
+}
+
+function csvDownload(filename: string, rows: (string | number | null | undefined)[][]) {
+  const esc = (v: string | number | null | undefined) => {
+    const s = v === null || v === undefined ? '' : String(v)
+    return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s
+  }
+  const blob = new Blob([rows.map(r => r.map(esc).join(',')).join('\n')], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url; a.download = filename
+  document.body.appendChild(a); a.click(); a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 export default function RedemptionsPage() {
-  const [data, setData] = useState<PageData>({ pending: 0, approved: 0, rejected: 0, tokensToday: 0, records: [] })
+  const [data, setData] = useState<PageData | null>(null)
   const [loading, setLoading] = useState(true)
-  const [tab, setTab] = useState<'pending' | 'completed' | 'history'>('pending')
-  const [toast, setToast] = useState('')
-  const [deciding, setDeciding] = useState<string | null>(null)
+  const [failed, setFailed] = useState(false)
+  const [tab, setTab] = useState<Tab>('pending')
+  const [toastNode, toast] = useToast()
 
+  // New request
   const [showModal, setShowModal] = useState(false)
-  const [plans, setPlans] = useState<{ id: string; customerName: string; customerId: string; balance: number; status: string; periodDays: number; dailyAmount: number; cadence: string }[]>([])
+  const [plans, setPlans] = useState<ActivePlan[]>([])
+  const [plansLoading, setPlansLoading] = useState(false)
+  const [plansFailed, setPlansFailed] = useState(false)
   const [form, setForm] = useState({ savingsPlanId: '', type: 'early', reason: '', note: '' })
-  const [preview, setPreview] = useState<{ balance: number; savingsFee?: number; penalty: number; netPayout: number } | null>(null)
+  const [formErrors, setFormErrors] = useState<{ plan?: string; reason?: string }>({})
+  const [preview, setPreview] = useState<{ balance: number; savingsFee: number; netPayout: number } | null>(null)
   const [submitting, setSubmitting] = useState(false)
+  const [createError, setCreateError] = useState('')
 
-  const [pinModal, setPinModal] = useState<{ id: string; ref: string; customerName: string; amount: number; payoutMethod: string; accountName: string | null; bankName: string | null; accountNumber: string | null } | null>(null)
+  // Approve (PIN), Paystack OTP, reject
+  const [pinModal, setPinModal] = useState<PinTarget | null>(null)
   const [pinValue, setPinValue] = useState('')
   const [pinError, setPinError] = useState('')
+  const [approveError, setApproveError] = useState('')
   const [pinLoading, setPinLoading] = useState(false)
-  const [otpModal, setOtpModal] = useState<{ id: string; ref: string; customerName: string } | null>(null)
+  const [otpModal, setOtpModal] = useState<{ id: string; ref: string; customerName: string; amount: number } | null>(null)
+  const [result, setResult] = useState<Result | null>(null)
   const [otpValue, setOtpValue] = useState('')
   const [otpError, setOtpError] = useState('')
   const [otpLoading, setOtpLoading] = useState(false)
+  const [rejectTarget, setRejectTarget] = useState<RedemptionRecord | null>(null)
+  const [rejectBusy, setRejectBusy] = useState(false)
+  const [rejectError, setRejectError] = useState('')
 
-  const [detailRecord, setDetailRecord] = useState<RedemptionRecord | null>(null)
+  const [detail, setDetail] = useState<RedemptionRecord | null>(null)
 
+  // All requests filters
   const [historySearch, setHistorySearch] = useState('')
   const [historyTypeFilter, setHistoryTypeFilter] = useState('all')
-  const [historyStatusFilter, setHistoryStatusFilter] = useState('all')
-  const [completedPage, setCompletedPage] = useState(1)
+  const [historyStatusFilter, setHistoryStatusFilter] = useState<HistoryStatus>('all')
   const [historyPage, setHistoryPage] = useState(1)
-  const PAGE_SIZE = 25
 
+  // Completed payouts
   const [completed, setCompleted] = useState<CompletedRedemption[]>([])
-  const [completedStats, setCompletedStats] = useState<CompletedStats>({ totalRedemptions: 0, totalRedeemedAmount: 0, todayCount: 0, todayAmount: 0 })
+  const [completedStats, setCompletedStats] = useState<CompletedStats | null>(null)
   const [completedSearch, setCompletedSearch] = useState('')
+  const completedQ = useDebounced(completedSearch.trim())
   const [completedDate, setCompletedDate] = useState('')
   const [completedLoading, setCompletedLoading] = useState(false)
-
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 4000) }
+  const [completedFailed, setCompletedFailed] = useState(false)
+  const [completedPage, setCompletedPage] = useState(1)
 
   const load = useCallback(async () => {
-    setLoading(true)
-    const res = await fetch('/api/admin/early-redemption')
-    if (res.ok) { const d = await res.json(); setData(d) }
-    setLoading(false)
+    setLoading(true); setFailed(false)
+    try {
+      const res = await fetch('/api/admin/early-redemption')
+      if (!res.ok) throw new Error()
+      setData(await res.json() as PageData)
+    } catch {
+      setFailed(true)
+    } finally {
+      setLoading(false)
+    }
   }, [])
 
   const loadCompleted = useCallback(async () => {
-    setCompletedLoading(true)
-    const params = new URLSearchParams()
-    if (completedSearch) params.set('search', completedSearch)
-    if (completedDate) params.set('date', completedDate)
-    const res = await fetch(`/api/admin/redemptions?${params}`)
-    const d = res.ok ? await res.json() : {}
-    setCompleted(d.redemptions ?? [])
-    setCompletedPage(1)
-    setCompletedStats({
-      totalRedemptions: d.totalRedemptions ?? 0,
-      totalRedeemedAmount: d.totalRedeemedAmount ?? 0,
-      todayCount: d.todayCount ?? 0,
-      todayAmount: d.todayAmount ?? 0,
-    })
-    setCompletedLoading(false)
-  }, [completedSearch, completedDate])
+    setCompletedLoading(true); setCompletedFailed(false)
+    try {
+      const params = new URLSearchParams()
+      if (completedQ) params.set('search', completedQ)
+      if (completedDate) params.set('date', completedDate)
+      const res = await fetch(`/api/admin/redemptions?${params}`)
+      if (!res.ok) throw new Error()
+      const d = await res.json() as Partial<CompletedStats> & { redemptions?: CompletedRedemption[] }
+      setCompleted(d.redemptions ?? [])
+      setCompletedPage(1)
+      setCompletedStats({
+        totalRedemptions: d.totalRedemptions ?? 0,
+        totalRedeemedAmount: d.totalRedeemedAmount ?? 0,
+        todayCount: d.todayCount ?? 0,
+        todayAmount: d.todayAmount ?? 0,
+      })
+    } catch {
+      setCompletedFailed(true)
+    } finally {
+      setCompletedLoading(false)
+    }
+  }, [completedQ, completedDate])
 
   const loadPlans = useCallback(async () => {
-    const res = await fetch('/api/admin/savings?status=Active&page=1&limit=100')
-    if (res.ok) {
-      const d = await res.json()
-      setPlans((d.plans ?? []).map((p: { id: string; customerName: string; customerId: string; balance: number; status: string; periodDays: number; dailyAmount: number; cadence: string }) => ({
+    setPlansLoading(true); setPlansFailed(false)
+    try {
+      const res = await fetch('/api/admin/savings?status=Active&page=1&limit=100')
+      if (!res.ok) throw new Error()
+      const d = await res.json() as { plans?: ActivePlan[] }
+      setPlans((d.plans ?? []).map(p => ({
         id: p.id, customerName: p.customerName, customerId: p.customerId, balance: p.balance, status: p.status, periodDays: p.periodDays, dailyAmount: p.dailyAmount, cadence: p.cadence,
       })))
+    } catch {
+      setPlansFailed(true)
+    } finally {
+      setPlansLoading(false)
     }
   }, [])
 
   useEffect(() => { load() }, [load])
   useEffect(() => { if (tab === 'completed') loadCompleted() }, [tab, loadCompleted])
+  useEffect(() => { setHistoryPage(1) }, [historySearch, historyTypeFilter, historyStatusFilter])
 
+  // ── New request ──
   function calcPreview(planId: string) {
     const plan = plans.find(p => p.id === planId)
     if (!plan) { setPreview(null); return }
-    const isDaily = !plan.cadence || plan.cadence === 'daily'
-    const savingsFee = isDaily
-      ? Math.min(Math.round(plan.dailyAmount * ((plan.periodDays || 31) / 31) * 100) / 100, plan.balance)
-      : Math.min(Math.round(plan.balance * 0.20 * 100) / 100, plan.balance)
-    const netPayout = Math.round((plan.balance - savingsFee) * 100) / 100
-    setPreview({ balance: plan.balance, savingsFee, penalty: 0, netPayout })
+    // Same rule the server uses for admin-initiated requests. It's an estimate: the server also
+    // waives the fee for self-saved plans, which this list can't tell.
+    const fee = Math.min(redemptionDeduction({
+      balance: plan.balance, dailyAmount: plan.dailyAmount, cadence: plan.cadence,
+      hasCashDeposit: true, periodDays: plan.periodDays, initiator: 'admin',
+    }).total, plan.balance)
+    setPreview({ balance: plan.balance, savingsFee: fee, netPayout: plan.balance - fee })
   }
 
   function onFormChange(key: keyof typeof form, val: string) {
     const next = { ...form, [key]: val }
     setForm(next)
+    setCreateError('')
+    if (key === 'savingsPlanId') setFormErrors(e => ({ ...e, plan: undefined }))
+    if (key === 'reason') setFormErrors(e => ({ ...e, reason: undefined }))
     if (key === 'savingsPlanId' || key === 'type') calcPreview(next.savingsPlanId)
   }
 
+  function openNewRequest() {
+    setForm({ savingsPlanId: '', type: 'early', reason: '', note: '' })
+    setPreview(null); setFormErrors({}); setCreateError('')
+    setShowModal(true)
+    loadPlans()
+  }
+
   async function handleSubmit() {
-    if (!form.savingsPlanId || !form.reason) return
-    setSubmitting(true)
-    const res = await fetch('/api/admin/early-redemption', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(form),
-    })
-    setSubmitting(false)
-    if (res.ok) {
+    const errs: { plan?: string; reason?: string } = {}
+    if (!form.savingsPlanId) errs.plan = 'Choose the customer’s plan.'
+    if (!form.reason) errs.reason = 'Choose a reason.'
+    setFormErrors(errs)
+    if (errs.plan || errs.reason) return
+    setSubmitting(true); setCreateError('')
+    try {
+      const res = await fetch('/api/admin/early-redemption', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(form),
+      })
+      if (!res.ok) { setCreateError(await errorOf(res, 'The request wasn’t created. Try again.')); return }
+      const d = await res.json().catch(() => ({})) as { ref?: string; netPayout?: number }
       setShowModal(false)
       setForm({ savingsPlanId: '', type: 'early', reason: '', note: '' })
       setPreview(null)
-      showToast('✅ Redemption request created')
+      toast(d.ref ? `Request ${d.ref} created. Net payout ${nairaKobo(d.netPayout)}.` : 'Redemption request created', 'success')
+      setTab('pending')
       load()
-    } else {
-      const d = await res.json().catch(() => ({}))
-      showToast((d as { error?: string }).error ?? 'Failed to create request')
+    } catch {
+      setCreateError(NO_CONNECTION)
+    } finally {
+      setSubmitting(false)
     }
   }
 
-  async function decide(id: string, action: 'approve' | 'reject', record?: RedemptionRecord) {
-    if (action === 'approve' && record) {
-      setPinModal({ id, ref: record.ref, customerName: record.customerName, amount: record.netPayout, payoutMethod: record.payoutMethod ?? 'Cash', accountName: record.accountName ?? null, bankName: record.bankName ?? null, accountNumber: record.accountNumber ?? null })
-      setPinValue('')
-      setPinError('')
-      return
-    }
-    setDeciding(id + action)
-    const res = await fetch(`/api/admin/early-redemption/${id}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action }),
+  // ── Approve / reject ──
+  function openApprove(r: RedemptionRecord) {
+    setPinModal({
+      id: r.id, ref: r.ref, customerName: r.customerName, customerId: r.customerId, amount: r.netPayout,
+      payoutMethod: r.payoutMethod ?? 'Cash', accountName: r.accountName ?? null, bankName: r.bankName ?? null, accountNumber: r.accountNumber ?? null,
     })
-    setDeciding(null)
-    if (res.ok) {
-      showToast('❌ Request rejected')
+    setPinValue(''); setPinError(''); setApproveError('')
+  }
+
+  function openReject(r: RedemptionRecord) {
+    setRejectError(''); setRejectTarget(r)
+  }
+
+  async function confirmReject() {
+    if (!rejectTarget) return
+    setRejectBusy(true); setRejectError('')
+    try {
+      const res = await fetch(`/api/admin/early-redemption/${rejectTarget.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reject' }),
+      })
+      if (!res.ok) { setRejectError(await errorOf(res, 'The request wasn’t rejected. Try again.')); return }
+      toast(`${rejectTarget.ref} rejected. ${rejectTarget.customerName}’s plan is active again.`, 'success')
+      setRejectTarget(null)
       load()
-    } else {
-      const d = await res.json().catch(() => ({}))
-      showToast((d as { error?: string }).error ?? 'Action failed')
+    } catch {
+      setRejectError(NO_CONNECTION)
+    } finally {
+      setRejectBusy(false)
     }
   }
 
   async function confirmApprove() {
     if (!pinModal) return
-    if (!pinValue.trim()) { setPinError('Enter your approval PIN'); return }
-    setPinLoading(true); setPinError('')
-    const res = await fetch(`/api/admin/early-redemption/${pinModal.id}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'approve', pin: pinValue }),
-    })
-    setPinLoading(false)
-    if (res.ok) {
-      const d = await res.json().catch(() => ({}))
-      const pending = pinModal
+    if (!pinValue.trim()) { setPinError('Enter your approval PIN.'); return }
+    setPinLoading(true); setPinError(''); setApproveError('')
+    try {
+      const res = await fetch(`/api/admin/early-redemption/${pinModal.id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'approve', pin: pinValue }),
+      })
+      if (!res.ok) {
+        const msg = await errorOf(res, 'The payout wasn’t approved. Nothing was paid. Try again.')
+        if (/pin/i.test(msg)) setPinError(msg); else setApproveError(msg)
+        return
+      }
+      const d = await res.json().catch(() => ({})) as { status?: string; bankTransferStatus?: string | null }
+      const target = pinModal
       setPinModal(null); setPinValue('')
       if (d.status === 'AwaitingOTP') {
-        setOtpModal({ id: pending.id, ref: pending.ref, customerName: pending.customerName })
-        showToast('📩 Paystack sent an OTP to your admin phone — enter it to finish the payout')
+        setOtpValue(''); setOtpError('')
+        setOtpModal({ id: target.id, ref: target.ref, customerName: target.customerName, amount: target.amount })
+        toast('Paystack sent a code to your admin phone. Enter it to finish the payout.')
         load()
         return
       }
-      const isBankTransfer = pending?.payoutMethod === 'Bank Transfer'
-      if (isBankTransfer) {
-        const status = d.bankTransferStatus
-        showToast(status === 'success' ? '✅ Approved — Paystack transfer sent successfully' : '✅ Approved — Bank transfer initiated, awaiting Paystack confirmation')
+      const base: ResultRow[] = [
+        { label: 'Customer', value: `${target.customerName} · ${target.customerId}` },
+        { label: 'Reference', value: target.ref },
+      ]
+      if (isBank(target.payoutMethod)) {
+        const sent = d.bankTransferStatus === 'success'
+        setResult({
+          heading: sent ? 'Payout sent' : 'Payout approved',
+          title: sent ? `${nairaKobo(target.amount)} sent` : 'Paystack is sending the money',
+          pending: !sent,
+          text: sent
+            ? <>Paystack has paid {target.accountName ?? target.customerName}’s bank account. The plan is closed.</>
+            : <>The plan is closed. The transfer usually lands within minutes; check the request’s transfer status to confirm.</>,
+          rows: [...base, { label: 'Account', value: `${target.accountName ?? '—'} · ${target.bankName ?? '—'} ${last4(target.accountNumber)}` }, { label: 'Net payout', value: nairaKobo(target.amount), total: true }],
+        })
       } else {
-        showToast('✅ Redemption approved — wallets updated')
+        setResult({
+          heading: 'Payout approved', title: `${nairaKobo(target.amount)} approved`,
+          text: <>{target.customerName}’s plan is closed and the agent’s wallet is credited, so they can pay out the cash.</>,
+          rows: [...base, { label: 'Paid as', value: 'Cash through the agent' }, { label: 'Net payout', value: nairaKobo(target.amount), total: true }],
+        })
       }
       load()
-    } else {
-      const d = await res.json().catch(() => ({}))
-      setPinError((d as { error?: string }).error ?? 'Approval failed')
+    } catch {
+      setApproveError('No connection. We can’t tell if this went through. Close this, refresh the list and check before trying again.')
+    } finally {
+      setPinLoading(false)
     }
   }
 
   async function submitOtp() {
     if (!otpModal) return
-    if (!otpValue.trim()) { setOtpError('Enter the OTP Paystack sent you'); return }
+    if (!otpValue.trim()) { setOtpError('Enter the code Paystack sent you.'); return }
     setOtpLoading(true); setOtpError('')
-    const res = await fetch(`/api/admin/early-redemption/${otpModal.id}/finalize-otp`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ otp: otpValue.trim() }),
-    })
-    setOtpLoading(false)
-    const d = await res.json().catch(() => ({}))
-    if (res.ok) {
+    try {
+      const res = await fetch(`/api/admin/early-redemption/${otpModal.id}/finalize-otp`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ otp: otpValue.trim() }),
+      })
+      if (!res.ok) { setOtpError(await errorOf(res, 'Paystack didn’t accept that code. Check it and try again.')); return }
       setOtpModal(null); setOtpValue('')
-      showToast('✅ OTP accepted — Paystack transfer completed')
+      setResult({
+        heading: 'Payout sent', title: `${nairaKobo(otpModal.amount)} sent`,
+        text: <>Paystack accepted the code and completed the transfer to {otpModal.customerName}.</>,
+        rows: [{ label: 'Customer', value: otpModal.customerName }, { label: 'Reference', value: otpModal.ref }, { label: 'Net payout', value: nairaKobo(otpModal.amount), total: true }],
+      })
       load()
-    } else {
-      setOtpError((d as { error?: string }).error ?? 'OTP finalisation failed')
+    } catch {
+      setOtpError('No connection. We can’t tell if the transfer finished. Refresh the list and check before trying again.')
+    } finally {
+      setOtpLoading(false)
     }
   }
 
-  const fmt = (n: number) => `₦${n.toLocaleString('en-NG', { minimumFractionDigits: 0 })}`
-  const fmtDate = (d: string) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-
-  function Section({ title, children }: { title: string; children: React.ReactNode }) {
-    return (
-      <div>
-        <div style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text3)', marginBottom: 8 }}>{title}</div>
-        <div style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 14px', display: 'flex', flexDirection: 'column', gap: 6 }}>{children}</div>
-      </div>
-    )
-  }
-  function Row({ label, value, bold, mono, red, green }: { label: string; value: string; bold?: boolean; mono?: boolean; red?: boolean; green?: boolean }) {
-    return (
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8 }}>
-        <span style={{ fontSize: 12, color: 'var(--text3)', flexShrink: 0 }}>{label}</span>
-        <span style={{ fontSize: 13, fontWeight: bold ? 700 : 500, fontFamily: mono ? 'monospace' : 'inherit', color: red ? 'var(--red)' : green ? 'var(--green)' : 'var(--text)', textAlign: 'right' }}>{value}</span>
-      </div>
-    )
-  }
-
-  const PENDING_STATUSES = ['Pending', 'TokenValidated', 'AgentApproved', 'AwaitingOTP']
-  const pending = data.records.filter(r => PENDING_STATUSES.includes(r.status))
-  const history = data.records.filter(r => !PENDING_STATUSES.includes(r.status)).filter(r => {
+  // ── Derived lists ──
+  const records = data?.records ?? []
+  const pending = records.filter(r => PENDING_STATUSES.includes(r.status))
+  const awaitingOtp = pending.filter(r => r.status === 'AwaitingOTP').length
+  const hq = historySearch.trim().toLowerCase()
+  const history = records.filter(r => !PENDING_STATUSES.includes(r.status)).filter(r => {
     if (historyTypeFilter !== 'all' && r.type !== historyTypeFilter) return false
     if (historyStatusFilter !== 'all' && r.status.toLowerCase() !== historyStatusFilter) return false
-    if (historySearch && !r.customerName.toLowerCase().includes(historySearch.toLowerCase()) &&
-      !r.ref.toLowerCase().includes(historySearch.toLowerCase()) &&
-      !r.agentName.toLowerCase().includes(historySearch.toLowerCase())) return false
+    if (hq && !r.customerName.toLowerCase().includes(hq) && !r.ref.toLowerCase().includes(hq) && !r.agentName.toLowerCase().includes(hq)) return false
     return true
   })
+  const historyFiltered = !!(hq || historyTypeFilter !== 'all' || historyStatusFilter !== 'all')
+
+  function exportCurrent() {
+    const stamp = new Date().toISOString().slice(0, 10)
+    if (tab === 'completed') {
+      if (!completed.length) { toast('Nothing to export yet'); return }
+      csvDownload(`completed-payouts-${stamp}.csv`, [
+        ['Reference', 'Customer', 'Customer ID', 'Agent', 'Agent ID', 'Amount', 'Method', 'Date', 'Status'],
+        ...completed.map(r => [r.ref, r.customerName, r.customerId, r.agentName, r.agentId, r.amount, r.method, r.createdAt, r.status]),
+      ])
+    } else {
+      const rows = tab === 'pending' ? pending : history
+      if (!rows.length) { toast('Nothing to export yet'); return }
+      csvDownload(`redemption-${tab === 'pending' ? 'pending' : 'requests'}-${stamp}.csv`, [
+        ['Reference', 'Customer', 'Customer ID', 'Agent', 'Agent ID', 'Type', 'Balance', 'Fee', 'Net payout', 'Payout method', 'Status', 'Reason', 'Requested', 'Decided', 'Decided by'],
+        ...rows.map(r => [r.ref, r.customerName, r.customerId, r.agentName, r.agentId, typeLabel(r.type), r.balance, r.penalty, r.netPayout, r.payoutMethod ?? 'Cash', r.status, r.reason, r.requestedAt, r.decidedAt, r.decidedBy]),
+      ])
+    }
+    toast('Export downloaded', 'success')
+  }
+
+  function rowActions(r: RedemptionRecord) {
+    if (r.status === 'AwaitingOTP') {
+      return <button type="button" className="btn btn-sm btn-green" onClick={() => { setOtpValue(''); setOtpError(''); setOtpModal({ id: r.id, ref: r.ref, customerName: r.customerName, amount: r.netPayout }) }}>Enter Paystack code</button>
+    }
+    return (
+      <div className="a-row-actions">
+        <button type="button" className="btn btn-sm btn-green" onClick={() => openApprove(r)}>Approve</button>
+        <button type="button" className="btn btn-sm btn-outline" onClick={() => openReject(r)}>Reject</button>
+      </div>
+    )
+  }
+
+  const statVal = (v: number, tone?: string) => !data
+    ? <div className="stat-val">{loading ? '…' : '—'}</div>
+    : <div className={`stat-val${v && tone ? ` ${tone}` : ''}`}>{v.toLocaleString('en-NG')}</div>
+
+  const TABS: { id: Tab; label: string; count?: number }[] = [
+    { id: 'pending', label: 'Waiting for approval', count: data ? pending.length : undefined },
+    { id: 'completed', label: 'Completed payouts' },
+    { id: 'history', label: 'All requests' },
+  ]
 
   return (
     <>
-      <div className="pg-hd">
-        <div>
-          <h1>Redemptions</h1>
-          <p>Tokenized approval queue and completed payout history</p>
+      <PageHeader
+        title="Redemptions"
+        sub="Approve early and matured savings payouts, and see every payout made."
+        actions={<>
+          <button type="button" className="btn btn-outline" onClick={exportCurrent}><Icons.download size={16} aria-hidden="true" /> Export</button>
+          <button type="button" className="btn btn-green" onClick={openNewRequest}><Icons.add size={18} aria-hidden="true" /> New request</button>
+        </>}
+      />
+
+      <div className="stats-grid">
+        <div className="stat">
+          <div className="stat-lbl">Waiting for approval</div>
+          {statVal(pending.length, 'amber')}
+          <div className="stat-sub">{awaitingOtp ? `${awaitingOtp} need${awaitingOtp === 1 ? 's' : ''} a Paystack code` : 'Needs a super admin'}</div>
         </div>
-        <div style={{ display: 'flex', gap: 10 }}>
-          <button className="btn btn-outline btn-sm" onClick={() => showToast('📥 Export redemption log')}>↓ Export</button>
-          <button className="btn btn-primary btn-sm" onClick={() => { loadPlans(); setShowModal(true) }}>＋ New Request</button>
+        <div className="stat">
+          <div className="stat-lbl">Codes issued today</div>
+          {statVal(data?.tokensToday ?? 0)}
+          <div className="stat-sub">Active and expired</div>
+        </div>
+        <div className="stat">
+          <div className="stat-lbl">Approved</div>
+          {statVal(data?.approved ?? 0)}
+          <div className="stat-sub">All time</div>
+        </div>
+        <div className="stat">
+          <div className="stat-lbl">Rejected</div>
+          {statVal(data?.rejected ?? 0)}
+          <div className="stat-sub">All time</div>
         </div>
       </div>
 
-      <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(4,1fr)', marginBottom: 22 }}>
-        <div className="stat"><span className="stat-ic">⏳</span><div className="stat-lbl">Pending Approval</div><div className="stat-val amber">{data.pending}</div><div className="stat-sub">Awaiting super admin action</div></div>
-        <div className="stat"><span className="stat-ic">🔑</span><div className="stat-lbl">Tokens Generated Today</div><div className="stat-val blue">{data.tokensToday}</div><div className="stat-sub">Active &amp; expired</div></div>
-        <div className="stat"><span className="stat-ic">✅</span><div className="stat-lbl">Approved</div><div className="stat-val green">{data.approved}</div><div className="stat-sub">All time</div></div>
-        <div className="stat"><span className="stat-ic">❌</span><div className="stat-lbl">Rejected</div><div className="stat-val red">{data.rejected}</div><div className="stat-sub">Insufficient reason</div></div>
+      <div className="tab-bar" role="tablist" aria-label="Redemption views">
+        {TABS.map(t => (
+          <button key={t.id} type="button" role="tab" id={`tab-${t.id}`} aria-selected={tab === t.id} aria-controls={`panel-${t.id}`}
+            className={`tab${tab === t.id ? ' active' : ''}`} onClick={() => setTab(t.id)}>
+            {t.label}{t.count !== undefined && <span className="cm-tab-count">{t.count}</span>}
+          </button>
+        ))}
       </div>
 
-      <div className="tab-bar">
-        <button className={`tab${tab === 'pending' ? ' active' : ''}`} onClick={() => setTab('pending')}>⏳ Pending ({pending.length})</button>
-        <button className={`tab${tab === 'completed' ? ' active' : ''}`} onClick={() => setTab('completed')}>✅ Completed Payouts</button>
-        <button className={`tab${tab === 'history' ? ' active' : ''}`} onClick={() => setTab('history')}>📋 All Requests</button>
-      </div>
-
-      {/* Pending */}
+      {/* Waiting for approval */}
       {tab === 'pending' && (
-        <div className="card">
-          <div className="card-hd">
-            <h3>Pending Redemption Requests</h3>
-            <span className="bdg bdg-a">{pending.length} awaiting</span>
-          </div>
-          <div className="tbl-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Token Ref</th><th>Customer</th><th>Agent</th><th>Type</th>
-                  <th>Net Payout</th><th>Payout Method</th>
-                  <th>Reason</th><th>Requested</th><th>Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading && <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>Loading…</td></tr>}
-                {!loading && pending.length === 0 && <tr><td colSpan={9} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>No pending requests</td></tr>}
-                {!loading && pending.map(r => (
-                  <tr key={r.id} style={{ cursor: 'pointer' }} onClick={e => { if ((e.target as HTMLElement).closest('button')) return; setDetailRecord(r) }}>
-                    <td style={{ fontFamily: "'IBM Plex Serif', serif", fontWeight: 700, fontSize: 12, color: 'var(--blue)' }}>{r.ref}</td>
-                    <td>
-                      <div className="td-name">{r.customerName}</div>
-                      <div className="td-sub">{r.customerId}</div>
-                    </td>
-                    <td>
-                      <div className="td-name">{r.agentName}</div>
-                      <div className="td-sub">{r.agentId}</div>
-                    </td>
-                    <td><span className={`bdg ${r.type === 'early' ? 'bdg-a' : 'bdg-b'}`}>{r.type === 'early' ? 'Early Exit' : 'Post-Maturity'}</span></td>
-                    <td style={{ fontFamily: "'IBM Plex Serif', serif", fontWeight: 800, color: 'var(--green)' }}>{fmt(r.netPayout)}</td>
-                    <td>
-                      <div style={{ fontSize: 12 }}>
-                        <span className={`bdg ${r.payoutMethod === 'Bank Transfer' ? 'bdg-b' : 'bdg-g'}`}>{r.payoutMethod ?? 'Cash'}</span>
-                        {r.payoutMethod === 'Bank Transfer' && r.bankName && (
-                          <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 3 }}>
-                            {r.accountName}<br />{r.bankName} · ****{r.accountNumber?.slice(-4)}
-                          </div>
-                        )}
-                      </div>
-                    </td>
-                    <td style={{ fontSize: 12, color: 'var(--text2)', maxWidth: 140, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{r.reason}</td>
-                    <td style={{ fontSize: 11, color: 'var(--text3)' }}>{fmtDate(r.requestedAt)}</td>
-                    <td>
-                      {r.status === 'TokenValidated' ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 4 }}>
-                          <span className="bdg bdg-a" style={{ fontSize: 10 }}>⏳ Awaiting Agent</span>
-                          <div style={{ display: 'flex', gap: 5 }}>
-                            <button className="btn btn-xs btn-green"
-                              disabled={deciding === r.id + 'approve'}
-                              onClick={() => decide(r.id, 'approve', r)}>
-                              {deciding === r.id + 'approve' ? '…' : '✅ Approve'}
+        <section className="card" id="panel-pending" role="tabpanel" aria-labelledby="tab-pending">
+          {loading && !data ? <TableSkeleton rows={6} cols={6} />
+            : failed && !data ? <LoadError what="redemption requests" onRetry={load} />
+            : pending.length === 0 ? (
+              <Empty icon="check" title="Nothing waiting for approval" text="New redemption requests show here. You can also create one for a customer."
+                action={<button type="button" className="btn btn-outline" onClick={openNewRequest}>New request</button>} />
+            ) : (
+              <>
+                {failed && <p className="a-alert a-alert-a cm-gap" role="status">We couldn’t refresh this list. It may be out of date.</p>}
+                <div className="tbl-wrap tbl-stack">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Request</th><th>Customer</th><th>Agent</th><th>Type</th>
+                        <th className="num">Net payout</th><th>Payout method</th><th>Reason</th><th>Requested</th>
+                        <th className="num">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {pending.map(r => (
+                        <tr key={r.id}>
+                          <td>
+                            <button type="button" className="cm-cell-btn" onClick={() => setDetail(r)} aria-label={`View request ${r.ref}`}>
+                              <span className="cm-ref">{r.ref}</span>
                             </button>
-                            <button className="btn btn-xs btn-danger"
-                              disabled={deciding === r.id + 'reject'}
-                              onClick={() => decide(r.id, 'reject')}>
-                              {deciding === r.id + 'reject' ? '…' : 'Reject'}
-                            </button>
-                          </div>
-                        </div>
-                      ) : r.status === 'AwaitingOTP' ? (
-                        <div style={{ display: 'flex', gap: 5, flexDirection: 'column', alignItems: 'flex-start' }}>
-                          <span className="bdg bdg-a" style={{ fontSize: 10 }}>📩 Awaiting Paystack OTP</span>
-                          <button className="btn btn-xs btn-blue"
-                            onClick={() => setOtpModal({ id: r.id, ref: r.ref, customerName: r.customerName })}>
-                            Enter OTP →
-                          </button>
-                        </div>
-                      ) : (
-                        <div style={{ display: 'flex', gap: 5, flexDirection: 'column', alignItems: 'flex-start' }}>
-                          {r.status === 'AgentApproved' && <span className="bdg bdg-b" style={{ fontSize: 10 }}>✓ Agent Approved</span>}
-                          <div style={{ display: 'flex', gap: 5 }}>
-                            <button className="btn btn-xs btn-green"
-                              disabled={deciding === r.id + 'approve'}
-                              onClick={() => decide(r.id, 'approve', r)}>
-                              {deciding === r.id + 'approve' ? '…' : '✅ Approve'}
-                            </button>
-                            <button className="btn btn-xs btn-danger"
-                              disabled={deciding === r.id + 'reject'}
-                              onClick={() => decide(r.id, 'reject')}>
-                              {deciding === r.id + 'reject' ? '…' : 'Reject'}
-                            </button>
-                          </div>
-                        </div>
-                      )}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
+                          </td>
+                          <td data-label="Customer">
+                            <div className="td-name">{r.customerName}</div>
+                            <div className="td-sub">{r.customerId}</div>
+                          </td>
+                          <td data-label="Agent">
+                            <div className="td-name">{r.agentName}</div>
+                            <div className="td-sub">{r.agentId}</div>
+                          </td>
+                          <td data-label="Type"><TypeBadge type={r.type} /></td>
+                          <td className="num cm-strong" data-label="Net payout">{nairaKobo(r.netPayout)}</td>
+                          <td data-label="Payout method">
+                            <div>{r.payoutMethod ?? 'Cash'}</div>
+                            {isBank(r.payoutMethod) && r.bankName && <div className="td-sub">{r.accountName} · {r.bankName} {last4(r.accountNumber)}</div>}
+                          </td>
+                          <td data-label="Reason"><span className="cm-truncate cm-sub2" title={r.reason}>{r.reason}</span></td>
+                          <td data-label="Requested" className="cm-nowrap cm-sub2">{dateTime(r.requestedAt)}</td>
+                          <td>
+                            <div className="cm-act">
+                              <StatusBadge status={r.status} />
+                              {rowActions(r)}
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            )}
+        </section>
       )}
 
-      {/* Completed Payouts */}
+      {/* Completed payouts */}
       {tab === 'completed' && (
-        <>
-          <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(4,1fr)', marginBottom: 18 }}>
-            <div className="stat"><span className="stat-ic">📤</span><div className="stat-lbl">Total Payouts</div><div className="stat-val blue">{completedStats.totalRedemptions.toLocaleString()}</div></div>
-            <div className="stat"><span className="stat-ic">💸</span><div className="stat-lbl">Total Amount Paid Out</div><div className="stat-val red">{fmt(completedStats.totalRedeemedAmount)}</div></div>
-            <div className="stat"><span className="stat-ic">📅</span><div className="stat-lbl">Today's Count</div><div className="stat-val amber">{completedStats.todayCount}</div></div>
-            <div className="stat"><span className="stat-ic">🔻</span><div className="stat-lbl">Today's Amount</div><div className="stat-val red">{fmt(completedStats.todayAmount)}</div></div>
+        <div id="panel-completed" role="tabpanel" aria-labelledby="tab-completed">
+          <div className="stats-grid">
+            <div className="stat"><div className="stat-lbl">Payouts made</div><div className="stat-val">{completedStats ? completedStats.totalRedemptions.toLocaleString('en-NG') : '—'}</div><div className="stat-sub">All time</div></div>
+            <div className="stat"><div className="stat-lbl">Total paid out</div><div className="stat-val">{completedStats ? nairaKobo(completedStats.totalRedeemedAmount) : '—'}</div><div className="stat-sub">All time</div></div>
+            <div className="stat"><div className="stat-lbl">Payouts today</div><div className="stat-val">{completedStats ? completedStats.todayCount.toLocaleString('en-NG') : '—'}</div></div>
+            <div className="stat"><div className="stat-lbl">Paid out today</div><div className="stat-val">{completedStats ? nairaKobo(completedStats.todayAmount) : '—'}</div></div>
           </div>
 
-          <div className="card" style={{ marginBottom: 16 }}>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-              <div className="a-topbar-search" style={{ minWidth: 240 }}>
-                <span style={{ color: 'var(--text3)' }}>🔍</span>
-                <input type="text" placeholder="Search ref, customer, agent…" value={completedSearch} onChange={e => setCompletedSearch(e.target.value)} />
-              </div>
-              <input type="date" value={completedDate} onChange={e => setCompletedDate(e.target.value)} style={{ padding: '7px 12px', borderRadius: 8, border: '1.5px solid var(--border)', fontSize: 13, fontFamily: 'IBM Plex Sans', background: 'var(--surface2)', color: 'var(--text)' }} />
-              {(completedSearch || completedDate) && <button className="btn btn-outline btn-sm" onClick={() => { setCompletedSearch(''); setCompletedDate('') }}>Clear</button>}
-            </div>
+          <div className="toolbar">
+            <SearchField value={completedSearch} onChange={setCompletedSearch} placeholder="Reference, customer or agent" label="Search completed payouts" />
+            <label className="sr-only" htmlFor="cp-date">Payout date</label>
+            <input id="cp-date" type="date" className="a-input cm-date" value={completedDate} onChange={e => setCompletedDate(e.target.value)} />
+            {(completedSearch || completedDate) && <button type="button" className="btn btn-outline btn-sm" onClick={() => { setCompletedSearch(''); setCompletedDate('') }}>Clear filters</button>}
           </div>
 
-          <div className="card">
-            <div className="card-hd">
-              <h3>Completed Payouts</h3>
-              <span className="bdg bdg-g">{completed.length} transactions</span>
-            </div>
-            <div className="tbl-wrap">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Ref</th><th>Customer</th><th>Agent</th><th>Amount</th><th>Method</th><th>Date</th><th>Status</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {completedLoading && <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>Loading…</td></tr>}
-                  {!completedLoading && completed.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>No completed payouts</td></tr>}
-                  {!completedLoading && completed.slice((completedPage - 1) * PAGE_SIZE, completedPage * PAGE_SIZE).map(r => (
-                    <tr key={r.id}>
-                      <td><strong style={{ fontSize: 12, color: 'var(--blue)' }}>{r.ref}</strong></td>
-                      <td>
-                        {r.customerName
-                          ? <><div className="td-name">{r.customerName}</div><div className="td-sub">{r.customerId}</div></>
-                          : <span style={{ color: 'var(--text3)' }}>—</span>}
-                      </td>
-                      <td>
-                        <div className="td-name">{r.agentName}</div>
-                        <div className="td-sub">{r.agentId}</div>
-                      </td>
-                      <td><span style={{ fontWeight: 700, color: 'var(--red)' }}>{fmt(r.amount)}</span></td>
-                      <td style={{ color: 'var(--text2)', fontSize: 12 }}>{r.method ?? '—'}</td>
-                      <td style={{ color: 'var(--text3)', fontSize: 12 }}>{fmtDate(r.createdAt)}</td>
-                      <td><span className="bdg bdg-g">{r.status}</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            {!completedLoading && Math.ceil(completed.length / PAGE_SIZE) > 1 && (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0 0', borderTop: '1px solid var(--border)', marginTop: 4 }}>
-                <div style={{ fontSize: 12, color: 'var(--text3)' }}>Showing {(completedPage - 1) * PAGE_SIZE + 1}–{Math.min(completedPage * PAGE_SIZE, completed.length)} of {completed.length}</div>
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <button className="btn btn-xs btn-outline" disabled={completedPage === 1} onClick={() => setCompletedPage(p => p - 1)}>← Prev</button>
-                  <span style={{ fontSize: 12, color: 'var(--text2)', minWidth: 80, textAlign: 'center' }}>Page {completedPage} of {Math.ceil(completed.length / PAGE_SIZE)}</span>
-                  <button className="btn btn-xs btn-outline" disabled={completedPage === Math.ceil(completed.length / PAGE_SIZE)} onClick={() => setCompletedPage(p => p + 1)}>Next →</button>
-                </div>
-              </div>
-            )}
-            </div>
-          </div>
-        </>
+          <section className="card" aria-label="Completed payouts" aria-busy={completedLoading}>
+            {completedLoading ? <TableSkeleton rows={6} cols={6} />
+              : completedFailed ? <LoadError what="completed payouts" onRetry={loadCompleted} />
+              : completed.length === 0 ? (
+                completedQ || completedDate
+                  ? <Empty icon="search" title="No payouts match" text="Try another date or search, or clear the filters." />
+                  : <Empty icon="redeem" title="No payouts yet" text="Approved redemptions show here once the money is paid." />
+              ) : (
+                <>
+                  <p className="cm-count">{completed.length.toLocaleString('en-NG')} payout{completed.length === 1 ? '' : 's'}</p>
+                  <div className="tbl-wrap tbl-stack">
+                    <table>
+                      <thead>
+                        <tr><th>Reference</th><th>Customer</th><th>Agent</th><th className="num">Amount</th><th>Method</th><th>Date</th><th>Status</th></tr>
+                      </thead>
+                      <tbody>
+                        {completed.slice((completedPage - 1) * PAGE_SIZE, completedPage * PAGE_SIZE).map(r => (
+                          <tr key={r.id}>
+                            <td><span className="cm-ref">{r.ref}</span></td>
+                            <td data-label="Customer">
+                              {r.customerName
+                                ? <><div className="td-name">{r.customerName}</div><div className="td-sub">{r.customerId}</div></>
+                                : <span className="cm-muted">—</span>}
+                            </td>
+                            <td data-label="Agent">
+                              <div className="td-name">{r.agentName}</div>
+                              <div className="td-sub">{r.agentId}</div>
+                            </td>
+                            <td className="num cm-strong" data-label="Amount">{nairaKobo(r.amount)}</td>
+                            <td data-label="Method" className="cm-sub2">{r.method ?? '—'}</td>
+                            <td data-label="Date" className="cm-nowrap cm-sub2">{dateTime(r.createdAt)}</td>
+                            <td data-label="Status"><span className={`bdg ${r.status === 'Done' ? 'bdg-g' : 'bdg-a'}`}>{r.status === 'Done' ? 'Paid' : r.status}</span></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <Pager page={completedPage} pageSize={PAGE_SIZE} total={completed.length} onPage={setCompletedPage} />
+                </>
+              )}
+          </section>
+        </div>
       )}
 
-      {/* All Requests History */}
+      {/* All requests */}
       {tab === 'history' && (
-        <>
-          <div className="card" style={{ padding: '14px 20px', marginBottom: 16 }}>
-            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-              <input type="text" placeholder="🔍  Search customer, token, agent…" value={historySearch} onChange={e => setHistorySearch(e.target.value)} style={{ flex: 1, minWidth: 200 }} />
-              <select style={{ width: 150 }} value={historyTypeFilter} onChange={e => setHistoryTypeFilter(e.target.value)}>
-                <option value="all">All Types</option>
-                <option value="early">Early Exit</option>
-                <option value="matured">Post-Maturity</option>
-              </select>
-              <select style={{ width: 150 }} value={historyStatusFilter} onChange={e => setHistoryStatusFilter(e.target.value)}>
-                <option value="all">All Status</option>
-                <option value="approved">Approved</option>
-                <option value="rejected">Rejected</option>
-              </select>
-            </div>
+        <div id="panel-history" role="tabpanel" aria-labelledby="tab-history">
+          <div className="toolbar">
+            <SearchField value={historySearch} onChange={setHistorySearch} placeholder="Customer, reference or agent" label="Search redemption requests" />
+            <label className="sr-only" htmlFor="h-type">Redemption type</label>
+            <select id="h-type" className="a-input cm-select" value={historyTypeFilter} onChange={e => setHistoryTypeFilter(e.target.value)}>
+              <option value="all">All types</option>
+              <option value="early">Early exit</option>
+              <option value="matured">After maturity</option>
+            </select>
+            <Segmented<HistoryStatus> label="Filter by decision" value={historyStatusFilter} onChange={setHistoryStatusFilter} options={[
+              { value: 'all', label: 'All' },
+              { value: 'approved', label: 'Approved' },
+              { value: 'rejected', label: 'Rejected' },
+            ]} />
           </div>
-          <div className="card">
-            <div className="card-hd">
-              <h3>All Redemption Requests</h3>
-              <span className="bdg bdg-b">{history.length} records</span>
-            </div>
-            <div className="tbl-wrap">
-              <table>
-                <thead>
-                  <tr><th>Token Ref</th><th>Customer</th><th>Agent</th><th>Type</th><th>Amount</th><th>Penalty</th><th>Net Payout</th><th>Decision</th><th>Decided By</th><th>Date</th></tr>
-                </thead>
-                <tbody>
-                  {history.length === 0 && <tr><td colSpan={10} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>No records</td></tr>}
-                  {history.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE).map(r => (
-                    <tr key={r.id} style={{ cursor: 'pointer' }} onClick={() => setDetailRecord(r)}>
-                      <td style={{ fontFamily: "'IBM Plex Serif', serif", fontWeight: 700, fontSize: 12, color: 'var(--blue)' }}>{r.ref}</td>
-                      <td><div className="td-name">{r.customerName}</div><div className="td-sub">{r.customerId}</div></td>
-                      <td><div className="td-name">{r.agentName}</div><div className="td-sub">{r.agentId}</div></td>
-                      <td><span className={`bdg ${r.type === 'early' ? 'bdg-a' : 'bdg-b'}`}>{r.type === 'early' ? 'Early Exit' : 'Post-Maturity'}</span></td>
-                      <td style={{ fontWeight: 600 }}>{fmt(r.balance)}</td>
-                      <td style={{ color: 'var(--text3)' }}>—</td>
-                      <td style={{ fontFamily: "'IBM Plex Serif', serif", fontWeight: 800, color: 'var(--green)' }}>{fmt(r.netPayout)}</td>
-                      <td><span className={`bdg ${r.status === 'Approved' ? 'bdg-g' : 'bdg-r'}`}>{r.status}</span></td>
-                      <td style={{ fontSize: 12, color: 'var(--text2)' }}>{r.decidedBy ?? '—'}</td>
-                      <td style={{ fontSize: 11, color: 'var(--text3)' }}>{r.decidedAt ? fmtDate(r.decidedAt) : '—'}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            {Math.ceil(history.length / PAGE_SIZE) > 1 && (
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0 0', borderTop: '1px solid var(--border)', marginTop: 4 }}>
-                <div style={{ fontSize: 12, color: 'var(--text3)' }}>Showing {(historyPage - 1) * PAGE_SIZE + 1}–{Math.min(historyPage * PAGE_SIZE, history.length)} of {history.length}</div>
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-                  <button className="btn btn-xs btn-outline" disabled={historyPage === 1} onClick={() => setHistoryPage(p => p - 1)}>← Prev</button>
-                  <span style={{ fontSize: 12, color: 'var(--text2)', minWidth: 80, textAlign: 'center' }}>Page {historyPage} of {Math.ceil(history.length / PAGE_SIZE)}</span>
-                  <button className="btn btn-xs btn-outline" disabled={historyPage === Math.ceil(history.length / PAGE_SIZE)} onClick={() => setHistoryPage(p => p + 1)}>Next →</button>
-                </div>
-              </div>
-            )}
-            </div>
-          </div>
-        </>
+
+          <section className="card" aria-label="All redemption requests">
+            {loading && !data ? <TableSkeleton rows={6} cols={6} />
+              : failed && !data ? <LoadError what="redemption requests" onRetry={load} />
+              : history.length === 0 ? (
+                historyFiltered
+                  ? <Empty icon="search" title="No requests match" text="Try a different search or filter." />
+                  : <Empty icon="history" title="No decided requests yet" text="Requests show here once they’re approved or rejected." />
+              ) : (
+                <>
+                  <p className="cm-count">{history.length.toLocaleString('en-NG')} request{history.length === 1 ? '' : 's'}</p>
+                  <div className="tbl-wrap tbl-stack">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Request</th><th>Customer</th><th>Agent</th><th>Type</th><th className="num">Balance</th>
+                          <th className="num">Fee</th><th className="num">Net payout</th><th>Decision</th><th>Decided by</th><th>Date</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {history.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE).map(r => (
+                          <tr key={r.id}>
+                            <td>
+                              <button type="button" className="cm-cell-btn" onClick={() => setDetail(r)} aria-label={`View request ${r.ref}`}>
+                                <span className="cm-ref">{r.ref}</span>
+                              </button>
+                            </td>
+                            <td data-label="Customer"><div className="td-name">{r.customerName}</div><div className="td-sub">{r.customerId}</div></td>
+                            <td data-label="Agent"><div className="td-name">{r.agentName}</div><div className="td-sub">{r.agentId}</div></td>
+                            <td data-label="Type"><TypeBadge type={r.type} /></td>
+                            <td className="num" data-label="Balance">{nairaKobo(r.balance)}</td>
+                            <td className="num cm-sub2" data-label="Fee">{r.penalty > 0 ? nairaKobo(r.penalty) : '—'}</td>
+                            <td className="num cm-strong" data-label="Net payout">{nairaKobo(r.netPayout)}</td>
+                            <td data-label="Decision"><StatusBadge status={r.status} /></td>
+                            <td data-label="Decided by" className="cm-sub2">{r.decidedBy ?? '—'}</td>
+                            <td data-label="Date" className="cm-nowrap cm-sub2">{r.decidedAt ? dateTime(r.decidedAt) : '—'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <Pager page={historyPage} pageSize={PAGE_SIZE} total={history.length} onPage={setHistoryPage} />
+                </>
+              )}
+          </section>
+        </div>
       )}
 
-      {/* New Request Modal */}
+      {/* New request */}
       {showModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: 'var(--surface)', borderRadius: 'var(--r)', padding: 28, width: 520, maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 16px 48px rgba(0,0,0,.25)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
-              <h3 style={{ fontFamily: "'IBM Plex Serif', serif", fontSize: 17, fontWeight: 700, margin: 0 }}>⏮️ Request Early Redemption</h3>
-              <button onClick={() => setShowModal(false)} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text3)' }}>✕</button>
-            </div>
+        <Modal error={createError || undefined} icon="redeem" title="New redemption request" sub="For a customer who wants their savings out." onClose={() => setShowModal(false)} busy={submitting}
+          footer={<>
+            <button type="button" className="btn btn-outline" onClick={() => setShowModal(false)} disabled={submitting}>Cancel</button>
+            <button type="button" className="btn btn-green" disabled={submitting || plansLoading} onClick={handleSubmit}>{submitting ? 'Creating…' : 'Create request'}</button>
+          </>}>
+          <div className="cm-info is-amber">
+            <Icons.locked size={16} aria-hidden="true" />
+            <span>A one-time security code is created with the request. It must be validated before the payout can be approved. The savings fee is taken from the balance; there’s no extra early-exit penalty.</span>
+          </div>
 
-            <div style={{ background: 'var(--amber-lt)', border: '1px solid var(--amber)', borderRadius: 8, padding: '10px 14px', fontSize: 13, color: 'var(--amber)', marginBottom: 18 }}>
-              A one-time security token will be generated and must be validated before processing. Only the platform fee (~3.23%) applies — no early exit penalty.
+          {plansFailed ? (
+            <div className="cm-gap">
+              <p className="a-alert a-alert-r" role="alert">We couldn’t load active savings plans.</p>
+              <button type="button" className="btn btn-outline btn-sm cm-gap" onClick={loadPlans}><Icons.retry size={16} aria-hidden="true" /> Try again</button>
             </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 14 }}>
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>Customer / Plan</label>
-                <select value={form.savingsPlanId} onChange={e => onFormChange('savingsPlanId', e.target.value)}
-                  style={{ width: '100%', padding: '9px 12px', borderRadius: 8, border: '1.5px solid var(--border)', fontSize: 13, fontFamily: 'IBM Plex Sans', background: 'var(--surface2)', color: 'var(--text)' }}>
-                  <option value="">— Select Customer —</option>
-                  {plans.map(p => (
-                    <option key={p.id} value={p.id}>{p.customerName} ({p.customerId}) · {fmt(p.balance)}</option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>Redemption Type</label>
-                <select value={form.type} onChange={e => onFormChange('type', e.target.value)}
-                  style={{ width: '100%', padding: '9px 12px', borderRadius: 8, border: '1.5px solid var(--border)', fontSize: 13, fontFamily: 'IBM Plex Sans', background: 'var(--surface2)', color: 'var(--text)' }}>
-                  <option value="early">Early Exit (Before Maturity)</option>
-                  <option value="matured">Post-Maturity Payout</option>
-                </select>
-              </div>
-            </div>
-
-            <div style={{ marginBottom: 14 }}>
-              <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>Reason for Early Withdrawal</label>
-              <select value={form.reason} onChange={e => onFormChange('reason', e.target.value)}
-                style={{ width: '100%', padding: '9px 12px', borderRadius: 8, border: '1.5px solid var(--border)', fontSize: 13, fontFamily: 'IBM Plex Sans', background: 'var(--surface2)', color: 'var(--text)' }}>
-                <option value="">— Select reason —</option>
-                {REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+          ) : (
+            <Field id="nr-plan" label="Customer and plan" error={formErrors.plan}
+              hint={plansLoading ? 'Loading active plans…' : plans.length >= PLAN_LIMIT ? `Showing the ${PLAN_LIMIT} newest active plans.` : plans.length === 0 ? 'There are no active plans to redeem.' : undefined}>
+              <select id="nr-plan" className="a-input" value={form.savingsPlanId} disabled={plansLoading} aria-invalid={!!formErrors.plan}
+                onChange={e => onFormChange('savingsPlanId', e.target.value)}>
+                <option value="">{plansLoading ? 'Loading…' : 'Choose a customer'}</option>
+                {plans.map(p => (
+                  <option key={p.id} value={p.id}>{p.customerName} ({p.customerId}) · {nairaKobo(p.balance)}</option>
+                ))}
               </select>
+            </Field>
+          )}
+
+          <Field id="nr-type" label="Redemption type">
+            <select id="nr-type" className="a-input" value={form.type} onChange={e => onFormChange('type', e.target.value)}>
+              <option value="early">Early exit (before maturity)</option>
+              <option value="matured">After maturity</option>
+            </select>
+          </Field>
+
+          <Field id="nr-reason" label="Reason" error={formErrors.reason}>
+            <select id="nr-reason" className="a-input" value={form.reason} aria-invalid={!!formErrors.reason} onChange={e => onFormChange('reason', e.target.value)}>
+              <option value="">Choose a reason</option>
+              {REASONS.map(r => <option key={r} value={r}>{r}</option>)}
+            </select>
+          </Field>
+
+          {(form.reason === 'Other (see note)' || form.note) && (
+            <Field id="nr-note" label="Note" hint="Only admins and the agent see this.">
+              <textarea id="nr-note" className="a-input" rows={2} placeholder="Say a little more about why" value={form.note} onChange={e => onFormChange('note', e.target.value)} />
+            </Field>
+          )}
+
+          {preview && (
+            <div className="dlg-hero">
+              <h3 className="cm-sec-title">Payout estimate</h3>
+              <dl className="dlg-ledger">
+                <DlRow label="Plan balance">{nairaKobo(preview.balance)}</DlRow>
+                {preview.savingsFee > 0 && <DlRow label="Savings fee"><span className="cm-neg">−{nairaKobo(preview.savingsFee)}</span></DlRow>}
+                <DlRow label="Net payout to customer" total>{nairaKobo(preview.netPayout)}</DlRow>
+              </dl>
+              <p className="a-hint">The exact amount is worked out when you create the request. If the fee is waived for this plan, the customer gets the full balance.</p>
             </div>
+          )}
 
-            {(form.reason === 'Other (see note)' || form.note) && (
-              <div style={{ marginBottom: 14 }}>
-                <label style={{ fontSize: 12, fontWeight: 600, color: 'var(--text2)', display: 'block', marginBottom: 6 }}>Additional Note</label>
-                <textarea value={form.note} onChange={e => onFormChange('note', e.target.value)} rows={2}
-                  placeholder="Provide more detail…"
-                  style={{ width: '100%', padding: '9px 12px', borderRadius: 8, border: '1.5px solid var(--border)', fontSize: 13, fontFamily: 'IBM Plex Sans', background: 'var(--surface2)', color: 'var(--text)', resize: 'vertical', boxSizing: 'border-box' }} />
-              </div>
-            )}
-
-            {preview && (
-              <div style={{ background: 'var(--surface2)', border: '1.5px solid var(--border)', borderRadius: 10, padding: 14, marginBottom: 18 }}>
-                <div style={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text3)', marginBottom: 10 }}>Payout Preview</div>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                    <span style={{ color: 'var(--text2)' }}>Gross Balance</span>
-                    <strong>{fmt(preview.balance)}</strong>
-                  </div>
-                  {(preview.savingsFee ?? 0) > 0 && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-                      <span style={{ color: 'var(--red)' }}>Platform Deduction</span>
-                      <strong style={{ color: 'var(--red)' }}>- {fmt(preview.savingsFee ?? 0)}</strong>
-                    </div>
-                  )}
-                  <div style={{ borderTop: '1px solid var(--border)', paddingTop: 6, display: 'flex', justifyContent: 'space-between', fontSize: 14 }}>
-                    <span style={{ fontWeight: 600 }}>Net Payout to Customer</span>
-                    <strong style={{ color: 'var(--green)', fontFamily: "'IBM Plex Serif', serif", fontSize: 16 }}>{fmt(preview.netPayout)}</strong>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button className="btn btn-outline btn-sm" onClick={() => setShowModal(false)}>Cancel</button>
-              <button className="btn btn-primary btn-sm" disabled={submitting || !form.savingsPlanId || !form.reason} onClick={handleSubmit}>
-                {submitting ? 'Creating…' : 'Submit Request'}
-              </button>
-            </div>
-          </div>
-        </div>
+        </Modal>
       )}
 
-      <div className={`a-toast${toast ? ' show' : ''}`}>{toast}</div>
-
+      {/* Approve: review + PIN */}
       {pinModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.55)', zIndex: 1000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: 'var(--surface)', borderRadius: 16, padding: 32, width: 360, boxShadow: '0 24px 60px rgba(0,0,0,.3)' }}>
-            <div style={{ textAlign: 'center', marginBottom: 24 }}>
-              <div style={{ fontSize: 36, marginBottom: 8 }}>🔐</div>
-              <div style={{ fontSize: 17, fontWeight: 800, color: 'var(--text)', marginBottom: 6 }}>Approval PIN Required</div>
-              <div style={{ fontSize: 13, color: 'var(--text3)', lineHeight: 1.5 }}>
-                Approving redemption of <strong style={{ color: 'var(--green)' }}>₦{pinModal.amount.toLocaleString()}</strong> for <strong>{pinModal.customerName}</strong>
+        <Modal error={approveError || undefined} icon="redeem" tone="money" title="Approve payout" sub={`${pinModal.ref}`} onClose={() => { setPinModal(null); setPinValue(''); setPinError(''); setApproveError('') }} busy={pinLoading}
+          footer={<>
+            <button type="button" className="btn btn-outline" onClick={() => { setPinModal(null); setPinValue(''); setPinError(''); setApproveError('') }} disabled={pinLoading}>Cancel</button>
+            <button type="button" className="btn btn-green" disabled={pinLoading || !pinValue} onClick={confirmApprove}>
+              {pinLoading ? 'Approving…' : `Approve ${nairaKobo(pinModal.amount)}`}
+            </button>
+          </>}>
+          <div className="dlg-hero">
+            <div className="dlg-hero-lbl">Net payout</div>
+            <div className="dlg-hero-amt">{nairaKobo(pinModal.amount)}</div>
+            <div className="dlg-hero-sub">To <strong>{pinModal.customerName}</strong> ({pinModal.customerId})</div>
+            {isBank(pinModal.payoutMethod) && pinModal.bankName ? (
+              <div className="dlg-hero-extra">
+                <span className="dlg-hero-lbl">Paystack bank transfer</span>
+                <strong>{pinModal.accountName}</strong>
+                <span>{pinModal.bankName} {last4(pinModal.accountNumber)}</span>
               </div>
-              {pinModal.payoutMethod === 'Bank Transfer' && pinModal.bankName && (
-                <div style={{ marginTop: 12, background: 'var(--surface2)', border: '1.5px solid var(--border)', borderRadius: 10, padding: '10px 14px', fontSize: 12, textAlign: 'left' }}>
-                  <div style={{ color: 'var(--text3)', marginBottom: 4, textTransform: 'uppercase', letterSpacing: '.6px', fontSize: 10, fontWeight: 700 }}>💳 Paystack Bank Transfer</div>
-                  <div style={{ fontWeight: 700, color: 'var(--text)', marginBottom: 2 }}>{pinModal.accountName}</div>
-                  <div style={{ color: 'var(--text2)' }}>{pinModal.bankName} · ****{pinModal.accountNumber?.slice(-4)}</div>
-                </div>
-              )}
-            </div>
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '.8px', display: 'block', marginBottom: 8 }}>Enter PIN</label>
-              <input
-                type="password"
-                inputMode="numeric"
-                maxLength={6}
-                value={pinValue}
-                onChange={e => { setPinValue(e.target.value); setPinError('') }}
-                onKeyDown={e => e.key === 'Enter' && confirmApprove()}
-                autoFocus
-                placeholder="••••"
-                style={{ width: '100%', padding: '14px 16px', border: `2px solid ${pinError ? 'var(--red)' : 'var(--border)'}`, borderRadius: 10, fontSize: 24, textAlign: 'center', letterSpacing: 8, fontFamily: 'monospace', background: 'var(--surface2)', color: 'var(--text)', outline: 'none', boxSizing: 'border-box' }}
-              />
-              {pinError && <div style={{ fontSize: 12, color: 'var(--red)', marginTop: 6, textAlign: 'center' }}>{pinError}</div>}
-            </div>
-            <div style={{ display: 'flex', gap: 10 }}>
-              <button className="btn btn-outline" style={{ flex: 1 }} onClick={() => { setPinModal(null); setPinValue(''); setPinError('') }}>Cancel</button>
-              <button className="btn btn-green" style={{ flex: 1 }} disabled={pinLoading || !pinValue} onClick={confirmApprove}>
-                {pinLoading ? '…' : '✅ Confirm Approval'}
-              </button>
-            </div>
+            ) : (
+              <div className="dlg-hero-extra"><span className="dlg-hero-lbl">Payout method</span><strong>{pinModal.payoutMethod}</strong></div>
+            )}
           </div>
-        </div>
+          <p className="a-hint cm-gap">
+            {isBank(pinModal.payoutMethod)
+              ? 'Paystack sends the money as soon as you approve. Paystack may text a code to your admin phone to release it.'
+              : 'The agent pays the customer in cash, and their wallet is credited back with this amount. The customer’s plan closes.'}
+          </p>
+          <form onSubmit={e => { e.preventDefault(); confirmApprove() }} noValidate>
+            <Field id="ap-pin" label="Your approval PIN" error={pinError}>
+              <input id="ap-pin" className="a-input cm-code" type="password" inputMode="numeric" autoComplete="off" maxLength={6}
+                value={pinValue} aria-invalid={!!pinError} placeholder="••••"
+                onChange={e => { setPinValue(e.target.value); setPinError('') }} />
+            </Field>
+          </form>
+        </Modal>
       )}
 
-      {/* Detail slide-over */}
-      {detailRecord && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 500, display: 'flex' }} onClick={() => setDetailRecord(null)}>
-          <div style={{ flex: 1, background: 'rgba(0,0,0,.35)' }} />
-          <div style={{ width: 420, background: 'var(--surface)', height: '100%', overflowY: 'auto', boxShadow: '-8px 0 40px rgba(0,0,0,.18)', display: 'flex', flexDirection: 'column' }} onClick={e => e.stopPropagation()}>
-            <div style={{ padding: '18px 22px', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <div>
-                <div style={{ fontSize: 15, fontWeight: 800, color: 'var(--text)' }}>{detailRecord.ref}</div>
-                <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 2 }}>Redemption Details</div>
-              </div>
-              <button onClick={() => setDetailRecord(null)} style={{ background: 'none', border: 'none', fontSize: 20, cursor: 'pointer', color: 'var(--text3)', lineHeight: 1 }}>✕</button>
-            </div>
-
-            <div style={{ padding: '18px 22px', display: 'flex', flexDirection: 'column', gap: 18 }}>
-
-              {/* Status */}
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                <span className={`bdg ${detailRecord.status === 'Approved' ? 'bdg-g' : detailRecord.status === 'Rejected' ? 'bdg-r' : 'bdg-a'}`}>{detailRecord.status}</span>
-                <span className={`bdg ${detailRecord.type === 'early' ? 'bdg-a' : 'bdg-b'}`}>{detailRecord.type === 'early' ? 'Early Exit' : 'Post-Maturity'}</span>
-              </div>
-
-              {/* Customer */}
-              <Section title="Customer">
-                <Row label="Name" value={detailRecord.customerName} bold />
-                <Row label="Customer ID" value={detailRecord.customerId} mono />
-                <Row label="Agent" value={`${detailRecord.agentName} (${detailRecord.agentId})`} />
-              </Section>
-
-              {/* Financials */}
-              <Section title="Payout Breakdown">
-                <Row label="Gross Balance" value={fmt(detailRecord.balance)} />
-                {detailRecord.penalty > 0 && <Row label="Penalty" value={`– ${fmt(detailRecord.penalty)}`} red />}
-                <div style={{ borderTop: '1px solid var(--border)', margin: '6px 0' }} />
-                <Row label="Net Payout" value={fmt(detailRecord.netPayout)} bold green />
-                <Row label="Payout Method" value={detailRecord.payoutMethod ?? 'Cash'} />
-              </Section>
-
-              {/* Bank details */}
-              {detailRecord.payoutMethod === 'Bank Transfer' && detailRecord.bankName && (
-                <Section title="Bank Details">
-                  <Row label="Account Name" value={detailRecord.accountName ?? '—'} />
-                  <Row label="Bank" value={detailRecord.bankName} />
-                  <Row label="Account No." value={detailRecord.accountNumber ?? '—'} mono />
-                  {detailRecord.bankTransferStatus && <Row label="Transfer Status" value={detailRecord.bankTransferStatus} />}
-                </Section>
-              )}
-
-              {/* Token */}
-              {detailRecord.token && (
-                <Section title="Security Token">
-                  <Row label="Token" value={detailRecord.token} mono bold />
-                  <Row label="Expiry" value={detailRecord.tokenExpiry ? fmtDate(detailRecord.tokenExpiry) : '—'} />
-                </Section>
-              )}
-
-              {/* Reason */}
-              <Section title="Reason">
-                <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.6 }}>{detailRecord.reason}</div>
-                {detailRecord.note && <div style={{ fontSize: 12, color: 'var(--text3)', marginTop: 6, fontStyle: 'italic' }}>{detailRecord.note}</div>}
-              </Section>
-
-              {/* Timeline */}
-              <Section title="Timeline">
-                <Row label="Requested" value={fmtDate(detailRecord.requestedAt)} />
-                {detailRecord.decidedAt && <Row label="Decided" value={fmtDate(detailRecord.decidedAt)} />}
-                {detailRecord.decidedBy && <Row label="Decided by" value={detailRecord.decidedBy} />}
-              </Section>
-
-              {/* Actions for pending */}
-              {['Pending', 'TokenValidated', 'AgentApproved'].includes(detailRecord.status) && (
-                <div style={{ display: 'flex', gap: 10, paddingTop: 4 }}>
-                  <button className="btn btn-green" style={{ flex: 1 }}
-                    disabled={deciding === detailRecord.id + 'approve'}
-                    onClick={() => { setDetailRecord(null); decide(detailRecord.id, 'approve', detailRecord) }}>
-                    ✅ Approve
-                  </button>
-                  <button className="btn btn-danger" style={{ flex: 1 }}
-                    disabled={deciding === detailRecord.id + 'reject'}
-                    onClick={() => { setDetailRecord(null); decide(detailRecord.id, 'reject') }}>
-                    Reject
-                  </button>
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
-
+      {/* Paystack OTP */}
       {otpModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.5)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 1000, padding: 20 }}
-          onClick={() => setOtpModal(null)}>
-          <div className="card" style={{ maxWidth: 460, width: '100%', padding: 24 }} onClick={e => e.stopPropagation()}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>Finalise Paystack Payout</div>
-            <div style={{ fontSize: 13, color: 'var(--text2)', marginBottom: 16 }}>
-              Paystack requires an OTP to release the transfer for <strong>{otpModal.customerName}</strong> ({otpModal.ref}). Check the SMS on your registered admin phone and enter the 6-digit code below.
-            </div>
-            <input
-              autoFocus
-              type="tel"
-              inputMode="numeric"
-              maxLength={6}
-              value={otpValue}
-              onChange={e => { setOtpValue(e.target.value.replace(/\D/g, '').slice(0, 6)); setOtpError('') }}
-              onKeyDown={e => { if (e.key === 'Enter') submitOtp() }}
-              placeholder="000000"
-              style={{ width: '100%', padding: '14px 16px', border: `2px solid ${otpError ? 'var(--red)' : 'var(--border)'}`, borderRadius: 10, fontSize: 24, textAlign: 'center', letterSpacing: 8, fontFamily: 'monospace', background: 'var(--surface2)', color: 'var(--text)', outline: 'none', boxSizing: 'border-box' }}
-            />
-            {otpError && <div style={{ fontSize: 12, color: 'var(--red)', marginTop: 6, textAlign: 'center' }}>{otpError}</div>}
-            <div style={{ display: 'flex', gap: 8, marginTop: 18 }}>
-              <button className="btn btn-outline" style={{ flex: 1 }} disabled={otpLoading} onClick={() => { setOtpModal(null); setOtpValue('') }}>Cancel</button>
-              <button className="btn btn-green" style={{ flex: 1 }} disabled={otpLoading || otpValue.length < 4} onClick={submitOtp}>
-                {otpLoading ? '…' : '✅ Complete Transfer'}
-              </button>
-            </div>
-          </div>
-        </div>
+        <Modal icon="locked" tone="money" title="Finish the Paystack transfer" sub={`${otpModal.customerName} · ${otpModal.ref}`}
+          onClose={() => { setOtpModal(null); setOtpValue('') }} busy={otpLoading}
+          footer={<>
+            <button type="button" className="btn btn-outline" disabled={otpLoading} onClick={() => { setOtpModal(null); setOtpValue('') }}>Later</button>
+            <button type="button" className="btn btn-green" disabled={otpLoading || otpValue.length < 4} onClick={submitOtp}>
+              {otpLoading ? 'Sending…' : 'Complete transfer'}
+            </button>
+          </>}>
+          <p className="a-confirm-body cm-gap">Paystack needs a one-time code to release this transfer. Check the text message on your registered admin phone and enter the 6-digit code.</p>
+          <form onSubmit={e => { e.preventDefault(); submitOtp() }} noValidate>
+            <Field id="otp-code" label="Paystack code" error={otpError} hint="If you close this, you can enter the code later from the list.">
+              <input id="otp-code" className="a-input cm-code" type="tel" inputMode="numeric" autoComplete="one-time-code" maxLength={6}
+                value={otpValue} aria-invalid={!!otpError} placeholder="000000"
+                onChange={e => { setOtpValue(digitsOnly(e.target.value).slice(0, 6)); setOtpError('') }} />
+            </Field>
+          </form>
+        </Modal>
       )}
+
+      {/* Reject */}
+      {rejectTarget && (
+        <ConfirmModal
+          title={`Reject ${rejectTarget.ref}?`}
+          body={<>
+            {rejectTarget.customerName} ({rejectTarget.customerId}) won’t receive the {nairaKobo(rejectTarget.netPayout)} payout.
+            Their plan goes back to active with its {nairaKobo(rejectTarget.balance)} balance. No money moves.
+          </>}
+          confirmLabel="Reject request" danger
+          busy={rejectBusy} error={rejectError}
+          onConfirm={confirmReject} onClose={() => setRejectTarget(null)}
+        />
+      )}
+
+      {/* Details */}
+      {detail && (
+        <Modal icon="redeem" title={detail.ref} sub="Redemption request" onClose={() => setDetail(null)}
+          footer={DECIDABLE.includes(detail.status) ? <>
+            <button type="button" className="btn btn-outline" onClick={() => { const r = detail; setDetail(null); openReject(r) }}>Reject</button>
+            <button type="button" className="btn btn-green" onClick={() => { const r = detail; setDetail(null); openApprove(r) }}>Approve</button>
+          </> : detail.status === 'AwaitingOTP' ? <>
+            <button type="button" className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>
+            <button type="button" className="btn btn-green" onClick={() => { const r = detail; setDetail(null); setOtpValue(''); setOtpError(''); setOtpModal({ id: r.id, ref: r.ref, customerName: r.customerName, amount: r.netPayout }) }}>Enter Paystack code</button>
+          </> : <button type="button" className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>}>
+          <div className="dlg-hero">
+            <div className="dlg-hero-lbl">Net payout</div>
+            <div className="dlg-hero-amt">{nairaKobo(detail.netPayout)}</div>
+            <span className="cm-badges"><StatusBadge status={detail.status} /><TypeBadge type={detail.type} /></span>
+          </div>
+
+          <div className="cm-sec">
+            <h3 className="cm-sec-title">Customer</h3>
+            <dl className="dlg-ledger">
+              <DlRow label="Name">{detail.customerName}</DlRow>
+              <DlRow label="Customer ID">{detail.customerId}</DlRow>
+              <DlRow label="Agent">{detail.agentName} ({detail.agentId})</DlRow>
+            </dl>
+          </div>
+
+          <div className="cm-sec">
+            <h3 className="cm-sec-title">Payout</h3>
+            <dl className="dlg-ledger">
+              <DlRow label="Plan balance">{nairaKobo(detail.balance)}</DlRow>
+              {detail.penalty > 0 && <DlRow label="Fee deducted"><span className="cm-neg">−{nairaKobo(detail.penalty)}</span></DlRow>}
+              <DlRow label="Net payout" total>{nairaKobo(detail.netPayout)}</DlRow>
+              <DlRow label="Method">{detail.payoutMethod ?? 'Cash'}</DlRow>
+            </dl>
+          </div>
+
+          {isBank(detail.payoutMethod) && detail.bankName && (
+            <div className="cm-sec">
+              <h3 className="cm-sec-title">Bank account</h3>
+              <dl className="dlg-ledger">
+                <DlRow label="Account name">{detail.accountName ?? '—'}</DlRow>
+                <DlRow label="Bank">{detail.bankName}</DlRow>
+                <DlRow label="Account number"><span className="cm-ref">{detail.accountNumber ?? '—'}</span></DlRow>
+                {detail.bankTransferStatus && <DlRow label="Transfer status">{detail.bankTransferStatus}</DlRow>}
+              </dl>
+            </div>
+          )}
+
+          {(detail.token || detail.tokenExpiry) && (
+            <div className="cm-sec">
+              <h3 className="cm-sec-title">Security code</h3>
+              <dl className="dlg-ledger">
+                {detail.token && <DlRow label="Code"><span className="cm-ref">{detail.token}</span></DlRow>}
+                <DlRow label="Expires">{detail.tokenExpiry ? dateTime(detail.tokenExpiry) : '—'}</DlRow>
+              </dl>
+            </div>
+          )}
+
+          <div className="cm-sec">
+            <h3 className="cm-sec-title">Reason</h3>
+            <p className="cm-note-text">{detail.reason}</p>
+            {detail.note && <p className="cm-note-text">{detail.note}</p>}
+          </div>
+
+          <div className="cm-sec">
+            <h3 className="cm-sec-title">Timeline</h3>
+            <dl className="dlg-ledger">
+              <DlRow label="Requested">{dateTime(detail.requestedAt)}</DlRow>
+              {detail.decidedAt && <DlRow label="Decided">{dateTime(detail.decidedAt)}</DlRow>}
+              {detail.decidedBy && <DlRow label="Decided by">{detail.decidedBy}</DlRow>}
+            </dl>
+          </div>
+        </Modal>
+      )}
+
+      {result && <ResultModal result={result} onClose={() => setResult(null)} />}
+      {toastNode}
     </>
   )
 }

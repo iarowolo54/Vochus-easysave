@@ -1,6 +1,9 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, type ReactNode } from 'react'
+import {
+  Empty, Field, LoadError, Modal, PageHeader, Pager, TableSkeleton, dateTime, nairaKobo,
+} from '../_components/admin-ui'
 
 interface Transaction {
   id: string
@@ -16,25 +19,46 @@ interface Transaction {
   customerId: string | null
 }
 
+// Filter options — the values sent to the API are unchanged.
 const TYPES = ['', 'saving', 'redemption', 'disbursement', 'repayment', 'enrolment']
 const TYPE_LABELS: Record<string, string> = {
-  '': 'All Types',
+  '': 'All types',
   saving: 'Savings',
   redemption: 'Redemptions',
-  disbursement: 'Disbursements',
-  repayment: 'Repayments',
+  disbursement: 'Loan disbursements',
+  repayment: 'Loan repayments',
   enrolment: 'Enrolments',
 }
-
-const typeBadge: Record<string, string> = {
+// Display names for single rows, including types that appear in "All types" but aren't filterable yet.
+const ROW_LABELS: Record<string, string> = {
+  saving: 'Saving',
+  redemption: 'Redemption',
+  disbursement: 'Loan disbursement',
+  repayment: 'Loan repayment',
+  enrolment: 'Enrolment',
+  registration: 'Registration',
+  wallet_funding: 'Wallet funding',
+  commission_payout: 'Commission payout',
+}
+const TYPE_BADGE: Record<string, string> = {
   saving: 'bdg-g',
   redemption: 'bdg-b',
   disbursement: 'bdg-a',
   repayment: 'bdg-p',
-  enrolment: 'bdg-t',
+  enrolment: 'bdg-grey',
 }
+const typeLabel = (t: string) => ROW_LABELS[t] ?? t.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase())
 
 const PAGE_SIZE = 25
+const API_LIMIT = 200 // the transactions API returns at most this many, newest first
+
+function DlRow({ label, children }: { label: string; children: ReactNode }) {
+  return <div><dt>{label}</dt><dd>{children}</dd></div>
+}
+
+function StatusBadge({ status }: { status: string }) {
+  return <span className={`bdg ${status === 'Done' ? 'bdg-g' : 'bdg-a'}`}>{status}</span>
+}
 
 export default function TransactionsPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
@@ -42,158 +66,141 @@ export default function TransactionsPage() {
   const [date, setDate] = useState('')
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
-  const [detailRecord, setDetailRecord] = useState<Transaction | null>(null)
+  const [failed, setFailed] = useState(false)
+  const [detail, setDetail] = useState<Transaction | null>(null)
 
   const load = useCallback(async () => {
-    setLoading(true)
-    const params = new URLSearchParams()
-    if (type) params.set('type', type)
-    if (date) params.set('date', date)
-    const q = params.toString() ? `?${params}` : ''
-    const res = await fetch(`/api/admin/transactions${q}`)
-    const d = res.ok ? await res.json() : {}
-    setTransactions(d.transactions ?? [])
-    setPage(1)
-    setLoading(false)
+    setLoading(true); setFailed(false)
+    try {
+      const params = new URLSearchParams()
+      if (type) params.set('type', type)
+      if (date) params.set('date', date)
+      const q = params.toString() ? `?${params}` : ''
+      const res = await fetch(`/api/admin/transactions${q}`)
+      if (!res.ok) throw new Error()
+      const d = await res.json() as { transactions?: Transaction[] }
+      setTransactions(d.transactions ?? [])
+      setPage(1)
+    } catch {
+      setFailed(true)
+    } finally {
+      setLoading(false)
+    }
   }, [type, date])
 
   useEffect(() => { load() }, [load])
 
-  const fmt = (n: number) => `₦${n.toLocaleString()}`
-  const fmtDate = (d: string) => new Date(d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  const filtered = !!(type || date)
   const paginated = transactions.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
-  const totalPages = Math.ceil(transactions.length / PAGE_SIZE)
-
-  const Section = ({ title }: { title: string }) => (
-    <div style={{ fontSize: 10, fontWeight: 800, letterSpacing: '.8px', textTransform: 'uppercase', color: 'var(--text3)', margin: '20px 0 8px', paddingBottom: 6, borderBottom: '1px solid var(--border)' }}>{title}</div>
-  )
-  const Row = ({ label, value }: { label: string; value: React.ReactNode }) => (
-    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '7px 0', borderBottom: '1px solid var(--border)', gap: 12 }}>
-      <span style={{ fontSize: 12, color: 'var(--text3)', whiteSpace: 'nowrap' }}>{label}</span>
-      <span style={{ fontSize: 13, fontWeight: 500, color: 'var(--text)', textAlign: 'right' }}>{value ?? '—'}</span>
-    </div>
-  )
 
   return (
     <>
-      <div className="pg-hd">
-        <div>
-          <h1>Transaction History</h1>
-          <p>All platform transactions across agents and customers</p>
-        </div>
-      </div>
+      <PageHeader title="Transactions" sub="Every transaction on the platform, across agents and customers. Newest first." />
 
-      <div className="card" style={{ marginBottom: 16 }}>
-        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
-          <select
-            value={type}
-            onChange={e => setType(e.target.value)}
-            style={{ width: 'auto', minWidth: 160 }}
-          >
+      <div className="toolbar">
+        <div className="cm-toolbar-field">
+          <label className="a-label" htmlFor="tx-type">Type</label>
+          <select id="tx-type" className="a-input cm-select" value={type} onChange={e => setType(e.target.value)}>
             {TYPES.map(t => <option key={t} value={t}>{TYPE_LABELS[t]}</option>)}
           </select>
-          <input
-            type="date"
-            value={date}
-            onChange={e => setDate(e.target.value)}
-            style={{ width: 'auto' }}
-          />
-          <button className="btn btn-outline btn-sm" onClick={() => { setType(''); setDate('') }}>Clear</button>
         </div>
+        <div className="cm-toolbar-field">
+          <label className="a-label" htmlFor="tx-date">Date</label>
+          <input id="tx-date" type="date" className="a-input cm-date" value={date} onChange={e => setDate(e.target.value)} />
+        </div>
+        {filtered && <button type="button" className="btn btn-outline btn-sm" onClick={() => { setType(''); setDate('') }}>Clear filters</button>}
       </div>
 
-      <div className="card">
-        <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 14 }}>{transactions.length} transactions</div>
-
-        <div className="tbl-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Ref</th>
-                <th>Type</th>
-                <th>Customer</th>
-                <th>Agent</th>
-                <th>Amount</th>
-                <th>Method</th>
-                <th>Date</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && (
-                <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>Loading…</td></tr>
-              )}
-              {!loading && transactions.length === 0 && (
-                <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>No transactions found</td></tr>
-              )}
-              {!loading && paginated.map(t => (
-                <tr key={t.id} style={{ cursor: 'pointer' }} onClick={() => setDetailRecord(t)}>
-                  <td><strong style={{ fontSize: 12, color: 'var(--blue)' }}>{t.ref}</strong></td>
-                  <td><span className={`bdg ${typeBadge[t.type] ?? 'bdg-grey'}`}>{TYPE_LABELS[t.type] ?? t.type}</span></td>
-                  <td>
-                    {t.customerName ? (
-                      <>
-                        <div className="td-name">{t.customerName}</div>
-                        <div className="td-sub">{t.customerId}</div>
-                      </>
-                    ) : <span style={{ color: 'var(--text3)' }}>—</span>}
-                  </td>
-                  <td>
-                    <div className="td-name">{t.agentName}</div>
-                    <div className="td-sub">{t.agentId}</div>
-                  </td>
-                  <td style={{ fontWeight: t.amount > 0 ? 600 : 400, color: t.amount > 0 ? 'var(--green)' : 'var(--text3)' }}>
-                    {t.amount > 0 ? fmt(t.amount) : '—'}
-                  </td>
-                  <td style={{ color: 'var(--text2)', fontSize: 12 }}>{t.method ?? '—'}</td>
-                  <td style={{ color: 'var(--text3)', fontSize: 12 }}>
-                    {fmtDate(t.createdAt)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        {totalPages > 1 && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0 0', borderTop: '1px solid var(--border)', marginTop: 4 }}>
-            <div style={{ fontSize: 12, color: 'var(--text3)' }}>Showing {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, transactions.length)} of {transactions.length}</div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <button className="btn btn-xs btn-outline" disabled={page === 1} onClick={() => setPage(p => p - 1)}>← Prev</button>
-              <span style={{ fontSize: 12, color: 'var(--text2)', minWidth: 80, textAlign: 'center' }}>Page {page} of {totalPages}</span>
-              <button className="btn btn-xs btn-outline" disabled={page === totalPages} onClick={() => setPage(p => p + 1)}>Next →</button>
-            </div>
-          </div>
-        )}
-        </div>
-      </div>
-
-      {detailRecord && (
-        <div style={{ position: 'fixed', inset: 0, zIndex: 200, display: 'flex' }} onClick={() => setDetailRecord(null)}>
-          <div style={{ flex: 1, background: 'rgba(0,0,0,.45)' }} />
-          <div style={{ width: 420, background: 'var(--surface)', height: '100%', overflowY: 'auto', padding: 28, boxShadow: '-8px 0 40px rgba(0,0,0,.25)' }} onClick={e => e.stopPropagation()}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 20 }}>
-              <div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: 'var(--blue)', fontFamily: 'monospace' }}>{detailRecord.ref}</div>
-                <div style={{ marginTop: 6 }}>
-                  <span className={`bdg ${typeBadge[detailRecord.type] ?? 'bdg-grey'}`}>{TYPE_LABELS[detailRecord.type] ?? detailRecord.type}</span>
-                </div>
+      <section className="card" aria-label="Transactions" aria-busy={loading}>
+        {loading ? <TableSkeleton rows={8} cols={6} />
+          : failed ? <LoadError what="transactions" onRetry={load} />
+          : transactions.length === 0 ? (
+            filtered
+              ? <Empty icon="history" title="No transactions match these filters" text="Try another date or type, or clear the filters."
+                  action={<button type="button" className="btn btn-outline" onClick={() => { setType(''); setDate('') }}>Clear filters</button>} />
+              : <Empty icon="history" title="No transactions yet" text="Savings, redemptions and loan payments show here as they happen." />
+          ) : (
+            <>
+              <p className="cm-count">
+                {transactions.length.toLocaleString('en-NG')} transaction{transactions.length === 1 ? '' : 's'}
+                {transactions.length >= API_LIMIT && ` · Showing the latest ${API_LIMIT}. Filter by date to see older ones.`}
+              </p>
+              <div className="tbl-wrap tbl-stack">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Reference</th><th>Type</th><th>Customer</th><th>Agent</th>
+                      <th className="num">Amount</th><th>Method</th><th>Date</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {paginated.map(t => (
+                      <tr key={t.id}>
+                        <td>
+                          <button type="button" className="cm-cell-btn" onClick={() => setDetail(t)} aria-label={`View transaction ${t.ref}`}>
+                            <span className="cm-ref">{t.ref}</span>
+                          </button>
+                        </td>
+                        <td data-label="Type"><span className={`bdg ${TYPE_BADGE[t.type] ?? 'bdg-grey'}`}>{typeLabel(t.type)}</span></td>
+                        <td data-label="Customer">
+                          {t.customerName ? (
+                            <>
+                              <div className="td-name">{t.customerName}</div>
+                              <div className="td-sub">{t.customerId}</div>
+                            </>
+                          ) : <span className="cm-muted">—</span>}
+                        </td>
+                        <td data-label="Agent">
+                          <div className="td-name">{t.agentName}</div>
+                          <div className="td-sub">{t.agentId}</div>
+                        </td>
+                        <td className="num cm-strong" data-label="Amount">{t.amount > 0 ? nairaKobo(t.amount) : <span className="cm-muted">—</span>}</td>
+                        <td data-label="Method" className="cm-sub2">{t.method ?? '—'}</td>
+                        <td data-label="Date" className="cm-nowrap cm-sub2">{dateTime(t.createdAt)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
-              <button className="btn btn-outline btn-xs" onClick={() => setDetailRecord(null)}>✕</button>
-            </div>
+              <Pager page={page} pageSize={PAGE_SIZE} total={transactions.length} onPage={setPage} />
+            </>
+          )}
+      </section>
 
-            <Section title="Transaction" />
-            <Row label="Amount" value={detailRecord.amount > 0 ? <span style={{ color: 'var(--green)', fontWeight: 700, fontSize: 15 }}>{fmt(detailRecord.amount)}</span> : '—'} />
-            <Row label="Method" value={detailRecord.method} />
-            <Row label="Status" value={<span className={`bdg ${detailRecord.status === 'Done' ? 'bdg-g' : 'bdg-a'}`}>{detailRecord.status}</span>} />
-            <Row label="Date" value={fmtDate(detailRecord.createdAt)} />
-
-            <Section title="Customer" />
-            <Row label="Name" value={detailRecord.customerName} />
-            <Row label="Customer ID" value={detailRecord.customerId} />
-
-            <Section title="Agent" />
-            <Row label="Name" value={detailRecord.agentName} />
-            <Row label="Agent ID" value={detailRecord.agentId} />
+      {detail && (
+        <Modal icon="history" title={typeLabel(detail.type)} sub={<span className="cm-ref">{detail.ref}</span>} onClose={() => setDetail(null)}
+          footer={<button type="button" className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>}>
+          <div className="dlg-hero">
+            <div className="dlg-hero-lbl">Amount</div>
+            <div className="dlg-hero-amt">{detail.amount > 0 ? nairaKobo(detail.amount) : '—'}</div>
+            <StatusBadge status={detail.status} />
           </div>
-        </div>
+
+          <div className="cm-sec">
+            <h3 className="cm-sec-title">Transaction</h3>
+            <dl className="dlg-ledger">
+              <DlRow label="Reference"><span className="cm-ref">{detail.ref}</span></DlRow>
+              <DlRow label="Method">{detail.method ?? '—'}</DlRow>
+              <DlRow label="Date">{dateTime(detail.createdAt)}</DlRow>
+            </dl>
+          </div>
+
+          <div className="cm-sec">
+            <h3 className="cm-sec-title">Customer</h3>
+            <dl className="dlg-ledger">
+              <DlRow label="Name">{detail.customerName ?? '—'}</DlRow>
+              <DlRow label="Customer ID">{detail.customerId ?? '—'}</DlRow>
+            </dl>
+          </div>
+
+          <div className="cm-sec">
+            <h3 className="cm-sec-title">Agent</h3>
+            <dl className="dlg-ledger">
+              <DlRow label="Name">{detail.agentName}</DlRow>
+              <DlRow label="Agent ID">{detail.agentId}</DlRow>
+            </dl>
+          </div>
+        </Modal>
       )}
     </>
   )

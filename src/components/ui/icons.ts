@@ -3,6 +3,7 @@
 import {
   ArrowDownLeft, Award, Banknote, CalendarDays, ClipboardList, HandCoins, Landmark, Menu, Network, Percent, Repeat, TriangleAlert, Wallet, ArrowUpRight, Check, ChevronDown, CreditCard, ChevronLeft, ChevronRight, CircleAlert, Clock, Download, Eye, EyeOff, Fingerprint,
   GraduationCap, HeartPulse, PartyPopper, Sprout, Store,
+  Activity, ArrowLeftRight, Calculator, ChartColumn, Ellipsis, Gift, Palette, QrCode, ScrollText, Smartphone, UserCog, Vault,
   Headset, House, ImagePlus, LayoutGrid, Lock, LogOut, MessageCircle, Phone, PiggyBank, Plus, Printer, Search, Receipt, RefreshCw, SendHorizontal, Settings, Share2, Users, X,
 } from 'lucide-react'
 
@@ -59,6 +60,19 @@ export const Icons = {
   goalHealth: HeartPulse,
   goalEvent: PartyPopper,
   goalFarm: Sprout,
+  // Super admin navigation
+  monitor: Activity,
+  redeem: ArrowLeftRight,
+  calculator: Calculator,
+  reports: ChartColumn,
+  gift: Gift,
+  design: Palette,
+  qr: QrCode,
+  audit: ScrollText,
+  device: Smartphone,
+  staff: UserCog,
+  treasury: Vault,
+  more: Ellipsis,
 } as const
 
 export type IconName = keyof typeof Icons

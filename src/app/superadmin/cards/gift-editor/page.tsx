@@ -2,11 +2,12 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react'
 import QRCode from 'qrcode'
+import { Icons } from '@/components/ui/icons'
+import { ConfirmModal, PageHeader, useToast } from '../../_components/admin-ui'
 
 const CANVAS_W = 856
 const CANVAS_H = 540
-
-type Handle = 'br' | null
+const QR_PAD = 6
 
 interface Overlay {
   qrX: number; qrY: number; qrSize: number
@@ -32,6 +33,11 @@ interface Overlay {
   scanLabelX: number; scanLabelY: number
 }
 
+type KeysOf<T> = { [K in keyof Overlay]: Overlay[K] extends T ? K : never }[keyof Overlay]
+type NumKey = KeysOf<number>
+type StrKey = KeysOf<string>
+type BoolKey = KeysOf<boolean>
+
 const DEFAULT: Overlay = {
   qrX: 590, qrY: 60, qrSize: 200,
   valueFontSize: 80, serialFontSize: 22, tierFontSize: 20, scanLabelFontSize: 16,
@@ -45,8 +51,19 @@ const DEFAULT: Overlay = {
   scanLabelX: 0, scanLabelY: 0,
 }
 
-type DragTarget = 'qr' | 'value' | 'serial' | 'tier' | 'scanLabel' | null
-type ResizeTarget = 'qr' | null
+type DragTarget = 'qr' | 'value' | 'serial' | 'tier' | null
+
+interface TextLayer {
+  id: string; title: string; show: BoolKey; text?: StrKey; size: NumKey; sizeMin: number; sizeMax: number
+  color: StrKey; x?: NumKey; y?: NumKey
+}
+
+const TEXT_LAYERS: TextLayer[] = [
+  { id: 'value', title: 'Card value', show: 'showValue', text: 'valueText', size: 'valueFontSize', sizeMin: 20, sizeMax: 140, color: 'valueColor', x: 'valueX', y: 'valueY' },
+  { id: 'tier', title: 'Tier label', show: 'showTier', text: 'tierText', size: 'tierFontSize', sizeMin: 10, sizeMax: 60, color: 'tierColor', x: 'tierX', y: 'tierY' },
+  { id: 'serial', title: 'Serial number', show: 'showSerial', size: 'serialFontSize', sizeMin: 10, sizeMax: 50, color: 'serialColor', x: 'serialX', y: 'serialY' },
+  { id: 'scan', title: 'Scan label', show: 'showScanLabel', text: 'scanLabelText', size: 'scanLabelFontSize', sizeMin: 8, sizeMax: 40, color: 'scanLabelColor' },
+]
 
 function hitTest(mx: number, my: number, x: number, y: number, w: number, h: number, pad = 10) {
   return mx >= x - pad && mx <= x + w + pad && my >= y - pad && my <= y + h + pad
@@ -58,25 +75,40 @@ export default function GiftCardEditorPage() {
 
   const [bgImg, setBgImg] = useState<HTMLImageElement | null>(null)
   const [bgFile, setBgFile] = useState<File | null>(null)
+  const [bgError, setBgError] = useState('')
   const [o, setO] = useState<Overlay>({ ...DEFAULT })
-  const [qrDataUrl, setQrDataUrl] = useState<string>('')
+  const [qrImg, setQrImg] = useState<HTMLImageElement | null>(null)
+  const [qrFailed, setQrFailed] = useState(false)
+  const [exporting, setExporting] = useState<'' | 'png' | 'pdf'>('')
+  const [confirmReset, setConfirmReset] = useState(false)
+  const [toastNode, toast] = useToast()
 
   const dragTarget = useRef<DragTarget>(null)
-  const resizeTarget = useRef<ResizeTarget>(null)
+  const resizing = useRef(false)
   const dragOffset = useRef({ x: 0, y: 0 })
   const resizeStart = useRef({ mx: 0, my: 0, size: 0 })
 
   const oRef = useRef(o)
   useEffect(() => { oRef.current = o }, [o])
 
-  // Generate QR
+  const set = useCallback(<K extends keyof Overlay>(k: K, v: Overlay[K]) => setO(prev => ({ ...prev, [k]: v })), [])
+
+  // QR image for the current serial, loaded once per change so drawing stays synchronous.
   useEffect(() => {
+    let cancelled = false
     QRCode.toDataURL(o.serialText || 'GC-PREVIEW', {
       width: 400, margin: 1, color: { dark: '#000000', light: '#ffffff' },
-    }).then(setQrDataUrl).catch(() => {})
+    }).then(url => {
+      const img = new Image()
+      img.onload = () => { if (!cancelled) { setQrImg(img); setQrFailed(false) } }
+      img.onerror = () => { if (!cancelled) setQrFailed(true) }
+      img.src = url
+    }).catch(() => { if (!cancelled) setQrFailed(true) })
+    return () => { cancelled = true }
   }, [o.serialText])
 
-  const draw = useCallback(async () => {
+  /** Draws the card. `forExport` leaves out the editing handle and the empty-state prompt. */
+  const draw = useCallback((forExport = false) => {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
@@ -98,45 +130,43 @@ export default function GiftCardEditorPage() {
       ctx.fillRect(0, 0, CANVAS_W, CANVAS_H)
       ctx.fillStyle = '#3FBF8030'
       ctx.fillRect(0, 0, CANVAS_W, CANVAS_H)
-      ctx.fillStyle = '#3FBF8066'
-      ctx.font = '18px sans-serif'
-      ctx.textAlign = 'center'
-      ctx.fillText('Upload a background image', CANVAS_W / 2, CANVAS_H / 2)
-      ctx.textAlign = 'left'
+      if (!forExport) {
+        ctx.fillStyle = '#3FBF8066'
+        ctx.font = '18px sans-serif'
+        ctx.textAlign = 'center'
+        ctx.fillText('Upload a background image', CANVAS_W / 2, CANVAS_H / 2)
+        ctx.textAlign = 'left'
+      }
     }
 
     const qx = Math.max(0, Math.min(ov.qrX, CANVAS_W - ov.qrSize))
     const qy = Math.max(0, Math.min(ov.qrY, CANVAS_H - ov.qrSize))
 
     // QR code
-    if (qrDataUrl) {
-      await new Promise<void>(resolve => {
-        const img = new Image()
-        img.onload = () => {
-          const pad = 6
-          ctx.fillStyle = '#ffffff'
-          ctx.beginPath()
-          ;(ctx as any).roundRect?.(qx - pad, qy - pad, ov.qrSize + pad * 2, ov.qrSize + pad * 2, 8) || ctx.rect(qx - pad, qy - pad, ov.qrSize + pad * 2, ov.qrSize + pad * 2)
-          ctx.fill()
-          ctx.drawImage(img, qx, qy, ov.qrSize, ov.qrSize)
-          // resize handle
-          ctx.fillStyle = '#ffffff'
-          ctx.strokeStyle = '#3FBF80'
-          ctx.lineWidth = 2
-          const hr = 10
-          ctx.beginPath()
-          ctx.arc(qx + ov.qrSize + pad, qy + ov.qrSize + pad, hr, 0, Math.PI * 2)
-          ctx.fill()
-          ctx.stroke()
-          ctx.fillStyle = '#3FBF80'
-          ctx.font = 'bold 11px sans-serif'
-          ctx.textAlign = 'center'
-          ctx.fillText('⤡', qx + ov.qrSize + pad, qy + ov.qrSize + pad + 4)
-          ctx.textAlign = 'left'
-          resolve()
-        }
-        img.src = qrDataUrl
-      })
+    if (qrImg) {
+      ctx.fillStyle = '#ffffff'
+      ctx.beginPath()
+      if (typeof ctx.roundRect === 'function') ctx.roundRect(qx - QR_PAD, qy - QR_PAD, ov.qrSize + QR_PAD * 2, ov.qrSize + QR_PAD * 2, 8)
+      else ctx.rect(qx - QR_PAD, qy - QR_PAD, ov.qrSize + QR_PAD * 2, ov.qrSize + QR_PAD * 2)
+      ctx.fill()
+      ctx.drawImage(qrImg, qx, qy, ov.qrSize, ov.qrSize)
+
+      if (!forExport) {
+        // Resize handle (on screen only)
+        const hx = qx + ov.qrSize + QR_PAD, hy = qy + ov.qrSize + QR_PAD
+        ctx.fillStyle = '#ffffff'
+        ctx.strokeStyle = '#3FBF80'
+        ctx.lineWidth = 2
+        ctx.beginPath()
+        ctx.arc(hx, hy, 10, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+        ctx.beginPath()
+        ctx.moveTo(hx - 4, hy - 4); ctx.lineTo(hx + 4, hy + 4)
+        ctx.moveTo(hx + 4, hy); ctx.lineTo(hx + 4, hy + 4); ctx.lineTo(hx, hy + 4)
+        ctx.moveTo(hx - 4, hy); ctx.lineTo(hx - 4, hy - 4); ctx.lineTo(hx, hy - 4)
+        ctx.stroke()
+      }
     }
 
     // Scan label under QR
@@ -172,33 +202,36 @@ export default function GiftCardEditorPage() {
       ctx.fillText(ov.tierText, ov.tierX, ov.tierY)
       ctx.textAlign = 'left'
     }
-  }, [bgImg, qrDataUrl])
+  }, [bgImg, qrImg])
 
   useEffect(() => { draw() }, [draw, o])
 
   function getPos(e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) {
-    const canvas = canvasRef.current!
+    const canvas = canvasRef.current
+    if (!canvas) return null
     const rect = canvas.getBoundingClientRect()
     const sx = CANVAS_W / rect.width, sy = CANVAS_H / rect.height
     if ('touches' in e) {
       const t = e.touches[0]
+      if (!t) return null
       return { x: (t.clientX - rect.left) * sx, y: (t.clientY - rect.top) * sy }
     }
-    return { x: ((e as React.MouseEvent).clientX - rect.left) * sx, y: ((e as React.MouseEvent).clientY - rect.top) * sy }
+    return { x: (e.clientX - rect.left) * sx, y: (e.clientY - rect.top) * sy }
   }
 
   function onDown(e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) {
-    if ('touches' in e) e.preventDefault()
-    const { x, y } = getPos(e)
+    const pos = getPos(e)
+    if (!pos) return
+    const { x, y } = pos
     const ov = oRef.current
     const qx = Math.max(0, Math.min(ov.qrX, CANVAS_W - ov.qrSize))
     const qy = Math.max(0, Math.min(ov.qrY, CANVAS_H - ov.qrSize))
-    const pad = 6, hr = 14
+    const hr = 14
 
     // resize handle
-    const hx = qx + ov.qrSize + pad, hy = qy + ov.qrSize + pad
+    const hx = qx + ov.qrSize + QR_PAD, hy = qy + ov.qrSize + QR_PAD
     if (Math.hypot(x - hx, y - hy) < hr) {
-      resizeTarget.current = 'qr'
+      resizing.current = true
       resizeStart.current = { mx: x, my: y, size: ov.qrSize }
       return
     }
@@ -222,199 +255,212 @@ export default function GiftCardEditorPage() {
   }
 
   function onMove(e: React.MouseEvent<HTMLCanvasElement> | React.TouchEvent<HTMLCanvasElement>) {
-    if ('touches' in e) e.preventDefault()
-    const { x, y } = getPos(e)
-    if (resizeTarget.current === 'qr') {
+    if (!resizing.current && !dragTarget.current) return
+    const pos = getPos(e)
+    if (!pos) return
+    const { x, y } = pos
+    if (resizing.current) {
       const delta = Math.max(x - resizeStart.current.mx, y - resizeStart.current.my)
       const newSize = Math.max(60, Math.min(380, resizeStart.current.size + delta))
       setO(prev => ({ ...prev, qrSize: Math.round(newSize) }))
       return
     }
-    if (!dragTarget.current) return
-    const dx = x - dragOffset.current.x, dy = y - dragOffset.current.y
+    const dx = Math.round(x - dragOffset.current.x), dy = Math.round(y - dragOffset.current.y)
     switch (dragTarget.current) {
-      case 'qr': setO(prev => ({ ...prev, qrX: Math.round(dx), qrY: Math.round(dy) })); break
-      case 'value': setO(prev => ({ ...prev, valueX: Math.round(dx), valueY: Math.round(dy) })); break
-      case 'serial': setO(prev => ({ ...prev, serialX: Math.round(dx), serialY: Math.round(dy) })); break
-      case 'tier': setO(prev => ({ ...prev, tierX: Math.round(dx), tierY: Math.round(dy) })); break
+      case 'qr': setO(prev => ({ ...prev, qrX: dx, qrY: dy })); break
+      case 'value': setO(prev => ({ ...prev, valueX: dx, valueY: dy })); break
+      case 'serial': setO(prev => ({ ...prev, serialX: dx, serialY: dy })); break
+      case 'tier': setO(prev => ({ ...prev, tierX: dx, tierY: dy })); break
     }
   }
 
-  function onUp() { dragTarget.current = null; resizeTarget.current = null }
+  function onUp() { dragTarget.current = null; resizing.current = false }
 
   function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]; if (!file) return
-    setBgFile(file)
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    if (!file.type.startsWith('image/')) { setBgError('That file isn’t an image. Choose a PNG or JPG.'); return }
+    setBgError('')
     const reader = new FileReader()
     reader.onload = ev => {
+      const src = ev.target?.result
+      if (typeof src !== 'string') { setBgError('That image couldn’t be read. Try another file.'); return }
       const img = new Image()
-      img.onload = () => setBgImg(img)
-      img.src = ev.target?.result as string
+      img.onload = () => { setBgImg(img); setBgFile(file) }
+      img.onerror = () => setBgError('That image couldn’t be opened. Try a PNG or JPG.')
+      img.src = src
     }
+    reader.onerror = () => setBgError('That image couldn’t be read. Try another file.')
     reader.readAsDataURL(file)
   }
 
+  /** Renders a clean copy (no handle), hands back its PNG data URL, then redraws the editor view. */
+  function exportImage() {
+    const canvas = canvasRef.current
+    if (!canvas) throw new Error('no canvas')
+    draw(true)
+    try { return canvas.toDataURL('image/png') } finally { draw(false) }
+  }
+
   function downloadPNG() {
-    const canvas = canvasRef.current; if (!canvas) return
-    const link = document.createElement('a')
-    link.download = `gift-card-${o.serialText}.png`
-    link.href = canvas.toDataURL('image/png')
-    link.click()
+    setExporting('png')
+    try {
+      const link = document.createElement('a')
+      link.download = `gift-card-${o.serialText}.png`
+      link.href = exportImage()
+      link.click()
+    } catch {
+      toast('The image wasn’t saved. Try again.', 'error')
+    } finally {
+      setExporting('')
+    }
   }
 
   async function downloadPDF() {
-    const canvas = canvasRef.current; if (!canvas) return
-    const { jsPDF } = await import('jspdf')
-    const imgData = canvas.toDataURL('image/png')
-    const pdf = new jsPDF({ unit: 'px', format: [CANVAS_W, CANVAS_H], orientation: 'landscape' })
-    pdf.addImage(imgData, 'PNG', 0, 0, CANVAS_W, CANVAS_H)
-    pdf.save(`gift-card-${o.serialText}.pdf`)
+    setExporting('pdf')
+    try {
+      const imgData = exportImage()
+      const { jsPDF } = await import('jspdf')
+      const pdf = new jsPDF({ unit: 'px', format: [CANVAS_W, CANVAS_H], orientation: 'landscape' })
+      pdf.addImage(imgData, 'PNG', 0, 0, CANVAS_W, CANVAS_H)
+      pdf.save(`gift-card-${o.serialText}.pdf`)
+    } catch {
+      toast('The PDF wasn’t created. Check your connection and try again.', 'error')
+    } finally {
+      setExporting('')
+    }
   }
 
-  function reset() { setO({ ...DEFAULT }); setBgImg(null); setBgFile(null) }
+  function reset() { setO({ ...DEFAULT }); setBgImg(null); setBgFile(null); setBgError(''); setConfirmReset(false) }
 
-  const sl = (label: string, key: keyof Overlay, min: number, max: number, step = 1) => (
-    <div style={{ marginBottom: 12 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 4 }}>
-        <span style={{ color: 'var(--text3)' }}>{label}</span>
-        <strong style={{ color: 'var(--text)', fontFamily: 'monospace' }}>{o[key] as number}</strong>
+  const slider = (id: string, label: string, key: NumKey, min: number, max: number, step = 1) => (
+    <div className="cs-range">
+      <div className="cs-range-hd">
+        <label htmlFor={id}>{label}</label>
+        <output htmlFor={id} className="cs-mono">{o[key]}</output>
       </div>
-      <input type="range" min={min} max={max} step={step} value={o[key] as number}
-        onChange={e => setO(prev => ({ ...prev, [key]: parseFloat(e.target.value) }))}
-        style={{ width: '100%', accentColor: 'var(--accent)' }} />
+      <input id={id} type="range" min={min} max={max} step={step} value={o[key]}
+        onChange={e => set(key, parseFloat(e.target.value))} />
     </div>
   )
 
   return (
     <>
-      <div className="pg-hd">
-        <div><h1>Gift Card Editor</h1><p>Upload a background, drag to position the QR code and text overlays, then export</p></div>
-      </div>
+      <PageHeader
+        title="Gift card editor"
+        sub="Upload a background, place the QR code and text, then download the card."
+        actions={<button type="button" className="btn btn-outline" onClick={() => setConfirmReset(true)}><Icons.retry size={18} aria-hidden="true" /> Reset design</button>}
+      />
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) 300px', gap: 20, alignItems: 'start' }}>
-
-        {/* Canvas */}
-        <div>
-          <canvas
-            ref={canvasRef}
-            width={CANVAS_W}
-            height={CANVAS_H}
-            style={{ width: '100%', borderRadius: 12, border: '1.5px solid var(--border)', cursor: 'grab', display: 'block', boxShadow: '0 4px 24px rgba(0,0,0,0.18)' }}
-            onMouseDown={onDown}
-            onMouseMove={onMove}
-            onMouseUp={onUp}
-            onMouseLeave={onUp}
-            onTouchStart={onDown}
-            onTouchMove={onMove}
-            onTouchEnd={onUp}
-          />
-          <div style={{ marginTop: 8, fontSize: 12, color: 'var(--text3)', textAlign: 'center' }}>
-            Drag the QR code or any text element directly on the canvas. Drag the green ⤡ handle to resize the QR.
-          </div>
-          <div style={{ display: 'flex', gap: 10, marginTop: 14 }}>
-            <button className="btn btn-green" style={{ flex: 1 }} onClick={downloadPNG}>⬇ Download PNG</button>
-            <button className="btn" style={{ flex: 1 }} onClick={downloadPDF}>⬇ Download PDF</button>
-          </div>
+      <div className="cs-editor">
+        <div className="cs-editor-stage">
+          <section className="card">
+            <canvas
+              ref={canvasRef}
+              width={CANVAS_W}
+              height={CANVAS_H}
+              className="cs-canvas"
+              role="img"
+              aria-label={`Gift card design${o.showValue ? `, value ${o.valueText}` : ''}${o.showTier ? `, ${o.tierText}` : ''}`}
+              onMouseDown={onDown}
+              onMouseMove={onMove}
+              onMouseUp={onUp}
+              onMouseLeave={onUp}
+              onTouchStart={onDown}
+              onTouchMove={onMove}
+              onTouchEnd={onUp}
+              onTouchCancel={onUp}
+            />
+            <p className="a-hint cs-center">Drag the QR code or any text to move it. Drag the round handle at the QR code’s corner to resize it. You can also use the position controls.</p>
+            {qrFailed && <p className="a-alert a-alert-r cs-gap" role="alert">The QR code couldn’t be made for this serial. Check the text under QR code and try again.</p>}
+            <div className="cs-actions">
+              <button type="button" className="btn btn-green" onClick={downloadPNG} disabled={!!exporting}>
+                <Icons.download size={18} aria-hidden="true" /> {exporting === 'png' ? 'Saving…' : 'Download PNG'}
+              </button>
+              <button type="button" className="btn btn-outline" onClick={downloadPDF} disabled={!!exporting}>
+                <Icons.download size={18} aria-hidden="true" /> {exporting === 'pdf' ? 'Making the PDF…' : 'Download PDF'}
+              </button>
+            </div>
+          </section>
         </div>
 
-        {/* Controls */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <div className="cs-editor-controls">
+          <section className="card" aria-labelledby="cs-bg-h">
+            <div className="card-hd"><h3 id="cs-bg-h">Background</h3></div>
+            <input ref={fileInputRef} type="file" accept="image/*" className="sr-only" tabIndex={-1} aria-hidden="true" onChange={handleFile} />
+            <button type="button" className="cs-drop" onClick={() => fileInputRef.current?.click()}>
+              <span className="row-ic" aria-hidden="true">{bgFile ? <Icons.check size={18} /> : <Icons.image size={18} />}</span>
+              <span className="cs-drop-text">
+                <span className="cs-drop-title">{bgFile ? bgFile.name : 'Upload an image'}</span>
+                <span className="cs-drop-sub">{bgFile ? 'Tap to replace it' : 'PNG or JPG. It’s cropped to fit the card.'}</span>
+              </span>
+            </button>
+            {bgError && <p className="a-field-error" role="alert"><Icons.error size={14} aria-hidden="true" /> {bgError}</p>}
+            {bgFile && <button type="button" className="card-link cs-gap" onClick={() => { setBgImg(null); setBgFile(null) }}>Remove background</button>}
+          </section>
 
-          {/* Background */}
-          <div className="card" style={{ padding: 16 }}>
-            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12 }}>Background Image</div>
-            <input ref={fileInputRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFile} />
-            <div onClick={() => fileInputRef.current?.click()}
-              style={{ border: '1.5px dashed var(--border)', borderRadius: 8, padding: '14px 12px', textAlign: 'center', cursor: 'pointer', background: 'var(--surface2)', fontSize: 13 }}>
-              {bgFile ? <><div style={{ fontWeight: 600, color: 'var(--accent)' }}>✓ {bgFile.name}</div><div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>Click to replace</div></>
-                : <><div style={{ color: 'var(--text3)' }}>Click to upload image</div><div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>PNG, JPG — any size</div></>}
+          <section className="card" aria-labelledby="cs-qr-h">
+            <div className="card-hd"><h3 id="cs-qr-h">QR code</h3></div>
+            <div className="a-field">
+              <label className="a-label" htmlFor="cs-qr-text">QR content and serial</label>
+              <input id="cs-qr-text" className="a-input cs-mono" value={o.serialText} autoComplete="off" spellCheck={false}
+                onChange={e => set('serialText', e.target.value)} />
+              <p className="a-hint">The QR code holds this text, and it’s printed as the serial number.</p>
             </div>
-          </div>
+            {slider('cs-qr-size', 'Size', 'qrSize', 60, 380)}
+            {slider('cs-qr-x', 'Across', 'qrX', 0, CANVAS_W - o.qrSize)}
+            {slider('cs-qr-y', 'Down', 'qrY', 0, CANVAS_H - o.qrSize)}
+          </section>
 
-          {/* QR */}
-          <div className="card" style={{ padding: 16 }}>
-            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12 }}>QR Code</div>
-            {sl('Size', 'qrSize', 60, 380)}
-            <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 8 }}>Position X: {o.qrX} Y: {o.qrY} — drag on canvas</div>
-            <label style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 4 }}>QR Content / Serial</label>
-            <input className="a-input" value={o.serialText} onChange={e => setO(prev => ({ ...prev, serialText: e.target.value }))} style={{ marginBottom: 0, fontSize: 12 }} />
-          </div>
-
-          {/* Text overlays */}
-          <div className="card" style={{ padding: 16 }}>
-            <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 12 }}>Text Overlays</div>
-
-            {/* Value */}
-            <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 12, marginBottom: 12 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <span style={{ fontSize: 12, fontWeight: 600 }}>Card Value</span>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-                  <input type="checkbox" checked={o.showValue} onChange={e => setO(prev => ({ ...prev, showValue: e.target.checked }))} />
-                  Show
-                </label>
+          <section className="card" aria-labelledby="cs-text-h">
+            <div className="card-hd"><h3 id="cs-text-h">Text</h3></div>
+            {TEXT_LAYERS.map(l => (
+              <div key={l.id} className="cs-layer" role="group" aria-labelledby={`cs-${l.id}-h`}>
+                <div className="cs-layer-hd">
+                  <h4 id={`cs-${l.id}-h`} className="cs-layer-title">{l.title}</h4>
+                  <label className="cs-check">
+                    <input type="checkbox" checked={o[l.show]} onChange={e => set(l.show, e.target.checked)} />
+                    <span>Show<span className="sr-only"> {l.title.toLowerCase()}</span></span>
+                  </label>
+                </div>
+                {o[l.show] && (
+                  <>
+                    {l.text && (
+                      <div className="a-field">
+                        <label className="sr-only" htmlFor={`cs-${l.id}-text`}>{l.title} text</label>
+                        <input id={`cs-${l.id}-text`} className="a-input" value={o[l.text]} autoComplete="off"
+                          onChange={e => { const k = l.text; if (k) set(k, e.target.value) }} />
+                      </div>
+                    )}
+                    {!l.text && <p className="a-hint cs-layer-note">Uses the QR content above.</p>}
+                    {slider(`cs-${l.id}-size`, 'Text size', l.size, l.sizeMin, l.sizeMax)}
+                    {l.x && slider(`cs-${l.id}-x`, 'Across', l.x, 0, CANVAS_W)}
+                    {l.y && slider(`cs-${l.id}-y`, 'Down', l.y, 0, CANVAS_H)}
+                    {!l.x && <p className="a-hint cs-layer-note">Sits under the QR code and moves with it.</p>}
+                    <div className="cs-color">
+                      <label htmlFor={`cs-${l.id}-color`}>Colour</label>
+                      <input id={`cs-${l.id}-color`} type="color" value={o[l.color]} onChange={e => set(l.color, e.target.value)} />
+                      <span className="cs-mono">{o[l.color].toUpperCase()}</span>
+                    </div>
+                  </>
+                )}
               </div>
-              <input className="a-input" value={o.valueText} onChange={e => setO(prev => ({ ...prev, valueText: e.target.value }))} style={{ marginBottom: 8, fontSize: 12 }} />
-              {sl('Font size', 'valueFontSize', 20, 140)}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-                <span style={{ color: 'var(--text3)' }}>Color</span>
-                <input type="color" value={o.valueColor} onChange={e => setO(prev => ({ ...prev, valueColor: e.target.value }))} style={{ width: 32, height: 24, border: 'none', borderRadius: 4, cursor: 'pointer' }} />
-              </div>
-            </div>
-
-            {/* Tier */}
-            <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 12, marginBottom: 12 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <span style={{ fontSize: 12, fontWeight: 600 }}>Tier Label</span>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-                  <input type="checkbox" checked={o.showTier} onChange={e => setO(prev => ({ ...prev, showTier: e.target.checked }))} />
-                  Show
-                </label>
-              </div>
-              <input className="a-input" value={o.tierText} onChange={e => setO(prev => ({ ...prev, tierText: e.target.value }))} style={{ marginBottom: 8, fontSize: 12 }} />
-              {sl('Font size', 'tierFontSize', 10, 60)}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-                <span style={{ color: 'var(--text3)' }}>Color</span>
-                <input type="color" value={o.tierColor} onChange={e => setO(prev => ({ ...prev, tierColor: e.target.value }))} style={{ width: 32, height: 24, border: 'none', borderRadius: 4, cursor: 'pointer' }} />
-              </div>
-            </div>
-
-            {/* Serial */}
-            <div style={{ borderBottom: '1px solid var(--border)', paddingBottom: 12, marginBottom: 12 }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <span style={{ fontSize: 12, fontWeight: 600 }}>Serial Number</span>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-                  <input type="checkbox" checked={o.showSerial} onChange={e => setO(prev => ({ ...prev, showSerial: e.target.checked }))} />
-                  Show
-                </label>
-              </div>
-              {sl('Font size', 'serialFontSize', 10, 50)}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-                <span style={{ color: 'var(--text3)' }}>Color</span>
-                <input type="color" value={o.serialColor} onChange={e => setO(prev => ({ ...prev, serialColor: e.target.value }))} style={{ width: 32, height: 24, border: 'none', borderRadius: 4, cursor: 'pointer' }} />
-              </div>
-            </div>
-
-            {/* Scan label */}
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-                <span style={{ fontSize: 12, fontWeight: 600 }}>Scan Label</span>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 12 }}>
-                  <input type="checkbox" checked={o.showScanLabel} onChange={e => setO(prev => ({ ...prev, showScanLabel: e.target.checked }))} />
-                  Show
-                </label>
-              </div>
-              <input className="a-input" value={o.scanLabelText} onChange={e => setO(prev => ({ ...prev, scanLabelText: e.target.value }))} style={{ marginBottom: 8, fontSize: 12 }} />
-              {sl('Font size', 'scanLabelFontSize', 8, 40)}
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
-                <span style={{ color: 'var(--text3)' }}>Color</span>
-                <input type="color" value={o.scanLabelColor} onChange={e => setO(prev => ({ ...prev, scanLabelColor: e.target.value }))} style={{ width: 32, height: 24, border: 'none', borderRadius: 4, cursor: 'pointer' }} />
-              </div>
-            </div>
-          </div>
-
-          <button className="btn" onClick={reset} style={{ fontSize: 12 }}>↺ Reset to defaults</button>
+            ))}
+          </section>
         </div>
       </div>
+
+      {confirmReset && (
+        <ConfirmModal
+          title="Reset the design?"
+          body={<>This clears the background image and puts the QR code and all text back to their starting size, position, colour and wording.</>}
+          confirmLabel="Reset design" danger
+          onConfirm={reset} onClose={() => setConfirmReset(false)}
+        />
+      )}
+
+      {toastNode}
     </>
   )
 }

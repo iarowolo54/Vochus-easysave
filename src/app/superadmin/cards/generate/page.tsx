@@ -1,8 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import Link from 'next/link'
 import QRCode from 'qrcode'
-import { blockMinus, nonNegativeString } from '@/lib/numeric'
+import type { jsPDF as JsPDF } from 'jspdf'
+import { Icons } from '@/components/ui/icons'
+import { ConfirmModal, Field, PageHeader, Segmented, shortDate } from '../../_components/admin-ui'
 
 type ColorScheme = { label: string; bg: string; accent: string; text: string }
 
@@ -16,10 +19,13 @@ const COLOR_SCHEMES: ColorScheme[] = [
 ]
 
 const EXPIRY_PRESETS = [
-  { label: '1 Year', years: 1 },
-  { label: '2 Years', years: 2 },
-  { label: '3 Years', years: 3 },
+  { label: '1 year', years: 1 },
+  { label: '2 years', years: 2 },
+  { label: '3 years', years: 3 },
 ]
+
+const MAX_QTY = 500
+const QR_BASE_URL = 'https://easysave.vochusglobalservices.co.uk/card/'
 
 function getExpiryDate(years: number): string {
   const d = new Date()
@@ -42,8 +48,18 @@ function blend(fgHex: string, bgHex: string, opacity: number): [number, number, 
   return [Math.round(bR + (fR - bR) * opacity), Math.round(bG + (fG - bG) * opacity), Math.round(bB + (fB - bB) * opacity)]
 }
 
+/** jsPDF exposes `internal.write` at runtime but not in its types; it's used for the clip path. */
+function writeRaw(doc: JsPDF, op: string) {
+  const internal: unknown = doc.internal
+  if (internal && typeof internal === 'object' && 'write' in internal && typeof internal.write === 'function') {
+    (internal.write as (s: string) => void)(op)
+  }
+}
+
+// Printed card (PDF). Unchanged from the previous design.
+
 function drawCardFront(
-  doc: any, x: number, y: number, w: number, h: number,
+  doc: JsPDF, x: number, y: number, w: number, h: number,
   serial: string, batchName: string, scheme: ColorScheme, qrDataUrl: string
 ) {
   const [bgR, bgG, bgB] = hexToRgb(scheme.bg)
@@ -58,13 +74,11 @@ function drawCardFront(
   doc.setFillColor(bgR, bgG, bgB)
   doc.roundedRect(x, y, w, h, 4, 4, 'F')
 
-  // Decorative rings — clipped to card bounds
+  // Decorative rings, clipped to card bounds
   const sf = doc.internal.scaleFactor
   const ph = doc.internal.pageSize.getHeight()
   doc.saveGraphicsState()
-  doc.internal.write(
-    `${(x * sf).toFixed(3)} ${((ph - y - h) * sf).toFixed(3)} ${(w * sf).toFixed(3)} ${(h * sf).toFixed(3)} re W n`
-  )
+  writeRaw(doc, `${(x * sf).toFixed(3)} ${((ph - y - h) * sf).toFixed(3)} ${(w * sf).toFixed(3)} ${(h * sf).toFixed(3)} re W n`)
   doc.setDrawColor(ci_r, ci_g, ci_b)
   doc.setLineWidth(0.6)
   doc.circle(x + w * 0.62, y + h * 0.45, h * 0.75, 'S')
@@ -72,19 +86,19 @@ function drawCardFront(
   doc.circle(x + w * 0.18, y + h * 0.82, h * 0.55, 'S')
   doc.restoreGraphicsState()
 
-  // VOCHUS — top left
+  // VOCHUS, top left
   doc.setTextColor(acR, acG, acB)
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(h * 0.19)
   doc.text('VOCHUS', x + w * 0.05, y + h * 0.2)
 
-  // EASY SAVE — top right
+  // EASY SAVE, top right
   doc.setTextColor(es_r, es_g, es_b)
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(h * 0.09)
   doc.text('EASY SAVE', x + w * 0.95, y + h * 0.15, { align: 'right' })
 
-  // QR box — left center, small
+  // QR box, left centre, small
   const qrPad = 1.2
   const qrSize = h * 0.2
   const qrX = x + w * 0.05
@@ -95,20 +109,20 @@ function drawCardFront(
     doc.addImage(qrDataUrl, 'PNG', qrX, qrY, qrSize, qrSize)
   }
 
-  // Serial — centered on card
+  // Serial, centred on card
   doc.setTextColor(txR, txG, txB)
   doc.setFont('courier', 'bold')
   doc.setFontSize(h * 0.14)
   doc.text(serial, x + w / 2, y + h * 0.55, { align: 'center', charSpace: 1.2 })
 
-  // Batch name — bottom left (no label)
+  // Batch name, bottom left (no label)
   doc.setTextColor(bn_r, bn_g, bn_b)
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(h * 0.12)
   const bn = batchName.length > 18 ? batchName.slice(0, 18) + '…' : batchName
   doc.text(bn, x + w * 0.05, y + h * 0.91)
 
-  // MEMBER CARD label — bottom right
+  // MEMBER CARD label, bottom right
   doc.setTextColor(lb_r, lb_g, lb_b)
   doc.setFont('helvetica', 'bold')
   doc.setFontSize(h * 0.09)
@@ -121,7 +135,7 @@ function drawCardFront(
 }
 
 function drawCardBack(
-  doc: any, x: number, y: number, w: number, h: number,
+  doc: JsPDF, x: number, y: number, w: number, h: number,
   backText: string, scheme: ColorScheme, cvv: string
 ) {
   const [acR, acG, acB] = hexToRgb(scheme.accent)
@@ -151,18 +165,16 @@ function drawCardBack(
   doc.setDrawColor(196, 192, 186)
   doc.setLineWidth(0.15)
   doc.rect(sigX, sigY, sigW, sigH, 'FD')
-  // horizontal stripe lines
   doc.setDrawColor(210, 206, 200)
   doc.setLineWidth(0.08)
   let sy = sigY + 1.2
   while (sy < sigY + sigH - 0.5) { doc.line(sigX + 0.5, sy, sigX + sigW - 0.5, sy); sy += 1.5 }
-  // label
   doc.setTextColor(170, 166, 160)
   doc.setFont('helvetica', 'normal')
   doc.setFontSize(h * 0.075)
   doc.text('AUTHORISED SIGNATURE', sigX + 2, sigY + sigH - 2)
 
-  // CVV box — number only, unique per card
+  // CVV box, number only, unique per card
   const cvvX = sigX + sigW + w * 0.02
   doc.setFillColor(255, 255, 255)
   doc.setDrawColor(196, 192, 186)
@@ -197,42 +209,34 @@ function drawCardBack(
 
 type GeneratedCard = { id: string; serial: string }
 
+// On-screen preview (not printed)
+
 function CardFront({ batchName, scheme, serial, qrDataUrl }: {
   batchName: string; scheme: ColorScheme; serial: string; qrDataUrl?: string
 }) {
   return (
-    <div style={{
-      aspectRatio: '1.586 / 1', borderRadius: 16, background: scheme.bg,
-      boxShadow: '0 8px 32px rgba(0,0,0,0.35)',
-      position: 'relative', overflow: 'hidden', width: '100%',
-    }}>
-      <div style={{ position: 'absolute', width: '120%', height: '120%', borderRadius: '50%', border: `1px solid ${scheme.accent}20`, top: '-20%', right: '-20%', pointerEvents: 'none' }} />
-      <div style={{ position: 'absolute', width: '80%', height: '80%', borderRadius: '50%', border: `1px solid ${scheme.accent}15`, bottom: '-20%', left: '-5%', pointerEvents: 'none' }} />
-      {/* Top row */}
-      <div style={{ position: 'absolute', top: '10%', left: '6%', right: '6%', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-        <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: 1.5, color: scheme.accent }}>VOCHUS</div>
-        <div style={{ fontSize: 8, color: `${scheme.text}77`, letterSpacing: 0.8 }}>EASY SAVE</div>
+    <div className="cs-mcard" style={{ background: scheme.bg }}>
+      <div className="cs-mcard-ring cs-mcard-ring--a" style={{ borderColor: `${scheme.accent}20` }} />
+      <div className="cs-mcard-ring cs-mcard-ring--b" style={{ borderColor: `${scheme.accent}15` }} />
+      <div className="cs-mcard-top">
+        <div className="cs-mcard-brand" style={{ color: scheme.accent }}>VOCHUS</div>
+        <div className="cs-mcard-tag" style={{ color: `${scheme.text}77` }}>EASY SAVE</div>
       </div>
-      {/* QR left, serial right */}
-      <div style={{ position: 'absolute', top: '28%', left: '6%', right: '6%', display: 'flex', alignItems: 'center', gap: '5%' }}>
-        <div style={{ width: '28%', aspectRatio: '1', borderRadius: 5, background: '#fff', padding: 3, flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div className="cs-mcard-qrrow">
+        <div className="cs-mcard-qr">
           {qrDataUrl
-            ? <img src={qrDataUrl} style={{ width: '100%', height: '100%', display: 'block' }} alt={serial} />
-            : <span style={{ fontSize: 18, opacity: 0.4 }}>▦</span>}
+            ? <img src={qrDataUrl} alt={`QR code for ${serial}`} />
+            : <Icons.qr size={20} aria-hidden="true" className="cs-mcard-qr-ph" />}
         </div>
       </div>
-      {/* Serial — centered */}
-      <div style={{ position: 'absolute', left: 0, right: 0, top: '50%', transform: 'translateY(-50%)', textAlign: 'center' }}>
-        <span style={{ fontSize: 11, fontFamily: 'monospace', letterSpacing: 1.5, color: scheme.text, fontWeight: 600 }}>{serial}</span>
+      <div className="cs-mcard-serial">
+        <span style={{ color: scheme.text }}>{serial}</span>
       </div>
-      {/* Bottom row */}
-      <div style={{ position: 'absolute', bottom: '8%', left: '6%', right: '6%', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-        <div style={{ fontSize: 10, color: `${scheme.text}BB`, fontWeight: 500, maxWidth: '55%', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {batchName || 'Batch Name'}
-        </div>
-        <div style={{ textAlign: 'right' }}>
-          <div style={{ fontSize: 7, color: `${scheme.text}66`, textTransform: 'uppercase', letterSpacing: 0.5, marginBottom: 3 }}>MEMBER CARD</div>
-          <div style={{ width: 24, height: 14, borderRadius: 3, background: scheme.accent, opacity: 0.85 }} />
+      <div className="cs-mcard-bottom">
+        <div className="cs-mcard-batch" style={{ color: `${scheme.text}BB` }}>{batchName || 'Batch name'}</div>
+        <div className="cs-mcard-end">
+          <div className="cs-mcard-label" style={{ color: `${scheme.text}66` }}>MEMBER CARD</div>
+          <div className="cs-mcard-chip" style={{ background: scheme.accent }} />
         </div>
       </div>
     </div>
@@ -241,27 +245,15 @@ function CardFront({ batchName, scheme, serial, qrDataUrl }: {
 
 function CardBack({ scheme, backText, cvv }: { scheme: ColorScheme; backText: string; cvv: string }) {
   return (
-    <div style={{
-      aspectRatio: '1.586 / 1', borderRadius: 16, background: '#F2EFE9', border: '1px solid #DDD',
-      position: 'relative', overflow: 'hidden', width: '100%',
-      boxShadow: '0 8px 32px rgba(0,0,0,0.18)',
-    }}>
-      <div style={{ width: '100%', height: '22%', background: '#1a1a1a', position: 'absolute', top: '20%', left: 0 }} />
-      <div style={{ position: 'absolute', top: '52%', left: '5%', right: '5%', display: 'flex', alignItems: 'center', gap: 8 }}>
-        <div style={{ flex: 1, height: 28, background: 'repeating-linear-gradient(0deg,#e8e4de,#e8e4de 1px,transparent 1px,transparent 5px)', border: '1px solid #ccc', position: 'relative' }}>
-          <div style={{ position: 'absolute', bottom: 3, left: 6, fontSize: 6, letterSpacing: 1, color: '#aaa', textTransform: 'uppercase' }}>Authorised Signature</div>
-        </div>
-        <div style={{ background: '#fff', border: '1px solid #ccc', padding: '5px 10px', textAlign: 'center', flexShrink: 0 }}>
-          <div style={{ fontSize: 13, fontFamily: 'monospace', fontWeight: 700, color: '#333' }}>{cvv}</div>
-        </div>
+    <div className="cs-mcard cs-mcard--back">
+      <div className="cs-mcard-stripe" />
+      <div className="cs-mcard-sigrow">
+        <div className="cs-mcard-sig"><span>Authorised signature</span></div>
+        <div className="cs-mcard-cvv">{cvv}</div>
       </div>
-      <div style={{ position: 'absolute', bottom: '8%', left: '5%', right: '5%', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
-        <div style={{ fontSize: 12, fontWeight: 800, color: '#1a1917' }}>
-          Vochus<span style={{ color: scheme.accent }}>.</span>
-        </div>
-        <div style={{ textAlign: 'right', fontSize: 8, color: '#888', letterSpacing: 0.3, lineHeight: 1.8, whiteSpace: 'pre-line' }}>
-          {backText || 'easysave.vochusglobalservices.co.uk'}
-        </div>
+      <div className="cs-mcard-bottom">
+        <div className="cs-mcard-logo">Vochus<span style={{ color: scheme.accent }}>.</span></div>
+        <div className="cs-mcard-backtext">{backText || 'easysave.vochusglobalservices.co.uk'}</div>
       </div>
     </div>
   )
@@ -269,8 +261,10 @@ function CardBack({ scheme, backText, cvv }: { scheme: ColorScheme; backText: st
 
 export default function GenerateCardsPage() {
   const [batchName, setBatchName] = useState('')
+  const [nameError, setNameError] = useState('')
   const [schemeIdx, setSchemeIdx] = useState(0)
-  const [quantity, setQuantity] = useState(50)
+  const [qtyText, setQtyText] = useState('50')
+  const [qtyError, setQtyError] = useState('')
   const [expiryYears, setExpiryYears] = useState(2)
   const [backText, setBackText] = useState('easysave.vochusglobalservices.co.uk\nsupport@vochus.ng')
   const [flipped, setFlipped] = useState(false)
@@ -280,31 +274,49 @@ export default function GenerateCardsPage() {
   const [cards, setCards] = useState<GeneratedCard[]>([])
   const [batchId, setBatchId] = useState('')
   const [generated, setGenerated] = useState(false)
+  const [downloaded, setDownloaded] = useState(false)
 
   const [qrMap, setQrMap] = useState<Record<string, string>>({})
   const [cvvMap, setCvvMap] = useState<Record<string, string>>({})
   const [qrLoading, setQrLoading] = useState(false)
+  const [qrFailed, setQrFailed] = useState(false)
   const [pdfLoading, setPdfLoading] = useState(false)
+  const [pdfError, setPdfError] = useState('')
+  const [confirmRestart, setConfirmRestart] = useState(false)
 
   const scheme = COLOR_SCHEMES[schemeIdx]
   const previewSerial = 'VES-XXXX0001'
+  const quantity = parseInt(qtyText, 10) || 0
+  const expiry = getExpiryDate(expiryYears)
+  const backLines = backText.split('\n').filter(Boolean).length
 
-  useEffect(() => {
-    if (!generated || cards.length === 0) return
-    setQrLoading(true)
-    const baseUrl = 'https://easysave.vochusglobalservices.co.uk/card/'
+  const buildQrs = useCallback(() => {
+    if (cards.length === 0) return
+    setQrLoading(true); setQrFailed(false)
     Promise.all(
       cards.map(async c => {
-        const dataUrl = await QRCode.toDataURL(`${baseUrl}${c.serial}`, { width: 160, margin: 1, color: { dark: '#000000', light: '#ffffff' } })
+        const dataUrl = await QRCode.toDataURL(`${QR_BASE_URL}${c.serial}`, { width: 160, margin: 1, color: { dark: '#000000', light: '#ffffff' } })
         return [c.serial, dataUrl] as [string, string]
       })
     ).then(entries => { setQrMap(Object.fromEntries(entries)); setQrLoading(false) })
-     .catch(() => setQrLoading(false))
-  }, [generated, cards])
+     .catch(() => { setQrFailed(true); setQrLoading(false) })
+  }, [cards])
+
+  useEffect(() => { if (generated) buildQrs() }, [generated, buildQrs])
+
+  // The codes on the back aren't saved anywhere, so warn before leaving with an undownloaded batch.
+  useEffect(() => {
+    if (!generated || downloaded) return
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = '' }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [generated, downloaded])
 
   const handleGenerate = async () => {
-    if (!batchName.trim()) { setGenError('Batch name is required'); return }
-    if (quantity < 1 || quantity > 500) { setGenError('Quantity must be 1–500'); return }
+    let ok = true
+    if (!batchName.trim()) { setNameError('Give the batch a name, like “June 2026 Lagos”.'); ok = false }
+    if (quantity < 1 || quantity > MAX_QTY) { setQtyError(`Enter a number from 1 to ${MAX_QTY}.`); ok = false }
+    if (!ok) return
     setGenError(''); setGenerating(true)
     try {
       // Serials and the batch id are generated server-side (unguessable); the
@@ -314,17 +326,21 @@ export default function GenerateCardsPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ batchName: batchName.trim(), quantity, expiryDate: getExpiryDate(expiryYears) }),
       })
-      const d = await r.json()
-      if (!r.ok) { setGenError(d.error ?? 'Generation failed'); return }
-      setBatchId(d.batchId); setCards(d.cards); setGenerated(true)
-      setCvvMap(Object.fromEntries(d.cards.map((c: GeneratedCard) => [c.serial, randomCvv()])))
-    } catch { setGenError('Network error') }
-    finally { setGenerating(false) }
+      const d = await r.json().catch(() => ({})) as { error?: string; batchId?: string; cards?: GeneratedCard[] }
+      if (!r.ok || !d.cards || !d.batchId) { setGenError(d.error ?? 'The batch wasn’t created. Try again.'); return }
+      const made = d.cards
+      setBatchId(d.batchId); setCards(made); setGenerated(true); setDownloaded(false); setPdfError('')
+      setCvvMap(Object.fromEntries(made.map(c => [c.serial, randomCvv()])))
+    } catch {
+      setGenError('No connection. Check your internet and try again. No cards were created.')
+    } finally {
+      setGenerating(false)
+    }
   }
 
   const downloadPDF = async () => {
-    if (qrLoading || cards.length === 0) return
-    setPdfLoading(true)
+    if (qrLoading || qrFailed || cards.length === 0) return
+    setPdfLoading(true); setPdfError('')
     try {
       const { jsPDF } = await import('jspdf')
       const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' })
@@ -355,153 +371,176 @@ export default function GenerateCardsPage() {
 
       const filename = `VES-${batchName.replace(/\s+/g, '-')}-${batchId}.pdf`
       doc.save(filename)
+      setDownloaded(true)
+    } catch {
+      setPdfError('The PDF wasn’t created. Check your connection and try again.')
     } finally {
       setPdfLoading(false)
     }
   }
 
+  function startAgain() {
+    if (!downloaded) { setConfirmRestart(true); return }
+    resetBatch()
+  }
+
+  function resetBatch() {
+    setConfirmRestart(false)
+    setGenerated(false); setCards([]); setBatchId(''); setBatchName(''); setQrMap({}); setCvvMap({}); setQrFailed(false); setPdfError(''); setDownloaded(false)
+  }
+
+  const pdfLabel = qrLoading ? 'Making QR codes…' : pdfLoading ? 'Making the PDF…' : downloaded ? 'Download PDF again' : 'Download PDF'
+
   return (
     <>
-      <style>{`
-        .flip-scene { perspective: 900px; width: 100%; }
-        .flip-card { position: relative; width: 100%; transform-style: preserve-3d; transition: transform 0.55s cubic-bezier(.4,0,.2,1); }
-        .flip-card.flipped { transform: rotateY(180deg); }
-        .flip-face { position: absolute; inset: 0; backface-visibility: hidden; -webkit-backface-visibility: hidden; }
-        .flip-back-face { transform: rotateY(180deg); }
-        .flip-scene-wrap { position: relative; width: 100%; }
-        .flip-scene-wrap::before { content: ''; display: block; padding-top: 63%; }
-      `}</style>
+      <PageHeader
+        title="Generate cards"
+        sub="Create a batch of member cards with QR codes, ready to print."
+        actions={<Link href="/superadmin/cards" className="btn btn-outline"><Icons.back size={18} aria-hidden="true" /> All cards</Link>}
+      />
 
-      <div className="pg-hd">
-        <div><h1>Generate Cards</h1><p>Create batches of physical member cards with QR codes</p></div>
-      </div>
-
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(0,340px)', gap: 24, alignItems: 'start' }}>
-
-        {/* LEFT: form */}
-        <div>
+      <div className="cs-gen">
+        <div className="cs-gen-main">
           {!generated ? (
-            <>
-              <div className="card" style={{ padding: 24, marginBottom: 20 }}>
-                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 18, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--accent)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 800 }}>1</span>
-                  Batch Setup
+            <form onSubmit={e => { e.preventDefault(); handleGenerate() }} noValidate>
+              <section className="card cs-step" aria-labelledby="cs-step1">
+                <div className="card-hd">
+                  <h3 id="cs-step1"><span className="cs-step-no" aria-hidden="true">1</span> Batch details</h3>
                 </div>
+                <Field id="cs-batch" label="Batch name" error={nameError} hint="Printed on the front of every card. The first 18 characters fit.">
+                  <input id="cs-batch" className="a-input" type="text" placeholder="e.g. June 2026 Lagos" autoComplete="off"
+                    value={batchName} aria-invalid={!!nameError}
+                    onChange={e => { setBatchName(e.target.value); setNameError('') }} />
+                </Field>
 
-                <label className="a-label">Batch Name *</label>
-                <input className="a-input" type="text" placeholder="e.g. June 2026 Batch"
-                  value={batchName} onChange={e => setBatchName(e.target.value)} style={{ marginBottom: 20 }} />
-
-                <label className="a-label" style={{ marginBottom: 10, display: 'block' }}>Color Scheme</label>
-                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 6 }}>
-                  {COLOR_SCHEMES.map((s, i) => (
-                    <div key={s.label} onClick={() => setSchemeIdx(i)} title={s.label}
-                      style={{ width: 44, height: 28, borderRadius: 8, background: `linear-gradient(135deg, ${s.bg} 60%, ${s.accent})`, cursor: 'pointer', border: schemeIdx === i ? `2.5px solid ${s.accent}` : '2.5px solid transparent', boxShadow: schemeIdx === i ? `0 0 0 2px ${s.accent}55` : 'none', transition: 'all 0.15s', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                      {schemeIdx === i && <span style={{ fontSize: 13, color: s.accent }}>✓</span>}
-                    </div>
-                  ))}
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 24 }}>{scheme.label}</div>
-
-                <div style={{ borderTop: '1px solid var(--border)', paddingTop: 20, marginTop: 4 }}>
-                  <label className="a-label">Back Card Text</label>
-                  <textarea className="a-input" rows={3} placeholder="Add any text for the back of the card…"
-                    value={backText} onChange={e => setBackText(e.target.value)}
-                    style={{ resize: 'vertical' }} />
-                </div>
-              </div>
-
-              <div className="card" style={{ padding: 24, marginBottom: 20 }}>
-                <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 18, display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ width: 24, height: 24, borderRadius: '50%', background: 'var(--accent)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 800 }}>2</span>
-                  Quantity &amp; Expiry
-                </div>
-
-                <label className="a-label">Quantity (1–500)</label>
-                <input className="a-input" type="tel" inputMode="numeric" value={quantity} onKeyDown={blockMinus}
-                  onChange={e => setQuantity(Math.min(500, Math.max(1, parseInt(nonNegativeString(e.target.value)) || 1)))}
-                  style={{ marginBottom: 20 }} />
-
-                <label className="a-label" style={{ marginBottom: 10, display: 'block' }}>Card Validity</label>
-                <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
-                  {EXPIRY_PRESETS.map(p => (
-                    <button key={p.years} onClick={() => setExpiryYears(p.years)}
-                      className={expiryYears === p.years ? 'btn btn-green' : 'btn'} style={{ flex: 1 }}>
-                      {p.label}
-                    </button>
-                  ))}
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 20 }}>
-                  Expiry: <strong style={{ color: 'var(--text)' }}>{getExpiryDate(expiryYears)}</strong>
-                </div>
-
-                {genError && <div style={{ color: 'var(--red)', fontSize: 13, marginBottom: 12 }}>{genError}</div>}
-
-                <button className="btn btn-green" onClick={handleGenerate} disabled={generating} style={{ width: '100%', fontSize: 15, padding: '12px 0' }}>
-                  {generating ? 'Generating…' : `⚡ Generate Batch (${quantity} cards)`}
-                </button>
-              </div>
-            </>
-          ) : (
-            <div className="card" style={{ padding: 32, marginBottom: 20 }}>
-              <div style={{ fontSize: 48, marginBottom: 16, textAlign: 'center' }}>✅</div>
-              <h2 style={{ textAlign: 'center', margin: '0 0 8px' }}>Batch Generated!</h2>
-              <p style={{ textAlign: 'center', color: 'var(--text3)', marginBottom: 24 }}>{cards.length} cards created successfully</p>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 24 }}>
-                {[{ label: 'Cards', value: cards.length }, { label: 'Batch ID', value: batchId }, { label: 'Batch Name', value: batchName }, { label: 'Expiry', value: getExpiryDate(expiryYears) }].map(({ label, value }) => (
-                  <div key={label} className="stat" style={{ padding: '12px 16px' }}>
-                    <div className="stat-lbl">{label}</div>
-                    <div className="stat-val" style={{ fontSize: 16 }}>{value}</div>
+                <fieldset className="cs-fieldset">
+                  <legend className="a-label">Colour scheme</legend>
+                  <div className="cs-swatches">
+                    {COLOR_SCHEMES.map((s, i) => (
+                      <button key={s.label} type="button" className="cs-swatch" aria-pressed={schemeIdx === i} onClick={() => setSchemeIdx(i)}>
+                        <span className="cs-swatch-chip" style={{ background: `linear-gradient(135deg, ${s.bg} 60%, ${s.accent})` }} aria-hidden="true">
+                          {schemeIdx === i && <Icons.check size={14} style={{ color: s.accent }} />}
+                        </span>
+                        <span className="cs-swatch-name">{s.label}</span>
+                      </button>
+                    ))}
                   </div>
-                ))}
-              </div>
-              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                <button className="btn btn-green" onClick={downloadPDF} disabled={qrLoading || pdfLoading} style={{ flex: 1 }}>
-                  {qrLoading ? '⏳ Building QR codes…' : pdfLoading ? '⏳ Generating PDF…' : '⬇️ Download PDF'}
+                </fieldset>
+
+                <Field id="cs-back" label="Text on the back" hint={backLines > 4 ? 'Only the first 4 lines are printed.' : 'Up to 4 lines, printed bottom right.'}>
+                  <textarea id="cs-back" className="a-input" rows={3} placeholder="Website, support email or phone"
+                    value={backText} onChange={e => setBackText(e.target.value)} />
+                </Field>
+              </section>
+
+              <section className="card cs-step" aria-labelledby="cs-step2">
+                <div className="card-hd">
+                  <h3 id="cs-step2"><span className="cs-step-no" aria-hidden="true">2</span> Quantity and expiry</h3>
+                </div>
+                <Field id="cs-qty" label="Number of cards" error={qtyError} hint={`From 1 to ${MAX_QTY} per batch.`}>
+                  <input id="cs-qty" className="a-input cs-qty" type="text" inputMode="numeric" pattern="[0-9]*" autoComplete="off"
+                    value={qtyText} aria-invalid={!!qtyError}
+                    onChange={e => { setQtyText(e.target.value.replace(/\D/g, '').slice(0, 3)); setQtyError('') }} />
+                </Field>
+
+                <div className="a-field">
+                  <span className="a-label" aria-hidden="true">Valid for</span>
+                  <Segmented<string> label="Valid for" value={String(expiryYears)} onChange={v => setExpiryYears(Number(v))}
+                    options={EXPIRY_PRESETS.map(p => ({ value: String(p.years), label: p.label }))} />
+                  <p className="a-hint">Cards expire on <strong>{shortDate(expiry)}</strong>.</p>
+                </div>
+
+                {genError && <p className="a-alert a-alert-r cs-gap" role="alert">{genError}</p>}
+
+                <button type="submit" className="btn btn-green cs-btn-block" disabled={generating}>
+                  {generating ? 'Creating the batch…' : quantity > 0 ? `Generate ${quantity.toLocaleString('en-NG')} card${quantity === 1 ? '' : 's'}` : 'Generate cards'}
                 </button>
-                <button className="btn" onClick={() => { setGenerated(false); setCards([]); setBatchId(''); setBatchName(''); setQrMap({}); setCvvMap({}) }} style={{ flex: 1 }}>
-                  Generate Another
-                </button>
+              </section>
+            </form>
+          ) : (
+            <section className="card" aria-labelledby="cs-done">
+              <div className="cs-sent">
+                <span className="cs-sent-ic" aria-hidden="true"><Icons.check size={20} /></span>
+                <div>
+                  <h3 id="cs-done">Batch created: {cards.length.toLocaleString('en-NG')} card{cards.length === 1 ? '' : 's'}</h3>
+                  <p>Download the PDF and send it to the printer.</p>
+                </div>
               </div>
-            </div>
+
+              <dl className="cs-dl">
+                <div><dt>Batch name</dt><dd>{batchName}</dd></div>
+                <div><dt>Cards</dt><dd>{cards.length.toLocaleString('en-NG')}</dd></div>
+                <div><dt>Expires</dt><dd>{shortDate(expiry)}</dd></div>
+                <div><dt>Serials</dt><dd className="cs-mono">{cards[0]?.serial} to {cards[cards.length - 1]?.serial}</dd></div>
+                <div className="cs-dl-wide"><dt>Batch ID</dt><dd className="cs-mono">{batchId}</dd></div>
+              </dl>
+
+              {!downloaded && (
+                <p className="cs-note" role="note">
+                  <Icons.report size={16} aria-hidden="true" />
+                  <span>Download the PDF before you leave this page. The 3-digit codes on the back are made in this browser and aren’t saved, so this exact file can’t be made again.</span>
+                </p>
+              )}
+
+              {qrFailed && (
+                <div className="a-alert a-alert-r cs-alert-row cs-gap" role="alert">
+                  <span>The QR codes couldn’t be made, so the PDF isn’t ready.</span>
+                  <button type="button" className="btn btn-sm btn-outline" onClick={buildQrs}><Icons.retry size={16} aria-hidden="true" /> Try again</button>
+                </div>
+              )}
+              {pdfError && <p className="a-alert a-alert-r cs-gap" role="alert">{pdfError}</p>}
+
+              <div className="cs-actions">
+                <button type="button" className="btn btn-green" onClick={downloadPDF} disabled={qrLoading || pdfLoading || qrFailed}>
+                  <Icons.download size={18} aria-hidden="true" /> {pdfLabel}
+                </button>
+                <button type="button" className="btn btn-outline" onClick={startAgain} disabled={pdfLoading}>Start a new batch</button>
+                <Link href="/superadmin/cards" className="btn btn-outline">See all cards</Link>
+              </div>
+            </section>
           )}
         </div>
 
-        {/* RIGHT: flip card preview */}
-        <div style={{ position: 'sticky', top: 88 }}>
-          <div className="card" style={{ padding: 20 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-              <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text3)', textTransform: 'uppercase', letterSpacing: 0.5 }}>
-                Card Preview — {flipped ? 'Back' : 'Front'}
-              </div>
-              <button className="btn" style={{ fontSize: 11, padding: '5px 12px' }} onClick={() => setFlipped(f => !f)}>
-                ↺ Flip
+        <aside className="cs-gen-side" aria-label="Card preview">
+          <section className="card">
+            <div className="card-hd">
+              <h3>Preview: {flipped ? 'back' : 'front'}</h3>
+              <button type="button" className="btn btn-sm btn-outline" onClick={() => setFlipped(f => !f)} aria-pressed={flipped}>
+                <Icons.retry size={16} aria-hidden="true" /> {flipped ? 'Show front' : 'Show back'}
               </button>
             </div>
 
-            <div className="flip-scene">
-              <div className="flip-scene-wrap">
-                <div className={`flip-card${flipped ? ' flipped' : ''}`} style={{ height: '100%', position: 'absolute', inset: 0 }}>
-                  <div className="flip-face" style={{ borderRadius: 16, overflow: 'hidden' }}>
-                    <CardFront batchName={batchName} scheme={scheme}
-                      serial={generated && cards[0] ? cards[0].serial : previewSerial}
-                      qrDataUrl={generated ? qrMap[cards[0]?.serial] : undefined} />
-                  </div>
-                  <div className="flip-face flip-back-face" style={{ borderRadius: 16, overflow: 'hidden' }}>
-                    <CardBack scheme={scheme} backText={backText} cvv={generated && cards[0] ? (cvvMap[cards[0].serial] ?? '---') : '---'} />
-                  </div>
+            <div className="cs-flip">
+              <div className={`cs-flip-card${flipped ? ' is-flipped' : ''}`}>
+                <div className="cs-flip-face" aria-hidden={flipped}>
+                  <CardFront batchName={batchName} scheme={scheme}
+                    serial={generated && cards[0] ? cards[0].serial : previewSerial}
+                    qrDataUrl={generated ? qrMap[cards[0]?.serial] : undefined} />
+                </div>
+                <div className="cs-flip-face cs-flip-back" aria-hidden={!flipped}>
+                  <CardBack scheme={scheme} backText={backText} cvv={generated && cards[0] ? (cvvMap[cards[0].serial] ?? '---') : '---'} />
                 </div>
               </div>
             </div>
 
-            <div style={{ marginTop: 14, fontSize: 12, color: 'var(--text3)', lineHeight: 1.7 }}>
-              <div>Scheme: <strong style={{ color: 'var(--text)' }}>{scheme.label}</strong></div>
-              <div>Batch: <strong style={{ color: 'var(--text)' }}>{batchName || 'Not set'}</strong></div>
-              {generated && <div>Range: <strong style={{ color: 'var(--text)' }}>{cards[0]?.serial} – {cards[cards.length - 1]?.serial}</strong></div>}
-            </div>
-          </div>
-        </div>
+            <dl className="cs-meta">
+              <div><dt>Scheme</dt><dd>{scheme.label}</dd></div>
+              <div><dt>Batch</dt><dd>{batchName || 'Not set'}</dd></div>
+              {generated && <div><dt>Range</dt><dd className="cs-mono">{cards[0]?.serial} to {cards[cards.length - 1]?.serial}</dd></div>}
+            </dl>
+            <p className="a-hint">The printed card is laid out slightly differently from this preview.</p>
+          </section>
+        </aside>
       </div>
+
+      {confirmRestart && (
+        <ConfirmModal
+          title="Start a new batch without downloading?"
+          body={<>You haven’t downloaded the PDF for <strong>{batchName}</strong> ({cards.length.toLocaleString('en-NG')} cards). The cards stay saved, but the 3-digit codes on the back are lost and this print file can’t be made again.</>}
+          confirmLabel="Start a new batch" danger
+          onConfirm={resetBatch} onClose={() => setConfirmRestart(false)}
+        />
+      )}
     </>
   )
 }

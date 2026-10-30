@@ -1,6 +1,10 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { Icons, type IconName } from '@/components/ui/icons'
+import {
+  Avatar, Empty, LoadError, PageHeader, SearchField, Segmented, TableSkeleton, naira, shortDate,
+} from '../_components/admin-ui'
 
 interface PlatformWallet {
   id: string
@@ -30,227 +34,250 @@ interface AgentWallet {
   photoUrl?: string | null
 }
 
-interface PageData {
+interface PlatformData {
   wallets: PlatformWallet[]
   totalAgentFloat: number
   totalAgentCommission: number
   totalCustomerSavings: number
   today: Today
+}
+
+interface AgentsData {
   agents: AgentWallet[]
   totalWalletBalance: number
   lowBalanceCount: number
 }
 
-const WALLET_META: Record<string, { icon: string; label: string; desc: string; color: string }> = {
-  Capital:      { icon: '🏦', label: 'Capital Reserve',    desc: 'Initial operating capital',           color: 'var(--blue)'   },
-  Float:        { icon: '💵', label: 'Agent Float Pool',   desc: 'Pooled agent wallet balances',         color: 'var(--green)'  },
-  SavingsPool:  { icon: '🪙', label: 'Savings Pool',       desc: 'Customer savings held in trust',       color: 'var(--amber)'  },
-  Redemption:   { icon: '🔄', label: 'Redemption Reserve', desc: 'Reserved for pending redemptions',     color: 'var(--purple)' },
-  Revenue:      { icon: '📈', label: 'Revenue Wallet',     desc: 'Platform fees and interest earned',    color: 'var(--green)'  },
+type View = 'platform' | 'agents'
+
+const EMPTY_TODAY: Today = { savings: 0, redemptions: 0, registrations: 0, walletFunding: 0, disbursements: 0, repayments: 0 }
+const LOW_BALANCE = 10000 // same threshold the wallets API uses for lowBalanceCount
+// Display-only estimate of today's platform fee. Mirrors the 1.6% default platform savings rate in
+// wallet-rates.ts; the real figure depends on each plan's cadence and deposit method.
+const EST_PLATFORM_RATE = 0.016
+
+const WALLET_META: Record<string, { icon: IconName; label: string; desc: string }> = {
+  Capital:     { icon: 'treasury', label: 'Capital reserve',    desc: 'Operating capital put into the platform' },
+  Float:       { icon: 'cash',     label: 'Agent float pool',   desc: 'Pooled agent wallet balances' },
+  SavingsPool: { icon: 'plan',     label: 'Savings pool',       desc: 'Customer savings held in trust' },
+  Redemption:  { icon: 'redeem',   label: 'Redemption reserve', desc: 'Set aside for pending redemptions' },
+  Revenue:     { icon: 'reports',  label: 'Revenue',            desc: 'Platform fees and interest earned' },
 }
 
 export default function WalletAccountsPage() {
-  const [data, setData] = useState<PageData>({
-    wallets: [], totalAgentFloat: 0, totalAgentCommission: 0, totalCustomerSavings: 0,
-    today: { savings: 0, redemptions: 0, registrations: 0, walletFunding: 0, disbursements: 0, repayments: 0 },
-    agents: [], totalWalletBalance: 0, lowBalanceCount: 0,
-  })
+  const [platform, setPlatform] = useState<PlatformData | null>(null)
+  const [agentsData, setAgentsData] = useState<AgentsData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [platformFailed, setPlatformFailed] = useState(false)
+  const [agentsFailed, setAgentsFailed] = useState(false)
   const [search, setSearch] = useState('')
-  const [activeTab, setActiveTab] = useState<'platform' | 'agents'>('platform')
+  const [view, setView] = useState<View>('platform')
 
   const load = useCallback(async () => {
-    setLoading(true)
+    setLoading(true); setPlatformFailed(false); setAgentsFailed(false)
     const [platRes, agentRes] = await Promise.all([
-      fetch('/api/admin/wallets/platform'),
-      fetch('/api/admin/wallets'),
+      fetch('/api/admin/wallets/platform').catch(() => null),
+      fetch('/api/admin/wallets').catch(() => null),
     ])
-    const plat = platRes.ok ? await platRes.json() : {}
-    const agent = agentRes.ok ? await agentRes.json() : {}
-    setData({
-      wallets: plat.wallets ?? [],
-      totalAgentFloat: plat.totalAgentFloat ?? 0,
-      totalAgentCommission: plat.totalAgentCommission ?? 0,
-      totalCustomerSavings: plat.totalCustomerSavings ?? 0,
-      today: plat.today ?? { savings: 0, redemptions: 0, registrations: 0, walletFunding: 0, disbursements: 0, repayments: 0 },
-      agents: agent.agents ?? [],
-      totalWalletBalance: agent.totalWalletBalance ?? 0,
-      lowBalanceCount: agent.lowBalanceCount ?? 0,
-    })
+    try {
+      if (!platRes?.ok) throw new Error()
+      const plat = await platRes.json() as Partial<PlatformData>
+      setPlatform({
+        wallets: plat.wallets ?? [],
+        totalAgentFloat: plat.totalAgentFloat ?? 0,
+        totalAgentCommission: plat.totalAgentCommission ?? 0,
+        totalCustomerSavings: plat.totalCustomerSavings ?? 0,
+        today: plat.today ?? EMPTY_TODAY,
+      })
+    } catch {
+      setPlatformFailed(true)
+    }
+    try {
+      if (!agentRes?.ok) throw new Error()
+      const agent = await agentRes.json() as Partial<AgentsData>
+      setAgentsData({
+        agents: agent.agents ?? [],
+        totalWalletBalance: agent.totalWalletBalance ?? 0,
+        lowBalanceCount: agent.lowBalanceCount ?? 0,
+      })
+    } catch {
+      setAgentsFailed(true)
+    }
     setLoading(false)
   }, [])
 
   useEffect(() => { load() }, [load])
 
-  const fmt = (n: number) => `₦${n.toLocaleString('en-NG', { minimumFractionDigits: 0 })}`
+  const today = platform?.today ?? EMPTY_TODAY
+  const totalPlatform = (platform?.wallets ?? []).reduce((s, w) => s + w.balance, 0)
+  const totalAll = platform ? totalPlatform + platform.totalAgentFloat + platform.totalAgentCommission : 0
+  const net = platform ? platform.totalAgentFloat - platform.totalCustomerSavings : 0
 
-  const totalPlatform = data.wallets.reduce((s, w) => s + w.balance, 0)
-  const totalAll = totalPlatform + data.totalAgentFloat + data.totalAgentCommission
+  const term = search.trim().toLowerCase()
+  const agents = agentsData?.agents ?? []
+  const filteredAgents = agents.filter(a => !term ||
+    a.name.toLowerCase().includes(term) || a.agentId.toLowerCase().includes(term) || (a.location ?? '').toLowerCase().includes(term))
 
-  const filteredAgents = data.agents.filter(a =>
-    !search || a.name.toLowerCase().includes(search.toLowerCase()) ||
-    a.agentId.toLowerCase().includes(search.toLowerCase()) ||
-    a.location.toLowerCase().includes(search.toLowerCase())
-  )
+  const statVal = (v: string) => loading && !platform ? <span className="skel stat-val cm-stat-skel" aria-hidden="true" /> : <div className="stat-val">{platform ? v : '—'}</div>
+
+  function chipsFor(type: string) {
+    switch (type) {
+      case 'SavingsPool': return [`+${naira(today.savings)} saved today`, `−${naira(today.redemptions)} redeemed today`]
+      case 'Revenue': return [`About +${naira(today.savings * EST_PLATFORM_RATE)} today (estimate)`]
+      case 'Float': return [`+${naira(today.walletFunding)} funded today`]
+      case 'Capital': return ['Operating reserve']
+      case 'Redemption': return [`−${naira(today.redemptions)} today`]
+      default: return []
+    }
+  }
 
   return (
     <>
-      <div className="pg-hd">
-        <div>
-          <h1>Wallet Accounts</h1>
-          <p>Platform treasury wallets and agent wallet balances</p>
+      <PageHeader
+        title="Wallet accounts"
+        sub="Platform wallets and every agent’s wallet balance."
+        actions={<button type="button" className="btn btn-outline" onClick={load} disabled={loading}>
+          <Icons.retry size={16} aria-hidden="true" /> {loading ? 'Refreshing…' : 'Refresh'}
+        </button>}
+      />
+
+      <div className="stats-grid">
+        <div className="stat">
+          <div className="stat-lbl">Total system funds</div>
+          {statVal(naira(totalAll))}
+          <div className="stat-sub">Platform wallets, agent wallets and commission</div>
         </div>
-        <button className="btn btn-outline btn-sm" onClick={load}>↻ Refresh</button>
+        <div className="stat">
+          <div className="stat-lbl">Customer savings</div>
+          {statVal(naira(platform?.totalCustomerSavings))}
+          <div className="stat-sub">In active plans</div>
+        </div>
+        <div className="stat">
+          <div className="stat-lbl">Agent float</div>
+          {statVal(naira(platform?.totalAgentFloat))}
+          <div className="stat-sub">
+            {agentsData ? `${agentsData.lowBalanceCount} agent${agentsData.lowBalanceCount === 1 ? '' : 's'} under ${naira(LOW_BALANCE)}` : agentsFailed ? 'Low-balance count unavailable' : ' '}
+          </div>
+        </div>
+        <div className="stat">
+          <div className="stat-lbl">Saved today</div>
+          {statVal(naira(today.savings))}
+          <div className="stat-sub">{platform ? `${naira(today.redemptions)} redeemed today` : ' '}</div>
+        </div>
       </div>
 
-      <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(4,1fr)', marginBottom: 24 }}>
-        <div className="stat">
-          <span className="stat-ic">🏦</span>
-          <div className="stat-lbl">Total System Funds</div>
-          <div className="stat-val blue">{loading ? '…' : fmt(totalAll)}</div>
-          <div className="stat-sub">Platform + Agent wallets</div>
-        </div>
-        <div className="stat">
-          <span className="stat-ic">🪙</span>
-          <div className="stat-lbl">Customer Savings</div>
-          <div className="stat-val amber">{loading ? '…' : fmt(data.totalCustomerSavings)}</div>
-          <div className="stat-sub">Active savings plans</div>
-        </div>
-        <div className="stat">
-          <span className="stat-ic">💵</span>
-          <div className="stat-lbl">Agent Float Total</div>
-          <div className="stat-val green">{loading ? '…' : fmt(data.totalAgentFloat)}</div>
-          <div className="stat-sub">{data.lowBalanceCount} agents low balance</div>
-        </div>
-        <div className="stat">
-          <span className="stat-ic">📈</span>
-          <div className="stat-lbl">Today Savings Volume</div>
-          <div className="stat-val green">{loading ? '…' : fmt(data.today.savings)}</div>
-          <div className="stat-sub">Redemptions: {fmt(data.today.redemptions)}</div>
-        </div>
+      <div className="toolbar">
+        <Segmented<View> label="Show wallets" value={view} onChange={setView} options={[
+          { value: 'platform', label: 'Platform wallets' },
+          { value: 'agents', label: 'Agent wallets', count: agentsData ? agents.length : undefined },
+        ]} />
+        {view === 'agents' && <SearchField value={search} onChange={setSearch} placeholder="Name, agent ID or location" label="Search agent wallets" />}
       </div>
 
-      <div style={{ display: 'flex', gap: 8, marginBottom: 20 }}>
-        {(['platform', 'agents'] as const).map(tab => (
-          <button key={tab} onClick={() => setActiveTab(tab)}
-            className={`btn btn-sm ${activeTab === tab ? 'btn-green' : 'btn-outline'}`}>
-            {tab === 'platform' ? '🏛️ Platform Wallets' : '👥 Agent Wallets'}
-          </button>
-        ))}
-      </div>
-
-      {activeTab === 'platform' && (
-        <>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 16, marginBottom: 24 }}>
-            {data.wallets.map(w => {
-              const meta = WALLET_META[w.type] ?? { icon: '💼', label: w.type, desc: '', color: 'var(--text)' }
-              return (
-                <div key={w.id} className="card" style={{ margin: 0, padding: 22 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-                    <div style={{ width: 42, height: 42, borderRadius: 12, background: meta.color + '22', border: `1px solid ${meta.color}44`, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 20 }}>{meta.icon}</div>
-                    <div>
-                      <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)' }}>{meta.label}</div>
-                      <div style={{ fontSize: 11.5, color: 'var(--text3)' }}>{meta.desc}</div>
-                    </div>
-                  </div>
-                  <div style={{ fontFamily: "'IBM Plex Serif', serif", fontWeight: 800, fontSize: 26, color: meta.color, marginBottom: 8 }}>
-                    {loading ? '…' : fmt(w.balance)}
-                  </div>
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-                    {w.type === 'SavingsPool' && (
-                      <>
-                        <span style={{ fontSize: 11, background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', color: 'var(--text3)' }}>+{fmt(data.today.savings)} today</span>
-                        <span style={{ fontSize: 11, background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', color: 'var(--text3)' }}>-{fmt(data.today.redemptions)} redeemed</span>
-                      </>
-                    )}
-                    {w.type === 'Revenue' && (
-                      <span style={{ fontSize: 11, background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', color: 'var(--text3)' }}>+{fmt(Math.round(data.today.savings * 0.016))} today</span>
-                    )}
-                    {w.type === 'Float' && (
-                      <span style={{ fontSize: 11, background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', color: 'var(--text3)' }}>+{fmt(data.today.walletFunding)} funded today</span>
-                    )}
-                    {w.type === 'Capital' && (
-                      <span style={{ fontSize: 11, background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', color: 'var(--text3)' }}>Operating reserve</span>
-                    )}
-                    {w.type === 'Redemption' && (
-                      <span style={{ fontSize: 11, background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 6, padding: '3px 8px', color: 'var(--text3)' }}>-{fmt(data.today.redemptions)} today</span>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
+      {view === 'platform' && (
+        loading && !platform ? (
+          <div className="cm-wallets is-3" aria-busy="true" aria-label="Loading">
+            {[0, 1, 2].map(i => <span key={i} className="skel cm-wallet-skel" />)}
           </div>
-
-          <div className="card" style={{ padding: 20 }}>
-            <div className="card-hd"><h3>Solvency Overview</h3></div>
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 16 }}>
-              <div style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 16 }}>
-                <div style={{ fontSize: 11.5, color: 'var(--text3)', marginBottom: 6, fontWeight: 600 }}>TOTAL LIABILITIES</div>
-                <div style={{ fontFamily: "'IBM Plex Serif', serif", fontWeight: 800, fontSize: 22, color: 'var(--red)' }}>{loading ? '…' : fmt(data.totalCustomerSavings)}</div>
-                <div style={{ fontSize: 11.5, color: 'var(--text3)', marginTop: 4 }}>Customer savings owed</div>
-              </div>
-              <div style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 16 }}>
-                <div style={{ fontSize: 11.5, color: 'var(--text3)', marginBottom: 6, fontWeight: 600 }}>AGENT FLOAT COVERAGE</div>
-                <div style={{ fontFamily: "'IBM Plex Serif', serif", fontWeight: 800, fontSize: 22, color: data.totalAgentFloat >= data.totalCustomerSavings ? 'var(--green)' : 'var(--amber)' }}>{loading ? '…' : fmt(data.totalAgentFloat)}</div>
-                <div style={{ fontSize: 11.5, color: 'var(--text3)', marginTop: 4 }}>Agent wallet backing</div>
-              </div>
-              <div style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: 16 }}>
-                <div style={{ fontSize: 11.5, color: 'var(--text3)', marginBottom: 6, fontWeight: 600 }}>NET POSITION</div>
-                <div style={{ fontFamily: "'IBM Plex Serif', serif", fontWeight: 800, fontSize: 22, color: (data.totalAgentFloat - data.totalCustomerSavings) >= 0 ? 'var(--green)' : 'var(--red)' }}>
-                  {loading ? '…' : fmt(Math.abs(data.totalAgentFloat - data.totalCustomerSavings))}
-                  {!loading && <span style={{ fontSize: 12, fontFamily: 'IBM Plex Sans, sans-serif', marginLeft: 6 }}>{data.totalAgentFloat >= data.totalCustomerSavings ? 'surplus' : 'deficit'}</span>}
-                </div>
-                <div style={{ fontSize: 11.5, color: 'var(--text3)', marginTop: 4 }}>Float minus liabilities</div>
-              </div>
-            </div>
-          </div>
-        </>
-      )}
-
-      {activeTab === 'agents' && (
-        <div className="card">
-          <div className="card-hd">
-            <h3>Agent Wallet Balances</h3>
-            <input
-              type="text" placeholder="Search agents…" value={search}
-              onChange={e => setSearch(e.target.value)}
-              style={{ padding: '7px 12px', border: '1.5px solid var(--border)', borderRadius: 8, fontSize: 13, background: 'var(--surface)', color: 'var(--text)', outline: 'none', width: 220 }}
-            />
-          </div>
-          <div className="tbl-wrap">
-            <table>
-              <thead>
-                <tr>
-                  <th>Agent</th><th>Location</th><th>Wallet Balance</th><th>Commission</th><th>Today Activity</th><th>Last Funded</th><th>Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {loading && <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>Loading…</td></tr>}
-                {!loading && filteredAgents.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>No agents found</td></tr>}
-                {!loading && filteredAgents.map(a => {
-                  const initials = a.name.split(' ').map(w => w[0]).join('').slice(0, 2)
-                  const isLow = a.walletBalance < 10000
+        ) : platformFailed && !platform ? (
+          <section className="card"><LoadError what="platform wallets" onRetry={load} /></section>
+        ) : platform && (
+          <>
+            {platformFailed && <p className="a-alert a-alert-a cm-gap" role="status">We couldn’t refresh the platform wallets. These figures may be out of date.</p>}
+            {platform.wallets.length === 0 ? (
+              <section className="card cm-gap"><Empty icon="wallet" title="No platform wallets yet" text="Wallets are created the first time money moves into them, for example when capital is injected on the Treasury page." /></section>
+            ) : (
+              <div className="cm-wallets is-3">
+                {platform.wallets.map(w => {
+                  const meta = WALLET_META[w.type] ?? { icon: 'wallet' as IconName, label: w.type, desc: '' }
+                  const Icon = Icons[meta.icon]
                   return (
-                    <tr key={a.id}>
-                      <td>
-                        <div className="td-av">
-                          <div className={`av av-${isLow ? 'red' : 'blue'}`} style={{ overflow: 'hidden', padding: 0 }}>{a.photoUrl ? <img src={a.photoUrl} alt={a.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : initials}</div>
-                          <div><div className="td-name">{a.name}</div><div className="td-sub">{a.agentId}</div></div>
-                        </div>
-                      </td>
-                      <td style={{ color: 'var(--text2)' }}>{a.location}</td>
-                      <td style={{ fontFamily: "'IBM Plex Serif', serif", fontWeight: 700, color: isLow ? 'var(--red)' : 'var(--green)' }}>{fmt(a.walletBalance)}</td>
-                      <td style={{ color: 'var(--text2)' }}>{fmt(a.commissionBalance)}</td>
-                      <td style={{ color: 'var(--text3)' }}>{a.todayActivity > 0 ? fmt(a.todayActivity) : '—'}</td>
-                      <td style={{ color: 'var(--text3)', fontSize: 12 }}>{a.lastFunded ? new Date(a.lastFunded).toLocaleDateString('en-GB') : '—'}</td>
-                      <td><span className={`bdg ${a.status === 'Active' ? 'bdg-g' : 'bdg-r'}`}>{a.status}</span>{isLow && <span className="bdg bdg-r" style={{ marginLeft: 4 }}>Low</span>}</td>
-                    </tr>
+                    <article key={w.id} className="cm-wallet">
+                      <div className="cm-wallet-top"><span className="cm-wallet-ic" aria-hidden="true"><Icon size={20} /></span></div>
+                      <h3 className="cm-wallet-lbl">{meta.label}</h3>
+                      <div className="cm-wallet-val">{naira(w.balance)}</div>
+                      {meta.desc && <p className="cm-wallet-desc">{meta.desc}</p>}
+                      <div className="cm-chips">{chipsFor(w.type).map(c => <span key={c} className="cm-chip">{c}</span>)}</div>
+                    </article>
                   )
                 })}
-              </tbody>
-            </table>
-          </div>
-        </div>
+              </div>
+            )}
+
+            <section className="card" aria-labelledby="solv-hd">
+              <div className="card-hd"><h3 id="solv-hd">Solvency</h3></div>
+              <div className="cm-solv">
+                <div className="cm-solv-item">
+                  <div className="cm-solv-lbl">Owed to customers</div>
+                  <div className="cm-solv-val is-red">{naira(platform.totalCustomerSavings)}</div>
+                  <div className="cm-solv-sub">Customer savings in active plans</div>
+                </div>
+                <div className="cm-solv-item">
+                  <div className="cm-solv-lbl">Agent float backing it</div>
+                  <div className={`cm-solv-val${platform.totalAgentFloat >= platform.totalCustomerSavings ? '' : ' is-amber'}`}>{naira(platform.totalAgentFloat)}</div>
+                  <div className="cm-solv-sub">Total in agent wallets</div>
+                </div>
+                <div className="cm-solv-item">
+                  <div className="cm-solv-lbl">Net position</div>
+                  <div className={`cm-solv-val${net >= 0 ? '' : ' is-red'}`}>{net >= 0 ? '' : '−'}{naira(Math.abs(net))}</div>
+                  <div className="cm-solv-sub">{net >= 0 ? 'Surplus: float covers what’s owed' : 'Deficit: float is short of what’s owed'}</div>
+                </div>
+              </div>
+            </section>
+          </>
+        )
+      )}
+
+      {view === 'agents' && (
+        <section className="card" aria-label="Agent wallet balances">
+          {loading && !agentsData ? <TableSkeleton rows={8} cols={6} />
+            : agentsFailed && !agentsData ? <LoadError what="agent wallets" onRetry={load} />
+            : filteredAgents.length === 0 ? (
+              term ? <Empty icon="search" title={`No agents match “${search.trim()}”`} text="Check the spelling, or search by agent ID or location." />
+                : <Empty icon="customers" title="No agents yet" text="Agent wallets show here once agents are added." />
+            ) : (
+              <>
+                {agentsFailed && <p className="a-alert a-alert-a cm-gap" role="status">We couldn’t refresh agent wallets. These figures may be out of date.</p>}
+                <div className="tbl-wrap tbl-stack">
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Agent</th><th>Location</th><th className="num">Wallet</th><th className="num">Commission</th>
+                        <th className="num">Funded today</th><th>Last funded</th><th>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {filteredAgents.map(a => {
+                        const isLow = a.walletBalance < LOW_BALANCE
+                        return (
+                          <tr key={a.id}>
+                            <td>
+                              <div className="td-av">
+                                <Avatar name={a.name} photoUrl={a.photoUrl} tone={isLow ? 'red' : 'blue'} />
+                                <div><div className="td-name">{a.name}</div><div className="td-sub">{a.agentId}</div></div>
+                              </div>
+                            </td>
+                            <td data-label="Location" className="cm-sub2">{a.location || '—'}</td>
+                            <td className={`num cm-strong${isLow ? ' cm-neg' : ''}`} data-label="Wallet">{naira(a.walletBalance)}</td>
+                            <td className="num" data-label="Commission">{naira(a.commissionBalance)}</td>
+                            <td className="num" data-label="Funded today">{a.todayActivity > 0 ? naira(a.todayActivity) : <span className="cm-muted">—</span>}</td>
+                            <td data-label="Last funded" className="cm-nowrap cm-sub2">{a.lastFunded ? shortDate(a.lastFunded) : '—'}</td>
+                            <td data-label="Status">
+                              <span className="cm-badges">
+                                <span className={`bdg ${a.status === 'Active' ? 'bdg-g' : a.status === 'Suspended' ? 'bdg-r' : 'bdg-grey'}`}>{a.status}</span>
+                                {isLow && <span className="bdg bdg-a">Low balance</span>}
+                              </span>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+                <p className="cm-foot">Low balance means under {naira(LOW_BALANCE)}. {agentsData && `${naira(agentsData.totalWalletBalance)} across all agent wallets.`}</p>
+              </>
+            )}
+        </section>
       )}
     </>
   )

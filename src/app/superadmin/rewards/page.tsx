@@ -1,5 +1,11 @@
 'use client'
-import { useEffect, useState } from 'react'
+
+import { useCallback, useEffect, useState } from 'react'
+import { blockMinus, nonNegativeString } from '@/lib/numeric'
+import { Icons } from '@/components/ui/icons'
+import {
+  ConfirmModal, Empty, Field, LoadError, Modal, PageHeader, Pager, RowMenu, TableSkeleton, naira, shortDate, useToast,
+} from '../_components/admin-ui'
 
 interface RewardPromo {
   id: string; name: string; startDate: string; endDate: string
@@ -14,9 +20,31 @@ interface AgentReward {
   promo: { name: string }
 }
 
-function fmt(n: number) { return `₦${n.toLocaleString()}` }
-function fmtDate(s: string) { return new Date(s).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) }
+interface PromoForm {
+  name: string; startDate: string; endDate: string
+  offlineRewardAmount: string; onlineRewardAmount: string
+}
+type FormErrors = Partial<Record<keyof PromoForm, string>>
+
+const PAGE_SIZE = 25
+const EMPTY_FORM: PromoForm = { name: 'Registration Reward', startDate: '', endDate: '', offlineRewardAmount: '200', onlineRewardAmount: '500' }
+
 function isoDate(s: string) { return s ? new Date(s).toISOString().slice(0, 10) : '' }
+
+async function errorOf(res: Response, fallback: string) {
+  const d = await res.json().catch(() => ({})) as { error?: string }
+  return d.error ?? fallback
+}
+
+function validate(f: PromoForm): FormErrors {
+  const e: FormErrors = {}
+  if (!f.startDate) e.startDate = 'Choose the first day of the promo.'
+  if (!f.endDate) e.endDate = 'Choose the last day of the promo.'
+  else if (f.startDate && f.endDate < f.startDate) e.endDate = 'The end date must be on or after the start date.'
+  if (f.offlineRewardAmount.trim() === '' || !Number.isFinite(parseFloat(f.offlineRewardAmount))) e.offlineRewardAmount = 'Enter an amount. Use 0 for no reward.'
+  if (f.onlineRewardAmount.trim() === '' || !Number.isFinite(parseFloat(f.onlineRewardAmount))) e.onlineRewardAmount = 'Enter an amount. Use 0 for no reward.'
+  return e
+}
 
 export default function RewardsPage() {
   const [promos, setPromos] = useState<RewardPromo[]>([])
@@ -24,34 +52,46 @@ export default function RewardsPage() {
   const [totalAmount, setTotalAmount] = useState(0)
   const [totalCount, setTotalCount] = useState(0)
   const [loading, setLoading] = useState(true)
+  const [loaded, setLoaded] = useState(false)
+  const [failed, setFailed] = useState(false)
+  const [histPage, setHistPage] = useState(1)
+  const [toastNode, toast] = useToast()
+
+  // Create / edit: form, then a review step
   const [showForm, setShowForm] = useState(false)
+  const [step, setStep] = useState<'form' | 'review'>('form')
   const [editPromo, setEditPromo] = useState<RewardPromo | null>(null)
+  const [form, setForm] = useState<PromoForm>(EMPTY_FORM)
+  const [errors, setErrors] = useState<FormErrors>({})
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
-  const [msg, setMsg] = useState('')
 
-  const [form, setForm] = useState({
-    name: 'Registration Reward', startDate: '', endDate: '',
-    offlineRewardAmount: '200', onlineRewardAmount: '500',
-  })
+  // Activate / deactivate / delete
+  const [action, setAction] = useState<{ kind: 'toggle' | 'delete'; promo: RewardPromo } | null>(null)
+  const [actionBusy, setActionBusy] = useState(false)
+  const [actionError, setActionError] = useState('')
 
-  function load() {
-    setLoading(true)
-    fetch('/api/admin/rewards').then(r => r.json()).then(d => {
+  const load = useCallback(async () => {
+    setLoading(true); setFailed(false)
+    try {
+      const res = await fetch('/api/admin/rewards')
+      if (!res.ok) throw new Error()
+      const d = await res.json() as { promos?: RewardPromo[]; rewards?: AgentReward[]; totalAmount?: number; totalCount?: number }
       setPromos(d.promos ?? [])
       setRewards(d.rewards ?? [])
       setTotalAmount(d.totalAmount ?? 0)
       setTotalCount(d.totalCount ?? 0)
+      setLoaded(true)
+    } catch {
+      setFailed(true)
+    } finally {
       setLoading(false)
-    }).catch(() => setLoading(false))
-  }
-  useEffect(load, [])
+    }
+  }, [])
+  useEffect(() => { load() }, [load])
 
   function openNew() {
-    setEditPromo(null)
-    setForm({ name: 'Registration Reward', startDate: '', endDate: '', offlineRewardAmount: '200', onlineRewardAmount: '500' })
-    setErr('')
-    setShowForm(true)
+    setEditPromo(null); setForm(EMPTY_FORM); setErrors({}); setErr(''); setStep('form'); setShowForm(true)
   }
 
   function openEdit(p: RewardPromo) {
@@ -63,187 +103,265 @@ export default function RewardsPage() {
       offlineRewardAmount: String(p.offlineRewardAmount),
       onlineRewardAmount: String(p.onlineRewardAmount),
     })
-    setErr('')
-    setShowForm(true)
+    setErrors({}); setErr(''); setStep('form'); setShowForm(true)
+  }
+
+  function setField<K extends keyof PromoForm>(k: K, v: string) {
+    setForm(f => ({ ...f, [k]: v }))
+    setErrors(e => ({ ...e, [k]: undefined }))
+  }
+
+  function review() {
+    const e = validate(form)
+    setErrors(e)
+    if (Object.keys(e).length === 0) { setErr(''); setStep('review') }
   }
 
   async function savePromo() {
-    if (!form.startDate || !form.endDate) { setErr('Start and end dates required'); return }
+    if (!form.startDate || !form.endDate) { setErr('Start and end dates are required.'); setStep('form'); return }
     setSaving(true); setErr('')
     try {
       const url = editPromo ? `/api/admin/rewards/${editPromo.id}` : '/api/admin/rewards'
       const method = editPromo ? 'PATCH' : 'POST'
       const res = await fetch(url, { method, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(form) })
-      const data = await res.json()
-      if (!res.ok) { setErr(data.error ?? 'Failed'); setSaving(false); return }
-      setMsg(editPromo ? 'Promo updated.' : 'Promo created.')
+      if (!res.ok) { setErr(await errorOf(res, editPromo ? 'The promo wasn’t updated. Try again.' : 'The promo wasn’t created. Try again.')); return }
+      toast(editPromo ? `${form.name || 'Promo'} updated` : `${form.name || 'Promo'} created and switched on`, 'success')
       setShowForm(false)
       load()
-    } catch { setErr('Network error') }
-    setSaving(false)
+    } catch {
+      setErr('No connection. Check your internet and try again.')
+    } finally {
+      setSaving(false)
+    }
   }
 
-  async function toggleActive(p: RewardPromo) {
-    await fetch(`/api/admin/rewards/${p.id}`, {
-      method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ isActive: !p.isActive }),
-    })
-    load()
-  }
-
-  async function deletePromo(p: RewardPromo) {
-    if (!confirm(`Delete promo "${p.name}"? This cannot be undone.`)) return
-    await fetch(`/api/admin/rewards/${p.id}`, { method: 'DELETE' })
-    load()
+  async function runAction() {
+    if (!action) return
+    const p = action.promo
+    setActionBusy(true); setActionError('')
+    try {
+      const res = action.kind === 'toggle'
+        ? await fetch(`/api/admin/rewards/${p.id}`, {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ isActive: !p.isActive }),
+        })
+        : await fetch(`/api/admin/rewards/${p.id}`, { method: 'DELETE' })
+      if (!res.ok) {
+        setActionError(await errorOf(res, action.kind === 'delete'
+          ? 'The promo wasn’t deleted. If agents have already earned rewards from it, switch it off instead.'
+          : 'That didn’t go through. Try again.'))
+        return
+      }
+      toast(action.kind === 'delete' ? `${p.name} deleted` : p.isActive ? `${p.name} switched off` : `${p.name} switched on`, 'success')
+      setAction(null)
+      load()
+    } catch {
+      setActionError('No connection. Check your internet and try again.')
+    } finally {
+      setActionBusy(false)
+    }
   }
 
   const activePromo = promos.find(p => p.isActive)
+  const firstLoad = loading && !loaded
+  const histShown = rewards.slice((histPage - 1) * PAGE_SIZE, histPage * PAGE_SIZE)
+  const offlineNum = parseFloat(form.offlineRewardAmount) || 0
+  const onlineNum = parseFloat(form.onlineRewardAmount) || 0
 
   return (
-    <div style={{ maxWidth: 900, margin: '0 auto', padding: 16 }}>
-      {msg && <div style={{ background: 'var(--gl)', color: 'var(--g)', padding: '10px 14px', borderRadius: 10, marginBottom: 14, fontSize: 13 }}>{msg}</div>}
+    <>
+      <PageHeader
+        title="Rewards"
+        sub="While a promo is on, agents earn a reward for every customer they register."
+        actions={<button type="button" className="btn btn-green" onClick={openNew}><Icons.add size={18} aria-hidden="true" /> New promo</button>}
+      />
 
-      <div style={{ display: 'flex', gap: 12, marginBottom: 18 }}>
-        <div className="card" style={{ flex: 1, textAlign: 'center' }}>
-          <div style={{ fontSize: 11, color: 'var(--mu)', marginBottom: 4 }}>TOTAL REWARDS CREDITED</div>
-          <div style={{ fontSize: 24, fontWeight: 900, color: 'var(--g)' }}>{fmt(totalAmount)}</div>
-        </div>
-        <div className="card" style={{ flex: 1, textAlign: 'center' }}>
-          <div style={{ fontSize: 11, color: 'var(--mu)', marginBottom: 4 }}>TOTAL REWARDS ISSUED</div>
-          <div style={{ fontSize: 24, fontWeight: 900 }}>{totalCount}</div>
-        </div>
-        <div className="card" style={{ flex: 1, textAlign: 'center' }}>
-          <div style={{ fontSize: 11, color: 'var(--mu)', marginBottom: 4 }}>ACTIVE PROMO</div>
-          <div style={{ fontSize: 15, fontWeight: 800, color: activePromo ? 'var(--g)' : 'var(--mu)' }}>
-            {activePromo ? activePromo.name : 'None'}
-          </div>
-        </div>
-      </div>
-
-      <div className="card" style={{ marginBottom: 18 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
-          <div className="card-title" style={{ margin: 0 }}>Reward Promos</div>
-          <button className="btn btn-g" onClick={openNew} style={{ fontSize: 13 }}>+ New Promo</button>
-        </div>
-
-        {showForm && (
-          <div style={{ background: 'var(--bg)', border: '1px solid var(--br)', borderRadius: 12, padding: 20, marginBottom: 16 }}>
-            <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 14 }}>{editPromo ? 'Edit Promo' : 'New Promo'}</div>
-            {err && <div style={{ color: 'var(--rd)', fontSize: 13, marginBottom: 10 }}>{err}</div>}
-            <div className="a-form-row">
-              <label>Promo Name</label>
-              <input className="a-input" value={form.name} onChange={e => setForm(f => ({ ...f, name: e.target.value }))} placeholder="e.g. Registration Reward" />
+      {failed && !loaded ? (
+        <section className="card"><LoadError what="rewards" onRetry={load} /></section>
+      ) : (
+        <>
+          <div className="stats-grid am-stats-3">
+            <div className="stat">
+              <div className="stat-lbl">Rewards paid to agents</div>
+              <div className="stat-val">{firstLoad ? '—' : naira(totalAmount)}</div>
+              <div className="stat-sub">All time</div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 4 }}>
-              <div className="a-form-row">
-                <label>Start Date</label>
-                <input className="a-input" type="date" value={form.startDate} onChange={e => setForm(f => ({ ...f, startDate: e.target.value }))} />
-              </div>
-              <div className="a-form-row">
-                <label>End Date</label>
-                <input className="a-input" type="date" value={form.endDate} onChange={e => setForm(f => ({ ...f, endDate: e.target.value }))} />
-              </div>
+            <div className="stat">
+              <div className="stat-lbl">Rewards given</div>
+              <div className="stat-val">{firstLoad ? '—' : totalCount.toLocaleString('en-NG')}</div>
+              <div className="stat-sub">One per registered customer</div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
-              <div className="a-form-row">
-                <label>Offline Reg. Reward (₦)</label>
-                <input className="a-input" type="number" value={form.offlineRewardAmount} onChange={e => setForm(f => ({ ...f, offlineRewardAmount: e.target.value }))} placeholder="500" />
-                <div style={{ fontSize: 11, color: 'var(--mu)', marginTop: 4 }}>Agent enrolls customer via agent app</div>
-              </div>
-              <div className="a-form-row">
-                <label>Online Reg. Reward (₦)</label>
-                <input className="a-input" type="number" value={form.onlineRewardAmount} onChange={e => setForm(f => ({ ...f, onlineRewardAmount: e.target.value }))} placeholder="200" />
-                <div style={{ fontSize: 11, color: 'var(--mu)', marginTop: 4 }}>Customer self-enrolls via referral link</div>
-              </div>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="btn btn-out" onClick={() => setShowForm(false)} disabled={saving}>Cancel</button>
-              <button className="btn btn-g" onClick={savePromo} disabled={saving}>{saving ? 'Saving…' : editPromo ? 'Update' : 'Create'}</button>
+            <div className="stat">
+              <div className="stat-lbl">Promo running now</div>
+              <div className="stat-val am-active-name">{firstLoad ? '—' : activePromo ? activePromo.name : 'None'}</div>
+              <div className="stat-sub">{activePromo ? `Until ${shortDate(activePromo.endDate)}` : 'Agents aren’t earning rewards'}</div>
             </div>
           </div>
-        )}
 
-        {loading ? (
-          <div style={{ color: 'var(--mu)', fontSize: 13 }}>Loading…</div>
-        ) : promos.length === 0 ? (
-          <div style={{ color: 'var(--mu)', fontSize: 13, textAlign: 'center', padding: 24 }}>No promos yet. Create one to start rewarding agents.</div>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--br)' }}>
-                  {['Promo Name', 'Period', 'Offline', 'Online', 'Status', ''].map(h => (
-                    <th key={h} style={{ textAlign: 'left', padding: '6px 10px', fontWeight: 700, color: 'var(--mu)', fontSize: 11 }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {promos.map(p => (
-                  <tr key={p.id} style={{ borderBottom: '1px solid var(--br)' }}>
-                    <td style={{ padding: '10px 10px', fontWeight: 700 }}>{p.name}</td>
-                    <td style={{ padding: '10px 10px', color: 'var(--mu)' }}>{fmtDate(p.startDate)} – {fmtDate(p.endDate)}</td>
-                    <td style={{ padding: '10px 10px', color: 'var(--g)', fontWeight: 700 }}>{fmt(p.offlineRewardAmount)}</td>
-                    <td style={{ padding: '10px 10px', color: 'var(--g)', fontWeight: 700 }}>{fmt(p.onlineRewardAmount)}</td>
-                    <td style={{ padding: '10px 10px' }}>
-                      <span style={{ background: p.isActive ? 'var(--gl)' : 'var(--bg)', color: p.isActive ? 'var(--g)' : 'var(--mu)', padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700 }}>
-                        {p.isActive ? 'Active' : 'Inactive'}
-                      </span>
-                    </td>
-                    <td style={{ padding: '10px 10px' }}>
-                      <div style={{ display: 'flex', gap: 6 }}>
-                        <button className="btn btn-out" onClick={() => openEdit(p)} style={{ fontSize: 11, padding: '4px 10px' }}>Edit</button>
-                        <button className="btn btn-out" onClick={() => toggleActive(p)} style={{ fontSize: 11, padding: '4px 10px' }}>{p.isActive ? 'Deactivate' : 'Activate'}</button>
-                        <button onClick={() => deletePromo(p)} style={{ fontSize: 11, padding: '4px 10px', borderRadius: 8, border: '1px solid var(--rd)', background: 'var(--rdl)', color: 'var(--rd)', cursor: 'pointer', fontWeight: 700 }}>Delete</button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
+          <section className="card am-section" aria-labelledby="promos-h">
+            <div className="card-hd"><h3 id="promos-h">Promos</h3></div>
+            {firstLoad ? <TableSkeleton rows={3} cols={5} />
+              : promos.length === 0 ? <Empty icon="gift" title="No promos yet" text="Create one to start rewarding agents for new customers."
+                  action={<button type="button" className="btn btn-green" onClick={openNew}>New promo</button>} />
+              : (
+                <div className="tbl-wrap tbl-stack">
+                  <table>
+                    <thead>
+                      <tr><th>Promo</th><th>Runs</th><th className="num">Agent registers</th><th className="num">Customer self-registers</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr>
+                    </thead>
+                    <tbody>
+                      {promos.map(p => (
+                        <tr key={p.id}>
+                          <td className="td-name">{p.name}</td>
+                          <td className="am-muted am-nowrap" data-label="Runs">{shortDate(p.startDate)} to {shortDate(p.endDate)}</td>
+                          <td className="num am-strong" data-label="Agent registers">{naira(p.offlineRewardAmount)}</td>
+                          <td className="num am-strong" data-label="Customer self-registers">{naira(p.onlineRewardAmount)}</td>
+                          <td data-label="Status"><span className={`bdg ${p.isActive ? 'bdg-g' : 'bdg-grey'}`}>{p.isActive ? 'On' : 'Off'}</span></td>
+                          <td>
+                            <div className="a-row-actions">
+                              <button type="button" className="btn btn-sm btn-outline" onClick={() => openEdit(p)} aria-label={`Edit ${p.name}`}>Edit</button>
+                              <RowMenu label={`More actions for ${p.name}`} items={[
+                                { label: p.isActive ? 'Switch off' : 'Switch on', onSelect: () => { setActionError(''); setAction({ kind: 'toggle', promo: p }) } },
+                                { label: 'Delete promo', danger: true, onSelect: () => { setActionError(''); setAction({ kind: 'delete', promo: p }) } },
+                              ]} />
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+          </section>
 
-      <div className="card">
-        <div className="card-title">Recent Reward History</div>
-        {rewards.length === 0 ? (
-          <div style={{ color: 'var(--mu)', fontSize: 13, textAlign: 'center', padding: 24 }}>No rewards issued yet.</div>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-              <thead>
-                <tr style={{ borderBottom: '1px solid var(--br)' }}>
-                  {['Date', 'Agent', 'Customer', 'Type', 'Amount', 'Promo'].map(h => (
-                    <th key={h} style={{ textAlign: 'left', padding: '6px 10px', fontWeight: 700, color: 'var(--mu)', fontSize: 11 }}>{h}</th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rewards.map(r => (
-                  <tr key={r.id} style={{ borderBottom: '1px solid var(--br)' }}>
-                    <td style={{ padding: '10px 10px', color: 'var(--mu)' }}>{fmtDate(r.createdAt)}</td>
-                    <td style={{ padding: '10px 10px' }}>
-                      <div style={{ fontWeight: 700 }}>{r.agent.name}</div>
-                      <div style={{ fontSize: 11, color: 'var(--mu)' }}>{r.agent.agentId}</div>
-                    </td>
-                    <td style={{ padding: '10px 10px' }}>
-                      <div>{r.customer.firstName} {r.customer.lastName}</div>
-                      <div style={{ fontSize: 11, color: 'var(--mu)' }}>{r.customer.customerId}</div>
-                    </td>
-                    <td style={{ padding: '10px 10px' }}>
-                      <span style={{ background: r.type === 'online' ? '#e8f0fe' : 'var(--gl)', color: r.type === 'online' ? '#1a73e8' : 'var(--g)', padding: '3px 10px', borderRadius: 20, fontSize: 11, fontWeight: 700 }}>
-                        {r.type === 'online' ? 'Online' : 'Offline'}
-                      </span>
-                    </td>
-                    <td style={{ padding: '10px 10px', fontWeight: 700, color: 'var(--g)' }}>{fmt(r.amount)}</td>
-                    <td style={{ padding: '10px 10px', color: 'var(--mu)', fontSize: 12 }}>{r.promo.name}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </div>
-    </div>
+          <section className="card" aria-labelledby="hist-h">
+            <div className="card-hd">
+              <div>
+                <h3 id="hist-h">Recent rewards</h3>
+                <p className="am-card-sub">The latest 100 rewards.</p>
+              </div>
+            </div>
+            {firstLoad ? <TableSkeleton rows={5} cols={5} />
+              : rewards.length === 0 ? <Empty icon="history" title="No rewards given yet" text="Rewards show here when an agent registers a customer while a promo is on." />
+              : (
+                <>
+                  <div className="tbl-wrap tbl-stack">
+                    <table>
+                      <thead>
+                        <tr><th>Agent</th><th>Customer</th><th>How they joined</th><th className="num">Amount</th><th>Promo</th><th>Date</th></tr>
+                      </thead>
+                      <tbody>
+                        {histShown.map(r => (
+                          <tr key={r.id}>
+                            <td>
+                              <span className="td-name ui-block">{r.agent.name}</span>
+                              <span className="td-sub ui-block">{r.agent.agentId}</span>
+                            </td>
+                            <td data-label="Customer">
+                              <span className="ui-block">{r.customer.firstName} {r.customer.lastName}</span>
+                              <span className="td-sub ui-block">{r.customer.customerId}</span>
+                            </td>
+                            <td data-label="How they joined"><span className={`bdg ${r.type === 'online' ? 'bdg-b' : 'bdg-g'}`}>{r.type === 'online' ? 'Self-registered' : 'Agent registered'}</span></td>
+                            <td className="num am-strong" data-label="Amount">{naira(r.amount)}</td>
+                            <td className="am-muted" data-label="Promo">{r.promo.name}</td>
+                            <td className="am-muted am-nowrap" data-label="Date">{shortDate(r.createdAt)}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                  <Pager page={histPage} pageSize={PAGE_SIZE} total={rewards.length} onPage={setHistPage} />
+                </>
+              )}
+          </section>
+          {failed && loaded && <p className="a-alert a-alert-a am-refresh-err" role="status">We couldn’t refresh rewards. What you see may be out of date. <button type="button" className="card-link" onClick={load}>Try again</button></p>}
+        </>
+      )}
+
+      {showForm && (
+        <Modal error={err || undefined} icon="gift"
+          title={step === 'review' ? 'Check the promo' : editPromo ? `Edit ${editPromo.name}` : 'New promo'}
+          sub={step === 'form' ? 'Set how much agents earn for each new customer, and when.' : undefined}
+          onClose={() => setShowForm(false)} busy={saving}
+          footer={step === 'form' ? <>
+            <button type="button" className="btn btn-outline" onClick={() => setShowForm(false)}>Cancel</button>
+            <button type="button" className="btn btn-green" onClick={review}>Continue</button>
+          </> : <>
+            <button type="button" className="btn btn-outline" onClick={() => setStep('form')} disabled={saving}>Back</button>
+            <button type="button" className="btn btn-green" onClick={savePromo} disabled={saving}>{saving ? 'Saving…' : editPromo ? 'Save changes' : 'Create promo'}</button>
+          </>}>
+          {step === 'form' ? (
+            <form onSubmit={e => { e.preventDefault(); review() }} noValidate>
+              <Field id="pr-name" label="Promo name">
+                <input id="pr-name" className="a-input" value={form.name} onChange={e => setField('name', e.target.value)} placeholder="e.g. Registration Reward" />
+              </Field>
+              <div className="am-2col">
+                <Field id="pr-start" label="Starts" error={errors.startDate}>
+                  <input id="pr-start" className="a-input" type="date" value={form.startDate} aria-invalid={!!errors.startDate} onChange={e => setField('startDate', e.target.value)} />
+                </Field>
+                <Field id="pr-end" label="Ends" error={errors.endDate}>
+                  <input id="pr-end" className="a-input" type="date" value={form.endDate} min={form.startDate || undefined} aria-invalid={!!errors.endDate} onChange={e => setField('endDate', e.target.value)} />
+                </Field>
+              </div>
+              <div className="am-2col">
+                <Field id="pr-off" label="Agent registers a customer" hint="In person, in the agent app." error={errors.offlineRewardAmount}>
+                  <div className="am-money">
+                    <span aria-hidden="true">₦</span>
+                    <input id="pr-off" className="a-input" type="tel" inputMode="decimal" autoComplete="off" placeholder="200" value={form.offlineRewardAmount}
+                      aria-invalid={!!errors.offlineRewardAmount} onKeyDown={blockMinus} onChange={e => setField('offlineRewardAmount', nonNegativeString(e.target.value))} />
+                  </div>
+                </Field>
+                <Field id="pr-on" label="Customer self-registers" hint="Through the agent’s referral link." error={errors.onlineRewardAmount}>
+                  <div className="am-money">
+                    <span aria-hidden="true">₦</span>
+                    <input id="pr-on" className="a-input" type="tel" inputMode="decimal" autoComplete="off" placeholder="500" value={form.onlineRewardAmount}
+                      aria-invalid={!!errors.onlineRewardAmount} onKeyDown={blockMinus} onChange={e => setField('onlineRewardAmount', nonNegativeString(e.target.value))} />
+                  </div>
+                </Field>
+              </div>
+            </form>
+          ) : (
+            <>
+              <dl className="dlg-ledger">
+                <div><dt>Promo</dt><dd>{form.name || 'Registration Reward'}</dd></div>
+                <div><dt>Runs</dt><dd>{shortDate(form.startDate)} to {shortDate(form.endDate)}</dd></div>
+                <div><dt>Agent registers a customer</dt><dd className="dlg-strong">{naira(offlineNum)}</dd></div>
+                <div><dt>Customer self-registers</dt><dd className="dlg-strong">{naira(onlineNum)}</dd></div>
+              </dl>
+              <p className="dlg-note">
+                {editPromo
+                  ? 'New amounts apply to customers registered from now on. Rewards already given don’t change.'
+                  : 'The promo is switched on as soon as you create it. Agents are credited automatically for each new customer.'}
+              </p>
+            </>
+          )}
+        </Modal>
+      )}
+
+      {action?.kind === 'toggle' && (
+        <ConfirmModal icon="gift"
+          title={action.promo.isActive ? `Switch off ${action.promo.name}?` : `Switch on ${action.promo.name}?`}
+          body={action.promo.isActive
+            ? <>Agents stop earning rewards from this promo straight away. Rewards already given stay.</>
+            : <>Agents earn {naira(action.promo.offlineRewardAmount)} for each customer they register and {naira(action.promo.onlineRewardAmount)} for each self-registered customer, from {shortDate(action.promo.startDate)} to {shortDate(action.promo.endDate)}.</>}
+          confirmLabel={action.promo.isActive ? 'Switch off' : 'Switch on'}
+          danger={action.promo.isActive}
+          busy={actionBusy} error={actionError}
+          onConfirm={runAction} onClose={() => setAction(null)}
+        />
+      )}
+
+      {action?.kind === 'delete' && (
+        <ConfirmModal
+          title={`Delete ${action.promo.name}?`}
+          body={<>This can’t be undone. To stop rewards but keep the record, switch it off instead.</>}
+          confirmLabel="Delete promo" danger
+          busy={actionBusy} error={actionError}
+          onConfirm={runAction} onClose={() => setAction(null)}
+        />
+      )}
+
+      {toastNode}
+    </>
   )
 }

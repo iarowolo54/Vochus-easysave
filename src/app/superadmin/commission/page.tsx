@@ -1,7 +1,12 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
+import Link from 'next/link'
 import { blockMinus, nonNegativeString } from '@/lib/numeric'
+import { Icons } from '@/components/ui/icons'
+import {
+  Avatar, ConfirmModal, Empty, Field, LoadError, Modal, PageHeader, Pager, TableSkeleton, naira, nairaKobo, useToast,
+} from '../_components/admin-ui'
 
 interface LeaderboardEntry {
   rank: number
@@ -21,367 +26,506 @@ interface PageData {
   leaderboard: LeaderboardEntry[]
 }
 
-const TERM_COLORS: Record<number, string> = { 30: 'var(--green)', 60: 'var(--blue)', 90: 'var(--amber)', 180: 'var(--purple)' }
-const TERM_ICONS: Record<number, string> = { 30: '⚡', 60: '📅', 90: '🗓️', 180: '🏦' }
-const TERM_LABELS: Record<number, string> = { 30: 'Short-term', 60: 'Standard', 90: 'Medium-term', 180: 'Long-term' }
-const DEFAULT_RATES: Record<number, number> = { 30: 5, 60: 8, 90: 12, 180: 18 }
-const DEFAULT_MAX: Record<number, number> = { 30: 50000, 60: 100000, 90: 200000, 180: 500000 }
+const TERMS = [30, 60, 90, 180] as const
+type Term = typeof TERMS[number]
+const TERM_LABELS: Record<Term, string> = { 30: 'Short term', 60: 'Standard', 90: 'Medium term', 180: 'Long term' }
+const DEFAULT_RATES: Record<Term, number> = { 30: 5, 60: 8, 90: 12, 180: 18 }
 const DEFAULT_COMM = { agentSavings: 0.4, agentLoan: 1.0, agentRepay: 0.5, platformSavings: 1.6, platformLoan: 5.0, platformPenalty: 2.0 }
+type CommRates = typeof DEFAULT_COMM
+type CommKey = keyof CommRates
+
+const COMM_FIELDS: { key: CommKey; group: 'agent' | 'platform'; label: string; example: (v: number) => string }[] = [
+  { key: 'agentSavings', group: 'agent', label: 'Savings commission', example: v => `Per savings deposit. On ₦100,000 the agent earns ${nairaKobo(1000 * v)}.` },
+  { key: 'agentLoan', group: 'agent', label: 'Loan commission', example: v => `Per loan paid out. On a ₦50,000 loan the agent earns ${nairaKobo(500 * v)}.` },
+  { key: 'agentRepay', group: 'agent', label: 'Repayment commission', example: v => `Per repayment. On ₦33,600 repaid the agent earns ${nairaKobo(336 * v)}.` },
+  { key: 'platformSavings', group: 'platform', label: 'Savings platform fee', example: v => `Per savings deposit. On ₦100,000 the platform keeps ${nairaKobo(1000 * v)}.` },
+  { key: 'platformLoan', group: 'platform', label: 'Platform share of loan interest', example: v => `Of interest earned. On ₦3,600 of interest the platform keeps ${nairaKobo(36 * v)}.` },
+  { key: 'platformPenalty', group: 'platform', label: 'Late repayment penalty', example: v => `Per day late. ₦50,000 overdue for 3 days costs ${nairaKobo(50000 * v / 100 * 3)}.` },
+]
+const commLabel = (k: CommKey) => COMM_FIELDS.find(f => f.key === k)?.label ?? k
 
 const PAGE_SIZE = 25
+
+type Drafts<K extends string | number> = Record<K, string>
+const toDrafts = <K extends string | number>(o: Record<K, number>) =>
+  Object.fromEntries(Object.entries(o).map(([k, v]) => [k, String(v)])) as Drafts<K>
+/** A valid percentage 0–100, or null. */
+const pct = (s: string) => { const n = parseFloat(s); return s.trim() !== '' && Number.isFinite(n) && n >= 0 && n <= 100 ? n : null }
+
+type Confirm =
+  | { kind: 'comm' }
+  | { kind: 'commReset' }
+  | { kind: 'loan' }
+  | { kind: 'pay'; agent: LeaderboardEntry }
+
+type BatchResult = { id: string; name: string; amount: number; ok: boolean; error?: string }
+
+async function errorOf(res: Response, fallback: string) {
+  const d = await res.json().catch(() => ({})) as { error?: string }
+  return d.error ?? fallback
+}
+
+function PctInput({ id, value, invalid, onChange, label }: { id: string; value: string; invalid: boolean; onChange: (v: string) => void; label?: string }) {
+  return (
+    <div className="am-pct">
+      <input id={id} className="a-input" type="tel" inputMode="decimal" autoComplete="off" value={value} aria-invalid={invalid} aria-label={label}
+        onKeyDown={blockMinus} onChange={e => onChange(nonNegativeString(e.target.value))} />
+      <span aria-hidden="true">%</span>
+    </div>
+  )
+}
 
 export default function CommissionPage() {
   const [data, setData] = useState<PageData>({ totalPending: 0, totalDisbursed: 0, leaderboard: [] })
   const [lbPage, setLbPage] = useState(1)
   const [loading, setLoading] = useState(true)
-  const [toast, setToast] = useState('')
-  const [payingOut, setPayingOut] = useState<string | null>(null)
-  const [savingLoan, setSavingLoan] = useState(false)
-  const [savingComm, setSavingComm] = useState(false)
+  const [boardFailed, setBoardFailed] = useState(false)
+  const [commFailed, setCommFailed] = useState(false)
+  const [loanFailed, setLoanFailed] = useState(false)
+  const [commLoaded, setCommLoaded] = useState(false)
+  const [loanLoaded, setLoanLoaded] = useState(false)
+  // Drafts are filled from the server once; later reloads (after a payout) mustn't wipe unsaved edits.
+  const commInit = useRef(false)
+  const loanInit = useRef(false)
+  const [toastNode, toast] = useToast()
 
-  const [comm, setComm] = useState(DEFAULT_COMM)
-  const [loanRates, setLoanRates] = useState({ ...DEFAULT_RATES })
-  const [loanMax, setLoanMax] = useState({ ...DEFAULT_MAX })
-  const [loanActive, setLoanActive] = useState<Record<number, boolean>>({ 30: true, 60: true, 90: true, 180: true })
+  const [savedComm, setSavedComm] = useState<CommRates>(DEFAULT_COMM)
+  const [comm, setComm] = useState<Drafts<CommKey>>(toDrafts(DEFAULT_COMM))
+  const [savedLoan, setSavedLoan] = useState<Record<Term, number>>({ ...DEFAULT_RATES })
+  const [loanRates, setLoanRates] = useState<Drafts<Term>>(toDrafts(DEFAULT_RATES))
   const [lastSavedComm, setLastSavedComm] = useState('')
   const [lastSavedLoan, setLastSavedLoan] = useState('')
 
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 4000) }
+  const [confirm, setConfirm] = useState<Confirm | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [confirmError, setConfirmError] = useState('')
+
+  const [batch, setBatch] = useState<{ step: 'confirm' | 'running' | 'done'; results: BatchResult[] } | null>(null)
+
   const nowStr = () => new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
 
   const load = useCallback(async () => {
-    setLoading(true)
-    const [commRes, ratesRes, commRatesRes] = await Promise.all([
-      fetch('/api/admin/commission'),
-      fetch('/api/admin/interest-rates'),
-      fetch('/api/admin/commission/rates'),
+    setLoading(true); setBoardFailed(false); setCommFailed(false); setLoanFailed(false)
+    const get = (url: string) => fetch(url).then(r => r.ok ? r.json() as Promise<unknown> : null).catch(() => null)
+    const [commD, ratesD, commRatesD] = await Promise.all([
+      get('/api/admin/commission'),
+      get('/api/admin/interest-rates'),
+      get('/api/admin/commission/rates'),
     ])
-    if (commRes.ok) { const d = await commRes.json(); setData(d) }
-    if (ratesRes.ok) {
-      const { rates } = await ratesRes.json()
-      if (Array.isArray(rates)) {
-        const rateMap: Record<number, number> = {}
-        rates.forEach((r: { durationDays: number; rate: number }) => { rateMap[r.durationDays] = r.rate })
-        setLoanRates(prev => ({ ...prev, ...rateMap }))
-      }
+
+    const board = commD as Partial<PageData> | null
+    setBoardFailed(!board)
+    if (board) setData({ totalPending: board.totalPending ?? 0, totalDisbursed: board.totalDisbursed ?? 0, leaderboard: board.leaderboard ?? [] })
+
+    const loan = ratesD as { rates?: { durationDays: number; rate: number }[] } | null
+    setLoanFailed(!loan || !Array.isArray(loan.rates))
+    if (loan && Array.isArray(loan.rates)) {
+      const next: Record<Term, number> = { ...DEFAULT_RATES }
+      loan.rates.forEach(r => { if ((TERMS as readonly number[]).includes(r.durationDays)) next[r.durationDays as Term] = r.rate })
+      setSavedLoan(next); setLoanLoaded(true)
+      if (!loanInit.current) { loanInit.current = true; setLoanRates(toDrafts(next)) }
     }
-    if (commRatesRes.ok) {
-      const { rates } = await commRatesRes.json()
-      if (rates) setComm(prev => ({ ...prev, ...rates }))
+
+    const cr = commRatesD as { rates?: Partial<CommRates> } | null
+    setCommFailed(!cr)
+    if (cr) {
+      const next = { ...DEFAULT_COMM, ...(cr.rates ?? {}) }
+      setSavedComm(next); setCommLoaded(true)
+      if (!commInit.current) { commInit.current = true; setComm(toDrafts(next)) }
     }
     setLoading(false)
   }, [])
 
   useEffect(() => { load() }, [load])
 
-  async function handleSaveLoanRates() {
-    setSavingLoan(true)
-    const rates = ([30, 60, 90, 180] as const).map(d => ({ durationDays: d, rate: loanRates[d] }))
-    const res = await fetch('/api/admin/interest-rates', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ rates }),
-    })
-    setSavingLoan(false)
-    if (res.ok) { setLastSavedLoan(`Last saved: Today, ${nowStr()}`); showToast('✅ Loan rates saved successfully') }
-    else showToast('Failed to save loan rates')
+  // Commission rates: parsed drafts, validity and what changed
+  const commParsed = Object.fromEntries(COMM_FIELDS.map(f => [f.key, pct(comm[f.key])])) as Record<CommKey, number | null>
+  const commValid = COMM_FIELDS.every(f => commParsed[f.key] !== null)
+  const commChanges = COMM_FIELDS.filter(f => commParsed[f.key] !== savedComm[f.key])
+  const valOr = (k: CommKey) => commParsed[k] ?? savedComm[k]
+  const totalTakeRate = (valOr('agentSavings') + valOr('platformSavings')).toFixed(1)
+  const effectiveLoanCost = (valOr('agentLoan') + valOr('platformLoan')).toFixed(1)
+
+  const loanParsed = Object.fromEntries(TERMS.map(t => [t, pct(loanRates[t])])) as Record<Term, number | null>
+  const loanValid = TERMS.every(t => loanParsed[t] !== null)
+  const loanChanges = TERMS.filter(t => loanParsed[t] !== savedLoan[t])
+  const maxLoanRate = Math.max(...TERMS.map(t => loanParsed[t] ?? 0))
+
+  const owed = data.leaderboard.filter(a => a.commissionBalance > 0)
+  const owedTotal = owed.reduce((s, a) => s + a.commissionBalance, 0)
+
+  function openConfirm(c: Confirm) { setConfirmError(''); setConfirm(c) }
+
+  async function saveCommRates(rates: CommRates, done: string) {
+    setBusy(true); setConfirmError('')
+    try {
+      const res = await fetch('/api/admin/commission/rates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rates }) })
+      if (!res.ok) { setConfirmError(await errorOf(res, 'The rates weren’t saved. Nothing changed. Try again.')); return }
+      setSavedComm(rates); setComm(toDrafts(rates))
+      setLastSavedComm(`Saved at ${nowStr()}`)
+      setConfirm(null)
+      toast(done, 'success')
+    } catch {
+      setConfirmError('No connection. Check your internet and try again.')
+    } finally {
+      setBusy(false)
+    }
   }
 
-  const fmt = (n: number) => `₦${n.toLocaleString('en-NG', { minimumFractionDigits: 0 })}`
-  const fmtK = (n: number) => n >= 1000000 ? `₦${(n / 1000000).toFixed(2)}M` : n >= 1000 ? `₦${(n / 1000).toFixed(0)}K` : fmt(n)
-  const totalTakeRate = (comm.agentSavings + comm.platformSavings).toFixed(1)
-  const effectiveLoanCost = (comm.agentLoan + comm.platformLoan).toFixed(1)
-  const maxLoanRate = Math.max(...Object.values(loanRates))
-  const rankMedal = (r: number) => r === 1 ? '🥇' : r === 2 ? '🥈' : r === 3 ? '🥉' : `${r}`
+  async function handleSaveLoanRates() {
+    if (!loanValid) return
+    setBusy(true); setConfirmError('')
+    const rates = TERMS.map(d => ({ durationDays: d, rate: loanParsed[d] as number }))
+    try {
+      const res = await fetch('/api/admin/interest-rates', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ rates }),
+      })
+      if (!res.ok) { setConfirmError(await errorOf(res, 'The loan rates weren’t saved. Nothing changed. Try again.')); return }
+      const next = Object.fromEntries(rates.map(r => [r.durationDays, r.rate])) as Record<Term, number>
+      setSavedLoan(next)
+      setLastSavedLoan(`Saved at ${nowStr()}`)
+      setConfirm(null)
+      toast('Loan interest rates saved. New loan requests use them from now on.', 'success')
+    } catch {
+      setConfirmError('No connection. Check your internet and try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
 
-  async function handlePayout(agentId: string, name: string, amount: number) {
-    setPayingOut(agentId)
+  async function payOne(agentId: string) {
     const res = await fetch('/api/admin/wallets/commission-payout', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ agentId }),
     })
-    setPayingOut(null)
-    if (res.ok) { showToast(`💸 ${fmt(amount)} paid to ${name}`); load() }
-    else { const d = res.ok ? await res.json() : {}; showToast((d as { error?: string }).error ?? 'Payout failed') }
+    if (!res.ok) return { ok: false as const, error: await errorOf(res, 'Payout failed') }
+    const d = await res.json().catch(() => ({})) as { amount?: number }
+    return { ok: true as const, amount: d.amount }
   }
+
+  async function handlePayout(a: LeaderboardEntry) {
+    setBusy(true); setConfirmError('')
+    try {
+      const r = await payOne(a.id)
+      if (!r.ok) { setConfirmError(r.error); return }
+      setConfirm(null)
+      toast(`${naira(r.amount ?? a.commissionBalance)} commission paid out to ${a.name}`, 'success')
+      load()
+    } catch {
+      setConfirmError('No connection. We can’t tell if the payout went through, so reload before trying again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  // One at a time, so SQLite isn't hit with parallel writes and each result is clear.
+  async function runBatch() {
+    const targets = owed
+    setBatch({ step: 'running', results: [] })
+    const results: BatchResult[] = []
+    for (const a of targets) {
+      try {
+        const r = await payOne(a.id)
+        results.push(r.ok ? { id: a.id, name: a.name, amount: r.amount ?? a.commissionBalance, ok: true } : { id: a.id, name: a.name, amount: a.commissionBalance, ok: false, error: r.error })
+      } catch {
+        results.push({ id: a.id, name: a.name, amount: a.commissionBalance, ok: false, error: 'No connection' })
+      }
+      setBatch({ step: 'running', results: [...results] })
+    }
+    setBatch({ step: 'done', results })
+    load()
+  }
+
+  const firstLoad = loading && !data.leaderboard.length && !boardFailed
+  const paidCount = batch?.results.filter(r => r.ok).length ?? 0
+  const paidSum = batch?.results.filter(r => r.ok).reduce((s, r) => s + r.amount, 0) ?? 0
+  const failedResults = batch?.results.filter(r => !r.ok) ?? []
 
   return (
     <>
-      <div className="pg-hd">
-        <div>
-          <h1>Commission Management</h1>
-          <p>Track, approve and disburse agent commissions</p>
-        </div>
-        <button className="btn btn-green btn-sm" onClick={() => {
-          data.leaderboard.filter(a => a.commissionBalance > 0).forEach(a => handlePayout(a.id, a.name, a.commissionBalance))
-        }}>💸 Batch Payout</button>
-      </div>
+      <PageHeader
+        title="Commission"
+        sub="Set what agents and the platform earn, set loan interest, and pay agents what they’re owed."
+        actions={<button type="button" className="btn btn-green" disabled={!owed.length || loading} onClick={() => setBatch({ step: 'confirm', results: [] })}>
+          <Icons.commission size={18} aria-hidden="true" /> Pay all owed commission
+        </button>}
+      />
 
-      <div className="stats-grid" style={{ gridTemplateColumns: 'repeat(3,1fr)' }}>
+      <div className="stats-grid am-stats-3">
         <div className="stat">
-          <span className="stat-ic">🏅</span>
-          <div className="stat-lbl">Total Commission</div>
-          <div className="stat-val green">{loading ? '…' : fmtK(data.totalPending + data.totalDisbursed)}</div>
-          <div className="stat-sub">{data.leaderboard.length} agents</div>
+          <div className="stat-lbl">Total commission earned</div>
+          <div className="stat-val">{firstLoad ? '—' : naira(data.totalPending + data.totalDisbursed)}</div>
+          <div className="stat-sub">{data.leaderboard.length.toLocaleString('en-NG')} agents</div>
         </div>
         <div className="stat">
-          <span className="stat-ic">⏳</span>
-          <div className="stat-lbl">Pending Payout</div>
-          <div className="stat-val amber">{loading ? '…' : fmt(data.totalPending)}</div>
-          <div className="stat-sub">{data.leaderboard.filter(a => a.commissionBalance > 0).length} agents awaiting</div>
+          <div className="stat-lbl">Waiting to be paid</div>
+          <div className={`stat-val${data.totalPending > 0 ? ' amber' : ''}`}>{firstLoad ? '—' : naira(data.totalPending)}</div>
+          <div className="stat-sub">{owed.length.toLocaleString('en-NG')} agent{owed.length === 1 ? '' : 's'} owed</div>
         </div>
         <div className="stat">
-          <span className="stat-ic">✅</span>
-          <div className="stat-lbl">Disbursed</div>
-          <div className="stat-val blue">{loading ? '…' : fmtK(data.totalDisbursed)}</div>
-          <div className="stat-sub">{data.leaderboard.filter(a => a.commissionBalance === 0).length} agents paid</div>
+          <div className="stat-lbl">Paid out</div>
+          <div className="stat-val">{firstLoad ? '—' : naira(data.totalDisbursed)}</div>
+          <div className="stat-sub">All time</div>
         </div>
       </div>
 
-      {/* Commission Rate Settings */}
-      <div className="card" style={{ marginBottom: 20 }}>
+      {/* Commission rates */}
+      <section className="card am-section" aria-labelledby="comm-h">
         <div className="card-hd">
-          <h3>Commission Rate Settings</h3>
-          <span style={{ fontSize: 12, color: 'var(--text3)', fontWeight: 400 }}>Configure rates for Savings &amp; Loan products</span>
+          <div>
+            <h3 id="comm-h">Commission rates</h3>
+            <p className="am-card-sub">Used for every new savings deposit, loan and repayment.</p>
+          </div>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 20 }}>
-          {/* Agent Commission */}
-          <div style={{ background: 'var(--surface2)', border: '1.5px solid var(--border)', borderRadius: 'var(--r)', padding: 20 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-              <div style={{ width: 36, height: 36, borderRadius: 10, background: 'var(--green-lt)', border: '1px solid var(--border2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17 }}>🤝</div>
-              <div>
-                <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text)' }}>Agent Commission</div>
-                <div style={{ fontSize: 11.5, color: 'var(--text3)' }}>Applied per agent on verified transactions</div>
+        {!commLoaded ? (commFailed ? <LoadError what="commission rates" onRetry={load} /> : <TableSkeleton rows={3} cols={3} />)
+          : (
+            <>
+              <div className="am-rate-groups">
+                {(['agent', 'platform'] as const).map(group => (
+                  <div key={group} className="am-rate-group">
+                    <div className="am-rate-group-hd">
+                      <span className="row-ic" aria-hidden="true">{group === 'agent' ? <Icons.customers size={18} /> : <Icons.treasury size={18} />}</span>
+                      <div>
+                        <h4>{group === 'agent' ? 'Agent commission' : 'Platform fees'}</h4>
+                        <p>{group === 'agent' ? 'Paid to the agent on verified transactions.' : 'Kept by Vochus.'}</p>
+                      </div>
+                    </div>
+                    {COMM_FIELDS.filter(f => f.group === group).map(f => {
+                      const v = commParsed[f.key]
+                      return (
+                        <Field key={f.key} id={`c-${f.key}`} label={f.label} error={v === null ? 'Enter a rate from 0 to 100.' : undefined} hint={f.example(v ?? 0)}>
+                          <PctInput id={`c-${f.key}`} value={comm[f.key]} invalid={v === null} onChange={s => setComm(c => ({ ...c, [f.key]: s }))} />
+                        </Field>
+                      )
+                    })}
+                  </div>
+                ))}
               </div>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              {([
-                { key: 'agentSavings', label: 'Savings Commission Rate', sub: 'per savings txn', preview: (v: number) => `On ₦100,000 savings → <strong style="color:var(--green)">₦${(1000 * v).toFixed(2)}</strong> agent commission` },
-                { key: 'agentLoan', label: 'Loan Disbursement Commission Rate', sub: 'per loan issued', preview: (v: number) => `On ₦50,000 loan → <strong style="color:var(--green)">₦${(500 * v).toFixed(2)}</strong> agent commission` },
-                { key: 'agentRepay', label: 'Loan Repayment Commission Rate', sub: 'per repayment', preview: (v: number) => `On ₦33,600 repayment → <strong style="color:var(--green)">₦${(336 * v).toFixed(2)}</strong> agent commission` },
-              ] as { key: keyof typeof DEFAULT_COMM; label: string; sub: string; preview: (v: number) => string }[]).map(({ key, label, sub, preview }) => (
-                <div key={key}>
-                  <label style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text2)', textTransform: 'uppercase' as const, letterSpacing: '.8px', display: 'block', marginBottom: 6 }}>{label}</label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', border: '1.5px solid var(--border)', borderRadius: 9, background: 'var(--surface)', overflow: 'hidden' }}>
-                      <input type="tel" inputMode="decimal" value={comm[key]} onKeyDown={blockMinus}
-                        onChange={e => setComm(c => ({ ...c, [key]: Math.max(0, parseFloat(nonNegativeString(e.target.value)) || 0) }))}
-                        style={{ flex: 1, border: 'none', outline: 'none', padding: '9px 12px', fontSize: 14, fontFamily: 'IBM Plex Sans, sans-serif', background: 'transparent', color: 'var(--text)' }} />
-                      <span style={{ padding: '0 12px', color: 'var(--text3)', fontSize: 13, fontWeight: 600, borderLeft: '1px solid var(--border)', background: 'var(--surface2)', alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>%</span>
-                    </div>
-                    <div style={{ fontSize: 11.5, color: 'var(--text3)', whiteSpace: 'nowrap' }}>{sub}</div>
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 5 }} dangerouslySetInnerHTML={{ __html: preview(comm[key]) }} />
+              <div className="am-foot">
+                <div className="am-foot-info">
+                  <span>Total take on savings: <strong>{totalTakeRate}%</strong></span>
+                  <span>Loan cost to customer: <strong>{effectiveLoanCost}%</strong></span>
+                  {lastSavedComm && <span>{lastSavedComm}</span>}
                 </div>
-              ))}
-            </div>
-          </div>
-
-          {/* Platform Commission */}
-          <div style={{ background: 'var(--surface2)', border: '1.5px solid var(--border)', borderRadius: 'var(--r)', padding: 20 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
-              <div style={{ width: 36, height: 36, borderRadius: 10, background: 'var(--amber-lt)', border: '1px solid rgba(200,132,26,.25)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 17 }}>🛡️</div>
-              <div>
-                <div style={{ fontSize: 13.5, fontWeight: 700, color: 'var(--text)' }}>Platform Commission</div>
-                <div style={{ fontSize: 11.5, color: 'var(--text3)' }}>Platform revenue retained by Super Admin</div>
-              </div>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-              {([
-                { key: 'platformSavings', label: 'Savings Platform Fee Rate', sub: 'per savings txn', color: 'var(--amber)', preview: (v: number) => `On ₦100,000 savings → <strong style="color:var(--amber)">₦${(1000 * v).toFixed(2)}</strong> platform fee` },
-                { key: 'platformLoan', label: 'Loan Interest Platform Share', sub: 'of loan interest', color: 'var(--amber)', preview: (v: number) => `On ₦3,600 interest earned → <strong style="color:var(--amber)">₦${(36 * v).toFixed(2)}</strong> platform share` },
-                { key: 'platformPenalty', label: 'Late Repayment Penalty Fee', sub: 'per late day', color: 'var(--red)', preview: (v: number) => `On ₦50,000 overdue, 3 days → <strong style="color:var(--red)">₦${(50000 * v / 100 * 3).toFixed(2)}</strong> penalty` },
-              ] as { key: keyof typeof DEFAULT_COMM; label: string; sub: string; color: string; preview: (v: number) => string }[]).map(({ key, label, sub, preview }) => (
-                <div key={key}>
-                  <label style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text2)', textTransform: 'uppercase' as const, letterSpacing: '.8px', display: 'block', marginBottom: 6 }}>{label}</label>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ flex: 1, display: 'flex', alignItems: 'center', border: '1.5px solid var(--border)', borderRadius: 9, background: 'var(--surface)', overflow: 'hidden' }}>
-                      <input type="tel" inputMode="decimal" value={comm[key]} onKeyDown={blockMinus}
-                        onChange={e => setComm(c => ({ ...c, [key]: Math.max(0, parseFloat(nonNegativeString(e.target.value)) || 0) }))}
-                        style={{ flex: 1, border: 'none', outline: 'none', padding: '9px 12px', fontSize: 14, fontFamily: 'IBM Plex Sans, sans-serif', background: 'transparent', color: 'var(--text)' }} />
-                      <span style={{ padding: '0 12px', color: 'var(--text3)', fontSize: 13, fontWeight: 600, borderLeft: '1px solid var(--border)', background: 'var(--surface2)', alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>%</span>
-                    </div>
-                    <div style={{ fontSize: 11.5, color: 'var(--text3)', whiteSpace: 'nowrap' }}>{sub}</div>
-                  </div>
-                  <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 5 }} dangerouslySetInnerHTML={{ __html: preview(comm[key]) }} />
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        {/* Summary bar */}
-        <div style={{ marginTop: 20, borderTop: '1px solid var(--border)', paddingTop: 18, display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 14 }}>
-          <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center' }}>
-            <div style={{ fontSize: 12, color: 'var(--text2)' }}>Total take rate on savings: <strong style={{ color: 'var(--green)', fontSize: 14 }}>{totalTakeRate}%</strong></div>
-            <div style={{ width: 1, background: 'var(--border)', alignSelf: 'stretch' }} />
-            <div style={{ fontSize: 12, color: 'var(--text2)' }}>Effective loan cost to customer: <strong style={{ color: 'var(--amber)', fontSize: 14 }}>{effectiveLoanCost}%</strong></div>
-            {lastSavedComm && <div style={{ fontSize: 11, color: 'var(--text3)' }}>{lastSavedComm}</div>}
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-outline btn-sm" onClick={async () => {
-              setComm(DEFAULT_COMM)
-              await fetch('/api/admin/commission/rates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rates: DEFAULT_COMM }) })
-              showToast('↺ Commission rates reset to defaults')
-            }}>↺ Reset to Defaults</button>
-            <button className="btn btn-green btn-sm" disabled={savingComm} onClick={async () => {
-              setSavingComm(true)
-              const res = await fetch('/api/admin/commission/rates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rates: comm }) })
-              setSavingComm(false)
-              if (res.ok) { setLastSavedComm(`Last saved: Today, ${nowStr()}`); showToast('✅ Commission rates saved successfully') }
-              else showToast('Failed to save commission rates')
-            }}>{savingComm ? '…' : '💾 Save Rate Changes'}</button>
-          </div>
-        </div>
-      </div>
-
-      {/* Loan Interest Rate Settings */}
-      <div className="card" style={{ marginBottom: 20 }}>
-        <div className="card-hd">
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <div style={{ width: 34, height: 34, borderRadius: 10, background: 'var(--blue-lt)', border: '1px solid rgba(26,95,168,.2)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 16 }}>📊</div>
-            <div>
-              <h3 style={{ margin: 0 }}>Loan Interest Rate Settings</h3>
-              <div style={{ fontSize: 12, color: 'var(--text3)', fontWeight: 400 }}>Configure interest rates per loan term</div>
-            </div>
-          </div>
-          <span style={{ fontSize: 11.5, color: 'var(--text3)' }}>All rates active</span>
-        </div>
-
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 14, marginBottom: 20 }}>
-          {([30, 60, 90, 180] as const).map(term => {
-            const color = TERM_COLORS[term]
-            const rate = loanRates[term]
-            const max = loanMax[term]
-            const active = loanActive[term]
-            const interest = 50000 * rate / 100
-            return (
-              <div key={term} style={{ background: 'var(--surface2)', border: `1.5px solid ${active ? color : 'var(--border)'}`, borderRadius: 'var(--r)', padding: 18, opacity: active ? 1 : 0.6, transition: 'border-color .2s,opacity .2s' }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                    <div style={{ width: 28, height: 28, borderRadius: 8, background: active ? color + '22' : 'var(--surface3)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 13 }}>{TERM_ICONS[term]}</div>
-                    <div>
-                      <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{term} Days</div>
-                      <div style={{ fontSize: 10.5, color: 'var(--text3)' }}>{TERM_LABELS[term]}</div>
-                    </div>
-                  </div>
-                  <button onClick={() => setLoanActive(a => ({ ...a, [term]: !a[term] }))}
-                    style={{ width: 32, height: 18, borderRadius: 100, background: active ? color : 'var(--border)', border: 'none', cursor: 'pointer', position: 'relative', transition: 'background .2s', flexShrink: 0 }}>
-                    <span style={{ width: 14, height: 14, borderRadius: '50%', background: '#fff', position: 'absolute', top: 2, right: active ? 2 : 16, transition: 'right .2s', boxShadow: '0 1px 3px rgba(0,0,0,.2)', display: 'block' }} />
+                <div className="am-foot-actions">
+                  <button type="button" className="btn btn-outline" onClick={() => openConfirm({ kind: 'commReset' })}>Reset to defaults</button>
+                  <button type="button" className="btn btn-green" disabled={!commValid || commChanges.length === 0} onClick={() => openConfirm({ kind: 'comm' })}>
+                    {commChanges.length === 0 ? 'No changes' : 'Save changes'}
                   </button>
                 </div>
-                <div style={{ marginBottom: 10 }}>
-                  <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '.8px', marginBottom: 5 }}>Interest Rate</div>
-                  <div style={{ display: 'flex', alignItems: 'center', border: '1.5px solid var(--border)', borderRadius: 8, background: 'var(--surface)', overflow: 'hidden' }}>
-                    <input type="tel" inputMode="decimal" value={rate} onKeyDown={blockMinus}
-                      onChange={e => setLoanRates(r => ({ ...r, [term]: Math.max(0, parseFloat(nonNegativeString(e.target.value)) || 0) }))}
-                      style={{ flex: 1, border: 'none', outline: 'none', padding: '8px 10px', fontSize: 18, fontWeight: 700, fontFamily: "'IBM Plex Serif', serif", color, background: 'transparent', width: 0 }} />
-                    <span style={{ padding: '0 10px', fontSize: 13, fontWeight: 700, color, borderLeft: '1px solid var(--border)', background: 'var(--surface2)', alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>%</span>
-                  </div>
-                </div>
-                <div style={{ fontSize: 11, color: 'var(--text3)', lineHeight: 1.5 }}>
-                  ₦50,000 loan → repay <strong style={{ color }}>{fmt(50000 + interest)}</strong><br />
-                  <span>Interest: {fmt(interest)} over {term} days</span>
-                </div>
-                <div style={{ marginTop: 10, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-                  <div style={{ fontSize: 10.5, fontWeight: 600, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '.8px', marginBottom: 5 }}>Max Loan Amount</div>
-                  <div style={{ display: 'flex', alignItems: 'center', border: '1.5px solid var(--border)', borderRadius: 8, background: 'var(--surface)', overflow: 'hidden' }}>
-                    <span style={{ padding: '0 8px', fontSize: 12, fontWeight: 600, color: 'var(--text3)', borderRight: '1px solid var(--border)', background: 'var(--surface2)', alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>₦</span>
-                    <input type="tel" inputMode="numeric" value={max} onKeyDown={blockMinus}
-                      onChange={e => setLoanMax(m => ({ ...m, [term]: Math.max(0, parseInt(nonNegativeString(e.target.value)) || 0) }))}
-                      style={{ flex: 1, border: 'none', outline: 'none', padding: '7px 8px', fontSize: 12.5, fontWeight: 600, fontFamily: 'IBM Plex Sans, sans-serif', color: 'var(--text)', background: 'transparent', width: 0 }} />
-                  </div>
-                </div>
               </div>
-            )
-          })}
-        </div>
+            </>
+          )}
+      </section>
 
-        {/* Rate comparison bar */}
-        <div style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', padding: '14px 18px', marginBottom: 18 }}>
-          <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text3)', marginBottom: 10 }}>Rate Comparison</div>
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
-            {([30, 60, 90, 180] as const).map(term => (
-              <div key={term} style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                <div style={{ width: 60, fontSize: 11.5, fontWeight: 600, color: 'var(--text2)', flexShrink: 0 }}>{term} Days</div>
-                <div style={{ flex: 1, background: 'var(--surface3)', borderRadius: 4, height: 8, overflow: 'hidden' }}>
-                  <div style={{ height: '100%', borderRadius: 4, background: TERM_COLORS[term], width: `${maxLoanRate > 0 ? (loanRates[term] / maxLoanRate) * 100 : 0}%`, transition: 'width .4s ease' }} />
-                </div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: TERM_COLORS[term], width: 36, textAlign: 'right', flexShrink: 0 }}>{loanRates[term]}%</div>
-              </div>
-            ))}
-          </div>
-        </div>
-
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: 12 }}>
-          <div style={{ fontSize: 11.5, color: 'var(--text3)' }}>
-            📋 Rates apply to all new loan requests. Existing approved loans retain their locked-in rate.
-            {lastSavedLoan && <span style={{ marginLeft: 6 }}>· {lastSavedLoan}</span>}
-          </div>
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn btn-outline btn-sm" onClick={() => { setLoanRates({ ...DEFAULT_RATES }); setLoanMax({ ...DEFAULT_MAX }); showToast('↺ Loan rates reset to defaults') }}>↺ Reset to Defaults</button>
-            <button className="btn btn-green btn-sm" disabled={savingLoan} onClick={handleSaveLoanRates}>{savingLoan ? '…' : '💾 Save Loan Rates'}</button>
-          </div>
-        </div>
-      </div>
-
-      {/* Leaderboard */}
-      <div className="card">
+      {/* Loan interest */}
+      <section className="card am-section" aria-labelledby="loan-h">
         <div className="card-hd">
-          <h3>Commission Leaderboard — {new Date().toLocaleString('en-GB', { month: 'long', year: 'numeric' })}</h3>
-        </div>
-        <div className="tbl-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>Rank</th><th>Agent</th><th>Customers</th><th>Savings Volume</th><th>Commission</th><th>Status</th><th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading && <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>Loading…</td></tr>}
-              {!loading && data.leaderboard.length === 0 && <tr><td colSpan={7} style={{ textAlign: 'center', color: 'var(--text3)', padding: 24 }}>No agents found</td></tr>}
-              {!loading && data.leaderboard.slice((lbPage - 1) * PAGE_SIZE, lbPage * PAGE_SIZE).map(a => {
-                const initials = a.name.split(' ').map(w => w[0]).join('').slice(0, 2)
-                const hasPending = a.commissionBalance > 0
-                return (
-                  <tr key={a.id}>
-                    <td style={{ fontFamily: "'IBM Plex Serif', serif", fontWeight: 800, color: a.rank <= 3 ? 'var(--amber)' : 'var(--text3)', fontSize: 14 }}>{rankMedal(a.rank)}</td>
-                    <td>
-                      <div className="td-av">
-                        <div className={`av av-${a.rank === 1 ? 'blue' : a.rank === 2 ? 'green' : 'amber'}`} style={{ overflow: 'hidden', padding: 0 }}>{a.photoUrl ? <img src={a.photoUrl} alt={a.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : initials}</div>
-                        <div><div className="td-name">{a.name}</div><div className="td-sub">{a.agentId}</div></div>
-                      </div>
-                    </td>
-                    <td style={{ color: 'var(--text2)' }}>{a.customerCount}</td>
-                    <td style={{ color: 'var(--green)', fontWeight: 600 }}>{fmt(a.savingsVolume)}</td>
-                    <td style={{ fontFamily: "'IBM Plex Serif', serif", fontWeight: 800, color: 'var(--green)' }}>{fmt(a.commissionBalance)}</td>
-                    <td><span className={`bdg ${hasPending ? 'bdg-a' : 'bdg-g'}`}>{hasPending ? 'Pending' : 'Paid'}</span></td>
-                    <td>
-                      {hasPending ? (
-                        <button className="btn btn-xs btn-green" disabled={payingOut === a.id} onClick={() => handlePayout(a.id, a.name, a.commissionBalance)}>
-                          {payingOut === a.id ? '…' : 'Pay Now'}
-                        </button>
-                      ) : <span style={{ color: 'var(--text3)', fontSize: 12 }}>—</span>}
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        {!loading && Math.ceil(data.leaderboard.length / PAGE_SIZE) > 1 && (
-          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 0 0', borderTop: '1px solid var(--border)', marginTop: 4 }}>
-            <div style={{ fontSize: 12, color: 'var(--text3)' }}>Showing {(lbPage - 1) * PAGE_SIZE + 1}–{Math.min(lbPage * PAGE_SIZE, data.leaderboard.length)} of {data.leaderboard.length}</div>
-            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-              <button className="btn btn-xs btn-outline" disabled={lbPage === 1} onClick={() => setLbPage(p => p - 1)}>← Prev</button>
-              <span style={{ fontSize: 12, color: 'var(--text2)', minWidth: 80, textAlign: 'center' }}>Page {lbPage} of {Math.ceil(data.leaderboard.length / PAGE_SIZE)}</span>
-              <button className="btn btn-xs btn-outline" disabled={lbPage === Math.ceil(data.leaderboard.length / PAGE_SIZE)} onClick={() => setLbPage(p => p + 1)}>Next →</button>
-            </div>
+          <div>
+            <h3 id="loan-h">Loan interest rates</h3>
+            <p className="am-card-sub">Interest charged on each loan length.</p>
           </div>
-        )}
         </div>
-      </div>
+        {!loanLoaded ? (loanFailed ? <LoadError what="loan interest rates" onRetry={load} /> : <TableSkeleton rows={2} cols={4} />)
+          : (
+            <>
+              <div className="am-terms">
+                {TERMS.map(term => {
+                  const rate = loanParsed[term]
+                  const interest = 50000 * (rate ?? 0) / 100
+                  return (
+                    <div key={term} className="am-term">
+                      <div className="am-term-hd"><strong>{term} days</strong><span>{TERM_LABELS[term]}</span></div>
+                      <Field id={`lr-${term}`} label="Interest rate" error={rate === null ? 'Enter 0 to 100.' : undefined}>
+                        <PctInput id={`lr-${term}`} value={loanRates[term]} invalid={rate === null} onChange={s => setLoanRates(r => ({ ...r, [term]: s }))} />
+                      </Field>
+                      <p className="am-term-eg">A ₦50,000 loan is repaid as <strong>{naira(50000 + interest)}</strong>, which is {naira(interest)} interest over {term} days.</p>
+                    </div>
+                  )
+                })}
+              </div>
 
-      <div className={`a-toast${toast ? ' show' : ''}`}>{toast}</div>
+              <div className="am-bars" aria-label="Rate comparison">
+                <p className="am-bars-h">Compared</p>
+                {TERMS.map(term => (
+                  <div key={term} className="am-bar-row">
+                    <span className="am-bar-lbl">{term} days</span>
+                    <div className="progress-bar" aria-hidden="true">
+                      <div className="progress-fill" style={{ width: `${maxLoanRate > 0 ? ((loanParsed[term] ?? 0) / maxLoanRate) * 100 : 0}%` }} />
+                    </div>
+                    <span className="am-bar-val">{loanParsed[term] ?? '—'}%</span>
+                  </div>
+                ))}
+              </div>
+
+              <div className="am-foot">
+                <div className="am-foot-info">
+                  <span>New loan requests use these rates. Loans already approved keep the rate they were given.</span>
+                  {lastSavedLoan && <span>{lastSavedLoan}</span>}
+                </div>
+                <div className="am-foot-actions">
+                  <button type="button" className="btn btn-outline" onClick={() => { setLoanRates(toDrafts(DEFAULT_RATES)); toast('Default rates filled in. Save to apply them.') }}>Use defaults</button>
+                  <button type="button" className="btn btn-green" disabled={!loanValid || loanChanges.length === 0} onClick={() => openConfirm({ kind: 'loan' })}>
+                    {loanChanges.length === 0 ? 'No changes' : 'Save loan rates'}
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
+      </section>
+
+      {/* Commission by agent */}
+      <section className="card" aria-labelledby="lb-h">
+        <div className="card-hd">
+          <div>
+            <h3 id="lb-h">Commission by agent</h3>
+            <p className="am-card-sub">Ranked by commission owed now. Savings volume is all time.</p>
+          </div>
+        </div>
+        {firstLoad ? <TableSkeleton rows={6} cols={6} />
+          : boardFailed && !data.leaderboard.length ? <LoadError what="agent commission" onRetry={load} />
+          : data.leaderboard.length === 0 ? <Empty icon="customers" title="No agents yet" text="Agents and the commission they earn will show here."
+              action={<Link href="/superadmin/agents" className="btn btn-outline">Go to agents</Link>} />
+          : (
+            <>
+              <div className="tbl-wrap tbl-stack">
+                <table>
+                  <thead>
+                    <tr><th>Agent</th><th className="num">Customers</th><th className="num">Savings volume</th><th className="num">Commission owed</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr>
+                  </thead>
+                  <tbody>
+                    {data.leaderboard.slice((lbPage - 1) * PAGE_SIZE, lbPage * PAGE_SIZE).map(a => {
+                      const hasPending = a.commissionBalance > 0
+                      return (
+                        <tr key={a.id}>
+                          <td>
+                            <Link href={`/superadmin/agents/${a.id}`} className="td-av am-link">
+                              <span className="am-rank" aria-label={`Rank ${a.rank}`}>{a.rank}</span>
+                              <Avatar name={a.name} photoUrl={a.photoUrl} tone={hasPending ? 'amber' : 'green'} />
+                              <span>
+                                <span className="td-name ui-block">{a.name}</span>
+                                <span className="td-sub ui-block">{a.agentId}</span>
+                              </span>
+                            </Link>
+                          </td>
+                          <td className="num" data-label="Customers">{a.customerCount.toLocaleString('en-NG')}</td>
+                          <td className="num" data-label="Savings volume">{naira(a.savingsVolume)}</td>
+                          <td className="num am-strong" data-label="Commission owed">{naira(a.commissionBalance)}</td>
+                          <td data-label="Status"><span className={`bdg ${hasPending ? 'bdg-a' : 'bdg-g'}`}>{hasPending ? 'Owed' : 'Paid up'}</span></td>
+                          <td>
+                            {hasPending && (
+                              <div className="a-row-actions">
+                                <button type="button" className="btn btn-sm btn-soft" onClick={() => openConfirm({ kind: 'pay', agent: a })}
+                                  aria-label={`Pay ${naira(a.commissionBalance)} to ${a.name}`}>Pay</button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+              <Pager page={lbPage} pageSize={PAGE_SIZE} total={data.leaderboard.length} onPage={setLbPage} />
+            </>
+          )}
+      </section>
+
+      {confirm?.kind === 'comm' && (
+        <ConfirmModal icon="rate" title="Save commission rates?" confirmLabel="Save rates" busy={busy} error={confirmError}
+          body={<>
+            These apply to every agent, from the next transaction. Transactions already made don’t change.
+            <ul className="am-diff">
+              {commChanges.map(f => (
+                <li key={f.key}><span>{f.label}</span><span className="am-diff-val"><span className="am-diff-old">{savedComm[f.key]}%</span>{commParsed[f.key]}%</span></li>
+              ))}
+            </ul>
+          </>}
+          onConfirm={() => saveCommRates(Object.fromEntries(COMM_FIELDS.map(f => [f.key, commParsed[f.key] as number])) as CommRates, 'Commission rates saved')}
+          onClose={() => setConfirm(null)} />
+      )}
+
+      {confirm?.kind === 'commReset' && (
+        <ConfirmModal title="Reset commission rates to defaults?" confirmLabel="Reset and save" danger busy={busy} error={confirmError}
+          body={<>
+            This saves the default rates straight away, for every agent.
+            <ul className="am-diff">
+              {COMM_FIELDS.map(f => (
+                <li key={f.key}><span>{commLabel(f.key)}</span><span className="am-diff-val">{savedComm[f.key] !== DEFAULT_COMM[f.key] && <span className="am-diff-old">{savedComm[f.key]}%</span>}{DEFAULT_COMM[f.key]}%</span></li>
+              ))}
+            </ul>
+          </>}
+          onConfirm={() => saveCommRates(DEFAULT_COMM, 'Commission rates reset to defaults')}
+          onClose={() => setConfirm(null)} />
+      )}
+
+      {confirm?.kind === 'loan' && (
+        <ConfirmModal icon="rate" title="Save loan interest rates?" confirmLabel="Save loan rates" busy={busy} error={confirmError}
+          body={<>
+            New loan requests use these rates. Loans already approved keep their rate.
+            <ul className="am-diff">
+              {loanChanges.map(t => (
+                <li key={t}><span>{t} days</span><span className="am-diff-val"><span className="am-diff-old">{savedLoan[t]}%</span>{loanParsed[t]}%</span></li>
+              ))}
+            </ul>
+          </>}
+          onConfirm={handleSaveLoanRates} onClose={() => setConfirm(null)} />
+      )}
+
+      {confirm?.kind === 'pay' && (
+        <ConfirmModal icon="commission" tone="money" title={`Pay ${confirm.agent.name}’s commission?`} confirmLabel={`Pay ${naira(confirm.agent.commissionBalance)}`} busy={busy} error={confirmError}
+          body={<>
+            <dl className="dlg-ledger">
+              <div><dt>Commission</dt><dd className="dlg-strong">{naira(confirm.agent.commissionBalance)}</dd></div>
+              <div><dt>Agent</dt><dd>{confirm.agent.name} · {confirm.agent.agentId}</dd></div>
+            </dl>
+            <p className="dlg-note">The amount comes out of the Float wallet and their commission balance goes to {naira(0)}. No bank transfer is sent from here.</p>
+          </>}
+          onConfirm={() => handlePayout(confirm.agent)} onClose={() => setConfirm(null)} />
+      )}
+
+      {batch && (
+        <Modal icon="commission" tone="money" title={batch.step === 'done' ? 'Payouts finished' : 'Pay all owed commission?'} onClose={() => setBatch(null)} busy={batch.step === 'running'}
+          footer={batch.step === 'confirm' ? <>
+            <button type="button" className="btn btn-outline" onClick={() => setBatch(null)}>Cancel</button>
+            <button type="button" className="btn btn-green" onClick={runBatch}>Pay {naira(owedTotal)} to {owed.length} agent{owed.length === 1 ? '' : 's'}</button>
+          </> : batch.step === 'running' ? (
+            <button type="button" className="btn btn-green" disabled>Paying {batch.results.length + 1} of {owed.length}…</button>
+          ) : <button type="button" className="btn btn-green" onClick={() => setBatch(null)}>Done</button>}>
+          {batch.step === 'confirm' && (
+            <>
+              <dl className="dlg-ledger">
+                <div><dt>Total</dt><dd className="dlg-strong">{naira(owedTotal)}</dd></div>
+                <div><dt>Agents</dt><dd>{owed.length}</dd></div>
+              </dl>
+              <p className="dlg-note">Each agent is paid in turn from the Float wallet and their commission balance goes to {naira(0)}. No bank transfers are sent from here. If the Float wallet runs out, the rest won’t be paid.</p>
+              <ul className="am-batch">
+                {owed.map(a => <li key={a.id}><span>{a.name}</span><span className="am-diff-val">{naira(a.commissionBalance)}</span></li>)}
+              </ul>
+            </>
+          )}
+          {batch.step !== 'confirm' && (
+            <>
+              <p className="dlg-note" role="status">
+                {batch.step === 'running' ? `Paid ${paidCount} so far. Keep this open until it finishes.`
+                  : `Paid ${naira(paidSum)} to ${paidCount} of ${batch.results.length} agent${batch.results.length === 1 ? '' : 's'}.`}
+              </p>
+              {batch.step === 'done' && failedResults.length > 0 && (
+                <>
+                  <p className="a-alert a-alert-r" role="alert">{failedResults.length} payout{failedResults.length === 1 ? '' : 's'} didn’t go through. Fix the reason below, then pay them one by one.</p>
+                  <ul className="am-batch">
+                    {failedResults.map(r => <li key={r.id} className="is-failed"><span>{r.name}</span><span>{r.error}</span></li>)}
+                  </ul>
+                </>
+              )}
+            </>
+          )}
+        </Modal>
+      )}
+
+      {toastNode}
     </>
   )
 }

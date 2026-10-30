@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { blockMinus, nonNegativeString } from '@/lib/numeric'
+import { Icons, type IconName } from '@/components/ui/icons'
+import { AmountHero, DialogNote, ResultModal, type Result, Field, Ledger, LedgerRow, LoadError, Modal, PageHeader, naira, useToast } from '../_components/admin-ui'
 
 interface PlatformWallet {
   id: string
@@ -26,241 +28,293 @@ interface TreasuryData {
   totalCustomerSavings: number
   lowBalanceAgents: number
   totalAgents: number
+  agentsLoaded: boolean
   today: Today
 }
 
-export default function TreasuryPage() {
-  const [data, setData] = useState<TreasuryData>({
-    wallets: [], totalAgentFloat: 0, totalAgentCommission: 0,
-    totalCustomerSavings: 0, lowBalanceAgents: 0, totalAgents: 0,
-    today: { savings: 0, redemptions: 0, registrations: 0, walletFunding: 0, disbursements: 0, repayments: 0 },
-  })
-  const [loading, setLoading] = useState(true)
-  const [toast, setToast] = useState('')
+interface WalletCard {
+  key: string
+  code: string
+  label: string
+  icon: IconName
+  balance: number
+  desc: string
+  inactive?: boolean
+  stats: { label: string; val?: string }[]
+}
 
-  const [showInjectModal, setShowInjectModal] = useState(false)
+const EMPTY_TODAY: Today = { savings: 0, redemptions: 0, registrations: 0, walletFunding: 0, disbursements: 0, repayments: 0 }
+const LOW_BALANCE = 10000
+// Display-only estimates of how today's savings split. They mirror the default commission rates in
+// wallet-rates.ts (agent 0.4%, platform 1.6%); real splits depend on each plan's cadence and deposit method.
+const EST_AGENT_RATE = 0.004
+const EST_PLATFORM_RATE = 0.016
+const EST_NET_RATE = 1 - EST_AGENT_RATE - EST_PLATFORM_RATE
+
+const short = (n: number) => n >= 1_000_000 ? `₦${(n / 1_000_000).toFixed(2)}M` : n >= 1000 ? `₦${(n / 1000).toFixed(0)}K` : naira(n)
+const signed = (sign: '+' | '−', n: number) => n > 0 ? `${sign}${short(n)}` : '—'
+
+async function errorOf(res: Response, fallback: string) {
+  const d = await res.json().catch(() => ({})) as { error?: string }
+  return d.error ?? fallback
+}
+
+export default function TreasuryPage() {
+  const [data, setData] = useState<TreasuryData | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [failed, setFailed] = useState(false)
+  const [toastNode, toast] = useToast()
+
+  // Inject capital: form step, then a review step before money moves
+  const [showInject, setShowInject] = useState(false)
+  const [reviewing, setReviewing] = useState(false)
+  const [result, setResult] = useState<Result | null>(null)
   const [injectAmount, setInjectAmount] = useState('')
   const [injectRef, setInjectRef] = useState('')
-  const [injectLoading, setInjectLoading] = useState(false)
-
-  const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 4000) }
+  const [amountError, setAmountError] = useState('')
+  const [injectError, setInjectError] = useState('')
+  const [injecting, setInjecting] = useState(false)
 
   const load = useCallback(async () => {
-    setLoading(true)
-    const [wRes, aRes] = await Promise.all([
-      fetch('/api/admin/wallets/platform'),
-      fetch('/api/admin/wallets'),
-    ])
-    if (wRes.ok) {
-      const d = await wRes.json()
-      const agents = aRes.ok ? (await aRes.json()).agents ?? [] : []
+    setLoading(true); setFailed(false)
+    try {
+      const [wRes, aRes] = await Promise.all([
+        fetch('/api/admin/wallets/platform'),
+        fetch('/api/admin/wallets').catch(() => null),
+      ])
+      if (!wRes.ok) throw new Error()
+      const d = await wRes.json() as Partial<TreasuryData>
+      let agents: { walletBalance: number }[] = []
+      let agentsLoaded = false
+      if (aRes?.ok) {
+        const a = await aRes.json().catch(() => null) as { agents?: { walletBalance: number }[] } | null
+        if (a) { agents = a.agents ?? []; agentsLoaded = true }
+      }
       setData({
         wallets: d.wallets ?? [],
         totalAgentFloat: d.totalAgentFloat ?? 0,
         totalAgentCommission: d.totalAgentCommission ?? 0,
         totalCustomerSavings: d.totalCustomerSavings ?? 0,
-        lowBalanceAgents: agents.filter((a: { walletBalance: number }) => a.walletBalance < 10000).length,
+        lowBalanceAgents: agents.filter(a => a.walletBalance < LOW_BALANCE).length,
         totalAgents: agents.length,
-        today: d.today ?? { savings: 0, redemptions: 0, registrations: 0, walletFunding: 0, disbursements: 0, repayments: 0 },
+        agentsLoaded,
+        today: d.today ?? EMPTY_TODAY,
       })
+    } catch {
+      setFailed(true)
+    } finally {
+      setLoading(false)
     }
-    setLoading(false)
   }, [])
 
   useEffect(() => { load() }, [load])
 
-  const w = (type: string) => data.wallets.find(x => x.type === type)?.balance ?? 0
+  const w = (type: string) => data?.wallets.find(x => x.type === type)?.balance ?? 0
+  const today = data?.today ?? EMPTY_TODAY
+  const agentsKnown = !!data?.agentsLoaded
 
-  const fmt = (n: number) => `₦${n.toLocaleString('en-NG', { minimumFractionDigits: 0 })}`
-  const fmtS = (n: number) => n >= 1000000 ? `₦${(n / 1000000).toFixed(2)}M` : n >= 1000 ? `₦${(n / 1000).toFixed(0)}K` : fmt(n)
-
-  const inputStyle: React.CSSProperties = {
-    width: '100%', padding: '9px 12px', borderRadius: 8, border: '1.5px solid var(--border)',
-    fontSize: 13, fontFamily: 'IBM Plex Sans, sans-serif', background: 'var(--surface2)',
-    color: 'var(--text)', boxSizing: 'border-box',
+  function openInject() {
+    setShowInject(true); setReviewing(false); setInjectAmount(''); setInjectRef(''); setAmountError(''); setInjectError('')
   }
-  const labelStyle: React.CSSProperties = {
-    fontSize: 12, fontWeight: 600, color: 'var(--text2)', display: 'block', marginBottom: 6,
+  function closeInject() {
+    if (injecting) return
+    setShowInject(false); setReviewing(false)
+  }
+
+  function review() {
+    const amt = parseFloat(injectAmount)
+    if (!amt || amt <= 0) { setAmountError('Enter how much capital to add.'); return }
+    setInjectError(''); setReviewing(true)
   }
 
   async function handleInject() {
     const amt = parseFloat(injectAmount)
-    if (!amt || amt <= 0) return
-    setInjectLoading(true)
-    const res = await fetch('/api/admin/wallets/inject-capital', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ amount: amt, reference: injectRef }),
-    })
-    setInjectLoading(false)
-    if (res.ok) { setInjectAmount(''); setInjectRef(''); setShowInjectModal(false); showToast('✅ Capital injected successfully'); load() }
-    else { const d = await res.json().catch(() => ({})); showToast((d as { error?: string }).error ?? 'Injection failed') }
+    if (!amt || amt <= 0) { setReviewing(false); setAmountError('Enter how much capital to add.'); return }
+    setInjecting(true); setInjectError('')
+    try {
+      const res = await fetch('/api/admin/wallets/inject-capital', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ amount: amt, reference: injectRef }),
+      })
+      if (!res.ok) { setInjectError(await errorOf(res, 'The capital wasn’t added. Nothing has changed. Try again.')); return }
+      const before = capitalNow
+      setShowInject(false); setReviewing(false); setInjectAmount(''); setInjectRef('')
+      setResult({
+        heading: 'Capital added', title: `${naira(amt)} added`,
+        text: 'The capital wallet (W-1) has been credited.',
+        rows: [
+          ...(injectRef.trim() ? [{ label: 'Your reference (not saved)', value: injectRef.trim() }] : []),
+          { label: 'Capital before', value: naira(before) },
+          { label: 'Capital now', value: naira(before + amt), total: true },
+        ],
+      })
+      load()
+    } catch {
+      setInjectError('No connection. We can’t tell if the capital was added. Refresh the page and check the capital wallet before trying again.')
+    } finally {
+      setInjecting(false)
+    }
   }
 
-  const wallets = [
+  const wallets: WalletCard[] = [
     {
-      key: 'capital', label: 'Capital Wallet', badge: 'W-1', badgeClass: 'bdg-g', icon: '💰',
-      color: 'var(--green)', gradient: 'linear-gradient(90deg,#1a6b3a,#2ecc71)',
-      balance: w('Capital'), desc: 'Owner equity + investor capital',
+      key: 'capital', code: 'W-1', label: 'Capital wallet', icon: 'treasury',
+      balance: w('Capital'), desc: 'Owner equity and investor capital.',
       stats: [
-        { label: 'Injected today', val: data.today.walletFunding > 0 ? `+${fmtS(data.today.walletFunding)}` : '—', color: 'var(--green)' },
-        { label: 'Not used in agent model', val: '', color: 'var(--text3)' },
+        { label: 'Agent wallets funded today', val: signed('+', today.walletFunding) },
+        { label: 'Not used in the agent model' },
       ],
     },
     {
-      key: 'float', label: 'Float Wallet', badge: 'W-2', badgeClass: 'bdg-b', icon: '🔄',
-      color: 'var(--blue)', gradient: 'linear-gradient(90deg,var(--blue),#60a5fa)',
-      balance: w('Float'), desc: 'Platform working capital pool',
+      key: 'float', code: 'W-2', label: 'Float wallet', icon: 'repay', inactive: true,
+      balance: w('Float'), desc: 'Platform working capital pool.',
       stats: [
-        { label: 'Active agents', val: `${data.totalAgents}`, color: 'var(--text2)' },
-        { label: 'Not used in agent model', val: '', color: 'var(--text3)' },
+        { label: 'Agents', val: agentsKnown ? `${data?.totalAgents ?? 0}` : '—' },
+        { label: 'Not used in the agent model' },
       ],
     },
     {
-      key: 'agent', label: 'Agent Float Wallets', badge: 'W-3', badgeClass: 'bdg-t', icon: '🤝',
-      color: 'var(--teal)', gradient: 'linear-gradient(90deg,var(--teal),#22d3ee)',
-      balance: data.totalAgentFloat, desc: `Combined across ${data.totalAgents} agents`,
+      key: 'agent', code: 'W-3', label: 'Agent float wallets', icon: 'wallet',
+      balance: data?.totalAgentFloat ?? 0, desc: agentsKnown ? `Combined across ${data?.totalAgents ?? 0} agents.` : 'Combined across all agents.',
       stats: [
-        { label: data.lowBalanceAgents > 0 ? `⚠️ ${data.lowBalanceAgents} low balance` : '✅ All healthy', val: '', color: 'var(--amber)' },
-        { label: 'Collections today', val: data.today.savings > 0 ? `-${fmtS(data.today.savings * 0.98)}` : '—', color: 'var(--red)' },
+        { label: !agentsKnown ? 'Low-balance count unavailable' : data?.lowBalanceAgents ? `${data.lowBalanceAgents} under ${naira(LOW_BALANCE)}` : 'No agents low on float' },
+        { label: 'Collections today (estimate)', val: signed('−', today.savings * EST_NET_RATE) },
       ],
     },
     {
-      key: 'savings', label: 'Customer Savings Wallets', badge: 'W-4', badgeClass: 'bdg-a', icon: '💳',
-      color: 'var(--amber)', gradient: 'linear-gradient(90deg,var(--amber),#fbbf24)',
-      balance: data.totalCustomerSavings, desc: 'Individual savings accounts',
+      key: 'savings', code: 'W-4', label: 'Customer savings wallets', icon: 'plan',
+      balance: data?.totalCustomerSavings ?? 0, desc: 'Individual customer savings in active plans.',
       stats: [
-        { label: 'Deposited today', val: data.today.savings > 0 ? `+${fmtS(data.today.savings)}` : '—', color: 'var(--green)' },
-        { label: 'Redeemed today', val: data.today.redemptions > 0 ? `-${fmtS(data.today.redemptions)}` : '—', color: 'var(--red)' },
+        { label: 'Saved today', val: signed('+', today.savings) },
+        { label: 'Redeemed today', val: signed('−', today.redemptions) },
       ],
     },
     {
-      key: 'pool', label: 'Savings Pool', badge: 'W-5', badgeClass: 'bdg-p', icon: '🏊',
-      color: 'var(--purple)', gradient: 'linear-gradient(90deg,var(--purple),#a78bfa)',
-      balance: w('SavingsPool'), desc: 'Platform liability for customer savings',
+      key: 'pool', code: 'W-5', label: 'Savings pool', icon: 'deposit',
+      balance: w('SavingsPool'), desc: 'What the platform owes customers in savings.',
       stats: [
-        { label: 'In today', val: data.today.savings > 0 ? `+${fmtS(data.today.savings * 0.98)}` : '—', color: 'var(--green)' },
-        { label: 'Out today', val: data.today.redemptions > 0 ? `-${fmtS(data.today.redemptions)}` : '—', color: 'var(--red)' },
+        { label: 'In today (estimate)', val: signed('+', today.savings * EST_NET_RATE) },
+        { label: 'Out today', val: signed('−', today.redemptions) },
       ],
     },
     {
-      key: 'redemption', label: 'Redemption Wallet', badge: 'W-6', badgeClass: 'bdg-r', icon: '🎯',
-      color: 'var(--red)', gradient: 'linear-gradient(90deg,var(--red),#f87171)',
-      balance: w('Redemption'), desc: 'Agent pays customer directly (not used)',
+      key: 'redemption', code: 'W-6', label: 'Redemption wallet', icon: 'redeem', inactive: true,
+      balance: w('Redemption'), desc: 'Not used: agents pay customers directly from their float.',
       stats: [
-        { label: 'Not active in current model', val: '', color: 'var(--text3)' },
-        { label: 'Agent float backs payouts', val: '', color: 'var(--text3)' },
+        { label: 'Not active in the current model' },
+        { label: 'Agent float backs payouts' },
       ],
     },
     {
-      key: 'revenue', label: 'Revenue / Profit', badge: 'W-7', badgeClass: 'bdg-g', icon: '💹',
-      color: 'var(--green)', gradient: 'linear-gradient(90deg,#16a34a,#14532d)',
-      balance: w('Revenue'), desc: 'Platform earnings from fees & charges',
+      key: 'revenue', code: 'W-7', label: 'Revenue', icon: 'reports',
+      balance: w('Revenue'), desc: 'Platform earnings from fees and charges.',
       stats: [
-        { label: 'Earned today', val: data.today.savings > 0 ? `+${fmtS(data.today.savings * 0.016)}` : '—', color: 'var(--green)' },
-        { label: 'Total revenue', val: fmtS(w('Revenue')), color: 'var(--green)' },
+        { label: 'Earned today (estimate)', val: signed('+', today.savings * EST_PLATFORM_RATE) },
+        { label: 'Total revenue', val: short(w('Revenue')) },
       ],
     },
     {
-      key: 'commission', label: 'Agent Commission', badge: 'W-8', badgeClass: 'bdg-t', icon: '🏅',
-      color: 'var(--teal)', gradient: 'linear-gradient(90deg,var(--teal),#2dd4bf)',
-      balance: data.totalAgentCommission, desc: 'Pending commission across all agents',
+      key: 'commission', code: 'W-8', label: 'Agent commission', icon: 'commission',
+      balance: data?.totalAgentCommission ?? 0, desc: 'Commission owed to agents, not yet paid out.',
       stats: [
-        { label: 'Earned today', val: data.today.savings > 0 ? `+${fmtS(data.today.savings * 0.004)}` : '—', color: 'var(--teal)' },
-        { label: 'Pending payout', val: fmtS(data.totalAgentCommission), color: 'var(--teal)' },
+        { label: 'Earned today (estimate)', val: signed('+', today.savings * EST_AGENT_RATE) },
+        { label: 'Waiting to be paid', val: short(data?.totalAgentCommission ?? 0) },
       ],
     },
   ]
 
+  const amt = parseFloat(injectAmount) || 0
+  const capitalNow = w('Capital')
+
   return (
     <>
-      {/* Header */}
-      <div className="pg-hd treasury-hd">
-        <div>
-          <h1>Platform Treasury</h1>
-          <p>Agent-Funded Capital Model — Agent Float (W-3) backs Customer Savings · Revenue · Commission</p>
-        </div>
-        <div className="treasury-hd-actions">
-          <button className="btn btn-primary btn-sm" onClick={() => setShowInjectModal(true)}>＋ Inject Capital</button>
-        </div>
-      </div>
+      <PageHeader
+        title="Treasury"
+        sub="Agent-funded model: agent float (W-3) backs customer savings, revenue and commission."
+        actions={<>
+          <button type="button" className="btn btn-outline" onClick={load} disabled={loading}><Icons.retry size={16} aria-hidden="true" /> {loading ? 'Refreshing…' : 'Refresh'}</button>
+          <button type="button" className="btn btn-green" onClick={openInject} disabled={!data}><Icons.add size={18} aria-hidden="true" /> Inject capital</button>
+        </>}
+      />
 
-      {/* 8 Wallet Cards */}
-      {loading ? (
-        <div style={{ textAlign: 'center', color: 'var(--text3)', padding: 48 }}>Loading wallets…</div>
+      {loading && !data ? (
+        <div className="cm-wallets" aria-busy="true" aria-label="Loading wallets">
+          {Array.from({ length: 8 }, (_, i) => <span key={i} className="skel cm-wallet-skel" />)}
+        </div>
+      ) : failed && !data ? (
+        <section className="card"><LoadError what="the treasury wallets" onRetry={load} /></section>
       ) : (
-        <div className="treasury-wallets">
-          {wallets.map(card => (
-            <div key={card.key} className="treasury-wallet-card">
-              <div style={{ height: 5, background: card.gradient }} />
-              <div style={{ padding: 18 }}>
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-                  <div style={{ width: 38, height: 38, borderRadius: 10, background: card.color + '18', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 18 }}>{card.icon}</div>
-                  <span className={`bdg ${card.badgeClass}`} style={{ fontSize: 10 }}>{card.badge}</span>
-                </div>
-                <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text3)', marginBottom: 4 }}>{card.label}</div>
-                <div style={{ fontFamily: "'IBM Plex Serif', serif", fontSize: 22, fontWeight: 800, color: card.color, letterSpacing: '-.5px' }}>{fmt(card.balance)}</div>
-                <div style={{ fontSize: 11, color: 'var(--text3)', marginTop: 4 }}>{card.desc}</div>
-                <div style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
-                  {card.stats.map((s, i) => (
-                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, marginTop: i > 0 ? 3 : 0 }}>
-                      <span style={{ color: 'var(--text3)' }}>{s.label}</span>
-                      {s.val && <span style={{ color: s.color, fontWeight: 700 }}>{s.val}</span>}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <style>{`
-        .treasury-hd { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
-        .treasury-hd-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
-        .treasury-solvency-pill { display: flex; align-items: center; gap: 8px; padding: 8px 14px; border-radius: 10px; }
-        .treasury-wallets { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 22px; }
-        .treasury-wallet-card { background: var(--surface); border: 2px solid var(--border); border-radius: var(--r); overflow: hidden; transition: all .2s; }
-        .treasury-wallet-card:hover { box-shadow: 0 6px 20px rgba(0,0,0,.1); transform: translateY(-2px); }
-        @media (max-width: 1180px) { .treasury-wallets { grid-template-columns: repeat(3, 1fr); } }
-        @media (max-width: 900px) { .treasury-wallets { grid-template-columns: repeat(2, 1fr); } }
-        @media (max-width: 560px) {
-          .treasury-wallets { grid-template-columns: 1fr; gap: 12px; }
-          .treasury-hd { align-items: flex-start; }
-          .treasury-hd-actions { width: 100%; }
-          .treasury-solvency-pill { flex: 1; justify-content: center; }
-        }
-      `}</style>
-
-      {/* Inject Capital Modal (from header button) */}
-      {showInjectModal && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.45)', zIndex: 200, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div style={{ background: 'var(--surface)', borderRadius: 'var(--r)', padding: 28, width: 420, boxShadow: '0 16px 48px rgba(0,0,0,.25)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 18 }}>
-              <h3 style={{ fontFamily: "'IBM Plex Serif', serif", fontSize: 17, fontWeight: 700, margin: 0 }}>＋ Inject Capital</h3>
-              <button onClick={() => setShowInjectModal(false)} style={{ background: 'none', border: 'none', fontSize: 18, cursor: 'pointer', color: 'var(--text3)' }}>✕</button>
-            </div>
-            <div style={{ marginBottom: 12 }}>
-              <label style={labelStyle}>Amount (₦)</label>
-              <input type="tel" inputMode="decimal" onKeyDown={blockMinus} placeholder="e.g. 1000000" value={injectAmount} onChange={e => setInjectAmount(nonNegativeString(e.target.value))} style={inputStyle} />
-            </div>
-            <div style={{ marginBottom: 16 }}>
-              <label style={labelStyle}>Reference (optional)</label>
-              <input type="text" placeholder="e.g. INV-2025-001" value={injectRef} onChange={e => setInjectRef(e.target.value)} style={inputStyle} />
-            </div>
-            <div style={{ background: 'var(--blue-lt)', border: '1px solid var(--blue)', borderRadius: 8, padding: '10px 12px', fontSize: 12, color: 'var(--blue)', marginBottom: 16 }}>
-              ℹ️ Funds injected here flow into the Capital Wallet
-            </div>
-            <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
-              <button className="btn btn-outline btn-sm" onClick={() => setShowInjectModal(false)}>Cancel</button>
-              <button className="btn btn-primary btn-sm" onClick={handleInject} disabled={injectLoading}>
-                {injectLoading ? 'Injecting…' : 'Inject Capital'}
-              </button>
-            </div>
+        <>
+          {failed && <p className="a-alert a-alert-a cm-gap" role="status">We couldn’t refresh the wallets. These figures may be out of date.</p>}
+          <div className="cm-wallets">
+            {wallets.map(card => {
+              const Icon = Icons[card.icon]
+              return (
+                <article key={card.key} className={`cm-wallet${card.inactive ? ' is-inactive' : ''}`}>
+                  <div className="cm-wallet-top">
+                    <span className="cm-wallet-ic" aria-hidden="true"><Icon size={20} /></span>
+                    <span className="cm-wallet-code">{card.code}</span>
+                  </div>
+                  <h3 className="cm-wallet-lbl">{card.label}</h3>
+                  <div className="cm-wallet-val">{naira(card.balance)}</div>
+                  <p className="cm-wallet-desc">{card.desc}</p>
+                  <div className="cm-wallet-stats">
+                    <dl>
+                      {card.stats.map(s => (
+                        <div key={s.label} className="cm-wallet-stat"><dt>{s.label}</dt>{s.val && <dd>{s.val}</dd>}</div>
+                      ))}
+                    </dl>
+                  </div>
+                </article>
+              )
+            })}
           </div>
-        </div>
+          <p className="cm-foot">Figures marked estimate use the default 0.4% agent and 1.6% platform rates on today’s savings. Actual amounts depend on each plan.</p>
+        </>
       )}
 
-      <div className={`a-toast${toast ? ' show' : ''}`}>{toast}</div>
+      {showInject && (
+        <Modal error={injectError || undefined} icon="treasury" tone="money"
+          title={reviewing ? 'Check and confirm' : 'Inject capital'}
+          sub={reviewing ? 'This adds real money to the platform’s books.' : 'Money added here goes into the capital wallet (W-1).'}
+          onClose={closeInject} busy={injecting}
+          footnote={reviewing ? <><Icons.audit size={14} aria-hidden="true" /> Recorded in the audit log</> : undefined}
+          footer={reviewing ? <>
+            <button type="button" className="btn btn-outline" onClick={() => setReviewing(false)} disabled={injecting}>Back</button>
+            <button type="button" className="btn btn-green" onClick={handleInject} disabled={injecting}>{injecting ? <><span className="a-spin" aria-hidden="true" /> Adding…</> : `Add ${naira(amt)}`}</button>
+          </> : <>
+            <button type="button" className="btn btn-outline" onClick={closeInject}>Cancel</button>
+            <button type="button" className="btn btn-green" onClick={review}>Review</button>
+          </>}>
+          {!reviewing ? (
+            <form onSubmit={e => { e.preventDefault(); review() }} noValidate>
+              <Field id="inj-amount" label="Amount" error={amountError}>
+                <div className="cm-money">
+                  <span aria-hidden="true">₦</span>
+                  <input id="inj-amount" className="a-input" type="tel" inputMode="decimal" placeholder="1,000,000" value={injectAmount} aria-invalid={!!amountError}
+                    onKeyDown={blockMinus} onChange={e => { setInjectAmount(nonNegativeString(e.target.value)); setAmountError('') }} />
+                </div>
+              </Field>
+              <Field id="inj-ref" label="Reference (optional)" hint="For your own records, like an invoice or transfer number. It isn’t saved with the injection yet, so note it elsewhere too.">
+                <input id="inj-ref" className="a-input" type="text" placeholder="INV-2025-001" value={injectRef} onChange={e => setInjectRef(e.target.value)} />
+              </Field>
+            </form>
+          ) : (
+            <>
+              <AmountHero label="You’re adding" amount={naira(amt)} sub="to the capital wallet (W-1)" />
+              <Ledger>
+                <LedgerRow label="Capital now">{naira(capitalNow)}</LedgerRow>
+                {injectRef.trim() && <LedgerRow label="Your reference">{injectRef.trim()}</LedgerRow>}
+                <LedgerRow label="Capital after" total>{naira(capitalNow + amt)}</LedgerRow>
+              </Ledger>
+              <DialogNote warn>This can’t be undone from this page.</DialogNote>
+            </>
+          )}
+        </Modal>
+      )}
+
+      {result && <ResultModal result={result} onClose={() => setResult(null)} />}
+      {toastNode}
     </>
   )
 }
