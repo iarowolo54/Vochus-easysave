@@ -190,6 +190,27 @@ export async function verifyTransaction(reference: string): Promise<{
   gatewayResponse?: string
   raw: unknown
 }> {
+  if (isTestMode() && reference.startsWith('addenroll-')) {
+    return {
+      status: 'success',
+      amountNaira: 50,
+      currency: 'NGN',
+      channel: 'card',
+      gatewayResponse: 'Approved',
+      authorization: {
+        authorization_code: 'AUTH_test',
+        signature: 'SIG_test',
+        reusable: true,
+        last4: '4242',
+        card_type: 'visa',
+        bank: 'Test Bank',
+        exp_month: '12',
+        exp_year: '2030',
+        channel: 'card',
+      },
+      raw: null,
+    }
+  }
   if (isTestMode() && (reference.startsWith('autodebit-') || reference.startsWith('VCHS-'))) {
     return { status: 'success', amountNaira: 0, currency: 'NGN', channel: 'card', gatewayResponse: 'Approved', raw: null }
   }
