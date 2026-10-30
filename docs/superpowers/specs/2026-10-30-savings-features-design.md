@@ -60,8 +60,26 @@ early withdrawal is free and unrestricted, so "save to maturity" has no upside.
 This adds 1% per completed month held, i.e. 12%/yr, as a bonus paid at redemption.
 
 ### Rules (confirmed with owner)
-- **Every** savings plan earns **1% per completed month**, **simple** (no
-  interest-on-interest) → 12%/yr.
+- **Scope: ONLINE savings only.** Interest accrues ONLY on plans with
+  `source === 'self'` (self-registered, email-invite "online" plans — see the
+  online/offline customer distinction). `source === 'agent'` (offline/cash,
+  agent-created) plans earn **nothing**. Every rule below is implicitly scoped to
+  `source === 'self'` plans; the accrual job, the payout paths, the display, and
+  the retroactive backfill all filter on it.
+- Each qualifying (online) plan earns, **per completed month**, `annualRate/12`
+  of the deposit principal, **simple** (no interest-on-interest). The default
+  `annualRate` is **12%** (→ 1%/month).
+- **The annual rate is superadmin-configurable, applied FORWARD-ONLY.** The rate
+  lives as an **effective-dated history** (a new `SavingsInterestRate` append-only
+  model + a `platformSetting`-style admin editor, mirroring how `commissionRates`
+  are edited). Each completed month earns at the rate **in effect on that month's
+  completion date (its anniversary)**: a rate change on date X affects only
+  anniversaries `>= X`; months already completed keep the rate they completed under.
+  When no history entry precedes an anniversary, the baseline **12%** applies (so
+  all months before the superadmin ever changes anything, including the retroactive
+  backfill of existing plans, use 12%). Superadmin changes take effect **from the
+  moment they're made** (not backdatable). Redemption still freezes the computed
+  interest at the request, so a later rate change never alters an in-flight payout.
 - A "month" is a **monthly anniversary of the plan's `startDate`** (started the
   5th → earns on the 5th of each following month). Months without that day-of-month
   (e.g. anniversary would be the 31st) clamp to the **last day of that month**.
@@ -75,22 +93,25 @@ This adds 1% per completed month held, i.e. 12%/yr, as a bonus paid at redemptio
   money left past maturity earns nothing extra.
 - Interest is paid **on top** of the saved principal, released when the customer
   redeems.
-- **Retroactive:** existing active plans backfill 1% for each month already
-  completed since their `startDate` (the deterministic computation below does this
-  automatically — no special migration script).
+- **Retroactive:** existing active **online (`source === 'self'`)** plans backfill
+  1% for each month already completed since their `startDate` (the deterministic
+  computation below does this automatically — no special migration script).
+  Existing `source === 'agent'` plans get nothing, retroactively or going forward.
 
 ### Core computation (deterministic, idempotent)
 A pure function in a new `src/lib/savings-interest.ts`, unit-tested first (TDD):
 
 ```
-accruedInterest(startDate, maturityDate, deposits[], asOf):
+accruedInterest(startDate, maturityDate, deposits[], asOf, rateSchedule[]):
   cutoff = min(asOf, maturityDate)
   anniversaries = [startDate+1mo, startDate+2mo, ...] while <= cutoff   # month-end clamped
   total = 0
   for each anniversary a:
     principalAtA = sum(d.amount for d in deposits if d.createdAt <= a)
-    total += round1pct(principalAtA)          # money(principalAtA * 0.01)
+    annual = rateOn(rateSchedule, a)           # latest entry with effectiveFrom <= a, else 12
+    total += money(principalAtA * (annual / 12 / 100))
   return money(total)
+rateOn(schedule, date): annualRate of the latest entry with effectiveFrom <= date, else DEFAULT 12
 ```
 
 - `deposits` = the plan's `type:'saving'`, `status:'Done'` transactions
@@ -103,8 +124,9 @@ accruedInterest(startDate, maturityDate, deposits[], asOf):
 - New column `SavingsPlan.interestAccrued Float @default(0)` (Prisma migration via
   `prisma migrate dev`; applies on deploy through `migrate deploy`). This is a
   **display figure only** — the running accrued interest the customer sees grow.
-- The daily cron recomputes `SavingsPlan.interestAccrued` for each active plan and
-  writes it, so the customer sees it grow without logging in.
+- The daily cron recomputes `SavingsPlan.interestAccrued` for each active **online
+  (`source === 'self'`)** plan and writes it, so the customer sees it grow without
+  logging in. It never touches `source === 'agent'` plans.
 - Note: a plan whose last anniversary falls on/before `maturityDate` must still get
   that final anniversary credited once; the cron keeps processing a plan until its
   accrual equals the maturity-capped total, then can skip it.
@@ -116,9 +138,13 @@ use a **frozen `netPayout` stored on the `EarlyRedemption` record**, not a fresh
 computation. Interest therefore **freezes at the moment of the redemption request**
 (the same moment `netPayout`/fee freeze today), confirmed with the owner.
 
+- **Every payout path first gates on `plan.source === 'self'`.** For an
+  `'agent'` plan, interest is `0`, `EarlyRedemption.interestAmount` is `0`, and NO
+  interest Transaction or platform debit is written — behavior is exactly as today.
 - The customer `redeem` POST computes interest deterministically from the ledger
-  as of "now" and **stores it on the `EarlyRedemption` record** in a new column
-  `interestAmount Float @default(0)` (Prisma migration). It does NOT re-read the
+  as of "now" (only when `source === 'self'`) and **stores it on the
+  `EarlyRedemption` record** in a new column `interestAmount Float @default(0)`
+  (Prisma migration). It does NOT re-read the
   mutable `SavingsPlan.interestAccrued` (avoids a stale/racey display value driving
   money).
 - Redemption payout becomes: **principal (`balance`) + `interestAmount` − fee**,
