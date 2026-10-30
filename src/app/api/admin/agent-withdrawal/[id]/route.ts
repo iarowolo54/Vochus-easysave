@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
-import bcrypt from 'bcryptjs'
+import { verifyApprovalPin } from '@/lib/approval-pin'
 import { createRecipient, initiateTransfer, resolveAccount } from '@/lib/paystack'
 import { logAudit } from '@/lib/audit'
 
@@ -15,19 +15,13 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
 
   if (action === 'approve') {
     if (!pin) return NextResponse.json({ error: 'Approval PIN required' }, { status: 400 })
-    const adminId = (session.user as any).id
-    const adminEmail = (session.user as any).email
-    const admin = await prisma.superAdmin.findFirst({
-      where: adminId ? { id: adminId } : { email: adminEmail },
-    })
-    if (!admin?.approvalPin) return NextResponse.json({ error: 'No approval PIN set. Contact system administrator.' }, { status: 403 })
-    const valid = await bcrypt.compare(String(pin), admin.approvalPin)
-    if (!valid) return NextResponse.json({ error: 'Incorrect PIN' }, { status: 403 })
+    const pinCheck = await verifyApprovalPin(session, pin)
+    if (!pinCheck.ok) return pinCheck.response
   }
 
   const record = await prisma.agentWithdrawal.findUnique({ where: { id } })
   if (!record) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (!['Pending'].includes(record.status)) return NextResponse.json({ error: `Withdrawal is in ${record.status} state` }, { status: 400 })
+  if (record.status !== 'Pending') return NextResponse.json({ error: 'Already processed' }, { status: 409 })
 
   const agent = await prisma.agent.findUnique({ where: { id: record.agentId } })
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
@@ -36,16 +30,20 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   const decidedBy = adminUser.name ?? 'Super Admin'
 
   if (action === 'reject') {
-    await prisma.$transaction([
-      prisma.agentWithdrawal.update({
-        where: { id },
+    // Claim the Pending -> Rejected transition first; only the winner refunds.
+    const refunded = await prisma.$transaction(async (tx) => {
+      const claim = await tx.agentWithdrawal.updateMany({
+        where: { id, status: 'Pending' },
         data: { status: 'Rejected', decidedAt: new Date(), decidedBy, adminNote: adminNote || null },
-      }),
-      prisma.agent.update({
+      })
+      if (claim.count === 0) return false
+      await tx.agent.update({
         where: { id: agent.id },
         data: { commissionBalance: { increment: record.amount } },
-      }),
-    ])
+      })
+      return true
+    })
+    if (!refunded) return NextResponse.json({ error: 'Already processed' }, { status: 409 })
     logAudit({
       action: 'agent_withdrawal_reject',
       entity: 'AgentWithdrawal',
@@ -62,6 +60,20 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       return NextResponse.json({ error: 'Bank account details missing on this withdrawal record' }, { status: 400 })
     }
 
+    // Claim Pending -> Processing BEFORE any Paystack call. A concurrent/second approve claims
+    // nothing (count 0) and never reaches Paystack. Reverted to Pending below if the transfer
+    // is not started, so the admin can retry (Paystack also dedupes on the record's ref).
+    const claim = await prisma.agentWithdrawal.updateMany({
+      where: { id, status: 'Pending' },
+      data: { status: 'Processing', decidedAt: new Date(), decidedBy, adminNote: adminNote || null },
+    })
+    if (claim.count === 0) return NextResponse.json({ error: 'Already processed' }, { status: 409 })
+    const releaseClaim = () =>
+      prisma.agentWithdrawal.updateMany({
+        where: { id, status: 'Processing', paystackTransferCode: null },
+        data: { status: 'Pending', decidedAt: null, decidedBy: null },
+      })
+
     let recipientName = record.accountName ?? ''
     if (!recipientName) {
       try {
@@ -70,12 +82,13 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       } catch {
         recipientName = agent.name
       }
-      await prisma.agentWithdrawal.update({ where: { id }, data: { accountName: recipientName } })
+      await prisma.agentWithdrawal.updateMany({ where: { id, status: 'Processing' }, data: { accountName: recipientName } })
     }
 
     let paystackRecipientCode: string | null = null
     let paystackTransferCode: string | null = null
     let bankTransferStatus: string | null = null
+    let transferStarted = false
 
     try {
       paystackRecipientCode = await createRecipient(
@@ -91,10 +104,11 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       )
       paystackTransferCode = transfer.transferCode
       bankTransferStatus = transfer.status
+      transferStarted = transfer.status !== 'failed' && transfer.status !== 'reversed'
 
       if (transfer.status === 'otp') {
-        await prisma.agentWithdrawal.update({
-          where: { id },
+        await prisma.agentWithdrawal.updateMany({
+          where: { id, status: 'Processing' },
           data: {
             status: 'AwaitingOTP',
             paystackRecipientCode,
@@ -111,19 +125,23 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       }
 
       if (transfer.status === 'failed' || transfer.status === 'reversed') {
+        await releaseClaim()
         return NextResponse.json({
           error: `Paystack transfer ${transfer.status}. Reason: ${(transfer as any).raw?.gateway_response ?? 'unknown'}. Check your Paystack balance and try again.`,
         }, { status: 502 })
       }
     } catch (err: any) {
+      // Once Paystack has accepted the transfer never hand the record back to Pending
+      // (that would allow a second transfer); it stays Processing for manual verification.
+      if (!transferStarted) await releaseClaim()
       return NextResponse.json({ error: `Paystack transfer failed: ${err.message}` }, { status: 502 })
     }
 
     // 'success' = money moved; 'pending' = queued on Paystack side, verify later
     const finalStatus = bankTransferStatus === 'success' ? 'Approved' : 'Processing'
 
-    await prisma.agentWithdrawal.update({
-      where: { id },
+    await prisma.agentWithdrawal.updateMany({
+      where: { id, status: 'Processing' },
       data: {
         status: finalStatus,
         decidedAt: new Date(),

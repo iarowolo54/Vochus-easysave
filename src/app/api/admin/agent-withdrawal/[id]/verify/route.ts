@@ -21,31 +21,53 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
     return NextResponse.json({ error: `Verify failed: ${err.message}` }, { status: 502 })
   }
 
-  const agent = await prisma.agent.findUnique({ where: { id: record.agentId } })
   const admin = session.user as { name?: string }
   const decidedBy = admin.name ?? 'Super Admin'
 
+  // Only an in-flight transfer may change status; every transition is a conditional claim so a
+  // refund (failed/reversed) can be applied at most once however many times verify is hit.
+  const IN_FLIGHT = ['Processing', 'AwaitingOTP']
+  const inFlight = IN_FLIGHT.includes(record.status)
   let newStatus = record.status
-  if (result.status === 'success') newStatus = 'Approved'
-  else if (result.status === 'failed' || result.status === 'reversed') {
-    newStatus = 'Rejected'
-    if (agent && ['Processing', 'AwaitingOTP'].includes(record.status)) {
-      await prisma.agent.update({
-        where: { id: agent.id },
+
+  if (result.status === 'failed' || result.status === 'reversed') {
+    if (!inFlight) return NextResponse.json({ error: 'Already processed' }, { status: 409 })
+    const refunded = await prisma.$transaction(async (tx) => {
+      const claim = await tx.agentWithdrawal.updateMany({
+        where: { id, status: { in: IN_FLIGHT } },
+        data: {
+          status: 'Rejected',
+          bankTransferStatus: result.status,
+          decidedAt: new Date(),
+          decidedBy,
+          adminNote: `Auto-refund: Paystack ${result.status}`,
+        },
+      })
+      if (claim.count === 0) return false
+      await tx.agent.update({
+        where: { id: record.agentId },
         data: { commissionBalance: { increment: record.amount } },
       })
+      return true
+    })
+    if (!refunded) return NextResponse.json({ error: 'Already processed' }, { status: 409 })
+    newStatus = 'Rejected'
+  } else {
+    const target = result.status === 'success' ? 'Approved' : result.status === 'pending' ? 'Processing' : null
+    if (target && inFlight) {
+      const moved = await prisma.agentWithdrawal.updateMany({
+        where: { id, status: { in: IN_FLIGHT } },
+        data: {
+          status: target,
+          bankTransferStatus: result.status,
+          ...(target === 'Approved' && !record.decidedAt ? { decidedAt: new Date(), decidedBy } : {}),
+        },
+      })
+      newStatus = moved.count ? target : ((await prisma.agentWithdrawal.findUnique({ where: { id }, select: { status: true } }))?.status ?? record.status)
+    } else {
+      await prisma.agentWithdrawal.updateMany({ where: { id, status: record.status }, data: { bankTransferStatus: result.status } })
     }
-  } else if (result.status === 'pending') newStatus = 'Processing'
-
-  await prisma.agentWithdrawal.update({
-    where: { id },
-    data: {
-      status: newStatus,
-      bankTransferStatus: result.status,
-      ...(newStatus === 'Approved' && !record.decidedAt ? { decidedAt: new Date(), decidedBy } : {}),
-      ...(newStatus === 'Rejected' ? { decidedAt: new Date(), decidedBy, adminNote: `Auto-refund: Paystack ${result.status}` } : {}),
-    },
-  })
+  }
 
   logAudit({
     action: 'agent_withdrawal_verify',
