@@ -227,3 +227,10 @@ export async function verifyTransaction(reference: string): Promise<{
     raw: d,
   }
 }
+
+/** Deactivates a saved card authorization so Paystack can no longer charge it. Throws on live failure. */
+export async function deactivateAuthorization(authorizationCode: string): Promise<void> {
+  if (isTestMode()) return
+  const data = await call('POST', '/customer/authorization/deactivate', { authorization_code: authorizationCode })
+  if (!data.status) throw new Error(data.message ?? 'Authorization deactivation failed')
+}
