@@ -13,7 +13,18 @@ function stub(rel: string, exports: Record<string, unknown>) {
 }
 let mailImpl: (a: { to: string; subject: string; html: string }) => Promise<void> = async (a) => { mailCalls.push(a) }
 stub('../src/lib/mail', { sendMail: (a: { to: string; subject: string; html: string }) => mailImpl(a) })
-stub('../src/lib/kudisms', { sendSMS: async (to: string, body: string) => { smsCalls.push({ to, body }); return { success: true } } })
+let smsImpl: (to: string) => { success: boolean } = () => ({ success: true })
+stub('../src/lib/kudisms', { sendSMS: async (to: string, body: string) => { smsCalls.push({ to, body }); return smsImpl(to) } })
+
+async function withNodeEnv<T>(value: string, fn: () => Promise<T>): Promise<T> {
+  const env = process.env as Record<string, string | undefined>
+  const prev = env.NODE_ENV
+  env.NODE_ENV = value
+  try { return await fn() } finally {
+    if (prev === undefined) delete env.NODE_ENV
+    else env.NODE_ENV = prev
+  }
+}
 
 type Run = typeof import('../src/lib/weekly-summary-run').sendWeeklySummaries
 const sendWeeklySummaries: Run = (...a) => require_('../src/lib/weekly-summary-run').sendWeeklySummaries(...a)
@@ -70,7 +81,8 @@ after(async () => {
   await prisma.$disconnect()
 })
 
-test('sends by channel, dedupes, isolates failures', async () => {
+test('sends by channel, dedupes, isolates failures', () => withNodeEnv('production', async () => {
+  mailImpl = async (a) => { mailCalls.push(a) }
   const opts = { customerIds: Object.values(ids) }
   const r1 = await sendWeeklySummaries(prisma, NOW, opts)
   assert.equal(mailCalls.length, 1)
@@ -99,4 +111,38 @@ test('sends by channel, dedupes, isolates failures', async () => {
   assert.equal(r3.failed, 1)
   assert.equal(r3.smsed, 1)
   assert.equal(smsCalls.length, 2)
+}))
+
+test('email is gated on NODE_ENV: skipped outside production but still counted', async () => {
+  mailImpl = async (a) => { mailCalls.push(a) }
+  const opts = { customerIds: Object.values(ids) }
+  const before = mailCalls.length
+  const wk = new Date(NOW.getTime() + 14 * 864e5)
+  const r = await withNodeEnv('development', () => sendWeeklySummaries(prisma, wk, opts))
+  assert.equal(mailCalls.length, before, 'sendMail must not be called outside production')
+  assert.equal(r.emailed, 1)
+})
+
+test('email is sent when NODE_ENV is production', async () => {
+  mailImpl = async (a) => { mailCalls.push(a) }
+  const opts = { customerIds: Object.values(ids) }
+  const before = mailCalls.length
+  const wk = new Date(NOW.getTime() + 21 * 864e5)
+  const r = await withNodeEnv('production', () => sendWeeklySummaries(prisma, wk, opts))
+  assert.equal(mailCalls.length, before + 1)
+  assert.equal(mailCalls[before].to, EMAIL_A)
+  assert.equal(r.emailed, 1)
+})
+
+test('a failed SMS is counted as failed, not smsed', async () => {
+  const opts = { customerIds: Object.values(ids) }
+  const wk = new Date(NOW.getTime() + 28 * 864e5)
+  smsImpl = () => ({ success: false })
+  try {
+    const r = await withNodeEnv('development', () => sendWeeklySummaries(prisma, wk, opts))
+    assert.equal(r.smsed, 0)
+    assert.equal(r.failed, 1)
+  } finally {
+    smsImpl = () => ({ success: true })
+  }
 })

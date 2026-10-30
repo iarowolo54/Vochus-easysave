@@ -76,15 +76,26 @@ export async function sendWeeklySummaries(
       })
 
       if (email) {
-        await sendMail({ to: email, subject: 'Your Vochus weekly savings summary', html: summary.emailHtml })
+        // sendMail has no NODE_ENV self-gate (sendSMS does), so gate here: never email real
+        // customers from dev/staging. The attempt is still counted, mirroring the SMS path.
+        if (process.env.NODE_ENV === 'production') {
+          await sendMail({ to: email, subject: 'Your Vochus weekly savings summary', html: summary.emailHtml })
+        }
         result.emailed++
       } else if (phone) {
-        await sendSMS(phone, summary.smsText)
-        result.smsed++
+        // sendSMS reports gateway errors via its return value rather than throwing.
+        const sms = await sendSMS(phone, summary.smsText)
+        if (sms.success) {
+          result.smsed++
+        } else {
+          result.failed++
+          console.error(`[weekly-summary] sms send failed for customer ${c.id}`)
+        }
       }
     } catch (e) {
       result.failed++
-      console.error(`[weekly-summary] failed for customer ${c.id}: ${e instanceof Error ? e.message : 'unknown error'}`)
+      // Never log the raw message: SMTP/gateway errors can embed the recipient's email or phone.
+      console.error(`[weekly-summary] failed for customer ${c.id}: ${e instanceof Error ? e.name : 'UnknownError'}`)
     }
   }
   return result
