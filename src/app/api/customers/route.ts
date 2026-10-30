@@ -123,6 +123,8 @@ export async function POST(req: NextRequest) {
   const body = await req.json()
   const { firstName, lastName, phone, email, dob, address, language, gender, state, lga, bvn, nokName, nokRelation, nokPhone, dailyAmount, periodDays, goal, startDate, notes, registrationFee, feeMethod, cadence, plans } = body
 
+  if (typeof phone !== 'string' || !phone.trim()) return NextResponse.json({ error: 'Phone is required' }, { status: 400 })
+
   // Gender, state and LGA required; the LGA must belong to the state (#18).
   const genderCheck = validateGender(gender)
   if (!genderCheck.ok) return NextResponse.json({ error: genderCheck.error }, { status: 400 })
