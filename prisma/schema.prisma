@@ -609,6 +609,8 @@ model AutoDebitMandate {
   consentAt          DateTime @default(now())
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+
+  @@index([status, nextRunAt])
 }
 
 model AutoDebitAttempt {
@@ -625,4 +627,6 @@ model AutoDebitAttempt {
   gatewayResponse String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
+
+  @@index([status, createdAt])
 }

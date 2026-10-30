@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { timingSafeEqual } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { accruedInterestForPlan } from '@/lib/savings-interest-plan'
+import { runDueAutoDebits, reconcileProcessingAttempts } from '@/lib/auto-debit-run'
 
 export const dynamic = 'force-dynamic'
 
@@ -45,8 +46,28 @@ export async function GET(req: Request) {
     }
   }
 
+  // Pass 2: fire due auto-debits. Pass 3: settle/fail stuck 'processing' charges.
+  let charged = 0
+  let skipped = 0
+  let debitFailed = 0
+  let settled = 0
+  try {
+    const run = await runDueAutoDebits(prisma, now)
+    charged = run.charged
+    skipped = run.skipped
+    debitFailed = run.failed
+  } catch (err) {
+    console.error('[cron/daily] auto-debit run failed', err instanceof Error ? err.message : 'unknown')
+  }
+  try {
+    const rec = await reconcileProcessingAttempts(prisma, now)
+    settled = rec.settled
+  } catch (err) {
+    console.error('[cron/daily] auto-debit reconcile failed', err instanceof Error ? err.message : 'unknown')
+  }
+
   // SEAM (Feature 3): Friday summary sending will be added to this same route,
   // after the accrual pass above. Intentionally no summary logic yet.
 
-  return NextResponse.json({ accrued, failed })
+  return NextResponse.json({ accrued, failed, charged, skipped, debitFailed, settled })
 }
