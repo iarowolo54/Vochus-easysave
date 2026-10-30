@@ -1,4 +1,5 @@
 'use client'
+import type { ReactNode } from 'react'
 import Amount, { useCountUp } from '@/components/ui/Amount'
 import { Icons } from '@/components/ui/icons'
 import { formatDate, formatNaira } from '@/lib/format'
@@ -10,6 +11,8 @@ type Props = {
   hideAmounts: boolean
   onCollect: () => void
   onNewPlan: () => void
+  /** Optional line under the summary sentence (e.g. interest earned). */
+  note?: ReactNode
 }
 
 const RING = 208
@@ -21,7 +24,7 @@ const CIRC = 2 * Math.PI * R
  * A plan past its payout date. "Goal reached" only when the balance actually met the goal —
  * otherwise it says the plan ended, so we never congratulate someone for 3% of a goal.
  */
-export default function PlanEnded({ plan, hideAmounts, onCollect, onNewPlan }: Props) {
+export default function PlanEnded({ plan, hideAmounts, onCollect, onNewPlan, note }: Props) {
   const goal = plan.dailyAmount * plan.periodDays
   const reached = goal > 0 && plan.balance >= goal
   // Same count-up as the amount in the middle, so the ring fills in step with the number.
@@ -65,6 +68,7 @@ export default function PlanEnded({ plan, hideAmounts, onCollect, onNewPlan }: P
             ? <>You reached your {formatNaira(goal, { minor: false })} goal over {span}.</>
             : <>You saved <strong>{formatNaira(plan.balance)}</strong> over {span}.</>}
       </p>
+      {note}
 
       <div className="ui-plan-ended-actions">
         <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={onCollect}>

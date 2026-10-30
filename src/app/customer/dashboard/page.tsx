@@ -18,6 +18,7 @@ import Amount, { useCountUp } from '@/components/ui/Amount'
 import EmptyState from '@/components/ui/EmptyState'
 import ListRow from '@/components/ui/ListRow'
 import { Icons } from '@/components/ui/icons'
+import InterestNudge, { InterestCard, InterestChip, earnsInterest } from '@/components/customer/InterestNudge'
 import { displayName, formatDate, formatNaira } from '@/lib/format'
 import { getHideBalance, setHideBalance } from '@/lib/preferences'
 import { buildSlots, dateKey, hasEnded, isWeekly } from '@/lib/savings-card'
@@ -25,6 +26,7 @@ import { buildSlots, dateKey, hasEnded, isWeekly } from '@/lib/savings-card'
 type Plan = {
   id: string; dailyAmount: number; periodDays: number; cadence?: string; goal: string
   startDate: string; maturityDate: string; balance: number; status: string; interest?: number
+  source?: string; nextInterestAmount?: number; daysToNextInterest?: number | null
 }
 type Tx = {
   id: string; amount: number; ref: string; createdAt: string; method: string | null
@@ -45,6 +47,39 @@ function capitalise(s: string) {
 
 function daysUntil(iso: string) {
   return Math.max(0, Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000))
+}
+
+function daysLeftText(iso: string) {
+  const d = daysUntil(iso)
+  return d === 0 ? 'Ends today' : `${d} day${d === 1 ? '' : 's'} left`
+}
+
+/** Plain facts about a running plan, as a list under the actions. */
+function PlanDetails({ plan }: { plan: Plan }) {
+  const weekly = isWeekly(plan)
+  const left = daysUntil(plan.maturityDate)
+  return (
+    <>
+      <div className="ui-section-head"><h2>Plan details</h2></div>
+      <dl className="ui-card ui-card--list ui-summary">
+        <div className="ui-row">
+          <dt className="ui-row-main ui-row-sub ui-summary-key">You save</dt>
+          <dd className="ui-row-value">{formatNaira(weekly ? plan.dailyAmount * 7 : plan.dailyAmount, { minor: false })} {weekly ? 'a week' : 'a day'}</dd>
+        </div>
+        <div className="ui-row">
+          <dt className="ui-row-main ui-row-sub ui-summary-key">You collect on</dt>
+          <dd className="ui-row-value ui-value-stack">
+            <span>{formatDate(plan.maturityDate)}</span>
+            <span className="ui-row-sub">{left === 0 ? 'Today' : left === 1 ? 'Tomorrow' : `In ${left} days`}</span>
+          </dd>
+        </div>
+        <div className="ui-row">
+          <dt className="ui-row-main ui-row-sub ui-summary-key">Started</dt>
+          <dd className="ui-row-value">{formatDate(plan.startDate)}</dd>
+        </div>
+      </dl>
+    </>
+  )
 }
 
 export default function CustomerDashboard() {
@@ -216,6 +251,7 @@ export default function CustomerDashboard() {
               hideAmounts={hideBalance}
               onCollect={() => router.push('/customer/redeem')}
               onNewPlan={() => router.push('/customer/save?new=1')}
+              note={<InterestNudge plan={plan} hideAmounts={hideBalance} />}
             />
           </section>
         ) : (
@@ -228,46 +264,31 @@ export default function CustomerDashboard() {
             {hideBalance
               ? <span className="ui-amount ui-amount--hero" aria-label="Balance hidden">₦ ••••</span>
               : <Amount value={plan?.balance ?? 0} size="hero" animate />}
+            {plan && !ended && <InterestChip plan={plan} hideAmounts={hideBalance} />}
 
             {!plan && <p className="ui-balance-note">No active plan yet. Start one to begin saving.</p>}
             {plan && ended && <p className="ui-balance-note">Plan ended {formatDate(plan.maturityDate)}</p>}
+            {plan && ended && <InterestNudge plan={plan} hideAmounts={hideBalance} />}
             {plan && !ended && (
               <>
                 {!hideBalance && target > 0 && (
-                  <>
-                    <div
-                      className="ui-progress ui-balance-bar"
-                      role="progressbar"
-                      aria-valuemin={0}
-                      aria-valuemax={100}
-                      aria-valuenow={Math.round(goalPct)}
-                      aria-label={`${formatNaira(plan.balance)} of ${formatNaira(target)} goal`}
-                    >
-                      <span style={{ width: `${shownPct}%` }} />
-                    </div>
-                    <p className="ui-balance-goal" aria-hidden="true">
-                      <span>of {formatNaira(target, { minor: false })} goal</span>
-                      <span>{Math.floor(shownPct)}%</span>
-                    </p>
-                  </>
+                  <div
+                    className="ui-progress ui-balance-bar"
+                    role="progressbar"
+                    aria-valuemin={0}
+                    aria-valuemax={100}
+                    aria-valuenow={Math.round(goalPct)}
+                    aria-label={`${formatNaira(plan.balance)} of ${formatNaira(target)} goal`}
+                  >
+                    <span style={{ width: `${shownPct}%` }} />
+                  </div>
                 )}
-                <dl className="ui-balance-facts">
-                  <div>
-                    <dt>{weekly ? 'You save weekly' : 'You save daily'}</dt>
-                    <dd>{formatNaira(weekly ? plan.dailyAmount * 7 : plan.dailyAmount, { minor: false })}</dd>
-                  </div>
-                  <div>
-                    <dt>You collect on</dt>
-                    <dd>{formatDate(plan.maturityDate)}</dd>
-                    <dd className="ui-balance-fact-sub">
-                      {daysUntil(plan.maturityDate) === 0 ? 'Today' : daysUntil(plan.maturityDate) === 1 ? 'Tomorrow' : `In ${daysUntil(plan.maturityDate)} days`}
-                    </dd>
-                  </div>
-                  <div className="ui-balance-fact-wide">
-                    <dt>Interest so far</dt>
-                    <dd>{hideBalance ? '₦ ••••' : formatNaira(plan.interest ?? 0)}</dd>
-                  </div>
-                </dl>
+                <p className="ui-balance-goal">
+                  {!hideBalance && target > 0 && (
+                    <span aria-hidden="true"><strong>{Math.floor(shownPct)}%</strong> of {formatNaira(target, { minor: false })}</span>
+                  )}
+                  <span>{daysLeftText(plan.maturityDate)}</span>
+                </p>
               </>
             )}
             {plan && !ended && !pending && <TodayStatus weekly={weekly} deposits={recentForStatus} />}
@@ -295,9 +316,19 @@ export default function CustomerDashboard() {
         </div>}
 
         {plan && finished && <PlanSummary plan={plan} hideAmounts={hideBalance} />}
-        {plan && !finished && (
-          <WeekStrip plan={plan} deposits={planTxs} onOpenCard={() => setCardOpen(true)} onSelect={setDaySel} />
-        )}
+        {/* Online savers see interest and plan details first; cash savers check their week first. */}
+        {plan && !finished && (earnsInterest(plan) ? (
+          <>
+            <InterestCard plan={plan} hideAmounts={hideBalance} />
+            <PlanDetails plan={plan} />
+            <WeekStrip plan={plan} deposits={planTxs} onOpenCard={() => setCardOpen(true)} onSelect={setDaySel} />
+          </>
+        ) : (
+          <>
+            <WeekStrip plan={plan} deposits={planTxs} onOpenCard={() => setCardOpen(true)} onSelect={setDaySel} />
+            <PlanDetails plan={plan} />
+          </>
+        ))}
         {plan && finished && (
           <button type="button" className="ui-card ui-card-link" onClick={() => setCardOpen(true)}>
             <span className="ui-row-main">
@@ -343,7 +374,7 @@ export default function CustomerDashboard() {
           <ListRow
             leading={<span className="ui-avatar" aria-hidden="true">{data.agent.name[0]}</span>}
             title={displayName(data.agent.name)}
-            sub={`Agent ID ${data.agent.agentId}`}
+            sub={plan && !earnsInterest(plan) ? 'Your agent · collects your savings' : `Agent ID ${data.agent.agentId}`}
           />
           <p className="ui-safety">
             <Icons.locked size={16} aria-hidden="true" />
