@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
+import { customerType } from '@/lib/customer-type'
 
 export async function GET(req: NextRequest) {
   const guard = await requireSuperAdmin()
@@ -23,10 +24,21 @@ export async function GET(req: NextRequest) {
       : undefined,
     include: {
       agent: { select: { name: true, agentId: true } },
-      savingsPlans: { select: { balance: true, status: true } },
+      savingsPlans: { select: { balance: true, status: true, source: true } },
     },
     orderBy: { createdAt: 'desc' },
   })
+
+  // One groupBy for the whole list (not a query per customer); same definition as /api/customers.
+  const lastPaid = new Map<string, Date>()
+  if (customers.length) {
+    const rows = await prisma.transaction.groupBy({
+      by: ['customerId'],
+      where: { customerId: { in: customers.map(c => c.id) }, type: 'saving', status: 'Done' },
+      _max: { createdAt: true },
+    })
+    for (const r of rows) if (r.customerId && r._max.createdAt) lastPaid.set(r.customerId, r._max.createdAt)
+  }
 
   return NextResponse.json({
     customers: customers.map(c => ({
@@ -42,7 +54,11 @@ export async function GET(req: NextRequest) {
       agentId: c.agent.agentId,
       totalBalance: c.savingsPlans.reduce((s, p) => s + p.balance, 0),
       activePlans: c.savingsPlans.filter(p => p.status === 'Active').length,
-      photoUrl: c.photoUrl,
+      gender: c.gender,
+      state: c.state,
+      lga: c.lga,
+      type: customerType(c.savingsPlans),
+      lastPaidAt: lastPaid.get(c.id)?.toISOString() ?? null,
     })),
   })
 }
