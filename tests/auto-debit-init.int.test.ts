@@ -1,5 +1,6 @@
 // Integration test: POST /api/customer/auto-debit/init
 process.env.PAYSTACK_SECRET_KEY = 'sk_test_autodebitinit'
+process.env.NEXTAUTH_URL = 'http://localhost:3000'
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { createRequire } from 'node:module'
@@ -95,4 +96,17 @@ test('existing active mandate: 409', async () => {
     data: { customerId: c.id, savingsPlanId: plan.id, authorizationCode: 'x', authSignature: 'x', authEmail: 'a@b.c', status: 'active', amountPerCycle: 100, nextRunAt: new Date() },
   })
   assert.equal((await call(c, plan.id)).status, 409)
+})
+
+test('NEXTAUTH_URL unset: fails closed with 500 before Paystack', async () => {
+  const { c, plan } = await mk('self', 7)
+  const saved = process.env.NEXTAUTH_URL
+  delete process.env.NEXTAUTH_URL
+  try {
+    const r = await call(c, plan.id)
+    assert.equal(r.status, 500)
+    assert.equal(await prisma.paymentIntent.count({ where: { planId: plan.id } }), 0)
+  } finally {
+    process.env.NEXTAUTH_URL = saved
+  }
 })

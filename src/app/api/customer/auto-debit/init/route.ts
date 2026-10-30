@@ -37,6 +37,9 @@ export async function POST(req: NextRequest) {
   })
   if (existing) return NextResponse.json({ error: 'Auto-debit is already active for this plan' }, { status: 409 })
 
+  const baseUrl = process.env.NEXTAUTH_URL
+  if (!baseUrl) return NextResponse.json({ error: 'Payment not configured' }, { status: 500 })
+
   const email = customer.email ?? `${customer.customerId.toLowerCase()}@vochus.ng`
   // `addenroll-` keeps enrollment charges distinct from scheduled `autodebit-` refs.
   const reference = `addenroll-${plan.id}-${randomBytes(9).toString('base64url')}`
@@ -54,7 +57,7 @@ export async function POST(req: NextRequest) {
       amountNaira: FIRST_CHARGE_NAIRA,
       reference,
       metadata: { customerId: customer.id, planId: plan.id, purpose: 'auto-debit-enroll' },
-      callbackUrl: `${process.env.NEXTAUTH_URL}/customer/save/callback`,
+      callbackUrl: `${baseUrl}/customer/save/callback`,
     })
     return NextResponse.json({ authorizationUrl: init.authorizationUrl, reference: init.reference })
   } catch {
