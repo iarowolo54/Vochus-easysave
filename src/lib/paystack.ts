@@ -1,3 +1,5 @@
+import { money } from '@/lib/wallet-guard'
+
 const BASE = 'https://api.paystack.co'
 
 function headers() {
@@ -112,4 +114,95 @@ export async function finalizeTransfer(transferCode: string, otp: string) {
   })
   if (!data.status) throw new Error(data.message ?? 'OTP finalization failed')
   return { status: (data.data?.status ?? 'success') as string }
+}
+
+export interface PaystackAuthorization {
+  authorization_code: string
+  signature: string
+  reusable: boolean
+  last4?: string
+  card_type?: string
+  bank?: string
+  exp_month?: string
+  exp_year?: string
+  channel?: string
+}
+
+export async function initCardAuthorization(input: {
+  email: string
+  amountNaira: number
+  reference: string
+  metadata: object
+  callbackUrl?: string
+}): Promise<{ authorizationUrl: string; reference: string }> {
+  if (isTestMode()) {
+    return { authorizationUrl: `https://checkout.paystack.test/${input.reference}`, reference: input.reference }
+  }
+  const data = await call('POST', '/transaction/initialize', {
+    email: input.email,
+    amount: Math.round(input.amountNaira * 100),
+    currency: 'NGN',
+    reference: input.reference,
+    channels: ['card'],
+    metadata: input.metadata,
+    ...(input.callbackUrl ? { callback_url: input.callbackUrl } : {}),
+  })
+  if (!data.status) throw new Error(data.message ?? 'Card authorization init failed')
+  return {
+    authorizationUrl: data.data.authorization_url as string,
+    reference: (data.data.reference ?? input.reference) as string,
+  }
+}
+
+export async function chargeAuthorization(input: {
+  authorizationCode: string
+  email: string
+  amountNaira: number
+  reference: string
+  metadata?: object
+}): Promise<{ status: string; reference: string; gatewayResponse?: string; raw: unknown }> {
+  if (isTestMode()) {
+    return { status: 'success', reference: input.reference, gatewayResponse: 'Approved', raw: null }
+  }
+  const data = await call('POST', '/transaction/charge_authorization', {
+    authorization_code: input.authorizationCode,
+    email: input.email,
+    amount: Math.round(input.amountNaira * 100),
+    currency: 'NGN',
+    reference: input.reference,
+    ...(input.metadata ? { metadata: input.metadata } : {}),
+  })
+  if (!data.status) throw new Error(data.message ?? 'Charge failed')
+  return {
+    status: data.data.status as string, // 'success' | 'failed' | 'pending' | ...
+    reference: (data.data.reference ?? input.reference) as string,
+    gatewayResponse: data.data.gateway_response as string | undefined,
+    raw: data.data,
+  }
+}
+
+export async function verifyTransaction(reference: string): Promise<{
+  status: string
+  amountNaira: number
+  currency: string
+  channel?: string
+  authorization?: PaystackAuthorization
+  gatewayResponse?: string
+  raw: unknown
+}> {
+  if (isTestMode() && (reference.startsWith('autodebit-') || reference.startsWith('VCHS-'))) {
+    return { status: 'success', amountNaira: 0, currency: 'NGN', channel: 'card', gatewayResponse: 'Approved', raw: null }
+  }
+  const data = await call('GET', `/transaction/verify/${encodeURIComponent(reference)}`)
+  if (!data.status) throw new Error(data.message ?? 'Transaction verification failed')
+  const d = data.data
+  return {
+    status: d.status as string,
+    amountNaira: money(Number(d.amount) / 100),
+    currency: d.currency as string,
+    channel: d.channel as string | undefined,
+    authorization: d.authorization as PaystackAuthorization | undefined,
+    gatewayResponse: d.gateway_response as string | undefined,
+    raw: d,
+  }
 }
