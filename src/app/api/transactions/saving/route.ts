@@ -6,7 +6,7 @@ import { logAudit } from '@/lib/audit'
 import { assertSufficient, insufficientResponse, InsufficientFundsError, money } from '@/lib/wallet-guard'
 import { debitAgentBalance } from '@/lib/wallet-debit'
 import { creditRegistrationReward } from '@/lib/reward'
-import { selectActivePlan } from '@/lib/saving-plan'
+import { selectActivePlan, depositCreatedAt } from '@/lib/saving-plan'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -38,6 +38,8 @@ export async function POST(req: NextRequest) {
   const plan = selected.plan
 
   const rounded = money(amt)
+  // SR-3: ignore a client backdate on online (self) plans.
+  const createdAt = depositCreatedAt(plan.source, date)
 
   const priorSavings = await prisma.transaction.count({
     where: { customerId: customer.id, type: 'saving' },
@@ -72,7 +74,7 @@ export async function POST(req: NextRequest) {
           method: method ?? 'Cash',
           status: 'Done',
           walletAfter,
-          ...(date ? { createdAt: new Date(date) } : {}),
+          ...(createdAt ? { createdAt } : {}),
         },
       })
       await tx.savingsPlan.update({ where: { id: plan.id }, data: { balance: { increment: rounded } } })

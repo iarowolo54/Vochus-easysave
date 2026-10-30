@@ -66,7 +66,8 @@ export async function POST(req: NextRequest) {
             method: method ?? 'Cash',
             status: 'Done',
             walletAfter,
-            createdAt: dates[i],
+            // SR-3: online (self) plans ignore client dates; createdAt defaults to now.
+            ...(plan.source === 'self' ? {} : { createdAt: dates[i] }),
           },
         }))
       }
