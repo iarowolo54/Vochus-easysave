@@ -58,6 +58,7 @@ test('self plan: fresh interest (1000 at 12%/yr, one month = 10) on plan and pla
   const { status, body } = await me(c)
   assert.equal(status, 200)
   assert.equal(body.plan.interest, 10)
+  assert.equal(body.plan.source, 'self')
   assert.equal(body.plans[0].interest, 10)
 })
 
@@ -65,4 +66,6 @@ test('agent plan: interest is 0', async () => {
   const c = await mk('agent', 2)
   const { body } = await me(c)
   assert.equal(body.plan.interest, 0)
+  assert.equal(body.plans[0].interest, 0)
+  assert.equal(body.plans[0].source, 'agent')
 })

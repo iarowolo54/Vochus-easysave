@@ -15,11 +15,11 @@ import { formatDate, formatNaira } from '@/lib/format'
 type Bank = { code: string; name: string }
 type Redemption = {
   id: string; ref: string; status: string; balance: number; penalty: number
-  netPayout: number; interestAmount?: number; requestedAt: string; token?: string; tokenExpiry?: string
+  netPayout: number; requestedAt: string; token?: string; tokenExpiry?: string
   reason: string; type: string
 }
-type Plan = { balance: number; interest?: number; dailyAmount: number; cadence?: string; maturityDate: string; hasCashDeposit?: boolean; goal?: string }
-type Result = { balance?: number; interest?: number; netPayout?: number }
+type Plan = { source?: string; balance: number; interest?: number; dailyAmount: number; cadence?: string; maturityDate: string; hasCashDeposit?: boolean; goal?: string }
+type Result = { balance?: number; netPayout?: number }
 
 const REASONS = ['Plan matured', 'Medical emergency', 'School fees', 'Business need', 'Personal emergency', 'Other']
 
@@ -167,7 +167,8 @@ export default function CustomerRedeemPage() {
   const hasCash = !!plan?.hasCashDeposit
   const isEarly = plan ? new Date() < new Date(plan.maturityDate) : false
   let savingsFee = 0
-  if (plan) {
+  // Online (self) plans pay no platform fee; the server waives it, so the preview must too.
+  if (plan && plan.source !== 'self') {
     if (hasCash && plan.cadence !== 'weekly') {
       savingsFee = Math.min(plan.dailyAmount, plan.balance)
     } else {
