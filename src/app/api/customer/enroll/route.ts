@@ -11,6 +11,7 @@ import { findIdentityConflict } from '@/lib/identity'
 import { identityConflictResponse } from '@/lib/identity-response'
 import { resolvePlanStartDate, maturityFrom } from '@/lib/saving-plan'
 import { validatePhoto } from '@/lib/photo'
+import { enrolRateLimiter, clientIp } from '@/lib/rate-limit'
 import { validateGender, validateState, validateLga } from '@/lib/customer-fields'
 
 function genId(prefix: string, pad = 5) {
@@ -18,6 +19,13 @@ function genId(prefix: string, pad = 5) {
 }
 
 export async function POST(req: NextRequest) {
+  // FIRST: bound every attempt per IP (before parsing, the OTP gate and the
+  // identity guard) so the 409 cannot be used to enumerate accounts at volume.
+  const ipLimit = enrolRateLimiter.check(`enroll:ip:${clientIp(req)}`, 10, 60 * 60 * 1000)
+  if (!ipLimit.allowed) {
+    return NextResponse.json({ error: 'Too many attempts. Please try again later.' }, { status: 429 })
+  }
+
   const body = await req.json()
   const { ref, aid, firstName, lastName, phone, email, dob, address, gender, state, lga, bvn,
           nokName, nokRelation, nokPhone, photoUrl, dailyAmount, periodDays, goal, password, cadence, plans, startDate } = body

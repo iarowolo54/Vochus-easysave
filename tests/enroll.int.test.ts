@@ -18,8 +18,13 @@ let POST: (req: any) => Promise<Response>
 let agentId = ''
 const createdCustomerIds: string[] = []
 
+// Each request gets a distinct client IP so the per-IP enrol rate limit (10/hr)
+// does not throttle this file's many POSTs; the limit itself is tested in
+// enroll-rate-limit.int.test.ts.
+let ipSeq = 0
 function req(body: Record<string, unknown>) {
-  return { json: async () => body, headers: { get: () => null } }
+  const ip = `192.0.2.${++ipSeq}`
+  return { json: async () => body, headers: { get: (n: string) => (n.toLowerCase() === 'x-forwarded-for' ? ip : null) } }
 }
 
 function validBody(overrides: Record<string, unknown> = {}) {
