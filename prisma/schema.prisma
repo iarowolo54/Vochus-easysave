@@ -587,3 +587,42 @@ model SavingsInterestRate {
   createdBy     String?
   createdAt     DateTime @default(now())
 }
+
+model AutoDebitMandate {
+  id                 String   @id @default(cuid())
+  customerId         String
+  savingsPlanId      String   @unique
+  channel            String   @default("card")
+  authorizationCode  String
+  authSignature      String
+  authEmail          String
+  reusable           Boolean  @default(false)
+  last4              String?
+  cardType           String?
+  bankName           String?
+  expMonth           String?
+  expYear            String?
+  status             String   @default("pending")
+  amountPerCycle     Float
+  nextRunAt          DateTime
+  consecutiveFailures Int     @default(0)
+  consentAt          DateTime @default(now())
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+model AutoDebitAttempt {
+  id             String   @id @default(cuid())
+  mandateId      String
+  savingsPlanId  String
+  reference      String   @unique
+  cycleDate      DateTime
+  creditAmount   Float
+  grossCharged   Float
+  feeEstimate    Float
+  settledAmount  Float?
+  status         String   @default("pending")
+  gatewayResponse String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
