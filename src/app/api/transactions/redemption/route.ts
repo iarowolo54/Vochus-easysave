@@ -6,8 +6,6 @@ import { logAudit } from '@/lib/audit'
 import { assertSufficient, insufficientResponse, InsufficientFundsError, money } from '@/lib/wallet-guard'
 import { redemptionDeduction, planHasCashDeposit, getStoredCommissionRates } from '@/lib/wallet-rates'
 import { loadOwnedRedeemablePlan, claimPlanForRedemption } from '@/lib/redemption'
-import { accruedInterestForPlan } from '@/lib/savings-interest-plan'
-import { interestPayoutOps } from '@/lib/redemption-interest-ops'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -34,9 +32,7 @@ export async function POST(req: NextRequest) {
   const rates = redemptionDeduction({ balance: plan.balance, dailyAmount: plan.dailyAmount, cadence: plan.cadence, hasCashDeposit, periodDays: plan.periodDays, initiator: 'admin', commRates, source: (plan as any).source })
   const platformFee = money(rates.platform)
   const agentComm = money(rates.agent)
-  // Live interest (0 unless source === 'self'); paid from the Revenue wallet inside the claim transaction.
-  const interest = await accruedInterestForPlan(prisma, plan, new Date())
-  const netPayout = money(gross - platformFee - agentComm + interest)
+  const netPayout = money(gross - platformFee - agentComm)
 
   const txnCount = await prisma.transaction.count()
   const ref = `TXN-${String(9000 + txnCount + 1)}`
@@ -74,7 +70,6 @@ export async function POST(req: NextRequest) {
           commissionBalance: { increment: agentComm },
         },
       })
-      for (const op of interestPayoutOps(tx, { ref, interestAmount: interest, savingsPlanId: plan.id }, agent.id, customerId)) await op
       return created
     })
   } catch (e) {
