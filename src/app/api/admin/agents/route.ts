@@ -6,6 +6,7 @@ import { randomBytes } from 'crypto'
 import { sendMail } from '@/lib/mail'
 import { logAudit } from '@/lib/audit'
 import { validatePhoto } from '@/lib/photo'
+import { findIdentityConflict } from '@/lib/identity'
 
 export async function GET(req: NextRequest) {
   const guard = await requireSuperAdmin()
@@ -89,6 +90,14 @@ export async function POST(req: NextRequest) {
 
   const existing = await prisma.agent.findFirst({ where: { OR: [{ phone }, { email }] } })
   if (existing) return NextResponse.json({ error: 'Phone or email already in use' }, { status: 409 })
+
+  const conflict = await findIdentityConflict(prisma, { phone, email })
+  if (conflict) {
+    return NextResponse.json(
+      { error: conflict === 'phone' ? 'This phone number is already registered.' : 'This email is already registered.' },
+      { status: 409 },
+    )
+  }
 
   const count = await prisma.agent.count()
   const agentId = `AGT-${String(count + 1).padStart(5, '0')}`
