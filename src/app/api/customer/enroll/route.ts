@@ -6,6 +6,8 @@ import { sendMail } from '@/lib/mail'
 import { logAudit } from '@/lib/audit'
 import { resolveBvn } from '@/lib/paystack'
 import { normalizeEmail } from '@/lib/email'
+import { normalizePhone } from '@/lib/phone'
+import { findIdentityConflict } from '@/lib/identity'
 import { resolvePlanStartDate, maturityFrom } from '@/lib/saving-plan'
 import { validatePhoto } from '@/lib/photo'
 import { validateGender, validateState, validateLga } from '@/lib/customer-fields'
@@ -93,9 +95,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid invite link — ask your agent for a new link' }, { status: 400 })
   }
 
-  const existing = await prisma.customer.findFirst({ where: { phone } })
-  if (existing) return NextResponse.json({ error: 'Phone number already registered' }, { status: 409 })
-
   // Email must have been verified via the email-OTP flow, recently. This is the
   // server-side gate — the browser check alone is not enough. The row is
   // consumed after the customer is created so it can't be replayed.
@@ -108,6 +107,11 @@ export async function POST(req: NextRequest) {
   if (!verifiedOtp) {
     return NextResponse.json({ error: 'Confirm your email first' }, { status: 400 })
   }
+
+  // One identity, one account: the phone/email must not belong to any account.
+  const conflict = await findIdentityConflict(prisma, { phone: String(phone), email: String(email) })
+  if (conflict === 'phone') return NextResponse.json({ error: 'This phone number is already registered.' }, { status: 409 })
+  if (conflict === 'email') return NextResponse.json({ error: 'This email is already registered.' }, { status: 409 })
 
   const hashed = await bcrypt.hash(password, 10)
 
@@ -131,8 +135,8 @@ export async function POST(req: NextRequest) {
       agentId: agentDbId,
       firstName,
       lastName,
-      phone,
-      email: email || null,
+      phone: normalizePhone(String(phone)),
+      email: email ? normalizeEmail(String(email)) : null,
       dob: dob ? new Date(dob) : null,
       address,
       gender: genderCheck.value,
