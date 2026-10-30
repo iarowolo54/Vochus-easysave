@@ -768,6 +768,7 @@
 .admin-root .cm-ref { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; font-weight: 600; color: var(--text); }
 .admin-root .cm-muted { color: var(--text3); }
 .admin-root .cm-sub2 { color: var(--text2); }
+.admin-root .cm-late { color: var(--red); font-weight: 600; }
 .admin-root .cm-neg { color: var(--red); }
 .admin-root .cm-pos { color: var(--accent2); }
 .admin-root .cm-strong { font-weight: 700; }

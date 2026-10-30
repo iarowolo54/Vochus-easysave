@@ -2491,3 +2491,26 @@ a.ag-crow { text-decoration: none; color: inherit; }
 .cu-tf .ag-tf-select:disabled { opacity: .6; cursor: not-allowed; }
 .ag-profile-details { margin-bottom: var(--ui-s2); }
 .ag-profile-details dd { max-width: 65%; }
+
+/* Customers: cash savers vs online */
+.ag-kind button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: var(--ui-s2); font-weight: 600; }
+.ag-kind-count { min-width: 22px; padding: 1px 7px; border-radius: var(--ui-r-pill); background: var(--ui-canvas); color: var(--ui-ink-2); font-size: var(--ui-fs-xs); font-variant-numeric: tabular-nums; }
+.ag-round { display: flex; gap: var(--ui-s3); align-items: flex-start; padding: var(--ui-s3) var(--ui-s4); margin-bottom: var(--ui-s4); border-radius: var(--ui-r-md); background: var(--ui-brand-tint); color: var(--ui-ink); }
+.ag-round > svg { flex-shrink: 0; margin-top: 2px; color: var(--ui-brand-ink); }
+.ag-round.is-overdue { background: var(--ui-warn-tint); }
+.ag-round.is-overdue > svg { color: var(--ui-warn); }
+.ag-round-title { font-weight: 700; }
+.ag-late { color: var(--ui-danger); font-weight: 600; }
+.ag-paid { color: var(--ui-positive); font-weight: 600; }
+.ag-crow-row { position: relative; }
+.ag-crow-row + .ag-crow-row > .ag-crow::before { content: ''; position: absolute; top: 0; left: var(--ui-s4); right: var(--ui-s4); border-top: 1px solid var(--ui-line); }
+.ag-crow-row:first-child > .ag-crow { border-radius: var(--ui-r-md) var(--ui-r-md) 0 0; }
+.ag-crow-row:last-child > .ag-crow { border-radius: 0 0 var(--ui-r-md) var(--ui-r-md); }
+.ag-crow-row > .ag-crow.is-selected + .ag-crow::before, .ag-crow-row:has(> .ag-crow.is-selected) + .ag-crow-row > .ag-crow::before { border-color: transparent; }
+.ag-crow--act { padding-right: calc(var(--ui-s4) + 88px); }
+.ag-crow-collect { position: absolute; right: 0; top: 50%; transform: translateY(-50%); min-height: 44px; min-width: 80px; padding: 0 var(--ui-s3); font-size: var(--ui-fs-sm); text-decoration: none; }
+.ag-type { display: inline-block; margin-right: var(--ui-s2); padding: 1px 8px; border-radius: var(--ui-r-pill); font-size: var(--ui-fs-xs); font-weight: 700; vertical-align: 1px; }
+.ag-type--offline { background: var(--ui-warn-tint); color: var(--ui-warn); }
+.ag-type--online { background: var(--ui-brand-tint); color: var(--ui-brand-ink); }
+.ag-profile-paid { display: flex; align-items: center; gap: var(--ui-s2); margin: 0 0 var(--ui-s3); font-size: var(--ui-fs-sm); color: var(--ui-ink-2); }
+.ag-profile-paid.ag-late { color: var(--ui-danger); }

@@ -24,9 +24,43 @@ interface Customer {
   gender?: string | null
   state?: string | null
   lga?: string | null
+  /** Offline = agent-created cash saver; online = self-registered. Missing until the API sends it. */
+  type?: CustomerType
+  lastPaidAt?: string | null
 }
 
 type Filter = 'all' | 'active' | 'locked'
+type CustomerType = 'offline' | 'online'
+type TypeFilter = 'all' | CustomerType
+
+const OVERDUE_DAYS = 3
+
+/** Whole calendar days since the last saving; null if never paid. */
+function daysSince(iso: string | null | undefined) {
+  if (!iso) return null
+  const start = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  return Math.round((start(new Date()) - start(new Date(iso))) / 86400000)
+}
+
+function lastPaidText(iso: string | null | undefined) {
+  const d = daysSince(iso)
+  if (d === null) return 'Never'
+  if (d <= 0) return 'Today'
+  if (d === 1) return 'Yesterday'
+  return `${d} days ago`
+}
+
+/** A cash saver with a running plan who hasn't paid the agent in a while. */
+const isOverdue = (c: Customer) => {
+  const d = daysSince(c.lastPaidAt)
+  return c.type === 'offline' && c.activePlans > 0 && (d === null || d >= OVERDUE_DAYS)
+}
+
+function TypeBadge({ type }: { type: CustomerType }) {
+  return type === 'offline'
+    ? <span className="bdg bdg-a">Cash saver</span>
+    : <span className="bdg bdg-b">Online</span>
+}
 
 const PAGE_SIZE = 20
 
@@ -53,6 +87,7 @@ export default function CustomersPage() {
   const [search, setSearch] = useState('')
   const q = useDebounced(search.trim())
   const [filter, setFilter] = useState<Filter>('all')
+  const [typeFilter, setTypeFilter] = useState<TypeFilter>('all')
   const [page, setPage] = useState(1)
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
@@ -79,7 +114,7 @@ export default function CustomersPage() {
   }, [q])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => { setPage(1) }, [q, filter])
+  useEffect(() => { setPage(1) }, [q, filter, typeFilter])
 
   function askLock(c: Customer) {
     setLockError(''); setLockTarget(c)
@@ -109,12 +144,21 @@ export default function CustomersPage() {
     }
   }
 
+  // The split only appears once the API sends a type for each customer.
+  const typed = customers.some(c => c.type !== undefined)
+  const ofType = typed && typeFilter !== 'all' ? customers.filter(c => c.type === typeFilter) : customers
   const counts = {
-    all: customers.length,
-    active: customers.filter(c => c.status === 'Active').length,
-    locked: customers.filter(c => c.status === 'Locked').length,
+    all: ofType.length,
+    active: ofType.filter(c => c.status === 'Active').length,
+    locked: ofType.filter(c => c.status === 'Locked').length,
   }
-  const shown = customers.filter(c => filter === 'all' ? true : filter === 'active' ? c.status === 'Active' : c.status === 'Locked')
+  const typeCounts = {
+    all: customers.length,
+    offline: customers.filter(c => c.type === 'offline').length,
+    online: customers.filter(c => c.type === 'online').length,
+  }
+  const overdue = customers.filter(isOverdue).length
+  const shown = ofType.filter(c => filter === 'all' ? true : filter === 'active' ? c.status === 'Active' : c.status === 'Locked')
   const paginated = shown.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
   const hasProfileFields = (c: Customer) => 'gender' in c || 'state' in c || 'lga' in c
 
@@ -122,11 +166,18 @@ export default function CustomersPage() {
     <>
       <PageHeader
         title="Customers"
-        sub={loading && !customers.length ? 'Loading…' : failed && !customers.length ? 'Customers across all agents.' : `${counts.all.toLocaleString('en-NG')} customer${counts.all === 1 ? '' : 's'} across all agents${counts.locked ? ` · ${counts.locked} locked` : ''}`}
+        sub={loading && !customers.length ? 'Loading…' : failed && !customers.length ? 'Customers across all agents.' : `${typeCounts.all.toLocaleString('en-NG')} customer${typeCounts.all === 1 ? '' : 's'} across all agents${typed && overdue ? ` · ${overdue} cash saver${overdue === 1 ? '' : 's'} not paid in ${OVERDUE_DAYS}+ days` : ''}`}
       />
 
       <div className="toolbar">
         <SearchField value={search} onChange={setSearch} placeholder="Name, customer ID or phone" label="Search customers" />
+        {typed && (
+          <Segmented<TypeFilter> label="Customer type" value={typeFilter} onChange={setTypeFilter} options={[
+            { value: 'all', label: 'All types', count: typeCounts.all },
+            { value: 'offline', label: 'Cash savers', count: typeCounts.offline },
+            { value: 'online', label: 'Online', count: typeCounts.online },
+          ]} />
+        )}
         <Segmented<Filter> label="Filter customers" value={filter} onChange={setFilter} options={[
           { value: 'all', label: 'All', count: failed && !customers.length ? undefined : counts.all },
           { value: 'active', label: 'Active', count: failed && !customers.length ? undefined : counts.active },
@@ -140,6 +191,8 @@ export default function CustomersPage() {
           : shown.length === 0 ? (
             q ? <Empty icon="search" title={`No customers match “${q}”`} text="Check the spelling, or search by customer ID or phone number." />
               : filter !== 'all' ? <Empty icon="check" title="Nothing here" text={filter === 'locked' ? 'No customers are locked right now.' : 'No active customers right now.'} />
+              : typed && typeFilter !== 'all' ? <Empty icon="customers" title={typeFilter === 'offline' ? 'No cash savers yet' : 'No online customers yet'}
+                  text={typeFilter === 'offline' ? 'Customers an agent enrols and collects cash from show here.' : 'Customers who sign up from an agent’s invite show here.'} />
               : <Empty icon="customers" title="No customers yet" text="Customers show here once an agent enrols them." />
           ) : (
             <>
@@ -149,7 +202,8 @@ export default function CustomersPage() {
                     <tr>
                       <th>Customer</th><th>Phone</th><th>Agent</th>
                       <th className="num">Savings balance</th><th className="num">Active plans</th>
-                      <th>Status</th><th>Enrolled</th><th><span className="sr-only">Actions</span></th>
+                      {typed && <th>Last paid</th>}
+                      <th>Status</th>{!typed && <th>Enrolled</th>}<th><span className="sr-only">Actions</span></th>
                     </tr>
                   </thead>
                   <tbody>
@@ -160,7 +214,7 @@ export default function CustomersPage() {
                             <Avatar name={c.name} photoUrl={c.photoUrl} tone={c.status === 'Active' ? 'blue' : 'red'} />
                             <span>
                               <span className="td-name">{c.name}</span>
-                              <span className="td-sub">{c.customerId}</span>
+                              <span className="td-sub">{c.customerId}{c.type && <> · <TypeBadge type={c.type} /></>}</span>
                             </span>
                           </button>
                         </td>
@@ -171,8 +225,11 @@ export default function CustomersPage() {
                         </td>
                         <td className="num cm-strong" data-label="Savings balance">{naira(c.totalBalance)}</td>
                         <td className="num" data-label="Active plans">{c.activePlans}</td>
+                        {typed && (
+                          <td data-label="Last paid" className={`cm-nowrap${isOverdue(c) ? ' cm-late' : ' cm-sub2'}`}>{lastPaidText(c.lastPaidAt)}</td>
+                        )}
                         <td data-label="Status"><StatusBadge status={c.status} /></td>
-                        <td data-label="Enrolled" className="cm-nowrap cm-sub2">{shortDate(c.createdAt)}</td>
+                        {!typed && <td data-label="Enrolled" className="cm-nowrap cm-sub2">{shortDate(c.createdAt)}</td>}
                         <td>
                           <div className="a-row-actions">
                             <button type="button" className="btn btn-sm btn-outline" onClick={() => setDetail(c)}>View</button>
@@ -206,6 +263,7 @@ export default function CustomersPage() {
           <div className="cm-detail-hd">
             <Avatar name={detail.name} photoUrl={detail.photoUrl} tone={detail.status === 'Active' ? 'blue' : 'red'} />
             <StatusBadge status={detail.status} />
+            {detail.type && <TypeBadge type={detail.type} />}
           </div>
 
           <div className="cm-sec">
@@ -241,6 +299,13 @@ export default function CustomersPage() {
             <dl className="dlg-ledger">
               <DlRow label="Total balance"><span className="cm-strong">{naira(detail.totalBalance)}</span></DlRow>
               <DlRow label="Active plans">{detail.activePlans}</DlRow>
+              {detail.lastPaidAt !== undefined && (
+                <DlRow label="Last paid">
+                  <span className={isOverdue(detail) ? 'cm-late' : undefined}>
+                    {detail.lastPaidAt ? `${lastPaidText(detail.lastPaidAt)} · ${shortDate(detail.lastPaidAt)}` : 'Never'}
+                  </span>
+                </DlRow>
+              )}
               <DlRow label="Enrolled">{shortDate(detail.createdAt)}</DlRow>
             </dl>
           </div>

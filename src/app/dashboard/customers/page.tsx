@@ -41,7 +41,15 @@ interface Customer {
   createdAt: string
   savingsPlans: Plan[]
   photoUrl?: string | null
+  /** Offline = agent-created cash saver; online = self-registered. Missing until the API sends it. */
+  type?: CustomerType
+  lastPaidAt?: string | null
 }
+
+type CustomerType = 'offline' | 'online'
+
+/** Sent with `type=offline`: whole-portfolio figures for the collection round. */
+interface Summary { overdueCount: number; expectedToday: number; saverCount: number }
 
 interface MonthStats { saved: number; missed: number; pct: number; bestStreak: number }
 
@@ -60,6 +68,33 @@ type StatusFilter = typeof STATUSES[number]
 const fullName = (c: Pick<Customer, 'firstName' | 'lastName'>) => displayName(`${c.firstName} ${c.lastName}`)
 const initials = (c: Pick<Customer, 'firstName' | 'lastName'>) => `${c.firstName[0] ?? ''}${c.lastName[0] ?? ''}`.toUpperCase()
 
+
+/** Whole calendar days since the last saving; null if never paid. */
+function daysSince(iso: string | null | undefined) {
+  if (!iso) return null
+  const start = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+  return Math.round((start(new Date()) - start(new Date(iso))) / 86400000)
+}
+
+const OVERDUE_DAYS = 3
+
+function lastPaidText(iso: string | null | undefined) {
+  const d = daysSince(iso)
+  if (d === null) return 'Never paid'
+  if (d <= 0) return 'Paid today'
+  if (d === 1) return 'Paid yesterday'
+  return `Last paid ${d} days ago`
+}
+
+function isOverdue(iso: string | null | undefined) {
+  const d = daysSince(iso)
+  return d === null || d >= OVERDUE_DAYS
+}
+
+function amountText(p: Plan) {
+  const weekly = p.cadence === 'weekly'
+  return `${formatNaira(weekly ? p.dailyAmount * 7 : p.dailyAmount, { minor: false })} ${weekly ? 'a week' : 'a day'}`
+}
 
 function daysLeft(iso: string) {
   return Math.ceil((new Date(iso).getTime() - Date.now()) / 86400000)
@@ -94,6 +129,11 @@ export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([])
   const [total, setTotal] = useState(0)
   const [counts, setCounts] = useState<Partial<Record<StatusFilter, number>>>({})
+  // null until the first response tells us whether the API knows customer types yet.
+  const [typed, setTyped] = useState<boolean | null>(null)
+  const [kind, setKind] = useState<CustomerType>('offline')
+  const [kindCounts, setKindCounts] = useState<Partial<Record<CustomerType, number>>>({})
+  const [summary, setSummary] = useState<Summary | null>(null)
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
   const [search, setSearch] = useState('')
@@ -146,38 +186,69 @@ export default function CustomersPage() {
     setTimeout(() => setInviteCopied(false), 2000)
   }
 
+  // Only ask for a type once we know the API understands it; until then it's the old single list.
+  const typeParams = useCallback((): Record<string, string> => (
+    typed === false ? {} : kind === 'offline' ? { type: 'offline', sort: 'lastPaid' } : { type: 'online' }
+  ), [typed, kind])
+
   // Portfolio counts for the status chips (one small request per status, using the list endpoint's total).
   useEffect(() => {
+    if (typed === null) return
     STATUSES.forEach(s => {
-      fetch(`/api/customers?${new URLSearchParams({ status: s, limit: '1', page: '1' })}`)
+      fetch(`/api/customers?${new URLSearchParams({ ...typeParams(), status: s, limit: '1', page: '1' })}`)
         .then(r => r.json())
         .then(d => setCounts(c => ({ ...c, [s]: d.total ?? 0 })))
         .catch(() => {})
     })
-  }, [])
+  }, [typed, typeParams])
+
+  // Tab counts: the whole portfolio, not the current filter.
+  useEffect(() => {
+    if (!typed) return
+    ;(['offline', 'online'] as const).forEach(t => {
+      fetch(`/api/customers?${new URLSearchParams({ type: t, limit: '1', page: '1' })}`)
+        .then(r => r.json())
+        .then(d => setKindCounts(c => ({ ...c, [t]: d.total ?? 0 })))
+        .catch(() => {})
+    })
+  }, [typed])
 
   const load = useCallback(async () => {
     setLoading(true)
     const params = new URLSearchParams({
-      search, status, plan, page: String(page), limit: String(limit),
+      ...typeParams(), search, status, plan, page: String(page), limit: String(limit),
     })
     try {
       const res = await fetch(`/api/customers?${params}`)
       const data = await res.json()
-      setCustomers(data.customers ?? [])
+      const list: Customer[] = data.customers ?? []
+      setCustomers(list)
       setTotal(data.total ?? 0)
+      setSummary(data.summary ?? null)
+      if (typed === null) setTyped('summary' in data || list.some(c => c.type !== undefined))
       setFailed(false)
     } catch {
       setFailed(true)
     }
     setLoading(false)
-  }, [search, status, plan, page])
+  }, [typeParams, typed, search, status, plan, page])
 
   useEffect(() => {
     const t = setTimeout(load, 300)
     return () => clearTimeout(t)
   }, [load])
 
+  function switchKind(k: CustomerType) {
+    if (k === kind) return
+    setKind(k); setPage(1); setStatus(''); setCounts({}); setSummary(null)
+  }
+
+  const tabs = typed === true
+  const cash = tabs && kind === 'offline'
+  // With tabs, the status counts are per tab, so the portfolio size comes from the two tab totals.
+  const portfolio = tabs
+    ? (kindCounts.offline !== undefined && kindCounts.online !== undefined ? kindCounts.offline + kindCounts.online : undefined)
+    : counts['']
   const totalPages = Math.ceil(total / limit)
   const filtered = !!(search || status || plan)
 
@@ -225,7 +296,7 @@ export default function CustomersPage() {
     <div className="ag-page">
       <section className="ag-hello">
         <div>
-          <p className="ag-count">{counts[''] !== undefined ? `${counts['']} customer${counts[''] === 1 ? '' : 's'} in your portfolio` : 'Everyone you’ve enrolled'}</p>
+          <p className="ag-count">{portfolio !== undefined ? `${portfolio} customer${portfolio === 1 ? '' : 's'} in your portfolio` : 'Everyone you’ve enrolled'}</p>
         </div>
         <div className="ag-head-actions">
           <button type="button" className="ui-btn ui-btn--secondary" onClick={generateInvite} disabled={inviteLoading}>
@@ -260,6 +331,32 @@ export default function CustomersPage() {
 
       <div className="ag-cust">
         <div className="ag-cust-list">
+          {tabs && (
+            <div className="ui-segment ag-seg ag-kind" role="group" aria-label="Customer type">
+              {([['offline', 'Cash savers'], ['online', 'Online']] as const).map(([k, label]) => (
+                <button key={k} type="button" aria-pressed={kind === k} onClick={() => switchKind(k)}>
+                  {label}{kindCounts[k] !== undefined && <span className="ag-kind-count">{kindCounts[k]}</span>}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {cash && summary && summary.saverCount > 0 && (
+            <section className={`ag-round${summary.overdueCount > 0 ? ' is-overdue' : ''}`} aria-label="Today’s collection">
+              <Icons.calendar size={20} aria-hidden="true" />
+              <div>
+                <p className="ag-round-title">
+                  {summary.overdueCount > 0
+                    ? `${summary.overdueCount} haven’t paid in ${OVERDUE_DAYS}+ days`
+                    : `Everyone has paid in the last ${OVERDUE_DAYS} days`}
+                </p>
+                <p className="ui-row-sub">
+                  About {formatNaira(summary.expectedToday, { minor: false })} expected today from {summary.saverCount} daily saver{summary.saverCount === 1 ? '' : 's'}
+                </p>
+              </div>
+            </section>
+          )}
+
           <div className="ag-toolbar">
             <div className="ag-search">
               <Icons.search size={20} aria-hidden="true" />
@@ -301,8 +398,12 @@ export default function CustomersPage() {
             <section className="ui-card">
               {filtered
                 ? <EmptyState icon="search" title="No customers match" text="Try another name, phone number or filter." />
-                : <EmptyState icon="customers" title="No customers yet" text="Customers you enrol will show here."
-                    action={<Link href="/dashboard/enrol" className="ui-btn ui-btn--primary">Enrol a customer</Link>} />}
+                : tabs && kind === 'online'
+                  ? <EmptyState icon="customers" title="No online customers yet" text="Send someone an invite link. They show here once they sign up."
+                      action={<button type="button" className="ui-btn ui-btn--primary" onClick={generateInvite} disabled={inviteLoading}><Icons.share size={18} aria-hidden="true" /> Invite</button>} />
+                  : <EmptyState icon="customers" title={cash ? 'No cash savers yet' : 'No customers yet'}
+                      text={cash ? 'Customers you enrol and collect cash from show here.' : 'Customers you enrol will show here.'}
+                      action={<Link href="/dashboard/enrol" className="ui-btn ui-btn--primary">Enrol a customer</Link>} />}
             </section>
           ) : (
             <section className={`ui-card ui-card--list ag-list${loading ? ' is-loading' : ''}`} aria-busy={loading} aria-label="Customers">
@@ -311,35 +412,59 @@ export default function CustomersPage() {
                 const pct = main ? planProgress(main) : 0
                 const left = main ? daysLeft(main.maturityDate) : 0
                 const isSel = wide && selected?.id === c.id
-                return (
+                // Cash savers who haven't paid today get a Collect button instead of the balance.
+                const collect = cash && !!main && daysSince(c.lastPaidAt) !== 0
+                const row = (
                   <button
                     key={c.id}
                     type="button"
-                    className={`ag-crow${isSel ? ' is-selected' : ''}`}
+                    className={`ag-crow${isSel ? ' is-selected' : ''}${collect ? ' ag-crow--act' : ''}`}
                     aria-current={isSel ? 'true' : undefined}
                     onClick={() => viewCustomer(c, !wide)}
                   >
                     <Avatar c={c} />
                     <span className="ag-crow-main">
                       <span className="ag-crow-name">{fullName(c)} <StatusBadge status={c.status} /></span>
-                      <span className="ag-crow-sub">{c.customerId} · {c.phone}</span>
+                      {cash ? (
+                        <span className="ag-crow-sub">
+                          <span className={isOverdue(c.lastPaidAt) ? 'ag-late' : daysSince(c.lastPaidAt) === 0 ? 'ag-paid' : undefined}>{lastPaidText(c.lastPaidAt)}</span>
+                        </span>
+                      ) : tabs && c.lastPaidAt !== undefined ? (
+                        <span className="ag-crow-sub">{c.lastPaidAt ? lastPaidText(c.lastPaidAt) : 'No savings yet'}</span>
+                      ) : (
+                        <span className="ag-crow-sub">{c.customerId} · {c.phone}</span>
+                      )}
                       {main ? (
                         <span className="ag-crow-plan">
                           <span className="ag-mini-bar" aria-hidden="true"><span style={{ width: `${pct}%` }} /></span>
-                          <span className="ag-crow-plan-text">{main.goal} · {pct}%{others > 0 ? ` · +${others} more` : ''}</span>
+                          <span className="ag-crow-plan-text">{cash ? amountText(main) : `${main.goal} · ${pct}%`}{others > 0 ? ` · +${others} more` : ''}</span>
                           {habits[c.customerId] && isDaily(main) && <HabitDot h={habits[c.customerId]} />}
                         </span>
                       ) : (
                         <span className="ag-crow-plan ag-crow-plan--none">No active plan</span>
                       )}
                     </span>
-                    <span className="ag-crow-end">
-                      <span className="ag-crow-bal">{formatNaira(c.savingsBalance, { minor: false })}</span>
-                      {c.activeLoan
-                        ? <span className="ag-crow-tag ag-crow-tag--loan">Loan {formatNaira(c.activeLoan.totalAmount, { minor: false })}</span>
-                        : main && <span className={`ag-crow-tag${left <= 7 ? ' ag-crow-tag--soon' : ''}`}>{left <= 0 ? 'Ends today' : `Ends in ${left} day${left === 1 ? '' : 's'}`}</span>}
-                    </span>
+                    {!collect && (
+                      <span className="ag-crow-end">
+                        <span className="ag-crow-bal">{formatNaira(c.savingsBalance, { minor: false })}</span>
+                        {c.activeLoan
+                          ? <span className="ag-crow-tag ag-crow-tag--loan">Loan {formatNaira(c.activeLoan.totalAmount, { minor: false })}</span>
+                          : main && <span className={`ag-crow-tag${left <= 7 ? ' ag-crow-tag--soon' : ''}`}>{left <= 0 ? 'Ends today' : `Ends in ${left} day${left === 1 ? '' : 's'}`}</span>}
+                      </span>
+                    )}
                   </button>
+                )
+                if (!cash) return row
+                return (
+                  <div key={c.id} className="ag-crow-row">
+                    {row}
+                    {collect && (
+                      <Link href={`/dashboard/savings?cid=${encodeURIComponent(c.customerId)}`} className="ui-btn ui-btn--primary ag-crow-collect"
+                        aria-label={`Collect from ${fullName(c)}`}>
+                        Collect
+                      </Link>
+                    )}
+                  </div>
                 )
               })}
             </section>
@@ -410,7 +535,10 @@ function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, g
         <Avatar c={c} size="lg" />
         <div className="ag-profile-main">
           <p className="ag-profile-name">{fullName(c)} <StatusBadge status={c.status} /></p>
-          <p className="ui-row-sub">{c.customerId} · since {formatDate(c.createdAt)}</p>
+          <p className="ui-row-sub">
+            {c.type && <span className={`ag-type ag-type--${c.type}`}>{c.type === 'offline' ? 'Cash saver' : 'Online'}</span>}
+            {c.customerId} · since {formatDate(c.createdAt)}
+          </p>
           <a className="ui-link ag-profile-phone" href={`tel:${c.phone}`}><Icons.phone size={16} aria-hidden="true" /> {c.phone}</a>
         </div>
       </div>
@@ -426,6 +554,13 @@ function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, g
             </p>
           </div>
         </div>
+      )}
+
+      {c.lastPaidAt !== undefined && (
+        <p className={`ag-profile-paid${isOverdue(c.lastPaidAt) ? ' ag-late' : ''}`}>
+          <Icons.history size={16} aria-hidden="true" />
+          {lastPaidText(c.lastPaidAt)}{c.lastPaidAt ? ` · ${formatDate(c.lastPaidAt)}` : ''}
+        </p>
       )}
 
       <dl className="ag-profile-stats">
