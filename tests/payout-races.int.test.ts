@@ -85,7 +85,7 @@ before(async () => {
 
 beforeEach(async () => {
   stub.getServerSession = async () => ({ user: { id: adminId, name: 'PR Admin', role: 'superadmin' } })
-  await prisma.auditLog.deleteMany({ where: { action: 'approval_pin_failed', actorId: adminId } })
+  await prisma.approvalPinAttempt.deleteMany({ where: { adminId } })
 })
 
 after(async () => {
@@ -96,7 +96,7 @@ after(async () => {
   await prisma.agentWithdrawal.deleteMany({ where: { id: { in: wdIds } } })
   await prisma.customer.deleteMany({ where: { id: customerId } })
   await prisma.agent.deleteMany({ where: { id: agentId } })
-  await prisma.auditLog.deleteMany({ where: { actorId: adminId } })
+  await prisma.approvalPinAttempt.deleteMany({ where: { adminId } })
   await prisma.superAdmin.deleteMany({ where: { id: adminId } })
   if (floatBefore === null) await prisma.platformWallet.deleteMany({ where: { type: 'Float' } })
   else await prisma.platformWallet.update({ where: { type: 'Float' }, data: { balance: floatBefore } })
@@ -235,4 +235,33 @@ test('commission payout: Float lacking funds -> 400, agent commission untouched'
   assert.equal(res.status, 400)
   assert.equal((await agentRow()).commissionBalance, 1e12)
   await prisma.agent.update({ where: { id: agentId }, data: { commissionBalance: 0 } })
+})
+
+// ---------- approval PIN limiter ----------
+
+test('PIN limiter: concurrent burst of MAX+5 wrong guesses reserves at most MAX slots', async () => {
+  const w = await mkWithdrawal()
+  const res = await Promise.all(Array.from({ length: 10 }, () => patch(w.id, { action: 'approve', pin: '000000' })))
+  const codes = res.map((r) => r.status)
+  assert.equal(codes.filter((c) => c === 403).length, 5)
+  assert.equal(codes.filter((c) => c === 429).length, 5)
+  assert.equal((await prisma.approvalPinAttempt.findUniqueOrThrow({ where: { adminId } })).count, 5)
+  assert.equal((await patch(w.id, { action: 'approve', pin: PIN })).status, 429)
+  assert.equal((await prisma.agentWithdrawal.findUniqueOrThrow({ where: { id: w.id } })).status, 'Pending')
+})
+
+test('PIN limiter: correct PIN after some failures succeeds and resets the counter', async () => {
+  const w = await mkWithdrawal()
+  for (let i = 0; i < 3; i++) assert.equal((await patch(w.id, { action: 'approve', pin: '000000' })).status, 403)
+  assert.equal((await prisma.approvalPinAttempt.findUniqueOrThrow({ where: { adminId } })).count, 3)
+  assert.equal((await patch(w.id, { action: 'approve', pin: PIN })).status, 200)
+  assert.equal((await prisma.approvalPinAttempt.findUniqueOrThrow({ where: { adminId } })).count, 0)
+})
+
+test('PIN limiter: lockout lifts once the window has passed', async () => {
+  const w = await mkWithdrawal()
+  for (let i = 0; i < 5; i++) await patch(w.id, { action: 'approve', pin: '000000' })
+  assert.equal((await patch(w.id, { action: 'approve', pin: PIN })).status, 429)
+  await prisma.approvalPinAttempt.update({ where: { adminId }, data: { windowStart: new Date(Date.now() - 16 * 60_000) } })
+  assert.equal((await patch(w.id, { action: 'approve', pin: PIN })).status, 200)
 })

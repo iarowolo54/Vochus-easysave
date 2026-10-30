@@ -640,3 +640,11 @@ model NotificationLog {
 
   @@unique([customerId, kind, periodKey])
 }
+
+model ApprovalPinAttempt {
+  id          String   @id @default(cuid())
+  adminId     String   @unique
+  windowStart DateTime @default(now())
+  count       Int      @default(0)
+  updatedAt   DateTime @updatedAt
+}
