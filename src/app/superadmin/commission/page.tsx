@@ -30,6 +30,8 @@ const DEFAULT_COMM = { agentSavings: 0.4, agentLoan: 1.0, agentRepay: 0.5, platf
 
 const PAGE_SIZE = 25
 
+interface SavingsRateData { current: number; history: { effectiveFrom: string; annualRate: number }[] }
+
 export default function CommissionPage() {
   const [data, setData] = useState<PageData>({ totalPending: 0, totalDisbursed: 0, leaderboard: [] })
   const [lbPage, setLbPage] = useState(1)
@@ -45,6 +47,11 @@ export default function CommissionPage() {
   const [loanActive, setLoanActive] = useState<Record<number, boolean>>({ 30: true, 60: true, 90: true, 180: true })
   const [lastSavedComm, setLastSavedComm] = useState('')
   const [lastSavedLoan, setLastSavedLoan] = useState('')
+
+  const [savingsRate, setSavingsRate] = useState<SavingsRateData | null>(null)
+  const [savingsRateError, setSavingsRateError] = useState(false)
+  const [newSavingsRate, setNewSavingsRate] = useState('')
+  const [savingSavingsRate, setSavingSavingsRate] = useState(false)
 
   const showToast = (msg: string) => { setToast(msg); setTimeout(() => setToast(''), 4000) }
   const nowStr = () => new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
@@ -72,7 +79,32 @@ export default function CommissionPage() {
     setLoading(false)
   }, [])
 
-  useEffect(() => { load() }, [load])
+  const loadSavingsRate = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/savings-interest')
+      if (!res.ok) throw new Error('failed')
+      setSavingsRate(await res.json())
+      setSavingsRateError(false)
+    } catch { setSavingsRateError(true) }
+  }, [])
+
+  useEffect(() => { load(); loadSavingsRate() }, [load, loadSavingsRate])
+
+  async function handleSetSavingsRate() {
+    const rate = parseFloat(newSavingsRate)
+    if (!Number.isFinite(rate) || rate < 0 || rate > 100) { showToast('Enter a rate between 0 and 100'); return }
+    setSavingSavingsRate(true)
+    try {
+      const res = await fetch('/api/admin/savings-interest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ annualRate: rate }),
+      })
+      if (res.ok) { setNewSavingsRate(''); showToast('✅ Savings interest rate updated'); await loadSavingsRate() }
+      else { const d = await res.json().catch(() => ({})); showToast((d as { error?: string }).error ?? 'Failed to update savings rate') }
+    } catch { showToast('Failed to update savings rate') }
+    setSavingSavingsRate(false)
+  }
 
   async function handleSaveLoanRates() {
     setSavingLoan(true)
@@ -321,6 +353,62 @@ export default function CommissionPage() {
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn-outline btn-sm" onClick={() => { setLoanRates({ ...DEFAULT_RATES }); setLoanMax({ ...DEFAULT_MAX }); showToast('↺ Loan rates reset to defaults') }}>↺ Reset to Defaults</button>
             <button className="btn btn-green btn-sm" disabled={savingLoan} onClick={handleSaveLoanRates}>{savingLoan ? '…' : '💾 Save Loan Rates'}</button>
+          </div>
+        </div>
+      </div>
+
+      {/* Savings Interest Rate */}
+      <div className="card" style={{ marginBottom: 20 }}>
+        <div className="card-hd">
+          <div>
+            <h3 style={{ margin: 0 }}>Savings interest rate</h3>
+            <div style={{ fontSize: 12, color: 'var(--text3)', fontWeight: 400 }}>Annual rate paid to customers on savings plans</div>
+          </div>
+          <span style={{ fontSize: 22, fontWeight: 800, fontFamily: "'IBM Plex Serif', serif", color: 'var(--green)' }}>
+            {savingsRate ? `${savingsRate.current}%` : savingsRateError ? '—' : '…'}
+            <span style={{ fontSize: 12, fontWeight: 500, color: 'var(--text3)' }}> / year</span>
+          </span>
+        </div>
+
+        {savingsRateError && (
+          <div style={{ fontSize: 12.5, color: 'var(--red)', marginBottom: 14 }}>
+            Could not load the savings rate. <button className="btn btn-xs btn-outline" onClick={loadSavingsRate}>Retry</button>
+          </div>
+        )}
+
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 20 }}>
+          <div style={{ flex: '1 1 260px', minWidth: 0 }}>
+            <label style={{ fontSize: 11.5, fontWeight: 600, color: 'var(--text2)', textTransform: 'uppercase', letterSpacing: '.8px', display: 'block', marginBottom: 6 }}>Set new rate (% per year)</label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <div style={{ flex: 1, display: 'flex', alignItems: 'center', border: '1.5px solid var(--border)', borderRadius: 9, background: 'var(--surface)', overflow: 'hidden' }}>
+                <input type="tel" inputMode="decimal" value={newSavingsRate} placeholder="e.g. 10" onKeyDown={blockMinus}
+                  onChange={e => setNewSavingsRate(nonNegativeString(e.target.value))}
+                  style={{ flex: 1, width: 0, border: 'none', outline: 'none', padding: '9px 12px', fontSize: 14, fontFamily: 'IBM Plex Sans, sans-serif', background: 'transparent', color: 'var(--text)' }} />
+                <span style={{ padding: '0 12px', color: 'var(--text3)', fontSize: 13, fontWeight: 600, borderLeft: '1px solid var(--border)', background: 'var(--surface2)', alignSelf: 'stretch', display: 'flex', alignItems: 'center' }}>%</span>
+              </div>
+              <button className="btn btn-green btn-sm" disabled={savingSavingsRate || newSavingsRate === ''} onClick={handleSetSavingsRate}>{savingSavingsRate ? '…' : 'Set rate'}</button>
+            </div>
+            <div style={{ fontSize: 11.5, color: 'var(--text3)', marginTop: 8, lineHeight: 1.5 }}>
+              📋 Effective immediately and forward-only: interest already earned is not restated, and the new rate applies from now on.
+            </div>
+          </div>
+
+          <div style={{ flex: '1 1 220px', minWidth: 0 }}>
+            <div style={{ fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1, color: 'var(--text3)', marginBottom: 8 }}>Rate history</div>
+            {!savingsRate && !savingsRateError && <div style={{ fontSize: 12, color: 'var(--text3)' }}>Loading…</div>}
+            {savingsRate && savingsRate.history.length === 0 && (
+              <div style={{ fontSize: 12, color: 'var(--text3)' }}>No changes yet. The default rate of {savingsRate.current}% applies.</div>
+            )}
+            {savingsRate && savingsRate.history.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {[...savingsRate.history].reverse().slice(0, 6).map(h => (
+                  <div key={h.effectiveFrom + h.annualRate} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 12.5, paddingBottom: 6, borderBottom: '1px solid var(--border)' }}>
+                    <span style={{ color: 'var(--text2)' }}>{new Date(h.effectiveFrom).toLocaleString('en-GB', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
+                    <strong style={{ color: 'var(--text)' }}>{h.annualRate}%</strong>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
         </div>
       </div>
