@@ -26,6 +26,7 @@ export async function GET(req: Request) {
 
   const now = new Date()
   let accrued = 0
+  let failed = 0
 
   // Pass 1: persist accrued interest for active online plans.
   const plans = await prisma.savingsPlan.findMany({
@@ -37,13 +38,15 @@ export async function GET(req: Request) {
       const interestAccrued = await accruedInterestForPlan(prisma, plan, now)
       await prisma.savingsPlan.update({ where: { id: plan.id }, data: { interestAccrued } })
       accrued++
-    } catch {
-      // One failing plan must not halt the batch.
+    } catch (err) {
+      // One failing plan must not halt the batch; log id + message only (never secrets/payloads).
+      failed++
+      console.error('[cron/daily] accrual failed', plan.id, err instanceof Error ? err.message : 'unknown')
     }
   }
 
   // SEAM (Feature 3): Friday summary sending will be added to this same route,
   // after the accrual pass above. Intentionally no summary logic yet.
 
-  return NextResponse.json({ accrued })
+  return NextResponse.json({ accrued, failed })
 }

@@ -70,11 +70,14 @@ test('correct bearer persists interest for self plans only', async () => {
   const agent = await mkPlan('agent')
   const res = await call(`Bearer ${SECRET}`)
   assert.equal(res.status, 200)
-  const body = (await res.json()) as { accrued: number }
+  const body = (await res.json()) as { accrued: number; failed: number }
   assert.ok(body.accrued >= 1)
+  assert.equal(typeof body.failed, 'number')
   const s = await prisma.savingsPlan.findUniqueOrThrow({ where: { id: self.id } })
   const a = await prisma.savingsPlan.findUniqueOrThrow({ where: { id: agent.id } })
-  // 3 completed monthly anniversaries on 1000 at a positive annual rate.
-  assert.ok(s.interestAccrued > 0, `expected >0, got ${s.interestAccrued}`)
+  // Start is 100 days ago: 3 months is at most 92 days and 4 months at least 120, so exactly
+  // 3 anniversaries are complete. Each earns 1000 * 12% / 12 = 10 at the 12% default (rate
+  // table is empty during this test) => 30.
+  assert.equal(s.interestAccrued, 30)
   assert.equal(a.interestAccrued, 0)
 })
