@@ -24,20 +24,23 @@ export async function POST(req: NextRequest) {
   const agent = await prisma.agent.findUnique({ where: { id: agentId } })
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
 
-  const commAmt = money(agent.commissionBalance)
+  // Debit the exact stored value (float drift can leave it just below a 2dp figure, and a guard on the
+  // rounded value would never match); the ledger/receipt show the clean 2dp display value.
+  const raw = agent.commissionBalance
+  const commAmt = money(raw)
   if (commAmt <= 0) return NextResponse.json({ error: 'No commission to pay out' }, { status: 400 })
 
   const ref = `COMM-${Date.now()}-${randomBytes(4).toString('hex').toUpperCase()}`
 
   // Conditional debits: each updateMany only matches while the balance still covers the amount, so
   // a concurrent payout (or a withdrawal that already took the commission) matches nothing and the
-  // whole transaction rolls back. The agent is debited by commAmt (not zeroed) so commission that
+  // whole transaction rolls back. The agent is debited by the exact value read (not zeroed) so commission that
   // accrues meanwhile is not lost.
   try {
     await prisma.$transaction(async (tx) => {
       const agentDebit = await tx.agent.updateMany({
-        where: { id: agentId, commissionBalance: { gte: commAmt } },
-        data: { commissionBalance: { decrement: commAmt } },
+        where: { id: agentId, commissionBalance: { gte: raw } },
+        data: { commissionBalance: { decrement: raw } },
       })
       if (agentDebit.count === 0) throw new PayoutConflict(409, 'Commission balance changed — refresh and retry')
       const floatDebit = await tx.platformWallet.updateMany({

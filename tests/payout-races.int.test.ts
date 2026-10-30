@@ -265,3 +265,17 @@ test('PIN limiter: lockout lifts once the window has passed', async () => {
   await prisma.approvalPinAttempt.update({ where: { adminId }, data: { windowStart: new Date(Date.now() - 16 * 60_000) } })
   assert.equal((await patch(w.id, { action: 'approve', pin: PIN })).status, 200)
 })
+
+test('commission payout: float-drift balance (699.9999997) still pays out once and zeroes', async () => {
+  await prisma.transaction.deleteMany({ where: { agentId, type: 'commission_payout' } })
+  await prisma.agent.update({ where: { id: agentId }, data: { commissionBalance: 699.9999997 } })
+  const f0 = (await walletBal('Float')) ?? 0
+  const res = await payout({ agentId })
+  assert.equal(res.status, 200)
+  assert.equal((await agentRow()).commissionBalance, 0)
+  assert.equal(Math.round((f0 - ((await walletBal('Float')) ?? 0)) * 100) / 100, 700)
+  const txs = await prisma.transaction.findMany({ where: { agentId, type: 'commission_payout' } })
+  assert.equal(txs.length, 1)
+  assert.equal(txs[0].amount, 700)
+  assert.ok((await payout({ agentId })).status >= 400)
+})
