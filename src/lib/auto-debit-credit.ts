@@ -59,14 +59,18 @@ export async function creditAutoDebitAttempt(
     throw e
   }
 
-  await logAudit({
-    action: 'customer_auto_debit',
-    entity: 'Transaction',
-    entityId: attempt.id,
-    details: `Auto-debit credited ₦${amount.toLocaleString()} to plan ${plan.id} for customer ${customer.customerId} — ref ${reference}`,
-    actorType: 'system',
-    actorId: customer.id,
-    actorName: 'auto-debit',
-  })
+  // Best-effort: the credit is already committed, so a logging failure must never throw.
+  try {
+    await logAudit({
+      action: 'customer_auto_debit',
+      entity: 'Transaction',
+      entityId: attempt.id,
+      details: `Auto-debit credited ₦${amount.toLocaleString()} to plan ${plan.id} for ${customer.firstName} ${customer.lastName} (${customer.customerId}) — ref ${reference}`,
+      actorType: 'system',
+      actorName: 'Auto-debit',
+    })
+  } catch {
+    // ignore
+  }
   return 'credited'
 }
