@@ -29,3 +29,11 @@ export function insufficientResponse(err: InsufficientFundsError) {
     { status: 400 }
   )
 }
+
+/** Largest single admin wallet top-up (NGN). */
+export const MAX_ADMIN_FUND = 10_000_000
+
+/** A positive, finite number with at most 2 decimals and no larger than `max`. */
+export function isValidAmount(n: unknown, max: number): n is number {
+  return typeof n === 'number' && Number.isFinite(n) && n >= 0.01 && n <= max && money(n) === n
+}

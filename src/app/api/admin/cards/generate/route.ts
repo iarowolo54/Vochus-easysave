@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireSuperAdmin } from '@/lib/admin-guard'
+import { requireSuperAdmin, adminActor } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { createCardBatch } from '@/lib/member-card'
@@ -10,7 +10,8 @@ export async function POST(req: NextRequest) {
   const guard = await requireSuperAdmin()
   if (!guard.ok) return guard.response
 
-  const body = await req.json()
+  const body = await req.json().catch(() => null)
+  if (!body || typeof body !== 'object') return NextResponse.json({ error: 'Invalid body' }, { status: 400 })
   const { batchName, quantity, expiryDate } = body as {
     batchName: string
     quantity: number
@@ -37,7 +38,7 @@ export async function POST(req: NextRequest) {
     entityId: batchId,
     details: `Generated batch "${batchName}" (${batchId}) — ${cards.length} cards, expiry ${expiryDate}`,
     actorType: 'admin',
-    actorName: 'SuperAdmin',
+    ...adminActor(guard.session),
   })
 
   return NextResponse.json({ batchId, count: cards.length, cards }, { status: 201 })

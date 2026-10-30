@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireSuperAdmin } from '@/lib/admin-guard'
+import { requireSuperAdmin, adminActor, isNotFound } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 
@@ -9,7 +9,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const session = guard.session
 
   const { id } = await params
-  const { status } = await req.json().catch(() => ({}))
+  const body: unknown = await req.json().catch(() => null)
+  const status = body && typeof body === 'object' ? (body as { status?: unknown }).status : undefined
   if (status !== 'Active' && status !== 'Locked') {
     return NextResponse.json({ error: 'status must be Active or Locked' }, { status: 400 })
   }
@@ -18,7 +19,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     where: { id },
     data: { status },
     select: { id: true, customerId: true, firstName: true, lastName: true, status: true },
-  })
+  }).catch((e: unknown) => { if (isNotFound(e)) return null; throw e })
+  if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
 
   logAudit({
     action: status === 'Locked' ? 'customer_lock' : 'customer_unlock',
@@ -26,7 +28,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     entityId: customer.id,
     details: `${status === 'Locked' ? 'Locked' : 'Unlocked'} customer ${customer.firstName} ${customer.lastName} (${customer.customerId})`,
     actorType: 'admin',
-    actorName: 'SuperAdmin',
+    ...adminActor(session),
   })
 
   return NextResponse.json({ ok: true, customer })

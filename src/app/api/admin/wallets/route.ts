@@ -44,7 +44,6 @@ export async function GET(req: NextRequest) {
       status: a.status,
       todayActivity,
       lastFunded,
-      photoUrl: a.photoUrl,
     }
   })
 

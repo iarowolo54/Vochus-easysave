@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireSuperAdmin } from '@/lib/admin-guard'
+import { requireSuperAdmin, isNotFound } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 
 export async function PATCH(req: NextRequest, context: { params: Promise<{ id: string }> }) {
@@ -8,8 +8,12 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
   const session = guard.session
 
   const { id } = await context.params
-  const body = await req.json()
-  const { name, startDate, endDate, offlineRewardAmount, onlineRewardAmount, isActive } = body
+  const body: unknown = await req.json().catch(() => null)
+  if (!body || typeof body !== 'object') return NextResponse.json({ error: 'Invalid body' }, { status: 400 })
+  const { name, startDate, endDate, offlineRewardAmount, onlineRewardAmount, isActive } = body as {
+    name?: string; startDate?: string; endDate?: string
+    offlineRewardAmount?: number | string; onlineRewardAmount?: number | string; isActive?: boolean
+  }
 
   const promo = await prisma.rewardPromo.update({
     where: { id },
@@ -21,7 +25,8 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
       ...(onlineRewardAmount !== undefined && { onlineRewardAmount: Number(onlineRewardAmount) }),
       ...(isActive !== undefined && { isActive }),
     },
-  })
+  }).catch((e: unknown) => { if (isNotFound(e)) return null; throw e })
+  if (!promo) return NextResponse.json({ error: 'Promo not found' }, { status: 404 })
 
   return NextResponse.json({ promo })
 }
@@ -32,6 +37,7 @@ export async function DELETE(_req: NextRequest, context: { params: Promise<{ id:
   const session = guard.session
 
   const { id } = await context.params
-  await prisma.rewardPromo.delete({ where: { id } })
+  const deleted = await prisma.rewardPromo.delete({ where: { id } }).catch((e: unknown) => { if (isNotFound(e)) return null; throw e })
+  if (!deleted) return NextResponse.json({ error: 'Promo not found' }, { status: 404 })
   return NextResponse.json({ ok: true })
 }
