@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
+import { accruedInterestForPlan } from '@/lib/savings-interest-plan'
 
 function unauthorized() {
   const res = NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -33,7 +34,12 @@ export async function GET() {
   }
   if (!customer) return unauthorized()
 
-  const plans = customer.savingsPlans
+  // Interest is computed fresh (not from the cron-refreshed column) so it is accurate immediately and
+  // matches what the redemption request will pay. 0 for non-self plans.
+  const now = new Date()
+  const plans = await Promise.all(
+    customer.savingsPlans.map(async p => ({ ...p, interest: await accruedInterestForPlan(prisma, p, now) })),
+  )
   const plan = plans[0] ?? null
   const planIds = plans.map(p => p.id)
 

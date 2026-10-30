@@ -24,7 +24,7 @@ import { buildSlots, dateKey, hasEnded, isWeekly } from '@/lib/savings-card'
 
 type Plan = {
   id: string; dailyAmount: number; periodDays: number; cadence?: string; goal: string
-  startDate: string; maturityDate: string; balance: number; status: string
+  startDate: string; maturityDate: string; balance: number; status: string; interest?: number
 }
 type Tx = {
   id: string; amount: number; ref: string; createdAt: string; method: string | null
@@ -262,6 +262,10 @@ export default function CustomerDashboard() {
                     <dd className="ui-balance-fact-sub">
                       {daysUntil(plan.maturityDate) === 0 ? 'Today' : daysUntil(plan.maturityDate) === 1 ? 'Tomorrow' : `In ${daysUntil(plan.maturityDate)} days`}
                     </dd>
+                  </div>
+                  <div className="ui-balance-fact-wide">
+                    <dt>Interest so far</dt>
+                    <dd>{hideBalance ? '₦ ••••' : formatNaira(plan.interest ?? 0)}</dd>
                   </div>
                 </dl>
               </>
