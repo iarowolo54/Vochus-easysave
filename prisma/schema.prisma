@@ -630,3 +630,13 @@ model AutoDebitAttempt {
 
   @@index([status, createdAt])
 }
+
+model NotificationLog {
+  id         String   @id @default(cuid())
+  customerId String
+  kind       String
+  periodKey  String
+  sentAt     DateTime @default(now())
+
+  @@unique([customerId, kind, periodKey])
+}
