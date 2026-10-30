@@ -126,6 +126,7 @@ model SavingsPlan {
   balance           Float              @default(0)
   status            String             @default("Active")
   maturityNotified  Boolean            @default(false)
+  interestAccrued   Float              @default(0)
   notes             String?
   transactions      Transaction[]
   earlyRedemptions  EarlyRedemption[]
@@ -296,6 +297,7 @@ model EarlyRedemption {
   status        String    @default("Pending")
   balance       Float
   penalty       Float     @default(0)
+  interestAmount Float    @default(0)
   netPayout     Float
   token         String?   @unique
   tokenExpiry   DateTime?
@@ -576,4 +578,12 @@ model PaymentIntent {
 
   @@index([customerId])
   @@index([agentId])
+}
+
+model SavingsInterestRate {
+  id            String   @id @default(cuid())
+  annualRate    Float
+  effectiveFrom DateTime @default(now())
+  createdBy     String?
+  createdAt     DateTime @default(now())
 }
