@@ -78,12 +78,8 @@ ssh "$SERVER" "ALLOW_DB_PUSH='$ALLOW_DB_PUSH' ALLOW_SEED='$ALLOW_SEED' bash -s" 
   echo "📦 Installing dependencies..."
   npm install --legacy-peer-deps
 
-  if [ "${ALLOW_DB_PUSH:-0}" = "1" ]; then
-    echo "⚠️  ALLOW_DB_PUSH=1 — syncing schema (can DROP columns)"
-    ./node_modules/.bin/prisma db push --accept-data-loss
-  else
-    echo "⏭  skipping prisma db push (code-only). Set ALLOW_DB_PUSH=1 to enable."
-  fi
+  echo "🗄️  Applying committed migrations (prisma migrate deploy)..."
+  ./node_modules/.bin/prisma migrate deploy
 
   echo "⚙️  Generating Prisma client..."
   ./node_modules/.bin/prisma generate

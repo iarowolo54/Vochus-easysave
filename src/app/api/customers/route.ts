@@ -4,6 +4,10 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { validateGender, validateState, validateLga } from '@/lib/customer-fields'
 import { logAudit } from '@/lib/audit'
+import { normalizePhone } from '@/lib/phone'
+import { normalizeEmail } from '@/lib/email'
+import { findIdentityConflict } from '@/lib/identity'
+import { identityConflictResponse } from '@/lib/identity-response'
 import { PLATFORM_SAVINGS_FEE, AGENT_SAVINGS_COMMISSION } from '@/lib/wallet-rates'
 import { assertSufficient, insufficientResponse, InsufficientFundsError, money } from '@/lib/wallet-guard'
 
@@ -119,6 +123,8 @@ export async function POST(req: NextRequest) {
   const body = await req.json()
   const { firstName, lastName, phone, email, dob, address, language, gender, state, lga, bvn, nokName, nokRelation, nokPhone, dailyAmount, periodDays, goal, startDate, notes, registrationFee, feeMethod, cadence, plans } = body
 
+  if (typeof phone !== 'string' || !phone.trim()) return NextResponse.json({ error: 'Phone is required' }, { status: 400 })
+
   // Gender, state and LGA required; the LGA must belong to the state (#18).
   const genderCheck = validateGender(gender)
   if (!genderCheck.ok) return NextResponse.json({ error: genderCheck.error }, { status: 400 })
@@ -135,14 +141,18 @@ export async function POST(req: NextRequest) {
   const maturity = new Date(start)
   maturity.setDate(maturity.getDate() + parseInt(periodDays))
 
+  // One identity, one account: the phone/email must not belong to any account.
+  const conflict = await findIdentityConflict(prisma, { phone, email })
+  if (conflict) return identityConflictResponse(conflict)
+
   const customer = await prisma.customer.create({
     data: {
       customerId,
       agentId: agent.id,
       firstName,
       lastName,
-      phone,
-      email: email || null,
+      phone: normalizePhone(String(phone)),
+      email: email ? normalizeEmail(String(email)) : null,
       dob: dob ? new Date(dob) : null,
       address,
       language: language ?? 'English',

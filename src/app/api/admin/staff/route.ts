@@ -3,6 +3,8 @@ import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import bcrypt from 'bcryptjs'
 import { logAudit } from '@/lib/audit'
+import { findIdentityConflict } from '@/lib/identity'
+import { identityConflictResponse } from '@/lib/identity-response'
 
 export async function GET() {
   const guard = await requireSuperAdmin()
@@ -36,8 +38,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'name, email, role and password are required' }, { status: 400 })
   }
 
-  const existing = await prisma.staffUser.findUnique({ where: { email } })
-  if (existing) return NextResponse.json({ error: 'Email already in use' }, { status: 409 })
+  const conflict = await findIdentityConflict(prisma, { email })
+  if (conflict) return identityConflictResponse(conflict)
 
   const hashed = await bcrypt.hash(password, 10)
 

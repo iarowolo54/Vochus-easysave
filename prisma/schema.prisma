@@ -33,6 +33,7 @@ model Agent {
   status             String       @default("Active")
   loginAttempts      Int          @default(0)
   lockedAt           DateTime?
+  tokenVersion       Int          @default(0)
   profileUnlocked    Boolean      @default(false)
   transactionPin     String?
   unlockToken        String?
@@ -125,6 +126,7 @@ model SavingsPlan {
   balance           Float              @default(0)
   status            String             @default("Active")
   maturityNotified  Boolean            @default(false)
+  interestAccrued   Float              @default(0)
   notes             String?
   transactions      Transaction[]
   earlyRedemptions  EarlyRedemption[]
@@ -295,9 +297,11 @@ model EarlyRedemption {
   status        String    @default("Pending")
   balance       Float
   penalty       Float     @default(0)
+  interestAmount Float    @default(0)
   netPayout     Float
   token         String?   @unique
   tokenExpiry   DateTime?
+  attempts      Int       @default(0)
   agentApprovedAt        DateTime?
   agentApprovedBy        String?
   payoutMethod           String    @default("Cash")
@@ -574,4 +578,12 @@ model PaymentIntent {
 
   @@index([customerId])
   @@index([agentId])
+}
+
+model SavingsInterestRate {
+  id            String   @id @default(cuid())
+  annualRate    Float
+  effectiveFrom DateTime @default(now())
+  createdBy     String?
+  createdAt     DateTime @default(now())
 }

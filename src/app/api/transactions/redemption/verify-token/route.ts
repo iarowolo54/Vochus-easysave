@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { redemptionTokenMatches } from '@/lib/redemption-token'
+import { reserveRedemptionAttempt } from '@/lib/redemption-attempts'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -26,8 +27,24 @@ export async function POST(req: NextRequest) {
   if (!record) return NextResponse.json({ valid: false, error: 'Redemption record not found' }, { status: 400 })
   if (record.savingsPlan.customer.agentId !== agent.id) return NextResponse.json({ valid: false, error: 'Not authorized for this record' }, { status: 400 })
   if (record.status !== 'Pending') return NextResponse.json({ valid: false, error: 'Record is no longer pending' }, { status: 400 })
-  if (!redemptionTokenMatches(record.token, token)) return NextResponse.json({ valid: false, error: 'Invalid token' }, { status: 400 })
+  // Expiry first, so an expired code doesn't burn a guess attempt.
   if (!record.tokenExpiry || record.tokenExpiry < new Date()) return NextResponse.json({ valid: false, error: 'Token has expired' }, { status: 400 })
+
+  // Cap wrong guesses: reserve an attempt atomically BEFORE comparing, so a rogue
+  // (but authorised) agent can't brute-force the 6-digit code to validate a
+  // redemption the customer never confirmed. 0 reserved => locked / over cap.
+  if (!(await reserveRedemptionAttempt(prisma, ref))) {
+    return NextResponse.json(
+      { valid: false, error: 'Too many incorrect attempts. This code is locked — ask the customer to request a new redemption.' },
+      { status: 429 },
+    )
+  }
+  if (!redemptionTokenMatches(record.token, token)) return NextResponse.json({ valid: false, error: 'Invalid token' }, { status: 400 })
+
+  // A correct check is read-only (status stays Pending), so don't let the agent
+  // re-rendering/retrying the confirmation accumulate toward the cap and lock a
+  // legitimate redemption — give back the attempt this (successful) call reserved.
+  await prisma.earlyRedemption.updateMany({ where: { ref, attempts: { gt: 0 } }, data: { attempts: { decrement: 1 } } })
 
   const customerName = `${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName}`
 

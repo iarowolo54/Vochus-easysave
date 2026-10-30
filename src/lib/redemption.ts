@@ -9,7 +9,7 @@ import type { Prisma } from '@prisma/client'
 import { prisma } from './prisma'
 
 /** The plan only if it belongs to one of this agent's customers and is still
- *  redeemable (positive balance, not already redeemed). Null otherwise → 404. */
+ *  redeemable (positive balance, not already redeemed, not an online plan). Null otherwise → 404. */
 export function loadOwnedRedeemablePlan(agentDbId: string, customerId: string, planId: string) {
   return prisma.savingsPlan.findFirst({
     where: {
@@ -17,6 +17,9 @@ export function loadOwnedRedeemablePlan(agentDbId: string, customerId: string, p
       customerId,
       balance: { gt: 0 },
       status: { not: 'Redeemed' },
+      // Online (self) plans redeem ONLY via the customer-OTP + admin-approval pipeline;
+      // the agent-direct path would bypass that approval (SR-4).
+      source: { not: 'self' },
       customer: { agentId: agentDbId },
       // Mutual exclusion with the customer early-redemption pipeline: a plan with
       // an in-flight EarlyRedemption must not also be redeemed via the agent path.

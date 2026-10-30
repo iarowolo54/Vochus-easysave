@@ -3,6 +3,8 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { findIdentityConflict } from '@/lib/identity'
+import { identityConflictResponse } from '@/lib/identity-response'
 
 export async function GET() {
   const session = await getServerSession(authOptions)
@@ -36,6 +38,9 @@ export async function POST(req: NextRequest) {
   if (typeof phone !== 'string' || !/^0\d{10}$/.test(phone)) {
     return NextResponse.json({ error: 'Phone must be 11 digits starting with 0' }, { status: 400 })
   }
+
+  const conflict = await findIdentityConflict(prisma, { phone })
+  if (conflict) return identityConflictResponse(conflict)
 
   let subAgent
   try {

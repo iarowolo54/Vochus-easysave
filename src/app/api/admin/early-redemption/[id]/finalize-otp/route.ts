@@ -5,6 +5,7 @@ import { finalizeTransfer } from '@/lib/paystack'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
+import { interestPayoutOps } from '@/lib/redemption-interest-ops'
 
 export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
   const guard = await requireSuperAdmin()
@@ -81,6 +82,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
         status: 'Done',
       },
     }),
+    ...interestPayoutOps(prisma, record, agentId, customerId),
   ])
 
   logAudit({

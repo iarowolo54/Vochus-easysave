@@ -39,7 +39,7 @@ export function maturityFrom(start: Date, periodDays: number): Date {
 }
 
 export type PlanSelection =
-  | { plan: { id: string } }
+  | { plan: { id: string; source: string } }
   | { error: 'none' | 'not_found' | 'ambiguous' }
 
 // Resolves which Active plan a saving should go to, scoped to the customer.
@@ -51,16 +51,25 @@ export async function selectActivePlan(
   if (planId) {
     const plan = await client.savingsPlan.findFirst({
       where: { id: planId, customerId, status: 'Active' },
-      select: { id: true },
+      select: { id: true, source: true },
     })
     return plan ? { plan } : { error: 'not_found' }
   }
   const active = await client.savingsPlan.findMany({
     where: { customerId, status: 'Active' },
-    select: { id: true },
+    select: { id: true, source: true },
     take: 2,
   })
   if (active.length === 0) return { error: 'none' }
   if (active.length > 1) return { error: 'ambiguous' }
   return { plan: active[0] }
+}
+
+// SR-3: interest accrues from each deposit's createdAt, so on an ONLINE
+// (source:'self') plan a client-supplied date must never backdate a deposit.
+// Returns undefined (=> createdAt defaults to now) for self plans; offline
+// (agent) plans keep honoring the date (they earn no interest).
+export function depositCreatedAt(planSource: string, clientDate?: string | Date | null): Date | undefined {
+  if (planSource === 'self') return undefined
+  return clientDate ? new Date(clientDate) : undefined
 }

@@ -6,8 +6,12 @@ import { sendMail } from '@/lib/mail'
 import { logAudit } from '@/lib/audit'
 import { resolveBvn } from '@/lib/paystack'
 import { normalizeEmail } from '@/lib/email'
+import { normalizePhone } from '@/lib/phone'
+import { findIdentityConflict } from '@/lib/identity'
+import { identityConflictResponse } from '@/lib/identity-response'
 import { resolvePlanStartDate, maturityFrom } from '@/lib/saving-plan'
 import { validatePhoto } from '@/lib/photo'
+import { enrolRateLimiter, clientIp } from '@/lib/rate-limit'
 import { validateGender, validateState, validateLga } from '@/lib/customer-fields'
 
 function genId(prefix: string, pad = 5) {
@@ -15,6 +19,13 @@ function genId(prefix: string, pad = 5) {
 }
 
 export async function POST(req: NextRequest) {
+  // FIRST: bound every attempt per IP (before parsing, the OTP gate and the
+  // identity guard) so the 409 cannot be used to enumerate accounts at volume.
+  const ipLimit = enrolRateLimiter.check(`enroll:ip:${clientIp(req)}`, 10, 60 * 60 * 1000)
+  if (!ipLimit.allowed) {
+    return NextResponse.json({ error: 'Too many attempts. Please try again later.' }, { status: 429 })
+  }
+
   const body = await req.json()
   const { ref, aid, firstName, lastName, phone, email, dob, address, gender, state, lga, bvn,
           nokName, nokRelation, nokPhone, photoUrl, dailyAmount, periodDays, goal, password, cadence, plans, startDate } = body
@@ -93,9 +104,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid invite link — ask your agent for a new link' }, { status: 400 })
   }
 
-  const existing = await prisma.customer.findFirst({ where: { phone } })
-  if (existing) return NextResponse.json({ error: 'Phone number already registered' }, { status: 409 })
-
   // Email must have been verified via the email-OTP flow, recently. This is the
   // server-side gate — the browser check alone is not enough. The row is
   // consumed after the customer is created so it can't be replayed.
@@ -108,6 +116,10 @@ export async function POST(req: NextRequest) {
   if (!verifiedOtp) {
     return NextResponse.json({ error: 'Confirm your email first' }, { status: 400 })
   }
+
+  // One identity, one account: the phone/email must not belong to any account.
+  const conflict = await findIdentityConflict(prisma, { phone: String(phone), email: String(email) })
+  if (conflict) return identityConflictResponse(conflict)
 
   const hashed = await bcrypt.hash(password, 10)
 
@@ -131,8 +143,8 @@ export async function POST(req: NextRequest) {
       agentId: agentDbId,
       firstName,
       lastName,
-      phone,
-      email: email || null,
+      phone: normalizePhone(String(phone)),
+      email: email ? normalizeEmail(String(email)) : null,
       dob: dob ? new Date(dob) : null,
       address,
       gender: genderCheck.value,

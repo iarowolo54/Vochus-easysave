@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { blockMinus, nonNegativeString } from '@/lib/numeric'
 import { Icons } from '@/components/ui/icons'
 import {
-  Avatar, ConfirmModal, Empty, Field, LoadError, Modal, PageHeader, Pager, TableSkeleton, naira, nairaKobo, useToast,
+  Avatar, ConfirmModal, Empty, Field, LoadError, Modal, PageHeader, Pager, TableSkeleton, naira, nairaKobo, shortDate, useToast,
 } from '../_components/admin-ui'
 
 interface LeaderboardEntry {
@@ -56,7 +56,11 @@ type Confirm =
   | { kind: 'comm' }
   | { kind: 'commReset' }
   | { kind: 'loan' }
+  | { kind: 'savings' }
   | { kind: 'pay'; agent: LeaderboardEntry }
+
+/** GET /api/admin/savings-interest: the current annual rate and its change history (forward-only). */
+interface SavingsRateData { current: number; history: { effectiveFrom: string; annualRate: number }[] }
 
 type BatchResult = { id: string; name: string; amount: number; ok: boolean; error?: string }
 
@@ -100,6 +104,10 @@ export default function CommissionPage() {
   const [busy, setBusy] = useState(false)
   const [confirmError, setConfirmError] = useState('')
 
+  const [savingsRate, setSavingsRate] = useState<SavingsRateData | null>(null)
+  const [savingsRateFailed, setSavingsRateFailed] = useState(false)
+  const [newSavingsRate, setNewSavingsRate] = useState('')
+
   const [batch, setBatch] = useState<{ step: 'confirm' | 'running' | 'done'; results: BatchResult[] } | null>(null)
 
   const nowStr = () => new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
@@ -136,7 +144,37 @@ export default function CommissionPage() {
     setLoading(false)
   }, [])
 
-  useEffect(() => { load() }, [load])
+  const loadSavingsRate = useCallback(async () => {
+    try {
+      const res = await fetch('/api/admin/savings-interest')
+      if (!res.ok) throw new Error()
+      setSavingsRate(await res.json() as SavingsRateData)
+      setSavingsRateFailed(false)
+    } catch { setSavingsRateFailed(true) }
+  }, [])
+
+  useEffect(() => { load(); loadSavingsRate() }, [load, loadSavingsRate])
+
+  async function handleSetSavingsRate() {
+    const rate = pct(newSavingsRate)
+    if (rate === null) { setConfirmError('Enter a rate from 0 to 100.'); return }
+    setBusy(true); setConfirmError('')
+    try {
+      const res = await fetch('/api/admin/savings-interest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ annualRate: rate }),
+      })
+      if (!res.ok) { setConfirmError(await errorOf(res, 'The rate wasn’t changed. Try again.')); return }
+      setConfirm(null); setNewSavingsRate('')
+      toast(`Savings interest is now ${rate}% a year`, 'success')
+      await loadSavingsRate()
+    } catch {
+      setConfirmError('No connection. Check your internet and try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
 
   // Commission rates: parsed drafts, validity and what changed
   const commParsed = Object.fromEntries(COMM_FIELDS.map(f => [f.key, pct(comm[f.key])])) as Record<CommKey, number | null>
@@ -376,6 +414,49 @@ export default function CommissionPage() {
           )}
       </section>
 
+      {/* Savings interest (online plans) */}
+      <section className="card am-section" aria-labelledby="si-h">
+        <div className="card-hd">
+          <div>
+            <h3 id="si-h">Savings interest rate</h3>
+            <p className="am-card-sub">Paid to online customers on their savings. Cash (agent) plans don’t earn interest.</p>
+          </div>
+          {savingsRate && <span className="am-rate-now">{savingsRate.current}% <span>a year</span></span>}
+        </div>
+        {!savingsRate ? (savingsRateFailed ? <LoadError what="the savings interest rate" onRetry={loadSavingsRate} /> : <TableSkeleton rows={2} cols={2} />)
+          : (
+            <>
+              <div className="am-terms">
+                <div className="am-term">
+                  <Field id="si-new" label="New rate (% a year)" error={newSavingsRate !== '' && pct(newSavingsRate) === null ? 'Enter 0 to 100.' : undefined}>
+                    <PctInput id="si-new" value={newSavingsRate} invalid={newSavingsRate !== '' && pct(newSavingsRate) === null} onChange={setNewSavingsRate} />
+                  </Field>
+                  <p className="am-term-eg">At {pct(newSavingsRate) ?? savingsRate.current}% a year, ₦100,000 held for a month earns <strong>{naira(100000 * (pct(newSavingsRate) ?? savingsRate.current) / 100 / 12)}</strong>.</p>
+                </div>
+                <div className="am-term">
+                  <div className="am-term-hd"><strong>Rate history</strong></div>
+                  {savingsRate.history.length === 0
+                    ? <p className="am-term-eg">No changes yet. The default of {savingsRate.current}% applies.</p>
+                    : (
+                      <dl className="dlg-ledger">
+                        {[...savingsRate.history].reverse().slice(0, 6).map(h => (
+                          <div key={h.effectiveFrom + h.annualRate}><dt>From {shortDate(h.effectiveFrom)}</dt><dd>{h.annualRate}%</dd></div>
+                        ))}
+                      </dl>
+                    )}
+                </div>
+              </div>
+              <div className="am-foot">
+                <div className="am-foot-info"><span>Applies from now on. Interest already earned isn’t changed.</span></div>
+                <div className="am-foot-actions">
+                  <button type="button" className="btn btn-green" disabled={pct(newSavingsRate) === null || pct(newSavingsRate) === savingsRate.current}
+                    onClick={() => openConfirm({ kind: 'savings' })}>Set rate</button>
+                </div>
+              </div>
+            </>
+          )}
+      </section>
+
       {/* Commission by agent */}
       <section className="card" aria-labelledby="lb-h">
         <div className="card-hd">
@@ -472,6 +553,17 @@ export default function CommissionPage() {
             </ul>
           </>}
           onConfirm={handleSaveLoanRates} onClose={() => setConfirm(null)} />
+      )}
+
+      {confirm?.kind === 'savings' && savingsRate && (
+        <ConfirmModal icon="rate" title="Change the savings interest rate?" confirmLabel="Set rate" busy={busy} error={confirmError}
+          body={<>
+            Online customers earn the new rate from now on. Interest already earned isn’t changed.
+            <ul className="am-diff">
+              <li><span>Annual rate</span><span className="am-diff-val"><span className="am-diff-old">{savingsRate.current}%</span>{pct(newSavingsRate)}%</span></li>
+            </ul>
+          </>}
+          onConfirm={handleSetSavingsRate} onClose={() => setConfirm(null)} />
       )}
 
       {confirm?.kind === 'pay' && (

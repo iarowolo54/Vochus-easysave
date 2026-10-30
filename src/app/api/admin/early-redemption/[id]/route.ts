@@ -5,6 +5,7 @@ import bcrypt from 'bcryptjs'
 import { createRecipient, initiateTransfer } from '@/lib/paystack'
 import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
+import { interestPayoutOps } from '@/lib/redemption-interest-ops'
 
 export async function PATCH(req: Request, context: { params: Promise<{ id: string }> }) {
   const guard = await requireSuperAdmin()
@@ -183,6 +184,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
           walletAfter,
         },
       }),
+      ...interestPayoutOps(prisma, record, agentId, customerId),
     ])
 
     logAudit({

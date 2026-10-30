@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { randomInt } from 'node:crypto'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { sendSMS } from '@/lib/kudisms'
 import { sendMail } from '@/lib/mail'
-import { hashRedemptionToken } from '@/lib/redemption-token'
+import { createRedemptionWithUniqueCode } from '@/lib/redemption-create'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
@@ -44,7 +43,6 @@ export async function POST(req: NextRequest) {
     })
     if (existing) return NextResponse.json({ error: 'A pending redemption request already exists for this customer' }, { status: 409 })
 
-    const token = randomInt(100000, 1000000).toString()
     const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000)
     const ref = `RDM-${Date.now().toString(36).toUpperCase()}`
     const customerName = `${plan.customer.firstName} ${plan.customer.lastName}`
@@ -54,31 +52,31 @@ export async function POST(req: NextRequest) {
     const deduction = money(rates.total)
     const netPayout = money(plan.balance - deduction)
 
-    await prisma.earlyRedemption.create({
-      data: {
-        ref,
-        savingsPlanId: planId,
-        type: 'matured',
-        reason: 'Plan matured - customer redemption',
-        status: 'Pending',
-        balance: plan.balance,
-        penalty: deduction,
-        netPayout,
-        token: hashRedemptionToken(token),
-        tokenExpiry,
-        payoutMethod: payoutMethod ?? 'Cash',
-        accountNumber: accountNumber ?? null,
-        accountName: accountName ?? null,
-        bankCode: bankCode ?? null,
-        bankName: bankName ?? null,
-      },
-    })
+    // Collision-safe create: retries if the random code's hash is already taken
+    // (token is @unique) instead of 500ing.
+    const { code: token } = await createRedemptionWithUniqueCode(prisma, (tokenHash) => ({
+      ref,
+      savingsPlanId: planId,
+      type: 'matured',
+      reason: 'Plan matured - customer redemption',
+      status: 'Pending',
+      balance: plan.balance,
+      penalty: deduction,
+      netPayout,
+      token: tokenHash,
+      tokenExpiry,
+      payoutMethod: payoutMethod ?? 'Cash',
+      accountNumber: accountNumber ?? null,
+      accountName: accountName ?? null,
+      bankCode: bankCode ?? null,
+      bankName: bankName ?? null,
+    }))
 
     const expiryStr = tokenExpiry.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
     const smsBody = `Vochus Easy Save: Your redemption token is ${token}. Present this to your agent to collect N${netPayout.toLocaleString()}. Expires ${expiryStr}.`
 
     // The plaintext token is delivered only out-of-band (SMS/email) — never
-    // logged. Only its hash is stored (see hashRedemptionToken above).
+    // logged. Only its hash is stored (createRedemptionWithUniqueCode above).
     sendSMS(plan.customer.phone, smsBody).catch(() => {})
 
     if (plan.customer.email) {

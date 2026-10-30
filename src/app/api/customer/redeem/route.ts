@@ -4,11 +4,13 @@ import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
+import { accruedInterestForPlan } from '@/lib/savings-interest-plan'
 import { resolveAccount } from '@/lib/paystack'
 import { sendSMS } from '@/lib/kudisms'
 import { sendMail } from '@/lib/mail'
-import crypto from 'crypto'
-import { hashRedemptionToken, redemptionTokenMatches } from '@/lib/redemption-token'
+import { redemptionTokenMatches } from '@/lib/redemption-token'
+import { createRedemptionWithUniqueCode } from '@/lib/redemption-create'
+import { reserveRedemptionAttempt } from '@/lib/redemption-attempts'
 
 export async function GET() {
   const session = await getCustomerSession()
@@ -81,32 +83,32 @@ export async function POST(req: NextRequest) {
   const hasCashDeposit = await planHasCashDeposit(prisma, plan.id)
   const rates = redemptionDeduction({ balance: plan.balance, dailyAmount: plan.dailyAmount, cadence: plan.cadence, hasCashDeposit, initiator: 'customer', source: (plan as any).source })
   const deduction = money(rates.total)
-  const netPayout = money(plan.balance - deduction)
+  const interest = await accruedInterestForPlan(prisma, plan, now)
+  const netPayout = money(plan.balance - deduction + interest)
 
-  // Crypto-random token (finding #6 — not Math.random).
-  const token = crypto.randomInt(100000, 1000000).toString()
   const tokenExpiry = new Date(now.getTime() + 30 * 60 * 1000)
   const ref = `RED-${customer.customerId}-${Date.now()}`
 
-  const redemption = await prisma.earlyRedemption.create({
-    data: {
-      ref,
-      savingsPlanId: plan.id,
-      type: isEarly ? 'early' : 'maturity',
-      reason,
-      status: 'Pending',
-      balance: plan.balance,
-      penalty: deduction,
-      netPayout,
-      token: hashRedemptionToken(token),
-      tokenExpiry,
-      payoutMethod,
-      accountNumber: accountNumber || null,
-      accountName: resolvedAccountName,
-      bankCode: bankCode || null,
-      bankName: bankName || null,
-    },
-  })
+  // Crypto-random 6-digit code (finding #6 — not Math.random), created
+  // collision-safe: retries if the code's hash is already taken (token @unique).
+  const { redemption, code: token } = await createRedemptionWithUniqueCode(prisma, (tokenHash) => ({
+    ref,
+    savingsPlanId: plan.id,
+    type: isEarly ? 'early' : 'maturity',
+    reason,
+    status: 'Pending',
+    balance: plan.balance,
+    penalty: deduction,
+    netPayout,
+    interestAmount: interest,
+    token: tokenHash,
+    tokenExpiry,
+    payoutMethod,
+    accountNumber: accountNumber || null,
+    accountName: resolvedAccountName,
+    bankCode: bankCode || null,
+    bankName: bankName || null,
+  }))
 
   logAudit({
     action: 'customer_redeem',
@@ -132,7 +134,7 @@ export async function POST(req: NextRequest) {
     }).catch(() => {})
   }
 
-  return NextResponse.json({ ref: redemption.ref, isEarly, deduction, netPayout, balance: plan.balance })
+  return NextResponse.json({ ref: redemption.ref, isEarly, deduction, interest, netPayout, balance: plan.balance })
 }
 
 export async function PATCH(req: NextRequest) {
@@ -152,10 +154,21 @@ export async function PATCH(req: NextRequest) {
   }
   if (redemption.status !== 'Pending') return NextResponse.json({ error: 'Already processed' }, { status: 409 })
 
-  if (!redemptionTokenMatches(redemption.token, token)) return NextResponse.json({ error: 'Invalid token' }, { status: 400 })
+  // Expiry first, so an expired code doesn't burn a guess attempt.
   if (!redemption.tokenExpiry || redemption.tokenExpiry < new Date()) {
     return NextResponse.json({ error: 'Token expired' }, { status: 400 })
   }
+
+  // Cap wrong guesses: reserve an attempt atomically BEFORE comparing, so a
+  // hijacked session that doesn't control the customer's phone/email can't
+  // brute-force the 6-digit confirmation code. 0 reserved => locked / over cap.
+  if (!(await reserveRedemptionAttempt(prisma, ref))) {
+    return NextResponse.json(
+      { error: 'Too many incorrect attempts. This code is locked — request a new redemption.' },
+      { status: 429 },
+    )
+  }
+  if (!redemptionTokenMatches(redemption.token, token)) return NextResponse.json({ error: 'Invalid token' }, { status: 400 })
 
   await prisma.earlyRedemption.update({
     where: { ref },

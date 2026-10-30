@@ -41,7 +41,7 @@ after(async () => {
 
 test('explicit planId that belongs to the customer resolves', async () => {
   const r = await selectActivePlan(prisma, custA, planA1)
-  assert.deepEqual(r, { plan: { id: planA1 } })
+  assert.deepEqual(r, { plan: { id: planA1, source: 'agent' } })
 })
 
 test("another customer's planId is rejected (IDOR-safe)", async () => {
@@ -54,7 +54,7 @@ test('no planId with multiple active plans is ambiguous', async () => {
 })
 
 test('no planId with exactly one active plan resolves to it', async () => {
-  assert.deepEqual(await selectActivePlan(prisma, custB), { plan: { id: planB1 } })
+  assert.deepEqual(await selectActivePlan(prisma, custB), { plan: { id: planB1, source: 'agent' } })
 })
 
 test('no planId with no active plan returns none', async () => {

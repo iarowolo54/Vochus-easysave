@@ -805,13 +805,8 @@ button.ui-cal-day:active { transform: scale(.9); }
 .ui-balance-note { font-size: var(--ui-fs-md); color: var(--ui-ink-2); margin: var(--ui-s2) 0 0; }
 .ui-balance-bar { margin-top: var(--ui-s4); }
 .ui-balance-goal { display: flex; justify-content: space-between; gap: var(--ui-s3); margin: var(--ui-s2) 0 0; font-size: var(--ui-fs-sm); color: var(--ui-ink-2); }
-.ui-balance-goal span:last-child { font-weight: 700; color: var(--ui-brand-ink); font-variant-numeric: tabular-nums; }
-.ui-balance-facts { display: grid; grid-template-columns: 1fr 1fr; margin: var(--ui-s4) 0 0; padding-top: var(--ui-s4); border-top: 1px solid var(--ui-line); }
-.ui-balance-facts > div { min-width: 0; }
-.ui-balance-facts > div + div { padding-left: var(--ui-s4); border-left: 1px solid var(--ui-line); }
-.ui-balance-facts dt { font-size: var(--ui-fs-sm); color: var(--ui-ink-2); margin-bottom: 2px; }
-.ui-balance-facts dd { margin: 0; font-family: var(--ui-font-display); font-size: var(--ui-fs-md); font-weight: 700; color: var(--ui-ink); }
-.ui-balance-facts dd.ui-balance-fact-sub { font-family: inherit; font-size: var(--ui-fs-sm); font-weight: 500; color: var(--ui-ink-2); }
+.ui-balance-goal strong { font-weight: 700; color: var(--ui-brand-ink); font-variant-numeric: tabular-nums; }
+.ui-balance-goal span:last-child:not(:first-child) { margin-left: auto; }
 .ui-balance .ui-today { display: flex; width: 100%; margin-top: var(--ui-s4); border-radius: var(--ui-r-sm); background: var(--ui-canvas); }
 .ui-balance .ui-today--done { background: var(--ui-brand-tint); }
 
@@ -2514,3 +2509,13 @@ a.ag-crow { text-decoration: none; color: inherit; }
 .ag-type--online { background: var(--ui-brand-tint); color: var(--ui-brand-ink); }
 .ag-profile-paid { display: flex; align-items: center; gap: var(--ui-s2); margin: 0 0 var(--ui-s3); font-size: var(--ui-fs-sm); color: var(--ui-ink-2); }
 .ag-profile-paid.ag-late { color: var(--ui-danger); }
+
+/* Interest nudge under the balance (online plans) */
+.ui-nudge { display: flex; align-items: flex-start; gap: var(--ui-s2); width: 100%; margin: var(--ui-s3) 0 0; color: var(--ui-ink-2); font-size: var(--ui-fs-sm); line-height: 1.45; text-align: left; }
+.ui-nudge > svg { flex-shrink: 0; margin-top: 2px; color: var(--ui-brand-ink); }
+.ui-nudge strong { font-weight: 700; color: var(--ui-ink); font-variant-numeric: tabular-nums; }
+.ui-hero .ui-nudge { max-width: 360px; margin-top: var(--ui-s2); }
+.ui-interest-chip { display: inline-flex; align-items: center; margin: var(--ui-s2) 0 0; padding: 3px 10px; border-radius: var(--ui-r-pill); background: var(--ui-brand-tint); color: var(--ui-brand-ink); font-size: var(--ui-fs-sm); font-weight: 600; font-variant-numeric: tabular-nums; }
+.ui-interest .ui-summary { margin: 0; }
+.ui-interest .ui-row-main { display: flex; flex-direction: column; gap: 2px; margin: 0; }
+.ui-interest .ui-nudge { margin: 0; padding: var(--ui-s3) 0 var(--ui-s1); border-top: 1px solid var(--ui-line); }

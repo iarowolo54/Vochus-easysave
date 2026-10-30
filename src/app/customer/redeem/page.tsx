@@ -18,7 +18,7 @@ type Redemption = {
   netPayout: number; requestedAt: string; token?: string; tokenExpiry?: string
   reason: string; type: string
 }
-type Plan = { balance: number; dailyAmount: number; cadence?: string; maturityDate: string; hasCashDeposit?: boolean; goal?: string }
+type Plan = { source?: string; balance: number; interest?: number; dailyAmount: number; cadence?: string; maturityDate: string; hasCashDeposit?: boolean; goal?: string }
 type Result = { balance?: number; netPayout?: number }
 
 const REASONS = ['Plan matured', 'Medical emergency', 'School fees', 'Business need', 'Personal emergency', 'Other']
@@ -167,7 +167,8 @@ export default function CustomerRedeemPage() {
   const hasCash = !!plan?.hasCashDeposit
   const isEarly = plan ? new Date() < new Date(plan.maturityDate) : false
   let savingsFee = 0
-  if (plan) {
+  // Online (self) plans pay no platform fee; the server waives it, so the preview must too.
+  if (plan && plan.source !== 'self') {
     if (hasCash && plan.cadence !== 'weekly') {
       savingsFee = Math.min(plan.dailyAmount, plan.balance)
     } else {
@@ -177,7 +178,8 @@ export default function CustomerRedeemPage() {
       savingsFee = Math.round(plan.balance * totalRate * 100) / 100
     }
   }
-  const netPayout = plan ? plan.balance - savingsFee : 0
+  const interest = plan?.interest ?? 0
+  const netPayout = plan ? Math.round((plan.balance - savingsFee + interest) * 100) / 100 : 0
   const inProgress = redemptions.find(r => ['Pending', 'TokenValidated', 'AgentApproved'].includes(r.status)) ?? null
 
   const title = step === 'form' ? 'Collect savings' : step === 'token' || step === 'resume-token' ? 'Confirm your request' : step === 'awaiting' ? 'Your request' : step === 'done' ? 'Request sent' : 'Collect'
@@ -256,6 +258,7 @@ export default function CustomerRedeemPage() {
               <dl className="ag-breakdown">
                 <div><dt>Saved</dt><dd>{formatNaira(plan.balance)}</dd></div>
                 <div><dt>Platform fee</dt><dd className="ag-neg">−{formatNaira(savingsFee)}</dd></div>
+                <div><dt>Interest earned</dt><dd>+{formatNaira(interest)}</dd></div>
                 <div className="ag-breakdown-total"><dt>You’ll receive</dt><dd>{formatNaira(netPayout)}</dd></div>
               </dl>
 
@@ -333,7 +336,7 @@ export default function CustomerRedeemPage() {
                 <span className="ui-row-sub">{plan.goal ? `${plan.goal} · ` : ''}Available to collect</span>
                 <p className="ag-status-amount">{formatNaira(plan.balance)}</p>
                 {plan.balance > 0
-                  ? <p className="ui-row-sub">You receive <strong className="ag-strong">{formatNaira(netPayout)}</strong> after the platform fee</p>
+                  ? <p className="ui-row-sub">You receive <strong className="ag-strong">{formatNaira(netPayout)}</strong> after the platform fee{interest > 0 ? ' and interest' : ''}</p>
                   : <p className="ui-row-sub">Nothing saved in this plan yet. Save first, then you can collect.</p>}
                 {isEarly && plan.balance > 0 && <p className="ag-early"><Icons.pending size={16} aria-hidden="true" /> Ends {formatDate(plan.maturityDate)}. Collecting now is an early collection.</p>}
                 {inProgress ? (
