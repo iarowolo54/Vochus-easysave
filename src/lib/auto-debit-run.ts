@@ -20,12 +20,16 @@ function yyyymmdd(d: Date): string {
 export async function runDueAutoDebits(
   client: PrismaClient,
   now: Date,
-): Promise<{ charged: number; skipped: number; failed: number }> {
+  opts?: { mandateIds?: string[] },
+): Promise<{ charged: number; skipped: number; failed: number; pending: number }> {
   let charged = 0
+  let pending = 0
   let skipped = 0
   let failed = 0
 
-  const mandates = await dueMandates(client, now)
+  const scope = opts?.mandateIds ? new Set(opts.mandateIds) : null
+  const due = await dueMandates(client, now)
+  const mandates = scope ? due.filter((m) => scope.has(m.id)) : due
   for (const mandate of mandates) {
     const plan = mandate.savingsPlan
     try {
@@ -85,15 +89,15 @@ export async function runDueAutoDebits(
         await recordAutoDebitFailure(client, { reference, gatewayResponse: result.gatewayResponse ?? 'charge failed' })
         failed++
       } else {
-        // pending/processing: leave 'processing'; the reconcile pass settles it later.
-        charged++
+        // pending/processing/unknown: leave 'processing'; the reconcile pass settles it later.
+        pending++
       }
     } catch (err) {
       failed++
       console.error('[auto-debit] charge failed', plan.id, errMsg(err))
     }
   }
-  return { charged, skipped, failed }
+  return { charged, skipped, failed, pending }
 }
 
 /** Settle or fail attempts stuck in 'processing' past the threshold. */
@@ -101,12 +105,17 @@ export async function reconcileProcessingAttempts(
   client: PrismaClient,
   now: Date,
   olderThanMs: number = DEFAULT_RECONCILE_AGE_MS,
+  opts?: { mandateIds?: string[] },
 ): Promise<{ settled: number; failed: number }> {
   let settled = 0
   let failed = 0
 
   const stale = await client.autoDebitAttempt.findMany({
-    where: { status: 'processing', createdAt: { lt: new Date(now.getTime() - olderThanMs) } },
+    where: {
+      status: 'processing',
+      createdAt: { lt: new Date(now.getTime() - olderThanMs) },
+      ...(opts?.mandateIds ? { mandateId: { in: opts.mandateIds } } : {}),
+    },
     orderBy: { createdAt: 'asc' },
   })
   for (const attempt of stale) {

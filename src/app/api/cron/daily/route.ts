@@ -50,12 +50,14 @@ export async function GET(req: Request) {
   let charged = 0
   let skipped = 0
   let debitFailed = 0
+  let pending = 0
   let settled = 0
   try {
     const run = await runDueAutoDebits(prisma, now)
     charged = run.charged
     skipped = run.skipped
     debitFailed = run.failed
+    pending = run.pending
   } catch (err) {
     console.error('[cron/daily] auto-debit run failed', err instanceof Error ? err.message : 'unknown')
   }
@@ -69,5 +71,5 @@ export async function GET(req: Request) {
   // SEAM (Feature 3): Friday summary sending will be added to this same route,
   // after the accrual pass above. Intentionally no summary logic yet.
 
-  return NextResponse.json({ accrued, failed, charged, skipped, debitFailed, settled })
+  return NextResponse.json({ accrued, failed, charged, skipped, debitFailed, pending, settled })
 }

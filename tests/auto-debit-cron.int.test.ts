@@ -46,8 +46,8 @@ after(async () => {
 
 test('charges a due mandate once; same-day rerun is idempotent', async () => {
   const { plan, mandate } = await seedPlan({ maturityDate: new Date(now.getTime() + 60 * DAY) })
-  const r1 = await runDueAutoDebits(prisma, now)
-  assert.ok(r1.charged >= 1)
+  const r1 = await runDueAutoDebits(prisma, now, { mandateIds: [mandate.id] })
+  assert.deepEqual(r1, { charged: 1, skipped: 0, failed: 0, pending: 0 })
   assert.equal((await prisma.savingsPlan.findUnique({ where: { id: plan.id } }))?.balance, 600)
   const attempts = await prisma.autoDebitAttempt.findMany({ where: { savingsPlanId: plan.id } })
   assert.equal(attempts.length, 1)
@@ -58,15 +58,16 @@ test('charges a due mandate once; same-day rerun is idempotent', async () => {
 
   // Force it due again the same day: reference collision must skip.
   await prisma.autoDebitMandate.update({ where: { id: mandate.id }, data: { nextRunAt: new Date(now.getTime() - 1000) } })
-  await runDueAutoDebits(prisma, now)
+  const r2 = await runDueAutoDebits(prisma, now, { mandateIds: [mandate.id] })
+  assert.deepEqual(r2, { charged: 0, skipped: 1, failed: 0, pending: 0 })
   assert.equal((await prisma.savingsPlan.findUnique({ where: { id: plan.id } }))?.balance, 600)
   assert.equal(await prisma.autoDebitAttempt.count({ where: { savingsPlanId: plan.id } }), 1)
   assert.equal(await prisma.transaction.count({ where: { planId: plan.id } }), 1)
 })
 
 test('a plan past maturity is not charged', async () => {
-  const { plan } = await seedPlan({ maturityDate: new Date(now.getTime() - DAY) })
-  await runDueAutoDebits(prisma, now)
+  const { plan, mandate } = await seedPlan({ maturityDate: new Date(now.getTime() - DAY) })
+  await runDueAutoDebits(prisma, now, { mandateIds: [mandate.id] })
   assert.equal((await prisma.savingsPlan.findUnique({ where: { id: plan.id } }))?.balance, 100)
   assert.equal(await prisma.autoDebitAttempt.count({ where: { savingsPlanId: plan.id } }), 0)
 })
@@ -78,13 +79,14 @@ test('reconcile settles a stale processing attempt exactly once', async () => {
   await prisma.autoDebitAttempt.create({
     data: { mandateId: mandate.id, savingsPlanId: plan.id, reference, cycleDate: now, creditAmount: 500, grossCharged: 508, feeEstimate: 8, status: 'processing', createdAt: new Date(now.getTime() - 3 * 3600e3) },
   })
-  const r1 = await reconcileProcessingAttempts(prisma, now)
-  assert.ok(r1.settled >= 1)
+  const scope = { mandateIds: [mandate.id] }
+  const r1 = await reconcileProcessingAttempts(prisma, now, undefined, scope)
+  assert.deepEqual(r1, { settled: 1, failed: 0 })
   assert.equal((await prisma.savingsPlan.findUnique({ where: { id: plan.id } }))?.balance, 600)
   const at = await prisma.autoDebitAttempt.findUnique({ where: { reference } })
   assert.equal(at?.status, 'success')
   assert.equal(at?.settledAmount, 508)
-  await reconcileProcessingAttempts(prisma, now)
+  assert.deepEqual(await reconcileProcessingAttempts(prisma, now, undefined, scope), { settled: 0, failed: 0 })
   assert.equal((await prisma.savingsPlan.findUnique({ where: { id: plan.id } }))?.balance, 600)
   assert.equal(await prisma.transaction.count({ where: { planId: plan.id } }), 1)
 })
