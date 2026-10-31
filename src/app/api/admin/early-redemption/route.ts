@@ -4,6 +4,10 @@ import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
+import { IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
+
+// Awaiting admin action = in flight but not yet Approved (incl. AwaitingOTP / Finalizing).
+const AWAITING_ACTION_STATUSES = IN_FLIGHT_REDEMPTION_STATUSES.filter(s => s !== 'Approved')
 
 function genRef() {
   return `ER-${Date.now().toString(36).toUpperCase()}-${randomBytes(4).toString('hex').toUpperCase()}`
@@ -30,7 +34,8 @@ export async function GET() {
     orderBy: { requestedAt: 'desc' },
   })
 
-  const pending = records.filter(r => ['Pending', 'TokenValidated', 'AgentApproved'].includes(r.status)).length
+  const now = new Date()
+  const pending = records.filter(r => AWAITING_ACTION_STATUSES.includes(r.status)).length
   const approved = records.filter(r => r.status === 'Approved').length
   const rejected = records.filter(r => r.status === 'Rejected').length
   const tokensToday = records.filter(r => {
@@ -46,6 +51,7 @@ export async function GET() {
       id: r.id,
       ref: r.ref,
       type: r.type,
+      isEarly: now < r.savingsPlan.maturityDate,
       reason: r.reason,
       note: r.note,
       status: r.status,
