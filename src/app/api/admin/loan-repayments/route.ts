@@ -11,8 +11,10 @@ export async function GET(req: NextRequest) {
   const search = searchParams.get('search') ?? ''
   const date = searchParams.get('date') ?? ''
 
-  const todayStart = new Date()
-  todayStart.setHours(0, 0, 0, 0)
+  // The app's day is Africa/Lagos (fixed UTC+1, no DST). Build every day window from it so the
+  // date filter and "today" agree regardless of the server's own timezone.
+  const lagosDayStart = (ymd: string) => new Date(`${ymd}T00:00:00+01:00`)
+  const todayStart = lagosDayStart(new Date().toLocaleDateString('en-CA', { timeZone: 'Africa/Lagos' }))
 
   const where: Record<string, unknown> = {}
   if (search) {
@@ -24,10 +26,11 @@ export async function GET(req: NextRequest) {
     ]
   }
   if (date) {
-    const d = new Date(date)
-    const next = new Date(d)
-    next.setDate(next.getDate() + 1)
-    where.createdAt = { gte: d, lt: next }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(lagosDayStart(date).getTime())) {
+      return NextResponse.json({ error: 'date must be YYYY-MM-DD' }, { status: 400 })
+    }
+    const start = lagosDayStart(date)
+    where.createdAt = { gte: start, lt: new Date(start.getTime() + 86_400_000) }
   }
 
   const repayments = await prisma.loanRepayment.findMany({
@@ -43,8 +46,10 @@ export async function GET(req: NextRequest) {
     orderBy: { createdAt: 'desc' },
   })
 
-  const all = await prisma.loanRepayment.findMany({ select: { amount: true, createdAt: true } })
-  const todayReps = all.filter(r => r.createdAt >= todayStart)
+  const [total, today] = await Promise.all([
+    prisma.loanRepayment.aggregate({ _count: true, _sum: { amount: true } }),
+    prisma.loanRepayment.aggregate({ where: { createdAt: { gte: todayStart } }, _count: true, _sum: { amount: true } }),
+  ])
 
   return NextResponse.json({
     repayments: repayments.map(r => ({
@@ -58,9 +63,9 @@ export async function GET(req: NextRequest) {
       agentId: r.loan.agent.agentId,
       createdAt: r.createdAt,
     })),
-    totalRepayments: all.length,
-    totalAmount: all.reduce((s, r) => s + r.amount, 0),
-    todayCount: todayReps.length,
-    todayAmount: todayReps.reduce((s, r) => s + r.amount, 0),
+    totalRepayments: total._count,
+    totalAmount: total._sum.amount ?? 0,
+    todayCount: today._count,
+    todayAmount: today._sum.amount ?? 0,
   })
 }

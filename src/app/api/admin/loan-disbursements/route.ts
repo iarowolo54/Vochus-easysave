@@ -19,6 +19,18 @@ export async function GET(req: NextRequest) {
     orderBy: { createdAt: 'desc' },
   })
 
+  // Loan has no disbursedAt column; the disburse route writes a `loan_disburse` audit entry keyed
+  // by the loan id, which is the stored disbursement time (desc order + Map.set means the earliest wins).
+  const disbursedAtByLoan = new Map<string, Date>()
+  if (loans.length > 0) {
+    const entries = await prisma.auditLog.findMany({
+      where: { action: 'loan_disburse', entity: 'Loan', entityId: { in: loans.map(l => l.id) } },
+      select: { entityId: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    })
+    for (const e of entries) if (e.entityId) disbursedAtByLoan.set(e.entityId, e.createdAt)
+  }
+
   const totalDisbursed = loans.length
   const totalDisbursedAmount = loans.reduce((s, l) => s + l.principal, 0)
   let totalOutstanding = 0
@@ -43,6 +55,7 @@ export async function GET(req: NextRequest) {
       agentName: l.agent.name,
       agentId: l.agent.agentId,
       createdAt: l.createdAt,
+      disbursedAt: disbursedAtByLoan.get(l.id) ?? null,
       approvedBy: l.approvedBy,
       outstanding,
       isOverdue: l.dueDate < now && outstanding > 0,

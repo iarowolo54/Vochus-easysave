@@ -18,6 +18,7 @@ interface DisbursedLoan {
   agentName: string
   agentId: string
   createdAt: string
+  disbursedAt?: string | null
   approvedBy: string | null
   outstanding: number
   isOverdue: boolean
@@ -199,6 +200,7 @@ export default function LoanDisbursePage() {
           <h3 className="dlg-sec-h">Dates and decision</h3>
           <dl className="dlg-ledger">
             <div><dt>Requested</dt><dd>{shortDate(detailRecord.createdAt)}</dd></div>
+            {detailRecord.disbursedAt && <div><dt>Disbursed</dt><dd>{shortDate(detailRecord.disbursedAt)}</dd></div>}
             <div><dt>Due date</dt><dd className={detailRecord.isOverdue ? 'lo-bad' : undefined}>{shortDate(detailRecord.dueDate)}{detailRecord.isOverdue ? ' (overdue)' : ''}</dd></div>
             <div><dt>Approved by</dt><dd>{detailRecord.approvedBy ?? '—'}</dd></div>
           </dl>
