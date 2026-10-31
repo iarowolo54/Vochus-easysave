@@ -45,7 +45,7 @@ export async function GET() {
   // `interest` is interest earned so far; `nextInterestAmount`/`daysToNextInterest` are the
   // forward-looking nudge for the next monthly credit (online plans only; null/0 for offline/matured).
   const now = new Date()
-  const plans = await Promise.all(
+  const plansBase = await Promise.all(
     customer.savingsPlans.map(async p => {
       const [interest, projection] = await Promise.all([
         accruedInterestForPlan(prisma, p, now),
@@ -59,8 +59,21 @@ export async function GET() {
       }
     }),
   )
+  const planIds = plansBase.map(p => p.id)
+
+  // Days covered by catch-up payments, per plan (scoped to this customer's plan ids).
+  const coverageRows = planIds.length
+    ? await prisma.planDayCoverage.findMany({
+        where: { savingsPlanId: { in: planIds } },
+        select: { savingsPlanId: true, coversKey: true },
+        orderBy: { coversKey: 'asc' },
+      })
+    : []
+  const plans = plansBase.map(p => ({
+    ...p,
+    coveredKeys: coverageRows.filter(r => r.savingsPlanId === p.id).map(r => r.coversKey),
+  }))
   const plan = plans[0] ?? null
-  const planIds = plans.map(p => p.id)
 
   // Every deposit on the customer's active plans, so the home screen can show per-plan history and
   // which days are paid (bulk deposits are stamped with the day they cover). Scoped to this customer.
