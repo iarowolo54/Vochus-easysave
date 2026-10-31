@@ -12,6 +12,7 @@ import { sendMail } from '@/lib/mail'
 import { redemptionTokenMatches } from '@/lib/redemption-token'
 import { createRedemptionWithUniqueCode } from '@/lib/redemption-create'
 import { reserveRedemptionAttempt } from '@/lib/redemption-attempts'
+import { notifySuperAdminsRedemptionPending } from '@/lib/redemption-notify'
 
 export async function GET() {
   const session = await getCustomerSession()
@@ -134,6 +135,14 @@ export async function POST(req: NextRequest) {
       html: `<p>Hi ${customer.firstName},</p><p>Your redemption confirmation code is:</p><p style="font-size:32px;font-weight:800;letter-spacing:8px;font-family:monospace">${token}</p><p>It expires ${expiryStr}. Do not share this code with anyone.</p>`,
     }).catch(() => {})
   }
+
+  // Tell the super admins a redemption is awaiting approval. Fire-and-forget; never throws.
+  notifySuperAdminsRedemptionPending(prisma, {
+    customerName: `${customer.firstName} ${customer.lastName}`,
+    amountNaira: netPayout,
+    planGoal: plan.goal,
+    ref: redemption.ref,
+  }).catch(() => {})
 
   return NextResponse.json({ ref: redemption.ref, isEarly, deduction, interest, netPayout, balance: plan.balance })
 }
