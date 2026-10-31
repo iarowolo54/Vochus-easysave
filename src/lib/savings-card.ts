@@ -9,6 +9,7 @@ export type Slot = {
   date: Date
   index: number    // 1-based day/week number within the plan
   state: SlotState
+  coveredOnly: boolean // saved via a coverage marker (catch-up) with no deposit on that day/week
 }
 
 type PlanLike = { startDate: string; maturityDate: string; periodDays: number; cadence?: string }
@@ -32,8 +33,9 @@ export function hasEnded(plan: PlanLike, now = new Date()): boolean {
   return dateKey(now) > dateKey(new Date(plan.maturityDate))
 }
 
-export function buildSlots(plan: PlanLike, depositDates: string[], now = new Date()): Slot[] {
+export function buildSlots(plan: PlanLike, depositDates: string[], coveredKeys: string[] = [], now = new Date()): Slot[] {
   const paid = new Set(depositDates.map(d => dateKey(new Date(d))))
+  const covered = new Set(coveredKeys)
   const today = dateKey(now)
   const start = new Date(plan.startDate)
 
@@ -41,8 +43,10 @@ export function buildSlots(plan: PlanLike, depositDates: string[], now = new Dat
     return Array.from({ length: plan.periodDays }, (_, i) => {
       const date = addDays(start, i)
       const key = dateKey(date)
-      const state: SlotState = paid.has(key) ? 'saved' : key < today ? 'missed' : key === today ? 'today' : 'upcoming'
-      return { key, date, index: i + 1, state }
+      const isPaid = paid.has(key)
+      const isCovered = covered.has(key)
+      const state: SlotState = isPaid || isCovered ? 'saved' : key < today ? 'missed' : key === today ? 'today' : 'upcoming'
+      return { key, date, index: i + 1, state, coveredOnly: !isPaid && isCovered }
     })
   }
 
@@ -51,9 +55,11 @@ export function buildSlots(plan: PlanLike, depositDates: string[], now = new Dat
     const date = addDays(start, w * 7)
     const first = dateKey(date)
     const last = dateKey(addDays(start, w * 7 + 6))
-    const saved = [...paid].some(k => k >= first && k <= last)
+    const hasDeposit = [...paid].some(k => k >= first && k <= last)
+    const hasCover = [...covered].some(k => k >= first && k <= last)
+    const saved = hasDeposit || hasCover
     const state: SlotState = saved ? 'saved' : last < today ? 'missed' : first <= today ? 'today' : 'upcoming'
-    return { key: first, date, index: w + 1, state }
+    return { key: first, date, index: w + 1, state, coveredOnly: !hasDeposit && hasCover }
   })
 }
 
