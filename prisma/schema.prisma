@@ -184,6 +184,8 @@ model InterestRate {
   durationDays Int    @unique
   label        String
   rate         Float
+  maxAmount    Float?
+  enabled      Boolean @default(true)
 }
 
 model SubAgent {
