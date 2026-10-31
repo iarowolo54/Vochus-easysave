@@ -408,7 +408,7 @@ export default function CommissionPage() {
                       <Field id={`lr-${term}`} label="Interest rate" error={rate === null ? 'Enter 0 to 100.' : undefined}>
                         <PctInput id={`lr-${term}`} value={loanRates[term]} invalid={rate === null} onChange={s => setLoanRates(r => ({ ...r, [term]: s }))} />
                       </Field>
-                      <Field id={`lc-${term}`} label="Largest loan" hint={capBad ? undefined : 'Leave blank for no cap.'} error={capBad ? 'Enter an amount, or leave blank.' : undefined}>
+                      <Field id={`lc-${term}`} label="Largest loan" hint={capBad ? undefined : 'Larger requests are refused. Leave blank for no cap.'} error={capBad ? 'Enter an amount, or leave blank.' : undefined}>
                         <div className="am-money">
                           <span aria-hidden="true">₦</span>
                           <input id={`lc-${term}`} className="a-input" type="tel" inputMode="numeric" autoComplete="off" placeholder="No cap" value={loanCaps[term]} aria-invalid={capBad || undefined}
@@ -417,15 +417,11 @@ export default function CommissionPage() {
                       </Field>
                       <p className="am-term-eg">{loanOn[term]
                         ? <>A ₦50,000 loan is repaid as <strong>{naira(50000 + interest)}</strong>, which is {naira(interest)} interest over {term} days.</>
-                        : <>Turned off. Saved as not offered.</>}</p>
+                        : <>Turned off. New loan requests for {term} days are refused.</>}</p>
                     </div>
                   )
                 })}
               </div>
-
-              {TERMS.some(t => !loanOn[t] || capParsed[t] != null) && (
-                <p className="am-term-eg am-tier-note">Caps and “Offered” are saved with the rates, but loan requests don’t check them yet. Agents can still request any length and amount until that’s switched on.</p>
-              )}
 
               <div className="am-bars" aria-label="Rate comparison">
                 <p className="am-bars-h">Compared</p>

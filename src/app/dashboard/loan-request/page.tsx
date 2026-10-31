@@ -14,7 +14,7 @@ interface Customer {
   phone: string; savingsBalance: number; activeLoan: { ref: string; totalAmount: number; status: string } | null; photoUrl?: string | null
 }
 
-interface Rate { id: string; durationDays: number; label: string; rate: number }
+interface Rate { id: string; durationDays: number; label: string; rate: number; maxAmount?: number | null; enabled?: boolean }
 interface Loan { ref: string; principal: number; status: string; customer: { name: string } }
 
 const LIMIT = 0.8 // a customer can borrow up to 80% of what they've saved
@@ -38,6 +38,8 @@ export default function LoanRequestPage() {
   const [searching, setSearching] = useState(false)
   const [selected, setSelected] = useState<Customer | null>(null)
   const [rates, setRates] = useState<Rate[]>([])
+  const [ratesLoaded, setRatesLoaded] = useState(false)
+  const [ratesError, setRatesError] = useState(false)
   const [selectedRate, setSelectedRate] = useState<Rate | null>(null)
   const [principal, setPrincipal] = useState('')
   const [loading, setLoading] = useState(false)
@@ -45,15 +47,28 @@ export default function LoanRequestPage() {
   const [created, setCreated] = useState<{ ref: string; name: string; amount: number } | null>(null)
   const [recentLoans, setRecentLoans] = useState<Loan[] | null>(null)
 
+  const loadRates = useCallback(() => {
+    setRatesError(false)
+    fetch('/api/interest-rates')
+      .then(r => { if (!r.ok) throw new Error(String(r.status)); return r.json() })
+      .then((d: { rates?: Rate[] }) => {
+        // Lengths the admin has switched off are refused by the server, so don't offer them.
+        const offered = (d.rates ?? []).filter(r => r.enabled !== false)
+        setRates(offered)
+        setSelectedRate(offered[0] ?? null)
+        setRatesLoaded(true)
+      })
+      // A failure must not look like "no lengths offered" (which blames the admin) or hang on
+      // "Loading…" forever — surface a retry instead.
+      .catch(() => { setRatesError(true); setRatesLoaded(true) })
+  }, [])
+
   useEffect(() => {
-    fetch('/api/interest-rates').then(r => r.json()).then(d => {
-      setRates(d.rates ?? [])
-      if (d.rates?.length) setSelectedRate(d.rates[0])
-    }).catch(() => {})
+    loadRates()
     fetch('/api/loans?status=Pending,Approved').then(r => r.json())
       .then(d => setRecentLoans((d.loans ?? []).slice(0, 4)))
       .catch(() => setRecentLoans([]))
-  }, [created])
+  }, [created, loadRates])
 
   const search = useCallback(async () => {
     if (!query.trim()) { setResults([]); return }
@@ -73,17 +88,29 @@ export default function LoanRequestPage() {
   }, [search, selected])
 
   const maxLoan = selected ? selected.savingsBalance * LIMIT : 0
+  // The admin can cap each loan length; the lower of that and 80% of savings is the real limit.
+  const cap = selectedRate?.maxAmount ?? null
+  const capBinds = cap !== null && cap < maxLoan
+  const limit = capBinds ? cap : maxLoan
+  const limitText = capBinds && selectedRate
+    ? `the largest ${selectedRate.durationDays}-day loan, ${formatNaira(limit, { minor: false })}`
+    : `their limit of ${formatNaira(limit, { minor: false })}`
   const amt = parseFloat(principal || '0')
   const interest = selectedRate && amt ? (amt * selectedRate.rate) / 100 : 0
   const total = amt + interest
-  const tooMuch = !!selected && amt > maxLoan
+  const tooMuch = !!selected && amt > limit
   const due = selectedRate ? new Date(Date.now() + selectedRate.durationDays * 86400000) : null
 
   async function submit() {
     if (!selected) { setError('Choose a customer first.'); return }
     if (!principal || amt <= 0) { setError('Enter how much they want to borrow.'); return }
     if (!selectedRate) { setError('Choose how long the loan is for.'); return }
-    if (amt > maxLoan) { setError(`The most they can borrow is ${formatNaira(maxLoan)} (80% of their savings).`); return }
+    if (amt > limit) {
+      setError(capBinds && selectedRate
+        ? `The largest loan for ${selectedRate.durationDays} days is ${formatNaira(limit)}.`
+        : `The most they can borrow is ${formatNaira(limit)} (80% of their savings).`)
+      return
+    }
     if (selected.activeLoan) { setError('This customer already has a loan. They need to repay it first.'); return }
     setLoading(true); setError('')
     try {
@@ -182,22 +209,22 @@ export default function LoanRequestPage() {
                     <>
                       <p className="ag-label ag-label--first">How much?</p>
                       <AmountField value={principal} onChange={v => { setPrincipal(v); setError('') }} invalid={tooMuch}
-                        hint={tooMuch ? `That’s more than their limit of ${formatNaira(maxLoan, { minor: false })}` : `Up to ${formatNaira(maxLoan, { minor: false })}`} />
+                        hint={tooMuch ? `That’s more than ${limitText}` : `Up to ${formatNaira(limit, { minor: false })}${capBinds ? ` for ${selectedRate?.durationDays} days` : ''}`} />
                       <div className="ag-quick">
                         {[0.25, 0.5, 1].map(f => {
-                          const v = Math.floor(maxLoan * f)
+                          const v = Math.floor(limit * f)
                           return v > 0 ? <button key={f} type="button" className="ag-chip" aria-pressed={amt === v} onClick={() => setPrincipal(String(v))}>{f === 1 ? `Max ${formatNaira(v, { minor: false })}` : formatNaira(v, { minor: false })}</button> : null
                         })}
                       </div>
 
                       <p className="ag-label">For how long?</p>
-                      {rates.length === 0 ? <p className="ui-note">Loading the loan lengths…</p> : (
+                      {!ratesLoaded ? <p className="ui-note">Loading the loan lengths…</p> : ratesError ? <p className="ui-note">Couldn’t load the loan lengths. <button type="button" className="ui-link" onClick={loadRates}>Try again</button></p> : rates.length === 0 ? <p className="ui-note">No loan lengths are offered right now. Ask Vochus admin.</p> : (
                         <div className="ag-radio-group">
                           {rates.map(r => (
                             <button key={r.id} type="button" role="radio" aria-checked={selectedRate?.id === r.id} className="ag-radio" onClick={() => setSelectedRate(r)}>
                               <span className="ag-payee-main">
                                 <span className="ui-row-title ui-block">{r.label}</span>
-                                <span className="ui-row-sub ui-block">{r.rate}% interest{amt > 0 ? ` · repay ${formatNaira(amt + amt * r.rate / 100, { minor: false })}` : ''}</span>
+                                <span className="ui-row-sub ui-block">{r.rate}% interest{r.maxAmount != null ? ` · up to ${formatNaira(r.maxAmount, { minor: false })}` : ''}{amt > 0 ? ` · repay ${formatNaira(amt + amt * r.rate / 100, { minor: false })}` : ''}</span>
                               </span>
                               <span className="ui-radio" aria-hidden="true" />
                             </button>
