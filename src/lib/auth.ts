@@ -3,6 +3,7 @@ import { requireEnv } from '@/lib/env'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import bcrypt from 'bcryptjs'
 import { prisma } from './prisma'
+import { IDLE_SECONDS } from '@/lib/session-policy'
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -125,10 +126,12 @@ export const authOptions: NextAuthOptions = {
       },
     }),
   ],
-  session: { strategy: 'jwt' },
+  session: { strategy: 'jwt', maxAge: IDLE_SECONDS.agent },
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
+        // Stable login anchor for the absolute cap; only set at sign-in (user is absent on refresh).
+        token.loginAt = Math.floor(Date.now() / 1000)
         token.agentId = (user as any).agentId
         token.location = (user as any).location
         token.walletBalance = (user as any).walletBalance

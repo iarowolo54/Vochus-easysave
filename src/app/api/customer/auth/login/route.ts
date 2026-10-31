@@ -143,7 +143,7 @@ export async function POST(req: NextRequest) {
     customerId: customer.customerId,
     name: `${customer.firstName} ${customer.lastName}`,
     agentId: customer.agentId,
-  })
+  }, { loginAt: Math.floor(Date.now() / 1000) })
 
   const res = NextResponse.json({
     customerId: customer.customerId,

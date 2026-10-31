@@ -4,6 +4,7 @@ import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { requireEnv } from '@/lib/env'
+import { IDLE_SECONDS } from '@/lib/session-policy'
 
 const COOKIE_NAME = 'next-admin-auth.session-token'
 const SECRET = requireEnv('NEXTAUTH_SECRET')
@@ -24,8 +25,9 @@ export async function POST(req: NextRequest) {
   }
 
   const token = await encode({
-    token: { sub: admin.id, email: admin.email, name: admin.name, role: 'superadmin' },
+    token: { sub: admin.id, email: admin.email, name: admin.name, role: 'superadmin', loginAt: Math.floor(Date.now() / 1000) },
     secret: SECRET,
+    maxAge: IDLE_SECONDS.admin,
   })
 
   logAudit({
@@ -44,7 +46,7 @@ export async function POST(req: NextRequest) {
     sameSite: 'lax',
     path: '/',
     secure: process.env.NODE_ENV === 'production',
-    maxAge: 60 * 60 * 24 * 30,
+    maxAge: IDLE_SECONDS.admin,
   })
   return res
 }

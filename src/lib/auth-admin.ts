@@ -3,6 +3,7 @@ import { requireEnv } from '@/lib/env'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import bcrypt from 'bcryptjs'
 import { prisma } from './prisma'
+import { IDLE_SECONDS } from '@/lib/session-policy'
 
 export const adminAuthOptions: NextAuthOptions = {
   providers: [
@@ -34,11 +35,11 @@ export const adminAuthOptions: NextAuthOptions = {
       },
     }),
   ],
-  session: { strategy: 'jwt' },
+  session: { strategy: 'jwt', maxAge: IDLE_SECONDS.admin },
   cookies: {
     sessionToken: {
       name: 'next-admin-auth.session-token',
-      options: { httpOnly: true, sameSite: 'lax', path: '/', secure: false },
+      options: { httpOnly: true, sameSite: 'lax', path: '/', secure: process.env.NODE_ENV === 'production' },
     },
   },
   callbacks: {
