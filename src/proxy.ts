@@ -25,6 +25,7 @@ import { verifyCustomerToken, signCustomerToken, type CustomerSession } from '@/
 import { IDLE_SECONDS, type Actor } from '@/lib/session-policy'
 import {
   decideForRequest,
+  strippedCookieHeader,
   AGENT_COOKIE,
   ADMIN_COOKIE,
   CUSTOMER_COOKIE,
@@ -140,9 +141,28 @@ export async function proxy(request: NextRequest) {
   }
 
   // 4. Build the response and apply cookie slides/clears to it.
-  const res = effectiveRedirect
-    ? NextResponse.redirect(new URL(effectiveRedirect, request.url), 307)
-    : NextResponse.next()
+  // For the pass-through case, ALSO strip any cleared cookie from the Cookie
+  // header forwarded downstream, so THIS request's handler sees the logged-out
+  // state (closes the one-final-authenticated-response window on cap expiry).
+  // Other actors' cookies stay intact. Redirects never reach a handler, so no
+  // stripping is needed there.
+  let res: NextResponse
+  if (effectiveRedirect) {
+    res = NextResponse.redirect(new URL(effectiveRedirect, request.url), 307)
+  } else {
+    const clearedNames = cookieActions
+      .filter((a) => a.action === 'clear')
+      .map((a) => actualName[a.cookieName] ?? a.cookieName)
+    if (clearedNames.length > 0) {
+      const headers = new Headers(request.headers)
+      const stripped = strippedCookieHeader(request.headers.get('cookie'), clearedNames)
+      if (stripped) headers.set('cookie', stripped)
+      else headers.delete('cookie')
+      res = NextResponse.next({ request: { headers } })
+    } else {
+      res = NextResponse.next()
+    }
+  }
 
   return applyCookies(res, cookieActions, actualName)
 }

@@ -124,3 +124,25 @@ export async function decideForRequest(input: DecideInput): Promise<DecideResult
 
   return { cookieActions, redirectTo }
 }
+
+/**
+ * Remove the named cookies from a raw `Cookie` request header, preserving all
+ * others (and their order). Used to strip a cleared session cookie from the
+ * header FORWARDED downstream, so the SAME request's handler sees the
+ * logged-out state (closes a one-final-authenticated-response window on
+ * absolute-cap expiry). Returns the empty string when nothing remains.
+ */
+export function strippedCookieHeader(originalCookieHeader: string | null | undefined, clearedNames: string[]): string {
+  if (!originalCookieHeader) return ''
+  const cleared = new Set(clearedNames)
+  return originalCookieHeader
+    .split(';')
+    .map((part) => part.trim())
+    .filter((part) => part.length > 0)
+    .filter((part) => {
+      const eq = part.indexOf('=')
+      const name = (eq === -1 ? part : part.slice(0, eq)).trim()
+      return !cleared.has(name)
+    })
+    .join('; ')
+}

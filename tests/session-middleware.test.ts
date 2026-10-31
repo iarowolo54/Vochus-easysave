@@ -5,6 +5,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   decideForRequest,
+  strippedCookieHeader,
   AGENT_COOKIE,
   ADMIN_COOKIE,
   CUSTOMER_COOKIE,
@@ -176,4 +177,26 @@ test('guarded customer page with no customer cookie → redirect to /customer/lo
   })
   assert.equal(res.redirectTo, '/customer/login')
   assert.deepEqual(res.cookieActions, [])
+})
+
+test('strippedCookieHeader removes only the cleared names, keeps the rest', () => {
+  assert.equal(
+    strippedCookieHeader(`${AGENT_COOKIE}=a; ${CUSTOMER_COOKIE}=b`, [CUSTOMER_COOKIE]),
+    `${AGENT_COOKIE}=a`,
+  )
+  // clearing a name that is not present is a no-op (order/content preserved)
+  assert.equal(
+    strippedCookieHeader(`${AGENT_COOKIE}=a; ${CUSTOMER_COOKIE}=b`, [ADMIN_COOKIE]),
+    `${AGENT_COOKIE}=a; ${CUSTOMER_COOKIE}=b`,
+  )
+  // clearing the only cookie yields an empty header
+  assert.equal(strippedCookieHeader(`${CUSTOMER_COOKIE}=b`, [CUSTOMER_COOKIE]), '')
+  // absent/empty header → empty
+  assert.equal(strippedCookieHeader(undefined, [CUSTOMER_COOKIE]), '')
+  assert.equal(strippedCookieHeader('', [CUSTOMER_COOKIE]), '')
+  // a value containing '=' (e.g. padded base64) is matched by name only
+  assert.equal(
+    strippedCookieHeader(`${ADMIN_COOKIE}=x==; ${AGENT_COOKIE}=a`, [ADMIN_COOKIE]),
+    `${AGENT_COOKIE}=a`,
+  )
 })
