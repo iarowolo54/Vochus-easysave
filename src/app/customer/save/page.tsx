@@ -8,6 +8,7 @@ import Amount from '@/components/ui/Amount'
 import BottomSheet from '@/components/ui/BottomSheet'
 import EmptyState from '@/components/ui/EmptyState'
 import EndDateField, { endDateDays } from '@/components/ui/EndDateField'
+import DatePicker from '@/components/ui/DatePicker'
 import { FormSkeleton } from '@/components/ui/Skeleton'
 import { FieldError, FormError } from '@/components/ui/FormErrors'
 import { Icons } from '@/components/ui/icons'
@@ -296,9 +297,10 @@ function SavePageInner() {
 
             <div className="ui-field">
               <label className="ui-label" htmlFor="plan-start">Starts on</label>
-              <input id="plan-start" className="ui-input" type="date" min={isoDate(today())} value={planStart || isoDate(today())}
-                onChange={e => {
-                  const v = !e.target.value || e.target.value === isoDate(today()) ? '' : e.target.value
+              <DatePicker id="plan-start" ariaLabel="Plan start date" sheetTitle="Pick a start date" todayPrefix
+                minIso={isoDate(today())} value={planStart || isoDate(today())}
+                onChange={iso => {
+                  const v = iso === isoDate(today()) ? '' : iso
                   setPlanStart(v)
                   // Keep a chosen end date where it is; the length changes instead.
                   if (customEnd) { const d = endDateDays(customEnd, parseDateInput(v) ?? today(), cadence); if (d) setPeriodDays(d) }
