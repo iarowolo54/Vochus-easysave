@@ -19,14 +19,6 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ se
   const card = await prisma.memberCard.findUnique({ where: { serial } })
   if (!card) return NextResponse.json({ error: 'Card not found' }, { status: 404 })
 
-  // Unlink/relink would otherwise silently make a blocked or expired card usable again.
-  if (card.status === 'Blocked') {
-    return NextResponse.json({ error: 'Card is blocked and cannot be unlinked or relinked' }, { status: 400 })
-  }
-  if (card.expiryDate.getTime() < Date.now()) {
-    return NextResponse.json({ error: 'Card has expired and cannot be unlinked or relinked' }, { status: 400 })
-  }
-
   const actor = guard.session.user as { id?: string; name?: string | null }
   const actorId = actor.id
   const actorName = actor.name ?? undefined
@@ -54,6 +46,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ se
       select: { id: true, firstName: true, lastName: true, customerId: true, agentId: true },
     })
     if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
+
+    // Only relink can make a card usable, so only relink refuses a blocked/expired card.
+    // Unlink must always work so an admin can detach a dead card from a customer.
+    if (card.status === 'Blocked') {
+      return NextResponse.json({ error: 'Card is blocked and cannot be relinked' }, { status: 400 })
+    }
+    if (card.expiryDate.getTime() < Date.now()) {
+      return NextResponse.json({ error: 'Card has expired and cannot be relinked' }, { status: 400 })
+    }
 
     const existing = await prisma.memberCard.findFirst({ where: { customerId: customer.id }, select: { serial: true } })
     if (existing) {

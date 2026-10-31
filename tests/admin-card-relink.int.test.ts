@@ -60,22 +60,39 @@ after(async () => {
   await prisma.$disconnect()
 })
 
-test('Blocked card: unlink and relink -> 400, card unchanged', async () => {
+test('Blocked card: relink -> 400 and card stays unusable', async () => {
   const card = await mkCard('blk', { status: 'Blocked', expiryDate: FUTURE, customerId: null })
-  assert.equal((await patch(card.serial, { action: 'unlink' })).status, 400)
   assert.equal((await patch(card.serial, { customerId: ids.custFree })).status, 400)
   const after = await prisma.memberCard.findUniqueOrThrow({ where: { id: card.id } })
   assert.equal(after.status, 'Blocked')
   assert.equal(after.customerId, null)
 })
 
-test('Expired card: unlink and relink -> 400, card unchanged', async () => {
+test('Blocked card: unlink succeeds and clears the link', async () => {
+  const card = await mkCard('blku', { status: 'Blocked', expiryDate: FUTURE, customerId: ids.custFree })
+  const res = await patch(card.serial, { action: 'unlink' })
+  assert.equal(res.status, 200)
+  const after = await prisma.memberCard.findUniqueOrThrow({ where: { id: card.id } })
+  assert.equal(after.customerId, null)
+  assert.equal(after.agentId, null)
+  assert.equal(after.status, 'Unlinked')
+})
+
+test('Expired card: relink -> 400, card unchanged', async () => {
   const card = await mkCard('exp', { status: 'Unlinked', expiryDate: PAST })
-  assert.equal((await patch(card.serial, { action: 'unlink' })).status, 400)
   assert.equal((await patch(card.serial, { customerId: ids.custFree })).status, 400)
   const after = await prisma.memberCard.findUniqueOrThrow({ where: { id: card.id } })
   assert.equal(after.status, 'Unlinked')
   assert.equal(after.customerId, null)
+})
+
+test('Expired card: unlink succeeds and clears the link', async () => {
+  const card = await mkCard('expu', { status: 'Linked', expiryDate: PAST, customerId: ids.custFree })
+  const res = await patch(card.serial, { action: 'unlink' })
+  assert.equal(res.status, 200)
+  const after = await prisma.memberCard.findUniqueOrThrow({ where: { id: card.id } })
+  assert.equal(after.customerId, null)
+  assert.equal(after.status, 'Unlinked')
 })
 
 test('Relink to a customer who already has a card -> 409, card unchanged', async () => {
