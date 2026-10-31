@@ -5,12 +5,19 @@
 // recorded as display-only coverage. All amounts are computed server-side from
 // the plan rate — never trusted from the client.
 import type { Slot } from './savings-card'
-import { money } from './wallet-guard'
+
+// Kept local (same maths as `money` in wallet-guard) so this module stays client-safe:
+// wallet-guard imports next/server, which must not be pulled into the customer UI bundle.
+function money(n: number): number {
+  if (!Number.isFinite(n)) return 0
+  return Math.round(n * 100) / 100
+}
 
 type RatePlan = { cadence?: string; dailyAmount: number }
 type EligiblePlan = { status: string; source: string; cadence?: string }
 
-const MAX_KEYS = 90
+export const MAX_CATCHUP_KEYS = 90
+const MAX_KEYS = MAX_CATCHUP_KEYS
 
 /** Amount that covering one slot costs: a day for daily plans, a full week for weekly. */
 export function perSlotAmount(plan: RatePlan): number {
@@ -42,4 +49,14 @@ export function validateSelection(plan: RatePlan, slots: Slot[], keys: string[])
   }
 
   return { ok: true, total: money(perSlotAmount(plan) * keys.length) }
+}
+
+/** Keys of the slots a customer may pick: only `missed` ones (today, upcoming, saved and covered are not). */
+export function selectableKeys(slots: Slot[]): string[] {
+  return slots.filter(s => s.state === 'missed').map(s => s.key)
+}
+
+/** Total for `count` chosen slots, using the same rate the server charges. */
+export function selectionTotal(plan: RatePlan, count: number): number {
+  return money(perSlotAmount(plan) * Math.max(0, count))
 }

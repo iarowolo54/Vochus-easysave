@@ -22,12 +22,13 @@ import InterestNudge, { InterestCard, InterestChip, earnsInterest } from '@/comp
 import AutoFunding from '@/components/customer/AutoFunding'
 import { displayName, formatDate, formatNaira } from '@/lib/format'
 import { getHideBalance, setHideBalance } from '@/lib/preferences'
+import { isEligiblePlan } from '@/lib/catchup'
 import { buildSlots, dateKey, hasEnded, isWeekly } from '@/lib/savings-card'
 
 type Plan = {
   id: string; dailyAmount: number; periodDays: number; cadence?: string; goal: string
   startDate: string; maturityDate: string; balance: number; status: string; interest?: number
-  source?: string; nextInterestAmount?: number; daysToNextInterest?: number | null
+  source?: string; coveredKeys?: string[]; nextInterestAmount?: number; daysToNextInterest?: number | null
 }
 type Tx = {
   id: string; amount: number; ref: string; createdAt: string; method: string | null
@@ -183,6 +184,10 @@ export default function CustomerDashboard() {
     const daysIn = Math.max(0, Math.floor((Date.now() - startDay.getTime()) / 86400000))
     windowStart = dateKey(new Date(startDay.getFullYear(), startDay.getMonth(), startDay.getDate() + daysIn - (daysIn % 7)))
   }
+  // "Catch up" is offered only for eligible (active, self-service, daily/weekly) plans with a missed slot.
+  const canCatchUp = !!plan && !ended && !pending
+    && isEligiblePlan({ status: plan.status, source: plan.source ?? '', cadence: plan.cadence })
+    && buildSlots(plan, depositDates, plan.coveredKeys ?? []).some(x => x.state === 'missed')
   const recentForStatus = planTxs.filter(t => {
     const k = dateKey(new Date(t.createdAt))
     return k >= windowStart && k <= today
@@ -307,6 +312,9 @@ export default function CustomerDashboard() {
               onClick={() => router.push(plan ? `/customer/save?planId=${plan.id}` : '/customer/save')}
             />
           )}
+          {canCatchUp && plan && (
+            <ActionButton icon="history" label="Catch up" onClick={() => router.push(`/customer/catchup?planId=${encodeURIComponent(plan.id)}`)} />
+          )}
           <ActionButton icon="withdraw" label="Collect" onClick={() => router.push('/customer/redeem')} />
           <ActionButton
             icon="plan"
@@ -336,7 +344,7 @@ export default function CustomerDashboard() {
             <span className="ui-row-main">
               <span className="ui-row-title">Savings card</span>
               <span className="ui-row-sub">
-                You saved on {buildSlots(plan, depositDates).filter(x => x.state === 'saved').length} of{' '}
+                You saved on {buildSlots(plan, depositDates, plan.coveredKeys ?? []).filter(x => x.state === 'saved').length} of{' '}
                 {weekly ? Math.ceil(plan.periodDays / 7) : plan.periodDays} {weekly ? 'weeks' : 'days'}
               </span>
             </span>

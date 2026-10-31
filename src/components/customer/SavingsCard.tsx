@@ -8,12 +8,12 @@ import {
   type Slot, type SlotState,
 } from '@/lib/savings-card'
 
-type Plan = { startDate: string; maturityDate: string; periodDays: number; cadence?: string; balance: number; dailyAmount: number }
+type Plan = { startDate: string; maturityDate: string; periodDays: number; cadence?: string; balance: number; dailyAmount: number; coveredKeys?: string[] }
 
 export type Deposit = { id: string; amount: number; createdAt: string; method: string | null; recordedBy: string }
 
 /** What the day-details sheet shows for a tapped day (or week). */
-export type DaySelection = { title: string; state: SlotState; deposits: Deposit[]; ended: boolean }
+export type DaySelection = { title: string; state: SlotState; deposits: Deposit[]; ended: boolean; coveredOnly: boolean }
 
 const WEEKDAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
 
@@ -28,7 +28,7 @@ function shortDate(d: Date) {
 function useCardData(plan: Plan, deposits: Deposit[]) {
   const weekly = isWeekly(plan)
   const ended = hasEnded(plan)
-  const slots = useMemo(() => buildSlots(plan, deposits.map(d => d.createdAt)), [plan, deposits])
+  const slots = useMemo(() => buildSlots(plan, deposits.map(d => d.createdAt), plan.coveredKeys ?? []), [plan, deposits])
   const byDay = useMemo(() => depositsByDay(deposits), [deposits])
 
   function select(slot: Slot): DaySelection {
@@ -40,7 +40,7 @@ function useCardData(plan: Plan, deposits: Deposit[]) {
     const title = weekly
       ? `Week ${slot.index} · ${shortDate(slot.date)} – ${shortDate(endDate)}`
       : slot.date.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
-    return { title, state: slot.state, deposits: list, ended }
+    return { title, state: slot.state, deposits: list, ended, coveredOnly: slot.coveredOnly }
   }
 
   return { weekly, ended, slots, select }
@@ -53,6 +53,23 @@ function slotLabel(slot: Slot, weekly: boolean, ended: boolean) {
 
 function stateClass(state: SlotState, ended: boolean) {
   return `ui-cal-day ui-cal-day--${ended && state === 'missed' ? 'unsaved' : state}`
+}
+
+/** Catch-up mode: only `selectable` (missed) slots can be toggled; everything else is shown but inert. */
+type Picker = { selectable: Set<string>; selected: Set<string> }
+
+function pickClass(slot: Slot, ended: boolean, picker?: Picker) {
+  const base = stateClass(slot.state, ended)
+  if (!picker) return base
+  const on = picker.selected.has(slot.key)
+  const open = picker.selectable.has(slot.key)
+  return `${base}${on ? ' ui-cal-day--picked' : ''}${open ? '' : ' ui-cal-day--inert'}`
+}
+
+function pickLabel(slot: Slot, weekly: boolean, ended: boolean, picker?: Picker) {
+  const base = slotLabel(slot, weekly, ended)
+  if (!picker || !picker.selectable.has(slot.key)) return slot.coveredOnly ? `${base} (covered in a catch-up payment)` : base
+  return `${base}, ${picker.selected.has(slot.key) ? 'selected' : 'tap to select'}`
 }
 
 /* ── Home screen: this week at a glance ─────────────────────────────── */
@@ -193,7 +210,7 @@ function monthKey(d: Date) {
   return `${d.getFullYear()}-${d.getMonth()}`
 }
 
-function MonthCalendar({ slots, ended, plan, onPick }: { slots: Slot[]; ended: boolean; plan: Plan; onPick: (s: Slot) => void }) {
+function MonthCalendar({ slots, ended, plan, onPick, picker }: { slots: Slot[]; ended: boolean; plan: Plan; onPick: (s: Slot) => void; picker?: Picker }) {
   const byKey = useMemo(() => new Map(slots.map(s => [s.key, s])), [slots])
   const months = useMemo(() => {
     const seen: Date[] = []
@@ -244,7 +261,14 @@ function MonthCalendar({ slots, ended, plan, onPick }: { slots: Slot[]; ended: b
           return (
             <li key={i}>
               {slot ? (
-                <button type="button" className={stateClass(slot.state, ended)} onClick={() => onPick(slot)} aria-label={slotLabel(slot, false, ended)}>
+                <button
+                  type="button"
+                  className={pickClass(slot, ended, picker)}
+                  onClick={() => onPick(slot)}
+                  aria-label={pickLabel(slot, false, ended, picker)}
+                  aria-pressed={picker?.selectable.has(slot.key) ? picker.selected.has(slot.key) : undefined}
+                  disabled={picker ? !picker.selectable.has(slot.key) : undefined}
+                >
                   {i + 1}
                   {slot.state === 'saved' && <span className="ui-cal-check" aria-hidden="true"><Icons.check size={10} strokeWidth={3} /></span>}
                 </button>
@@ -259,12 +283,19 @@ function MonthCalendar({ slots, ended, plan, onPick }: { slots: Slot[]; ended: b
   )
 }
 
-function WeekGrid({ slots, ended, onPick }: { slots: Slot[]; ended: boolean; onPick: (s: Slot) => void }) {
+function WeekGrid({ slots, ended, onPick, picker }: { slots: Slot[]; ended: boolean; onPick: (s: Slot) => void; picker?: Picker }) {
   return (
     <ol className="ui-cal-grid ui-cal-grid--weeks">
       {slots.map(s => (
         <li key={s.key}>
-          <button type="button" className={stateClass(s.state, ended)} onClick={() => onPick(s)} aria-label={slotLabel(s, true, ended)}>
+          <button
+            type="button"
+            className={pickClass(s, ended, picker)}
+            onClick={() => onPick(s)}
+            aria-label={pickLabel(s, true, ended, picker)}
+            aria-pressed={picker?.selectable.has(s.key) ? picker.selected.has(s.key) : undefined}
+            disabled={picker ? !picker.selectable.has(s.key) : undefined}
+          >
             {s.index}
             {s.state === 'saved' && <span className="ui-cal-check" aria-hidden="true"><Icons.check size={10} strokeWidth={3} /></span>}
           </button>
@@ -277,9 +308,11 @@ function WeekGrid({ slots, ended, onPick }: { slots: Slot[]; ended: boolean; onP
 /* ── What happened on a tapped day ──────────────────────────────────── */
 
 export function DayDetails({ selection, hideAmounts, onOpen }: { selection: DaySelection; hideAmounts: boolean; onOpen: (d: Deposit) => void }) {
-  const { deposits, state, ended } = selection
+  const { deposits, state, ended, coveredOnly } = selection
   if (deposits.length === 0) {
-    const text = state === 'upcoming'
+    const text = coveredOnly
+      ? 'Covered in a catch-up payment.'
+      : state === 'upcoming'
       ? 'This day hasn’t come yet.'
       : state === 'today'
         ? 'Nothing saved yet. If you’ve given your agent money, it will show here once they record it.'
@@ -304,6 +337,28 @@ export function DayDetails({ selection, hideAmounts, onOpen }: { selection: DayS
       {deposits.length > 1 && !hideAmounts && (
         <div className="ui-row"><div className="ui-row-main ui-row-title">Total</div><div className="ui-row-value">{formatNaira(total)}</div></div>
       )}
+    </div>
+  )
+}
+
+/* ── Catch-up: pick missed days to pay for ──────────────────────────── */
+
+type CatchupProps = {
+  plan: Plan
+  deposits: Deposit[]
+  selectable: Set<string>
+  selected: Set<string>
+  onToggle: (key: string) => void
+}
+
+export function CatchupCalendar({ plan, deposits, selectable, selected, onToggle }: CatchupProps) {
+  const { weekly, ended, slots } = useCardData(plan, deposits)
+  const picker: Picker = { selectable, selected }
+  return (
+    <div className="ui-savings-card">
+      {weekly
+        ? <WeekGrid slots={slots} ended={ended} picker={picker} onPick={s => onToggle(s.key)} />
+        : <MonthCalendar slots={slots} ended={ended} plan={plan} picker={picker} onPick={s => onToggle(s.key)} />}
     </div>
   )
 }

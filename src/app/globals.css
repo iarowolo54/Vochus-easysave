@@ -2576,3 +2576,13 @@ a.ag-crow { text-decoration: none; color: inherit; }
 .ui-dp-use { flex: 1; border: 0; background: var(--ui-brand); color: var(--ui-brand-on); font: inherit; font-weight: 700; font-size: var(--ui-fs-md); padding: 14px; border-radius: 14px; cursor: pointer; min-height: var(--ui-tap); }
 .ui-dp-use:focus-visible { outline: 2px solid var(--ui-brand-ink); outline-offset: 2px; }
 .ui-dp-use:disabled { opacity: .5; cursor: not-allowed; }
+
+/* Catch-up picker (customer): missed days are toggles, everything else is shown but inert */
+.ui-cal-day--picked { background: var(--ui-ink); border: 2px solid var(--ui-ink); color: #fff; }
+button.ui-cal-day--inert, button.ui-cal-day--inert:disabled { cursor: default; opacity: .55; }
+button.ui-cal-day--inert.ui-cal-day--saved { opacity: 1; }
+button.ui-cal-day:disabled:active { transform: none; }
+.ui-catchup-bar { position: sticky; bottom: 0; display: flex; flex-direction: column; gap: var(--ui-s2); padding: var(--ui-s3) 0 calc(var(--ui-s3) + env(safe-area-inset-bottom)); background: var(--ui-canvas); border-top: 1px solid var(--ui-line); margin-top: var(--ui-s3); }
+.ui-catchup-sum { display: flex; align-items: baseline; justify-content: space-between; gap: var(--ui-s3); }
+.ui-catchup-sum strong { font-size: var(--ui-fs-xl); font-weight: 800; }
+.ui-catchup-note { margin: 0; font-size: var(--ui-fs-sm); color: var(--ui-ink-2); }
