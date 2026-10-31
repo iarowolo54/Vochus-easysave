@@ -144,6 +144,26 @@ export default function AgentsPage() {
   const resendVerification = (a: Agent) => simpleAction(`/api/admin/agents/${a.id}/resend-verification`, { method: 'POST' }, `Verification email sent to ${a.email}`)
   const unblockAgent = (a: Agent) => simpleAction(`/api/admin/agents/${a.id}/unblock`, { method: 'POST' }, `${a.name} can sign in again`)
 
+  const [downloading, setDownloading] = useState(false)
+  async function downloadReport() {
+    setDownloading(true)
+    try {
+      const res = await fetch('/api/admin/reports/agents')
+      if (!res.ok) { toast(await errorOf(res, 'The report wasn’t downloaded. Try again.'), 'error'); return }
+      const name = /filename="([^"]+)"/.exec(res.headers.get('Content-Disposition') ?? '')?.[1] ?? 'agent-report.csv'
+      const url = URL.createObjectURL(await res.blob())
+      const link = document.createElement('a')
+      link.href = url
+      link.download = name
+      link.click()
+      setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch {
+      toast('No connection. Check your internet and try again.', 'error')
+    } finally {
+      setDownloading(false)
+    }
+  }
+
   function openInvite() {
     setShowInvite(true); setInviteEmail(''); setInviteLink(''); setInviteError(''); setCopied(false)
   }
@@ -290,7 +310,12 @@ export default function AgentsPage() {
       <PageHeader
         title="Agents"
         sub={loading && !agents.length ? 'Loading…' : failed && !agents.length ? 'Everyone who collects savings for Vochus.' : `${counts.all.toLocaleString('en-NG')} agent${counts.all === 1 ? '' : 's'}${counts.action ? ` · ${counts.action} need${counts.action === 1 ? 's' : ''} your attention` : ''}`}
-        actions={<button type="button" className="btn btn-green" onClick={openInvite}><Icons.add size={18} aria-hidden="true" /> Invite an agent</button>}
+        actions={<>
+          <button type="button" className="btn btn-outline" onClick={downloadReport} disabled={downloading} aria-busy={downloading}>
+            <Icons.download size={18} aria-hidden="true" /> {downloading ? 'Preparing…' : 'Download agents report'}
+          </button>
+          <button type="button" className="btn btn-green" onClick={openInvite}><Icons.add size={18} aria-hidden="true" /> Invite an agent</button>
+        </>}
       />
 
       <div className="toolbar">

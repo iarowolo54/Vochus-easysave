@@ -141,9 +141,9 @@ export default function TreasuryPage() {
       setShowInject(false); setReviewing(false); setInjectAmount(''); setInjectRef('')
       setResult({
         heading: 'Capital added', title: `${naira(amt)} added`,
-        text: 'The capital wallet (W-1) has been credited.',
+        text: 'The capital wallet (W-1) has been credited and the injection is recorded in the audit log.',
         rows: [
-          ...(injectRef.trim() ? [{ label: 'Your reference (not saved)', value: injectRef.trim() }] : []),
+          ...(injectRef.trim() ? [{ label: 'Your reference', value: injectRef.trim() }] : []),
           { label: 'Capital before', value: naira(before) },
           { label: 'Capital now', value: naira(before + amt), total: true },
         ],
@@ -295,7 +295,7 @@ export default function TreasuryPage() {
                     onKeyDown={blockMinus} onChange={e => { setInjectAmount(nonNegativeString(e.target.value)); setAmountError('') }} />
                 </div>
               </Field>
-              <Field id="inj-ref" label="Reference (optional)" hint="For your own records, like an invoice or transfer number. It isn’t saved with the injection yet, so note it elsewhere too.">
+              <Field id="inj-ref" label="Reference (optional)" hint="Like an invoice or transfer number. It’s saved with the injection in the audit log.">
                 <input id="inj-ref" className="a-input" type="text" placeholder="INV-2025-001" value={injectRef} onChange={e => setInjectRef(e.target.value)} />
               </Field>
             </form>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, type ReactNode } from 'react'
+import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react'
 import {
   Empty, Field, LoadError, Modal, PageHeader, Pager, TableSkeleton, dateTime, nairaKobo,
 } from '../_components/admin-ui'
@@ -50,7 +50,6 @@ const TYPE_BADGE: Record<string, string> = {
 const typeLabel = (t: string) => ROW_LABELS[t] ?? t.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase())
 
 const PAGE_SIZE = 25
-const API_LIMIT = 200 // the transactions API returns at most this many, newest first
 
 function DlRow({ label, children }: { label: string; children: ReactNode }) {
   return <div><dt>{label}</dt><dd>{children}</dd></div>
@@ -62,36 +61,48 @@ function StatusBadge({ status }: { status: string }) {
 
 export default function TransactionsPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
+  // null = the API didn't send a total (older server): page through what came back instead.
+  const [total, setTotal] = useState<number | null>(null)
   const [type, setType] = useState('')
   const [date, setDate] = useState('')
-  const [page, setPage] = useState(1)
+  // The page belongs to one set of filters; changing a filter starts again at page 1 without a second fetch.
+  const filterKey = `${type}|${date}`
+  const [paging, setPaging] = useState({ key: filterKey, page: 1 })
+  const page = paging.key === filterKey ? paging.page : 1
+  const setPage = (p: number) => setPaging({ key: filterKey, page: p })
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
   const [detail, setDetail] = useState<Transaction | null>(null)
 
+  const reqSeq = useRef(0)
   const load = useCallback(async () => {
+    const seq = ++reqSeq.current
     setLoading(true); setFailed(false)
     try {
       const params = new URLSearchParams()
       if (type) params.set('type', type)
       if (date) params.set('date', date)
-      const q = params.toString() ? `?${params}` : ''
-      const res = await fetch(`/api/admin/transactions${q}`)
+      params.set('page', String(page))
+      params.set('limit', String(PAGE_SIZE))
+      const res = await fetch(`/api/admin/transactions?${params}`)
       if (!res.ok) throw new Error()
-      const d = await res.json() as { transactions?: Transaction[] }
+      const d = await res.json() as { transactions?: Transaction[]; total?: number }
+      if (seq !== reqSeq.current) return // a newer page/filter request superseded this one
       setTransactions(d.transactions ?? [])
-      setPage(1)
+      setTotal(typeof d.total === 'number' ? d.total : null)
     } catch {
+      if (seq !== reqSeq.current) return
       setFailed(true)
     } finally {
-      setLoading(false)
+      if (seq === reqSeq.current) setLoading(false)
     }
-  }, [type, date])
+  }, [type, date, page])
 
   useEffect(() => { load() }, [load])
 
   const filtered = !!(type || date)
-  const paginated = transactions.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  const count = total ?? transactions.length
+  const paginated = total === null ? transactions.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE) : transactions
 
   return (
     <>
@@ -114,7 +125,7 @@ export default function TransactionsPage() {
       <section className="card" aria-label="Transactions" aria-busy={loading}>
         {loading ? <TableSkeleton rows={8} cols={6} />
           : failed ? <LoadError what="transactions" onRetry={load} />
-          : transactions.length === 0 ? (
+          : count === 0 ? (
             filtered
               ? <Empty icon="history" title="No transactions match these filters" text="Try another date or type, or clear the filters."
                   action={<button type="button" className="btn btn-outline" onClick={() => { setType(''); setDate('') }}>Clear filters</button>} />
@@ -122,8 +133,7 @@ export default function TransactionsPage() {
           ) : (
             <>
               <p className="cm-count">
-                {transactions.length.toLocaleString('en-NG')} transaction{transactions.length === 1 ? '' : 's'}
-                {transactions.length >= API_LIMIT && ` · Showing the latest ${API_LIMIT}. Filter by date to see older ones.`}
+                {count.toLocaleString('en-NG')} transaction{count === 1 ? '' : 's'}
               </p>
               <div className="tbl-wrap tbl-stack">
                 <table>
@@ -162,7 +172,7 @@ export default function TransactionsPage() {
                   </tbody>
                 </table>
               </div>
-              <Pager page={page} pageSize={PAGE_SIZE} total={transactions.length} onPage={setPage} />
+              <Pager page={page} pageSize={PAGE_SIZE} total={count} onPage={setPage} />
             </>
           )}
       </section>

@@ -11,6 +11,7 @@ import ListRow from '@/components/ui/ListRow'
 import { HomeSkeleton } from '@/components/ui/Skeleton'
 import { Icons } from '@/components/ui/icons'
 import { formatDate, formatNaira } from '@/lib/format'
+import { IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
 
 type Bank = { code: string; name: string }
 type Redemption = {
@@ -25,7 +26,11 @@ const REASONS = ['Plan matured', 'Medical emergency', 'School fees', 'Business n
 
 // Where a request is, in order. The customer confirms their code, then the agent and Vochus approve.
 const STEPS = ['Request sent', 'Code confirmed', 'Agent approval', 'Final approval and payment']
-const CURRENT_STEP: Record<string, number> = { Pending: 1, TokenValidated: 2, AgentApproved: 3, Approved: 4 }
+// AwaitingOTP and Finalizing are the payout being sent, so the last step is still the current one.
+const CURRENT_STEP: Record<string, number> = { Pending: 1, TokenValidated: 2, AgentApproved: 3, AwaitingOTP: 3, Finalizing: 3, Approved: 4 }
+// "In progress" for the customer excludes Approved: that payout is already done (the final step in
+// CURRENT_STEP), so it must not hijack the hero CTA or make a paid row re-openable.
+const OPEN_REDEMPTION_STATUSES = IN_FLIGHT_REDEMPTION_STATUSES.filter(s => s !== 'Approved')
 
 function statusTone(s: string): 'success' | 'danger' | 'warn' {
   return s === 'Approved' ? 'success' : s === 'Rejected' ? 'danger' : 'warn'
@@ -34,6 +39,8 @@ function statusLabel(s: string) {
   if (s === 'Pending') return 'Needs your code'
   if (s === 'TokenValidated') return 'With your agent'
   if (s === 'AgentApproved') return 'Final approval'
+  if (s === 'AwaitingOTP') return 'Processing payout'
+  if (s === 'Finalizing') return 'Finalizing payout'
   if (s === 'Approved') return 'Paid'
   if (s === 'Rejected') return 'Declined'
   return s
@@ -180,7 +187,7 @@ export default function CustomerRedeemPage() {
   }
   const interest = plan?.interest ?? 0
   const netPayout = plan ? Math.round((plan.balance - savingsFee + interest) * 100) / 100 : 0
-  const inProgress = redemptions.find(r => ['Pending', 'TokenValidated', 'AgentApproved'].includes(r.status)) ?? null
+  const inProgress = redemptions.find(r => OPEN_REDEMPTION_STATUSES.includes(r.status)) ?? null
 
   const title = step === 'form' ? 'Collect savings' : step === 'token' || step === 'resume-token' ? 'Confirm your request' : step === 'awaiting' ? 'Your request' : step === 'done' ? 'Request sent' : 'Collect'
 
@@ -358,7 +365,7 @@ export default function CustomerRedeemPage() {
                 <div className="ui-section-head"><h2>Your requests</h2></div>
                 <section className="ui-card ui-card--list">
                   {redemptions.map(r => {
-                    const clickable = r.status === 'Pending' || r.status === 'TokenValidated' || r.status === 'AgentApproved'
+                    const clickable = OPEN_REDEMPTION_STATUSES.includes(r.status)
                     const value = (
                       <span className="ui-value-stack ag-txn-value">
                         <span>{formatNaira(r.netPayout ?? 0)}</span>

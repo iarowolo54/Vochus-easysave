@@ -2519,3 +2519,14 @@ a.ag-crow { text-decoration: none; color: inherit; }
 .ui-interest .ui-summary { margin: 0; }
 .ui-interest .ui-row-main { display: flex; flex-direction: column; gap: 2px; margin: 0; }
 .ui-interest .ui-nudge { margin: 0; padding: var(--ui-s3) 0 var(--ui-s1); border-top: 1px solid var(--ui-line); }
+
+/* Auto-funding (online plans): opt-in, manage, paused */
+.ui-autofund .ui-summary { margin: 0; }
+.ui-autofund .ui-nudge { margin: 0; padding: var(--ui-s3) 0; border-top: 1px solid var(--ui-line); }
+.ui-autofund-body { display: grid; gap: var(--ui-s3); padding: var(--ui-s4) 0; }
+.ui-autofund-body .ui-banner { margin: 0; }
+.ui-autofund-body .ui-card-note { margin: 0; }
+.ui-autofund > .ui-field-error { margin: 0 0 var(--ui-s4); }
+.ui-autofund-card { font-variant-numeric: tabular-nums; }
+.ui-autofund-confirm { display: grid; gap: var(--ui-s2); }
+.ui-autofund-confirm .ui-row-sub { margin-bottom: var(--ui-s2); }

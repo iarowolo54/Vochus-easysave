@@ -8,7 +8,8 @@ const STEPS = [
   { label: 'Final approval and payment', hint: 'Vochus is approving and sending your money.' },
 ] as const
 
-const CURRENT_STEP: Record<string, number> = { Pending: 1, TokenValidated: 2, AgentApproved: 3 }
+// AwaitingOTP and Finalizing are the payout being sent: still the last step.
+const CURRENT_STEP: Record<string, number> = { Pending: 1, TokenValidated: 2, AgentApproved: 3, AwaitingOTP: 3, Finalizing: 3 }
 
 type Props = { status: string; onView: () => void }
 

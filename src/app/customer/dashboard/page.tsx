@@ -19,6 +19,7 @@ import EmptyState from '@/components/ui/EmptyState'
 import ListRow from '@/components/ui/ListRow'
 import { Icons } from '@/components/ui/icons'
 import InterestNudge, { InterestCard, InterestChip, earnsInterest } from '@/components/customer/InterestNudge'
+import AutoFunding from '@/components/customer/AutoFunding'
 import { displayName, formatDate, formatNaira } from '@/lib/format'
 import { getHideBalance, setHideBalance } from '@/lib/preferences'
 import { buildSlots, dateKey, hasEnded, isWeekly } from '@/lib/savings-card'
@@ -321,6 +322,7 @@ export default function CustomerDashboard() {
           <>
             <InterestCard plan={plan} hideAmounts={hideBalance} />
             <PlanDetails plan={plan} />
+            {!ended && <AutoFunding plan={plan} hideAmounts={hideBalance} />}
             <WeekStrip plan={plan} deposits={planTxs} onOpenCard={() => setCardOpen(true)} onSelect={setDaySel} />
           </>
         ) : (

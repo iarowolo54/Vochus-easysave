@@ -1422,3 +1422,9 @@
 .admin-root .dlg-done.is-pending .dlg-done-ic { background: var(--amber-lt); color: var(--amber); box-shadow: 0 0 0 8px #fdf7ea; }
 .admin-root .am-rate-now { font-size: 24px; font-weight: 700; color: var(--green); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .admin-root .am-rate-now span { font-size: 13px; font-weight: 500; color: var(--text2); }
+
+/* Loan tiers: cap + offered toggle */
+.admin-root .am-term-hd--row { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.admin-root .am-term--off { background: var(--bg, #f6f7f6); }
+.admin-root .am-term--off .am-term-hd strong { color: var(--text2); }
+.admin-root .am-tier-note { margin: 12px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--amber-lt); color: var(--amber); }

@@ -5,7 +5,7 @@ import EmptyState from '@/components/ui/EmptyState'
 import LogoLoader from '@/components/ui/LogoLoader'
 import { Icons } from '@/components/ui/icons'
 import { formatNaira } from '@/lib/format'
-import { postJson } from '@/lib/http'
+import { describeFailure, postJson } from '@/lib/http'
 import { setJustPaid } from '@/lib/payment-flash'
 
 type State =
@@ -13,6 +13,14 @@ type State =
   | { kind: 'success'; amount: number | null; newBalance: number | null; already: boolean }
   | { kind: 'failed' }        // Paystack says the payment did not succeed
   | { kind: 'unconfirmed' }   // we couldn't reach a verdict (network, server, timeout)
+  // Auto-funding set-up (refs from /api/customer/auto-debit/init start with `addenroll-`)
+  | { kind: 'autoOn'; already: boolean }
+  | { kind: 'autoSavedInstead' } // the card can't be reused, but the first payment was saved
+  | { kind: 'autoFailed'; message: string; canRetry: boolean }
+
+const ENROLL_PREFIX = 'addenroll-'
+/** Server reasons arrive without a full stop ("Card cannot be used for auto-debit"). */
+const sentence = (m: string) => /[.!?]$/.test(m) ? m : `${m}.`
 
 function CallbackContent() {
   const router = useRouter()
@@ -21,9 +29,24 @@ function CallbackContent() {
   const [state, setState] = useState<State>({ kind: 'confirming' })
   const [copied, setCopied] = useState(false)
 
+  const enrolling = reference.startsWith(ENROLL_PREFIX)
+
   const check = useCallback(async () => {
     if (!reference) { setState({ kind: 'unconfirmed' }); return }
     setState({ kind: 'confirming' })
+    if (reference.startsWith(ENROLL_PREFIX)) {
+      const r = await postJson<{ active?: boolean; alreadyProcessed?: boolean; savedInstead?: boolean }>(
+        '/api/customer/auto-debit/verify', { reference },
+      )
+      if (r.ok) {
+        setState(r.data.active ? { kind: 'autoOn', already: !!r.data.alreadyProcessed } : { kind: 'autoSavedInstead' })
+        return
+      }
+      // 4xx: show the server's reason as-is. Network/5xx: we don't know yet, so offer to check again.
+      const definite = r.kind === 'http' && r.status >= 400 && r.status < 500
+      setState({ kind: 'autoFailed', message: describeFailure(r), canRetry: !definite })
+      return
+    }
     const r = await postJson<{ amount?: number; newBalance?: number; alreadyProcessed?: boolean }>(
       '/api/customer/paystack/verify', { reference },
     )
@@ -56,10 +79,56 @@ function CallbackContent() {
   if (state.kind === 'confirming') return (
     <div className="ui-screen ui-screen--center">
       <div className="ui-empty">
-        <LogoLoader size={96} label="Confirming your payment…" />
-        <p className="ui-empty-title ui-gap-top">Confirming your payment…</p>
+        <LogoLoader size={96} label={enrolling ? 'Linking your card…' : 'Confirming your payment…'} />
+        <p className="ui-empty-title ui-gap-top">{enrolling ? 'Linking your card…' : 'Confirming your payment…'}</p>
         <p className="ui-empty-text">This takes a few seconds. Please don’t close the app or pay again.</p>
       </div>
+    </div>
+  )
+
+  const home = <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => router.push('/customer/dashboard')}>Back to home</button>
+
+  if (state.kind === 'autoOn') return (
+    <div className="ui-screen ui-screen--center">
+      <EmptyState
+        icon="check"
+        title={state.already ? 'Auto-funding is already on' : 'Auto-funding is on'}
+        text="Your card is linked and your first payment is in your savings. We’ll save for you on your plan’s schedule until it ends. You can turn it off anytime from home."
+        action={<div className="ui-stack">{home}{refLine}</div>}
+      />
+    </div>
+  )
+
+  if (state.kind === 'autoSavedInstead') return (
+    <div className="ui-screen ui-screen--center">
+      <EmptyState
+        icon="card"
+        title="This card can’t auto-fund"
+        text="Your payment was added to your savings, but this card can’t be charged automatically. Try again with a different card to turn on auto-funding."
+        action={<div className="ui-stack">{home}{refLine}</div>}
+      />
+    </div>
+  )
+
+  if (state.kind === 'autoFailed') return (
+    <div className="ui-screen ui-screen--center">
+      <EmptyState
+        icon={state.canRetry ? 'pending' : 'error'}
+        tone={state.canRetry ? undefined : 'danger'}
+        title={state.canRetry ? 'We’re still checking your card' : 'Auto-funding wasn’t turned on'}
+        text={state.canRetry
+          ? `${sentence(state.message)} Don’t set it up again yet.`
+          : `${sentence(state.message)} If money left your account, contact support with the reference below.`}
+        action={
+          <div className="ui-stack">
+            {state.canRetry
+              ? <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={check}><Icons.retry size={18} aria-hidden="true" /> Check again</button>
+              : home}
+            <button type="button" className="ui-btn ui-btn--plain ui-btn--block" onClick={() => router.push('/customer/chat')}>Get help</button>
+            {refLine}
+          </div>
+        }
+      />
     </div>
   )
 

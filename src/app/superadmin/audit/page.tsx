@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Icons, type IconName } from '@/components/ui/icons'
 import {
   Empty, LoadError, PageHeader, Pager, SearchField, Segmented, TableSkeleton, dateTime, useDebounced,
@@ -52,40 +52,52 @@ function humanise(action: string) {
 }
 
 const PAGE_SIZE = 30
-const API_LIMIT = 200
 
 export default function AuditPage() {
   const [logs, setLogs] = useState<AuditLog[]>([])
   const [search, setSearch] = useState('')
   const q = useDebounced(search.trim())
   const [action, setAction] = useState<ActionKey>('')
-  const [page, setPage] = useState(1)
+  // null = the API didn't send a total (older server): page through what came back instead.
+  const [total, setTotal] = useState<number | null>(null)
+  // The page belongs to one search/filter; changing either starts again at page 1 without a second fetch.
+  const filterKey = `${q}|${action}`
+  const [paging, setPaging] = useState({ key: filterKey, page: 1 })
+  const page = paging.key === filterKey ? paging.page : 1
+  const setPage = (p: number) => setPaging({ key: filterKey, page: p })
   const [loading, setLoading] = useState(true)
   const [loaded, setLoaded] = useState(false)
   const [failed, setFailed] = useState(false)
 
+  const reqSeq = useRef(0)
   const load = useCallback(async () => {
+    const seq = ++reqSeq.current
     setLoading(true); setFailed(false)
     try {
       const params = new URLSearchParams()
       if (q) params.set('search', q)
       if (action) params.set('action', action)
+      params.set('page', String(page))
+      params.set('limit', String(PAGE_SIZE))
       const res = await fetch(`/api/admin/audit?${params}`)
       if (!res.ok) throw new Error()
-      const d = await res.json() as { logs?: AuditLog[] }
+      const d = await res.json() as { logs?: AuditLog[]; total?: number }
+      if (seq !== reqSeq.current) return // a newer page/filter request superseded this one
       setLogs(d.logs ?? [])
+      setTotal(typeof d.total === 'number' ? d.total : null)
       setLoaded(true)
     } catch {
+      if (seq !== reqSeq.current) return
       setFailed(true)
     } finally {
-      setLoading(false)
+      if (seq === reqSeq.current) setLoading(false)
     }
-  }, [q, action])
+  }, [q, action, page])
 
   useEffect(() => { load() }, [load])
-  useEffect(() => { setPage(1) }, [q, action])
 
-  const paginated = logs.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
+  const count = total ?? logs.length
+  const paginated = total === null ? logs.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE) : logs
   const filtering = !!(q || action)
 
   return (
@@ -106,16 +118,14 @@ export default function AuditPage() {
       <section className="card lo-audit" aria-label="Audit entries">
         {loading && !loaded ? <TableSkeleton rows={10} cols={4} />
           : failed ? <LoadError what="the audit log" onRetry={load} />
-          : logs.length === 0 ? (
+          : count === 0 ? (
             filtering
               ? <Empty icon="search" title="No entries match" text={q ? `Nothing found for “${q}”. Try a name, ID or a different type.` : 'Nothing of this type has been recorded yet.'} />
               : <Empty icon="audit" title="No entries yet" text="Actions like approving loans, saving and enrolling customers are recorded here." />
           ) : (
             <>
               <p className="lo-count" aria-live="polite">
-                {logs.length >= API_LIMIT
-                  ? `Showing the latest ${API_LIMIT} entries${filtering ? ' that match' : ''}. Search or filter to find older ones.`
-                  : `${logs.length.toLocaleString('en-NG')} entr${logs.length === 1 ? 'y' : 'ies'}${filtering ? ' match' : ''}`}
+                {`${count.toLocaleString('en-NG')} entr${count === 1 ? 'y' : 'ies'}${filtering ? ' match' : ''}`}
               </p>
               <ol className="rows">
                 {paginated.map(log => {
@@ -138,7 +148,7 @@ export default function AuditPage() {
                   )
                 })}
               </ol>
-              <Pager page={page} pageSize={PAGE_SIZE} total={logs.length} onPage={setPage} />
+              <Pager page={page} pageSize={PAGE_SIZE} total={count} onPage={setPage} />
             </>
           )}
       </section>
