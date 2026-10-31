@@ -99,3 +99,30 @@ test('no session: 401', async () => {
   const { ref } = await mk(5)
   assert.equal((await call(null, ref)).status, 401)
 })
+
+test('non-reusable card: no mandate, N50 credited once as saving, savedInstead; replay stays one credit', async () => {
+  const { c, plan } = await mk(6)
+  // test-mode verifyTransaction returns reusable:false for refs carrying this marker
+  const ref = `addenroll-nonreusable-${plan.id}-${rid}6`
+  refs.push(ref)
+  await prisma.paymentIntent.create({ data: { ref, actorType: 'customer', customerId: c.id, planId: plan.id, amount: 50 } })
+  const r = await call(c, ref)
+  assert.equal(r.status, 200)
+  assert.equal(r.body.active, false)
+  assert.equal(r.body.savedInstead, true)
+  assert.ok(!/authorizationCode|AUTH_test|SIG_test/i.test(r.text))
+  assert.equal(await prisma.autoDebitMandate.count({ where: { savingsPlanId: plan.id } }), 0)
+  assert.equal((await prisma.savingsPlan.findUnique({ where: { id: plan.id } }))?.balance, 50)
+  const txs = await prisma.transaction.findMany({ where: { ref } })
+  assert.equal(txs.length, 1)
+  assert.equal(txs[0].type, 'saving')
+  assert.equal(txs[0].amount, 50)
+  assert.equal(txs[0].planId, plan.id)
+  assert.equal(txs[0].status, 'Done')
+
+  const r2 = await call(c, ref)
+  assert.equal(r2.status, 200)
+  assert.equal((await prisma.savingsPlan.findUnique({ where: { id: plan.id } }))?.balance, 50)
+  assert.equal(await prisma.transaction.count({ where: { ref } }), 1)
+  assert.equal(await prisma.autoDebitMandate.count({ where: { savingsPlanId: plan.id } }), 0)
+})

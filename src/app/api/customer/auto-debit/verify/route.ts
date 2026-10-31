@@ -8,9 +8,17 @@ import { findOwnedPendingIntent, consumePaymentIntent } from '@/lib/payment-inte
 import { createMandateFromAuthorization } from '@/lib/auto-debit'
 
 class RouteError extends Error {
-  constructor(public code: 'ALREADY_PROCESSED' | 'NOT_REUSABLE' | 'NOT_SELF') {
+  constructor(public code: 'ALREADY_PROCESSED' | 'NOT_SELF') {
     super(code)
   }
+}
+
+// A replayed enrollment ref: active only if a mandate exists (a non-reusable card was saved instead).
+async function replayResponse(planId: string | null) {
+  const mandate = planId
+    ? await prisma.autoDebitMandate.findUnique({ where: { savingsPlanId: planId }, select: { id: true } })
+    : null
+  return NextResponse.json({ alreadyProcessed: true, active: !!mandate })
 }
 
 export async function POST(req: NextRequest) {
@@ -31,10 +39,10 @@ export async function POST(req: NextRequest) {
   if (!customer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   // Replay: this customer's enrollment charge was already credited.
-  const prior = await prisma.transaction.findUnique({ where: { ref: reference }, select: { customerId: true } })
+  const prior = await prisma.transaction.findUnique({ where: { ref: reference }, select: { customerId: true, planId: true } })
   if (prior) {
     if (prior.customerId !== customer.id) return NextResponse.json({ error: 'Reference mismatch' }, { status: 403 })
-    return NextResponse.json({ alreadyProcessed: true, active: true })
+    return replayResponse(prior.planId)
   }
 
   const intent = await findOwnedPendingIntent(reference, { customerId: customer.id })
@@ -68,6 +76,7 @@ export async function POST(req: NextRequest) {
     : null
   if (!plan) return NextResponse.json({ error: 'No active plan' }, { status: 400 })
 
+  const reusable = authorization.reusable === true
   const email = customer.email ?? `${customer.customerId.toLowerCase()}@vochus.ng`
 
   try {
@@ -75,16 +84,19 @@ export async function POST(req: NextRequest) {
       const consumed = await consumePaymentIntent(tx, reference, { customerId: customer.id })
       if (!consumed) throw new RouteError('ALREADY_PROCESSED')
 
-      // 'exists' = already enrolled: idempotent, still credit the charge that was taken.
-      const m = await createMandateFromAuthorization(tx, {
-        customerId: customer.id,
-        plan: { id: plan.id, source: plan.source, cadence: plan.cadence, dailyAmount: plan.dailyAmount },
-        email,
-        authorization,
-      })
-      if ('error' in m) {
-        if (m.error === 'not_reusable') throw new RouteError('NOT_REUSABLE')
-        if (m.error === 'not_self') throw new RouteError('NOT_SELF')
+      // Non-reusable card: no mandate, but the charge taken is still saved below.
+      if (reusable) {
+        // 'exists' = already enrolled: idempotent, still credit the charge that was taken.
+        const m = await createMandateFromAuthorization(tx, {
+          customerId: customer.id,
+          plan: { id: plan.id, source: plan.source, cadence: plan.cadence, dailyAmount: plan.dailyAmount },
+          email,
+          authorization,
+        })
+        if ('error' in m) {
+          if (m.error === 'not_reusable') throw new RouteError('NOT_SELF')
+          if (m.error === 'not_self') throw new RouteError('NOT_SELF')
+        }
       }
 
       await tx.transaction.create({
@@ -97,21 +109,32 @@ export async function POST(req: NextRequest) {
           amount,
           method: 'Paystack',
           status: 'Done',
-          note: 'Auto-debit enrollment first charge',
+          note: reusable ? 'Auto-debit enrollment first charge' : 'Auto-debit enrollment charge saved (card not reusable)',
         },
       })
       await tx.savingsPlan.update({ where: { id: plan.id }, data: { balance: { increment: amount } } })
     })
   } catch (e) {
     if (e instanceof RouteError) {
-      if (e.code === 'ALREADY_PROCESSED') return NextResponse.json({ alreadyProcessed: true, active: true })
-      const msg = e.code === 'NOT_REUSABLE' ? 'This card cannot be used for auto-debit' : 'Auto-debit is only available on online plans'
-      return NextResponse.json({ error: msg }, { status: 400 })
+      if (e.code === 'ALREADY_PROCESSED') return replayResponse(plan.id)
+      return NextResponse.json({ error: 'Auto-debit is only available on online plans' }, { status: 400 })
     }
     if (typeof e === 'object' && e !== null && (e as { code?: unknown }).code === 'P2002') {
-      return NextResponse.json({ alreadyProcessed: true, active: true })
+      return replayResponse(plan.id)
     }
     throw e
+  }
+
+  if (!reusable) {
+    logAudit({
+      action: 'auto_debit_enroll_saved_instead',
+      entity: 'SavingsPlan',
+      details: `${customer.firstName} ${customer.lastName} (${customer.customerId}) enrollment card not reusable; N${amount} saved to plan ${plan.id} — ref ${reference}`,
+      actorType: 'customer',
+      actorId: customer.id,
+      actorName: `${customer.firstName} ${customer.lastName}`,
+    })
+    return NextResponse.json({ active: false, savedInstead: true })
   }
 
   logAudit({

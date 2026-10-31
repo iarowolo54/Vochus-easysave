@@ -209,7 +209,8 @@ export async function verifyTransaction(reference: string): Promise<{
       authorization: {
         authorization_code: 'AUTH_test',
         signature: 'SIG_test',
-        reusable: true,
+        // test-mode hook: refs carrying 'nonreusable' simulate a non-reusable card
+        reusable: !reference.includes('nonreusable'),
         last4: '4242',
         card_type: 'visa',
         bank: 'Test Bank',
