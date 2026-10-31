@@ -35,6 +35,9 @@ export async function POST(req: NextRequest) {
 
   const txData = event.data
   const reference = txData.reference as string
+  // The gift card app shares this Paystack account, so its charges arrive here too. They are not
+  // savings payments: never credit them (migrated gift card customers share ids with EasySave).
+  if (typeof reference === 'string' && reference.startsWith('VCHS-GC-')) return NextResponse.json({ ok: true })
   const meta = txData.metadata ?? {}
   const agentId = meta.agentId as string | undefined
   const customerId = meta.customerId as string | undefined
