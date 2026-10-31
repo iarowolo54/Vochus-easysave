@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react'
 import BottomNav from '@/components/BottomNav'
 import { AGENT_NAV } from '@/components/nav-items'
 import IdleTimeout from '@/components/IdleTimeout'
+import SessionKeepAlive from '@/components/SessionKeepAlive'
 import Logo from '@/components/Logo'
 import { Icons, type IconName } from '@/components/ui/icons'
 import { displayName, formatNaira } from '@/lib/format'
@@ -153,6 +154,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   return (
     <div className="ag-shell">
+      <SessionKeepAlive />
       {session?.user && <IdleTimeout onLogout={() => signOut({ callbackUrl: '/login' })} />}
       <div className={`ag-backdrop${sidebarOpen ? ' is-open' : ''}`} onClick={() => setSidebarOpen(false)} aria-hidden="true" />
       <aside className={`ag-sidebar${sidebarOpen ? ' is-open' : ''}`} aria-label="Main menu">

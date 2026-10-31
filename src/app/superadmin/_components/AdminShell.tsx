@@ -6,6 +6,7 @@ import { usePathname, useRouter } from 'next/navigation'
 import { useEffect, useRef, useState } from 'react'
 import '../admin.css'
 import Logo from '@/components/Logo'
+import SessionKeepAlive from '@/components/SessionKeepAlive'
 import { Icons, type IconName } from '@/components/ui/icons'
 
 type NavItem = { label: string; icon: IconName; href: string; badge?: 'pendingLoans' }
@@ -138,6 +139,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
 
   return (
     <div className="admin-root">
+      <SessionKeepAlive />
       <div className={`a-backdrop${sidebarOpen ? ' open' : ''}`} onClick={() => setSidebarOpen(false)} aria-hidden="true" />
       <aside className={`a-sidebar${sidebarOpen ? ' open' : ''}`} aria-label="Admin navigation">
         <div className="a-sb-header">
