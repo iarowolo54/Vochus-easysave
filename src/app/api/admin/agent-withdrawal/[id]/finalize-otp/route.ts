@@ -15,22 +15,31 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
 
   const record = await prisma.agentWithdrawal.findUnique({ where: { id } })
   if (!record) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (record.status !== 'AwaitingOTP') return NextResponse.json({ error: `Withdrawal is in ${record.status} state, not AwaitingOTP` }, { status: 400 })
+  if (record.status !== 'AwaitingOTP') return NextResponse.json({ error: 'Already processed' }, { status: 409 })
   if (!record.paystackTransferCode) return NextResponse.json({ error: 'Missing Paystack transfer code on record' }, { status: 400 })
+
+  // Claim BEFORE Paystack: AwaitingOTP -> Finalizing. A concurrent submit claims nothing and never finalizes.
+  const claim = await prisma.agentWithdrawal.updateMany({
+    where: { id, status: 'AwaitingOTP' },
+    data: { status: 'Finalizing' },
+  })
+  if (claim.count === 0) return NextResponse.json({ error: 'Already processed' }, { status: 409 })
 
   let finalStatus: string
   try {
     const r = await finalizeTransfer(record.paystackTransferCode, String(otp))
     finalStatus = r.status
   } catch (err: any) {
+    // Paystack rejected the OTP (nothing was sent): hand the claim back so the admin can retry.
+    await prisma.agentWithdrawal.updateMany({ where: { id, status: 'Finalizing' }, data: { status: 'AwaitingOTP' } })
     return NextResponse.json({ error: `Paystack OTP finalisation failed: ${err.message}` }, { status: 502 })
   }
 
   const adminUser = session.user as { name?: string }
   const decidedBy = adminUser.name ?? 'Super Admin'
 
-  await prisma.agentWithdrawal.update({
-    where: { id },
+  await prisma.agentWithdrawal.updateMany({
+    where: { id, status: 'Finalizing' },
     data: {
       status: 'Approved',
       decidedAt: new Date(),

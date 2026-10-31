@@ -25,14 +25,26 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     },
   })
   if (!record) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (record.status !== 'AwaitingOTP') return NextResponse.json({ error: `Redemption is in ${record.status} state, not AwaitingOTP` }, { status: 400 })
+  if (record.status !== 'AwaitingOTP') return NextResponse.json({ error: 'Already processed' }, { status: 409 })
   if (!record.paystackTransferCode) return NextResponse.json({ error: 'Missing Paystack transfer code on record' }, { status: 400 })
+
+  // Read-only inputs for the credit, computed before the claim.
+  const hasCashDeposit = await planHasCashDeposit(prisma, record.savingsPlanId)
+
+  // Claim BEFORE Paystack: AwaitingOTP -> Finalizing. A concurrent submit claims nothing and never finalizes.
+  const claim = await prisma.earlyRedemption.updateMany({
+    where: { id, status: 'AwaitingOTP' },
+    data: { status: 'Finalizing' },
+  })
+  if (claim.count === 0) return NextResponse.json({ error: 'Already processed' }, { status: 409 })
 
   let finalStatus: string
   try {
     const r = await finalizeTransfer(record.paystackTransferCode, String(otp))
     finalStatus = r.status
   } catch (err: any) {
+    // Paystack rejected the OTP (nothing was sent): hand the claim back so the admin can retry.
+    await prisma.earlyRedemption.updateMany({ where: { id, status: 'Finalizing' }, data: { status: 'AwaitingOTP' } })
     return NextResponse.json({ error: `Paystack OTP finalisation failed: ${err.message}` }, { status: 502 })
   }
 
@@ -41,49 +53,50 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
   const agentId = record.savingsPlan.customer.agentId
   const customerId = record.savingsPlan.customer.id
 
-  const hasCashDeposit = await planHasCashDeposit(prisma, record.savingsPlanId)
   const rates = redemptionDeduction({ balance: record.balance, dailyAmount: record.savingsPlan.dailyAmount, cadence: record.savingsPlan.cadence, hasCashDeposit, source: (record.savingsPlan as any).source })
   const platformFee = money(rates.platform)
   const agentComm = money(rates.agent)
   const revenueCredit = money(platformFee)
 
-  await prisma.$transaction([
-    prisma.earlyRedemption.update({
-      where: { id },
-      data: {
-        status: 'Approved',
-        decidedAt: new Date(),
-        decidedBy,
-        bankTransferStatus: finalStatus,
-      },
-    }),
-    prisma.savingsPlan.update({
-      where: { id: record.savingsPlanId },
-      data: { status: 'Redeemed', balance: 0 },
-    }),
-    prisma.platformWallet.upsert({
-      where: { type: 'Revenue' },
-      update: { balance: { increment: revenueCredit } },
-      create: { type: 'Revenue', balance: revenueCredit },
-    }),
-    prisma.agent.update({
-      where: { id: agentId },
-      data: { commissionBalance: { increment: agentComm } },
-    }),
-    prisma.transaction.create({
-      data: {
-        ref: record.ref,
-        agentId,
-        customerId,
-        planId: record.savingsPlanId,
-        type: 'redemption',
-        amount: record.netPayout,
-        method: record.payoutMethod ?? 'Bank Transfer',
-        status: 'Done',
-      },
-    }),
-    ...interestPayoutOps(prisma, record, agentId, customerId),
-  ])
+  try {
+    await prisma.$transaction(async (tx) => {
+      const fin = await tx.earlyRedemption.updateMany({
+        where: { id, status: 'Finalizing' },
+        data: { status: 'Approved', decidedAt: new Date(), decidedBy, bankTransferStatus: finalStatus },
+      })
+      if (fin.count === 0) throw new Error('Finalizing claim lost')
+      await tx.savingsPlan.update({
+        where: { id: record.savingsPlanId },
+        data: { status: 'Redeemed', balance: 0 },
+      })
+      await tx.platformWallet.upsert({
+        where: { type: 'Revenue' },
+        update: { balance: { increment: revenueCredit } },
+        create: { type: 'Revenue', balance: revenueCredit },
+      })
+      await tx.agent.update({
+        where: { id: agentId },
+        data: { commissionBalance: { increment: agentComm } },
+      })
+      await tx.transaction.create({
+        data: {
+          ref: record.ref,
+          agentId,
+          customerId,
+          planId: record.savingsPlanId,
+          type: 'redemption',
+          amount: record.netPayout,
+          method: record.payoutMethod ?? 'Bank Transfer',
+          status: 'Done',
+        },
+      })
+      for (const op of interestPayoutOps(tx, record, agentId, customerId)) await op
+    })
+  } catch (err) {
+    // Paystack already accepted the finalize; leave the record in Finalizing (never re-finalizable) for reconciliation.
+    console.error('early-redemption finalize-otp: post-finalize ledger write failed', id, err instanceof Error ? err.message : 'unknown')
+    return NextResponse.json({ error: 'Transfer finalised but ledger update failed; contact support' }, { status: 500 })
+  }
 
   logAudit({
     action: 'early_redemption_otp_finalized',
