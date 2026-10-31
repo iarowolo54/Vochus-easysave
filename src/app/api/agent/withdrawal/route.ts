@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { IN_FLIGHT_WITHDRAWAL_STATUSES } from '@/lib/redemption-statuses'
 import { logAudit } from '@/lib/audit'
 import { assertSufficient, insufficientResponse, InsufficientFundsError, money } from '@/lib/wallet-guard'
 import { debitAgentBalance } from '@/lib/wallet-debit'
@@ -59,7 +60,7 @@ export async function POST(req: NextRequest) {
   }
 
   const pendingExisting = await prisma.agentWithdrawal.count({
-    where: { agentId: agent.id, status: { in: ['Pending', 'AwaitingOTP'] } },
+    where: { agentId: agent.id, status: { in: IN_FLIGHT_WITHDRAWAL_STATUSES } },
   })
   if (pendingExisting > 0) return NextResponse.json({ error: 'You already have a pending withdrawal. Wait for admin decision before requesting another.' }, { status: 400 })
 

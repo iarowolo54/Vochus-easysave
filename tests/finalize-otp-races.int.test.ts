@@ -15,6 +15,7 @@ M._load = function (req: string, ...rest: unknown[]) {
   return mod
 }
 /* eslint-disable @typescript-eslint/no-require-imports */
+const { loadOwnedRedeemablePlan } = require('../src/lib/redemption') as typeof import('../src/lib/redemption')
 const { prisma } = require('../src/lib/prisma') as typeof import('../src/lib/prisma')
 const wdFin = require('../src/app/api/admin/agent-withdrawal/[id]/finalize-otp/route') as typeof import('../src/app/api/admin/agent-withdrawal/[id]/finalize-otp/route')
 const erFin = require('../src/app/api/admin/early-redemption/[id]/finalize-otp/route') as typeof import('../src/app/api/admin/early-redemption/[id]/finalize-otp/route')
@@ -49,9 +50,9 @@ async function mkWithdrawal() {
   wdIds.push(w.id)
   return w
 }
-async function mkRedemption() {
+async function mkRedemption(planStatus = 'Redeemed') {
   const p = await prisma.savingsPlan.create({
-    data: { customerId, dailyAmount: 100, periodDays: 180, goal: 'x', startDate: new Date(), maturityDate: new Date(Date.now() + 1e10), balance: 1000, status: 'Redeemed', source: 'agent' },
+    data: { customerId, dailyAmount: 100, periodDays: 180, goal: 'x', startDate: new Date(), maturityDate: new Date(Date.now() + 1e10), balance: 1000, status: planStatus, source: 'agent' },
   })
   planIds.push(p.id)
   const ref = `ERF-${rid}-${erIds.length}`
@@ -136,4 +137,78 @@ test('redemption finalize-otp: sequential second submit -> 409, balances unchang
   assert.equal(await revenue(), rev)
   assert.equal((await agentRow()).commissionBalance, comm)
   assert.equal(await prisma.transaction.count({ where: { ref: r.ref } }), 1)
+})
+
+// ---------- failure paths: drive the REAL paystack lib by stubbing fetch under a non-test key ----------
+const realFetch = globalThis.fetch
+const realKey = process.env.PAYSTACK_SECRET_KEY
+function paystackReplies(impl: () => Promise<Response>) {
+  process.env.PAYSTACK_SECRET_KEY = 'sk_live_stubbed'
+  globalThis.fetch = (async () => impl()) as typeof fetch
+}
+function restorePaystack() {
+  globalThis.fetch = realFetch
+  process.env.PAYSTACK_SECRET_KEY = realKey
+}
+const reject = () => Promise.resolve(new Response(JSON.stringify({ status: false, message: 'Invalid OTP' }), { status: 200 }))
+const transportFail = () => Promise.reject(new TypeError('fetch failed'))
+
+test('withdrawal: definite Paystack rejection releases claim; retry then pays exactly once', async () => {
+  const w = await mkWithdrawal()
+  paystackReplies(reject)
+  try {
+    assert.equal((await wdFinalize(w.id)).status, 400)
+  } finally { restorePaystack() }
+  assert.equal((await prisma.agentWithdrawal.findUniqueOrThrow({ where: { id: w.id } })).status, 'AwaitingOTP')
+  assert.equal(await auditCount(w.id), 0)
+  assert.equal((await wdFinalize(w.id)).status, 200)
+  assert.equal((await wdFinalize(w.id)).status, 409)
+  assert.equal(await auditCount(w.id), 1)
+})
+
+test('withdrawal: transport error leaves Finalizing (502), no retry possible, nothing paid', async () => {
+  const w = await mkWithdrawal()
+  paystackReplies(transportFail)
+  try {
+    assert.equal((await wdFinalize(w.id)).status, 502)
+  } finally { restorePaystack() }
+  const row = await prisma.agentWithdrawal.findUniqueOrThrow({ where: { id: w.id } })
+  assert.equal(row.status, 'Finalizing')
+  assert.equal(await auditCount(w.id), 0)
+  assert.equal((await wdFinalize(w.id)).status, 409)
+})
+
+test('redemption: definite rejection releases claim, nothing paid, retry pays once', async () => {
+  const r = await mkRedemption()
+  const rev0 = await revenue()
+  const comm0 = (await agentRow()).commissionBalance
+  paystackReplies(reject)
+  try {
+    assert.equal((await erFinalize(r.id)).status, 400)
+  } finally { restorePaystack() }
+  assert.equal((await prisma.earlyRedemption.findUniqueOrThrow({ where: { id: r.id } })).status, 'AwaitingOTP')
+  assert.equal(await prisma.transaction.count({ where: { ref: r.ref } }), 0)
+  assert.equal(await revenue(), rev0)
+  assert.equal((await agentRow()).commissionBalance, comm0)
+  assert.equal((await erFinalize(r.id)).status, 200)
+  assert.equal((await erFinalize(r.id)).status, 409)
+  assert.equal(await prisma.transaction.count({ where: { ref: r.ref } }), 1)
+})
+
+test('redemption: transport error leaves Finalizing, nothing paid, and the plan is NOT redeemable again', async () => {
+  const r = await mkRedemption('Active')
+  const rev0 = await revenue()
+  paystackReplies(transportFail)
+  try {
+    assert.equal((await erFinalize(r.id)).status, 502)
+  } finally { restorePaystack() }
+  assert.equal((await prisma.earlyRedemption.findUniqueOrThrow({ where: { id: r.id } })).status, 'Finalizing')
+  assert.equal(await prisma.transaction.count({ where: { ref: r.ref } }), 0)
+  assert.equal(await revenue(), rev0)
+  // double-pay window closed: the agent-direct path must not see this plan as redeemable
+  assert.equal(await loadOwnedRedeemablePlan(agentId, customerId, r.savingsPlanId), null)
+  assert.equal((await erFinalize(r.id)).status, 409)
+  // control: once the redemption is no longer in flight the plan is redeemable again
+  await prisma.earlyRedemption.update({ where: { id: r.id }, data: { status: 'Rejected' } })
+  assert.ok(await loadOwnedRedeemablePlan(agentId, customerId, r.savingsPlanId))
 })

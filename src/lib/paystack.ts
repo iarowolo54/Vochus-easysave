@@ -9,6 +9,15 @@ function headers() {
   }
 }
 
+/** Paystack answered with status:false: a definite rejection (e.g. wrong OTP), nothing was sent.
+ *  Transport failures (timeout, network, bad JSON) are NOT this class: the outcome is unknown. */
+export class PaystackRejected extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PaystackRejected'
+  }
+}
+
 async function call(method: string, path: string, body?: object) {
   const res = await fetch(`${BASE}${path}`, {
     method,
@@ -112,7 +121,7 @@ export async function finalizeTransfer(transferCode: string, otp: string) {
     transfer_code: transferCode,
     otp,
   })
-  if (!data.status) throw new Error(data.message ?? 'OTP finalization failed')
+  if (!data.status) throw new PaystackRejected(data.message ?? 'OTP finalization failed')
   return { status: (data.data?.status ?? 'success') as string }
 }
 

@@ -26,7 +26,7 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
 
   // Only an in-flight transfer may change status; every transition is a conditional claim so a
   // refund (failed/reversed) can be applied at most once however many times verify is hit.
-  const IN_FLIGHT = ['Processing', 'AwaitingOTP']
+  const IN_FLIGHT = ['Processing', 'AwaitingOTP', 'Finalizing']
   const inFlight = IN_FLIGHT.includes(record.status)
   let newStatus = record.status
 

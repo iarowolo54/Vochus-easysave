@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
-import { finalizeTransfer } from '@/lib/paystack'
+import { finalizeTransfer, PaystackRejected } from '@/lib/paystack'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
@@ -42,10 +42,19 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
   try {
     const r = await finalizeTransfer(record.paystackTransferCode, String(otp))
     finalStatus = r.status
-  } catch (err: any) {
-    // Paystack rejected the OTP (nothing was sent): hand the claim back so the admin can retry.
-    await prisma.earlyRedemption.updateMany({ where: { id, status: 'Finalizing' }, data: { status: 'AwaitingOTP' } })
-    return NextResponse.json({ error: `Paystack OTP finalisation failed: ${err.message}` }, { status: 502 })
+  } catch (err: unknown) {
+    if (err instanceof PaystackRejected) {
+      // Definite rejection (e.g. wrong OTP): nothing was sent, so hand the claim back for a retry.
+      try {
+        await prisma.earlyRedemption.updateMany({ where: { id, status: 'Finalizing' }, data: { status: 'AwaitingOTP' } })
+      } catch (relErr) {
+        console.error('early-redemption finalize-otp: claim release failed', id, relErr instanceof Error ? relErr.name : 'unknown')
+      }
+      return NextResponse.json({ error: `Paystack rejected the OTP: ${err.message}` }, { status: 400 })
+    }
+    // Timeout / network / unknown: Paystack may have accepted the finalize. Do NOT release the claim.
+    console.error('early-redemption finalize-otp: outcome unknown, left Finalizing', id, err instanceof Error ? err.name : 'unknown')
+    return NextResponse.json({ error: 'Could not confirm the Paystack finalisation. It is being verified; do not retry. Contact support.' }, { status: 502 })
   }
 
   const adminUser = session.user as { name?: string }
@@ -94,8 +103,8 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     })
   } catch (err) {
     // Paystack already accepted the finalize; leave the record in Finalizing (never re-finalizable) for reconciliation.
-    console.error('early-redemption finalize-otp: post-finalize ledger write failed', id, err instanceof Error ? err.message : 'unknown')
-    return NextResponse.json({ error: 'Transfer finalised but ledger update failed; contact support' }, { status: 500 })
+    console.error('early-redemption finalize-otp: post-finalize ledger write failed', id, err instanceof Error ? err.name : 'unknown')
+    return NextResponse.json({ error: 'Transfer finalised but the ledger update failed. Verify with Paystack; do not retry.' }, { status: 502 })
   }
 
   logAudit({

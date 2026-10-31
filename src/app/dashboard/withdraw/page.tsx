@@ -36,6 +36,7 @@ interface Bank {
 const STATUS: Record<string, { label: string; tone: 'warn' | 'success' | 'danger' | 'neutral' }> = {
   Pending: { label: 'Waiting for approval', tone: 'warn' },
   AwaitingOTP: { label: 'Approved · sending', tone: 'warn' },
+  Finalizing: { label: 'Approved · sending', tone: 'warn' },
   Approved: { label: 'Paid', tone: 'success' },
   Rejected: { label: 'Declined', tone: 'danger' },
 }
@@ -85,7 +86,7 @@ export default function WithdrawPage() {
 
   useEffect(() => { load() }, [load])
 
-  const pending = withdrawals.find(w => ['Pending', 'AwaitingOTP'].includes(w.status)) ?? null
+  const pending = withdrawals.find(w => ['Pending', 'AwaitingOTP', 'Finalizing'].includes(w.status)) ?? null
   const hasPending = !!pending
   const hasBank = !!bank?.accountNumber
   const locked = hasPending || !hasBank
@@ -119,7 +120,7 @@ export default function WithdrawPage() {
 
   const amt = parseFloat(amount) || 0
   const tooMuch = amt > commissionBalance
-  const pendingStep = pending ? (pending.status === 'AwaitingOTP' ? 2 : 1) : 0
+  const pendingStep = pending ? (pending.status === 'AwaitingOTP' || pending.status === 'Finalizing' ? 2 : 1) : 0
 
   return (
     <div className="ag-page">

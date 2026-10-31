@@ -7,6 +7,9 @@
 // claim so concurrent calls can't double-spend.
 import type { Prisma } from '@prisma/client'
 import { prisma } from './prisma'
+import { IN_FLIGHT_REDEMPTION_STATUSES } from './redemption-statuses'
+
+export { IN_FLIGHT_REDEMPTION_STATUSES }
 
 /** The plan only if it belongs to one of this agent's customers and is still
  *  redeemable (positive balance, not already redeemed, not an online plan). Null otherwise → 404. */
@@ -24,7 +27,7 @@ export function loadOwnedRedeemablePlan(agentDbId: string, customerId: string, p
       // Mutual exclusion with the customer early-redemption pipeline: a plan with
       // an in-flight EarlyRedemption must not also be redeemed via the agent path.
       earlyRedemptions: {
-        none: { status: { in: ['Pending', 'TokenValidated', 'AgentApproved', 'AwaitingOTP', 'Approved'] } },
+        none: { status: { in: IN_FLIGHT_REDEMPTION_STATUSES } },
       },
     },
   })

@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, type ReactNode } from 'react'
 import { Icons } from '@/components/ui/icons'
 import { digitsOnly } from '@/lib/numeric'
+import { IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
 import { redemptionDeduction } from '@/lib/wallet-rates'
 import {
   ConfirmModal, Empty, Field, LoadError, Modal, PageHeader, Pager, SearchField, Segmented,
@@ -90,7 +91,7 @@ const REASONS = [
 
 const PAGE_SIZE = 25
 const PLAN_LIMIT = 100 // the plan picker asks the savings API for up to this many active plans
-const PENDING_STATUSES = ['Pending', 'TokenValidated', 'AgentApproved', 'AwaitingOTP']
+const PENDING_STATUSES = IN_FLIGHT_REDEMPTION_STATUSES.filter(s => s !== 'Approved')
 const DECIDABLE = ['Pending', 'TokenValidated', 'AgentApproved']
 const NO_CONNECTION = 'No connection. Check your internet and try again.'
 
@@ -109,6 +110,7 @@ function StatusBadge({ status }: { status: string }) {
     case 'TokenValidated': return <span className="bdg bdg-a">Waiting for agent</span>
     case 'AgentApproved': return <span className="bdg bdg-b">Agent approved</span>
     case 'AwaitingOTP': return <span className="bdg bdg-a">Waiting for Paystack code</span>
+    case 'Finalizing': return <span className="bdg bdg-b">Finalising payout</span>
     case 'Approved': return <span className="bdg bdg-g">Approved</span>
     case 'Rejected': return <span className="bdg bdg-r">Rejected</span>
     default: return <span className="bdg bdg-grey">{status}</span>
@@ -446,6 +448,7 @@ export default function RedemptionsPage() {
     if (r.status === 'AwaitingOTP') {
       return <button type="button" className="btn btn-sm btn-green" onClick={() => { setOtpValue(''); setOtpError(''); setOtpModal({ id: r.id, ref: r.ref, customerName: r.customerName, amount: r.netPayout }) }}>Enter Paystack code</button>
     }
+    if (r.status === 'Finalizing') return <span className="bdg bdg-b">Finalising payout</span>
     return (
       <div className="a-row-actions">
         <button type="button" className="btn btn-sm btn-green" onClick={() => openApprove(r)}>Approve</button>

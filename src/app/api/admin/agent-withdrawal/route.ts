@@ -28,7 +28,7 @@ export async function GET() {
     }
   })
 
-  const pending = rows.filter(r => ['Pending', 'AwaitingOTP'].includes(r.status)).length
+  const pending = rows.filter(r => ['Pending', 'AwaitingOTP', 'Finalizing'].includes(r.status)).length
   const approved = rows.filter(r => r.status === 'Approved').length
   const rejected = rows.filter(r => r.status === 'Rejected').length
   const totalPaidOut = rows.filter(r => r.status === 'Approved').reduce((s, r) => s + r.amount, 0)

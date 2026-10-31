@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, type ReactNode } from 'react'
 import { digitsOnly, blockNonDigit } from '@/lib/numeric'
+import { IN_FLIGHT_WITHDRAWAL_STATUSES } from '@/lib/redemption-statuses'
 import { Icons } from '@/components/ui/icons'
 import {
   AmountHero, Empty, Field, Ledger, LedgerRow, LoadError, Modal, PageHeader, Pager, TableSkeleton, dateTime, naira, useToast,
@@ -41,13 +42,14 @@ interface PageData {
 
 type Tab = 'pending' | 'history'
 
-const PENDING_STATUSES = ['Pending', 'AwaitingOTP', 'Processing']
+const PENDING_STATUSES = IN_FLIGHT_WITHDRAWAL_STATUSES
 const PAGE_SIZE = 25
 
 const STATUS: Record<string, [cls: string, label: string]> = {
   Pending: ['bdg-a', 'Waiting for approval'],
   AwaitingOTP: ['bdg-a', 'Waiting for OTP'],
   Processing: ['bdg-b', 'Paystack is processing'],
+  Finalizing: ['bdg-b', 'Finalising payout'],
   Approved: ['bdg-g', 'Paid'],
   Rejected: ['bdg-r', 'Rejected'],
 }
@@ -227,7 +229,7 @@ export default function AgentWithdrawalsPage() {
 
   function pendingActions(r: WithdrawalRecord) {
     if (r.status === 'AwaitingOTP') return <button type="button" className="btn btn-sm btn-green" onClick={() => openOtp(r)}>Enter OTP</button>
-    if (r.status === 'Processing') return (
+    if (r.status === 'Processing' || r.status === 'Finalizing') return (
       <button type="button" className="btn btn-sm btn-outline" disabled={verifying === r.id} onClick={() => verify(r.id)}>
         {verifying === r.id ? 'Checking…' : 'Check status'}
       </button>
@@ -349,7 +351,7 @@ export default function AgentWithdrawalsPage() {
         <Modal icon="withdraw" title={detailRecord.ref} sub={<StatusBadge s={detailRecord.status} />} onClose={() => setDetailRecord(null)}
           footer={PENDING_STATUSES.includes(detailRecord.status) ? (
             detailRecord.status === 'AwaitingOTP' ? <button type="button" className="btn btn-green" onClick={() => openOtp(detailRecord)}>Enter OTP</button>
-              : detailRecord.status === 'Processing' ? <button type="button" className="btn btn-outline" disabled={verifying === detailRecord.id} onClick={() => { const id = detailRecord.id; setDetailRecord(null); verify(id) }}>Check status with Paystack</button>
+              : detailRecord.status === 'Processing' || detailRecord.status === 'Finalizing' ? <button type="button" className="btn btn-outline" disabled={verifying === detailRecord.id} onClick={() => { const id = detailRecord.id; setDetailRecord(null); verify(id) }}>Check status with Paystack</button>
               : <>
                 <button type="button" className="btn btn-outline" onClick={() => openReject(detailRecord)}>Reject</button>
                 <button type="button" className="btn btn-green" onClick={() => openApprove(detailRecord)}>Approve {naira(detailRecord.amount)}</button>
