@@ -3,6 +3,7 @@ import { requireEnv } from '@/lib/env'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import bcrypt from 'bcryptjs'
 import { prisma } from './prisma'
+import { isPastAbsoluteCap } from '@/lib/session-policy'
 import { IDLE_SECONDS } from '@/lib/session-policy'
 
 export const adminAuthOptions: NextAuthOptions = {
@@ -55,7 +56,16 @@ export const adminAuthOptions: NextAuthOptions = {
     },
     async session({ session, token }) {
       if (session.user) {
-        (session.user as any).id = token.sub
+        // Absolute-cap defense-in-depth: the admin session-refresh endpoint is
+        // excluded from the proxy, so enforce the cap here too. Finite loginAt
+        // only — legacy tokens (no loginAt) are not force-expired.
+        if (
+          typeof token.loginAt === 'number' &&
+          isPastAbsoluteCap('admin', token.loginAt, Math.floor(Date.now() / 1000))
+        ) {
+          return { ...session, user: undefined } as unknown as typeof session
+        }
+        ;(session.user as any).id = token.sub
         ;(session.user as any).role = token.role
         ;(session.user as any).email = token.email
       }

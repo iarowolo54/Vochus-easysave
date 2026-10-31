@@ -30,9 +30,18 @@ export const ABSOLUTE_SECONDS: Record<Actor, number> = {
 
 export type SessionDecision = { action: 'slide'; newExp: number } | { action: 'expire' }
 
+/**
+ * True once `nowSec` is strictly past `loginAt + ABSOLUTE_SECONDS[actor]`.
+ * The single source of the absolute-cap math — used by the proxy AND by the
+ * token-consumption trust points (NextAuth session callbacks, customer verify).
+ */
+export function isPastAbsoluteCap(actor: Actor, loginAt: number, nowSec: number): boolean {
+  return nowSec > loginAt + ABSOLUTE_SECONDS[actor]
+}
+
 /** Expire only once `nowSec` is strictly past `loginAt + ABSOLUTE_SECONDS`. */
 export function evaluateSession(actor: Actor, loginAt: number, nowSec: number): SessionDecision {
-  if (nowSec > loginAt + ABSOLUTE_SECONDS[actor]) return { action: 'expire' }
+  if (isPastAbsoluteCap(actor, loginAt, nowSec)) return { action: 'expire' }
   return { action: 'slide', newExp: nowSec + IDLE_SECONDS[actor] }
 }
 

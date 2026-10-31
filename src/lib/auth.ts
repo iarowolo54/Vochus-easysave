@@ -3,6 +3,7 @@ import { requireEnv } from '@/lib/env'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import bcrypt from 'bcryptjs'
 import { prisma } from './prisma'
+import { isPastAbsoluteCap } from '@/lib/session-policy'
 import { IDLE_SECONDS } from '@/lib/session-policy'
 
 export const authOptions: NextAuthOptions = {
@@ -152,6 +153,15 @@ export const authOptions: NextAuthOptions = {
         // stored tokenVersion has moved on, clear the user so protected routes
         // (which all check session.user) treat this session as logged out.
         if (agent && (agent.tokenVersion ?? 0) !== ((token.tokenVersion as number) ?? 0)) {
+          return { ...session, user: undefined } as unknown as typeof session
+        }
+        // Absolute-cap defense-in-depth: the session-refresh endpoint is excluded
+        // from the proxy, so enforce the cap here too. Finite loginAt only —
+        // legacy tokens (no loginAt) are not force-expired.
+        if (
+          typeof token.loginAt === 'number' &&
+          isPastAbsoluteCap('agent', token.loginAt, Math.floor(Date.now() / 1000))
+        ) {
           return { ...session, user: undefined } as unknown as typeof session
         }
         ;(session.user as any).id = agent?.id

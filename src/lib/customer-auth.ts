@@ -1,7 +1,7 @@
 import { SignJWT, jwtVerify } from 'jose'
 import { cookies } from 'next/headers'
 import { requireEnv } from '@/lib/env'
-import { IDLE_SECONDS } from '@/lib/session-policy'
+import { IDLE_SECONDS, isPastAbsoluteCap } from '@/lib/session-policy'
 
 const SECRET = new TextEncoder().encode(requireEnv('NEXTAUTH_SECRET'))
 const COOKIE = 'customer_token'
@@ -42,6 +42,12 @@ export async function signCustomerToken(
 export async function verifyCustomerToken(token: string): Promise<CustomerSession | null> {
   try {
     const { payload } = await jwtVerify(token, SECRET)
+    // Defense-in-depth absolute cap (the proxy enforces it too): a finite
+    // loginAt past the cap is invalid. Missing loginAt (legacy) is not rejected.
+    const loginAt = payload.loginAt
+    if (typeof loginAt === 'number' && Number.isFinite(loginAt)) {
+      if (isPastAbsoluteCap('customer', loginAt, Math.floor(Date.now() / 1000))) return null
+    }
     return payload as unknown as CustomerSession
   } catch {
     return null

@@ -5,6 +5,7 @@ import {
   IDLE_SECONDS,
   ABSOLUTE_SECONDS,
   evaluateSession,
+  isPastAbsoluteCap,
   actorForPage,
   type Actor,
 } from '../src/lib/session-policy'
@@ -28,6 +29,11 @@ for (const actor of ['admin', 'agent', 'customer'] as Actor[]) {
   test(`evaluateSession(${actor}): one second past the cap expires`, () => {
     const loginAt = 1_000_000
     assert.deepEqual(evaluateSession(actor, loginAt, loginAt + ABSOLUTE_SECONDS[actor] + 1), { action: 'expire' })
+  })
+  test(`isPastAbsoluteCap(${actor}): false at the cap, true one second past`, () => {
+    const loginAt = 1_000_000
+    assert.equal(isPastAbsoluteCap(actor, loginAt, loginAt + ABSOLUTE_SECONDS[actor]), false)
+    assert.equal(isPastAbsoluteCap(actor, loginAt, loginAt + ABSOLUTE_SECONDS[actor] + 1), true)
   })
 }
 
