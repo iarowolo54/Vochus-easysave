@@ -3,8 +3,7 @@ import { requireEnv } from '@/lib/env'
 import CredentialsProvider from 'next-auth/providers/credentials'
 import bcrypt from 'bcryptjs'
 import { prisma } from './prisma'
-import { isPastAbsoluteCap } from '@/lib/session-policy'
-import { IDLE_SECONDS } from '@/lib/session-policy'
+import { isPastAbsoluteCap, IDLE_SECONDS } from '@/lib/session-policy'
 
 export const authOptions: NextAuthOptions = {
   providers: [
