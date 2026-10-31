@@ -19,6 +19,8 @@ export interface IntentInput {
   customerId?: string | null
   planId?: string | null
   amount: number
+  /** Day-keys (local YYYY-MM-DD) this payment catches up; stored as a JSON array. */
+  coversKeys?: string[]
 }
 
 export function createPaymentIntent(data: IntentInput) {
@@ -30,6 +32,7 @@ export function createPaymentIntent(data: IntentInput) {
       customerId: data.customerId ?? null,
       planId: data.planId ?? null,
       amount: data.amount,
+      coversKeys: data.coversKeys ? JSON.stringify(data.coversKeys) : null,
     },
   })
 }

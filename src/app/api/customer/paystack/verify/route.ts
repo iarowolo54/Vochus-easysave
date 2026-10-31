@@ -73,6 +73,18 @@ export async function POST(req: NextRequest) {
   const agent = await prisma.agent.findUnique({ where: { id: customer.agentId } })
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
 
+  // Online catch-up: the day-keys this payment covers (display-only; never read by
+  // interest, which only sees the now-stamped deposit).
+  let coversKeys: string[] = []
+  if (intent.coversKeys) {
+    try {
+      const parsed: unknown = JSON.parse(intent.coversKeys)
+      if (Array.isArray(parsed)) coversKeys = parsed.filter((k): k is string => typeof k === 'string')
+    } catch {
+      coversKeys = []
+    }
+  }
+
   try {
     await prisma.$transaction(async (tx) => {
       // Atomically consume the intent; a losing/replayed call must not credit.
@@ -102,6 +114,17 @@ export async function POST(req: NextRequest) {
           channel: txData.channel ?? 'card',
         },
       })
+      // Catch-up: record display-only coverage for each covered day, tagged with
+      // this transaction's ref. The intent-consume above already makes a replay a
+      // no-op; the upsert on the unique (savingsPlanId, coversKey) also keeps a day
+      // that was already covered from erroring. (SQLite has no createMany skipDuplicates.)
+      for (const coversKey of coversKeys) {
+        await tx.planDayCoverage.upsert({
+          where: { savingsPlanId_coversKey: { savingsPlanId: plan.id, coversKey } },
+          create: { savingsPlanId: plan.id, coversKey, ref: reference },
+          update: {},
+        })
+      }
     })
   } catch (e: any) {
     if ((e instanceof Error && e.message === 'ALREADY_PROCESSED') || e?.code === 'P2002') {
