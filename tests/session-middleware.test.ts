@@ -95,6 +95,39 @@ test('missing/NaN loginAt → falls back to iat (then nowSec), slides, does NOT 
   assert.equal(viaNow.redirectTo, undefined)
 })
 
+test('slide action persists the resolved loginAt anchor (claim → iat → nowSec)', async () => {
+  // No loginAt claim but iat=X → slide carries loginAt===X (so the anchor is
+  // frozen, not re-derived from a fresh iat on the next slide).
+  const X = NOW - 500
+  const viaIat = await decideForRequest({
+    pathname: '/superadmin/x',
+    cookies: { [ADMIN_COOKIE]: 'raw' },
+    nowSec: NOW,
+    decoders: adminDecoder({ iat: X, claims: {} }),
+  })
+  assert.equal(viaIat.cookieActions[0].action, 'slide')
+  assert.equal(viaIat.cookieActions[0].loginAt, X)
+
+  // Neither loginAt nor iat → loginAt===nowSec.
+  const viaNow = await decideForRequest({
+    pathname: '/superadmin/x',
+    cookies: { [ADMIN_COOKIE]: 'raw' },
+    nowSec: NOW,
+    decoders: adminDecoder({ claims: {} }),
+  })
+  assert.equal(viaNow.cookieActions[0].action, 'slide')
+  assert.equal(viaNow.cookieActions[0].loginAt, NOW)
+
+  // Explicit loginAt claim is preserved verbatim.
+  const viaClaim = await decideForRequest({
+    pathname: '/superadmin/x',
+    cookies: { [ADMIN_COOKIE]: 'raw' },
+    nowSec: NOW,
+    decoders: adminDecoder({ loginAt: X, iat: NOW, claims: {} }),
+  })
+  assert.equal(viaClaim.cookieActions[0].loginAt, X)
+})
+
 test('absolute-cap-exceeded cookie on a PAGE → clear + redirect', async () => {
   const loginAt = NOW - ABSOLUTE_SECONDS.admin - 1
   const res = await decideForRequest({

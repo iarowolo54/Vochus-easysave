@@ -42,6 +42,13 @@ export interface CookieAction {
   action: 'slide' | 'clear'
   /** epoch seconds; present only when action === 'slide'. */
   newExp?: number
+  /**
+   * The resolved, STABLE login anchor (epoch seconds) to persist into the
+   * re-issued token. Present only when action === 'slide'. Resolved once here
+   * (claim → iat → nowSec) so the absolute cap stays anchored across slides;
+   * if it were re-derived from `iat` on each slide the cap would never fire.
+   */
+  loginAt?: number
   /** original decoded claims to re-issue; present only when action === 'slide'. */
   claims?: Record<string, unknown>
 }
@@ -100,6 +107,7 @@ export async function decideForRequest(input: DecideInput): Promise<DecideResult
         actor,
         action: 'slide',
         newExp: decision.newExp,
+        loginAt,
         claims: decoded.claims,
       })
     }

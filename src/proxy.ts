@@ -147,25 +147,41 @@ export async function proxy(request: NextRequest) {
   return applyCookies(res, cookieActions, actualName)
 }
 
-/** Re-sign a next-auth token, preserving all claims + loginAt, with a fresh idle exp. */
-async function reissueNextAuth(claims: Record<string, unknown>, actor: Actor): Promise<string> {
+/**
+ * Re-sign a next-auth token with a fresh idle exp, preserving all claims and
+ * PERSISTING the resolved `loginAt`. encode stamps a fresh iat/exp from maxAge,
+ * so we must write `loginAt` back explicitly — otherwise a token with no
+ * `loginAt` claim would re-anchor to the new iat on every slide and the
+ * absolute cap would never fire.
+ */
+async function reissueNextAuth(
+  claims: Record<string, unknown>,
+  actor: Actor,
+  loginAt: number,
+): Promise<string> {
   const payload = { ...claims }
   // encode stamps a fresh iat/exp from maxAge; drop the stale ones + jti.
   delete payload.iat
   delete payload.exp
   delete payload.jti
+  payload.loginAt = loginAt
   return encode({ token: payload, secret: SECRET, maxAge: IDLE_SECONDS[actor] })
 }
 
-/** Re-sign the customer jose token. See the Task-3 seam note in the report. */
-async function reissueCustomer(claims: Record<string, unknown>): Promise<string> {
+/**
+ * Re-sign the customer jose token, carrying the resolved `loginAt` through so
+ * the absolute cap stays anchored across slides (a fresh sign re-stamps iat).
+ * When `CustomerSession` later gains a native `loginAt` field this must keep
+ * passing it to signCustomerToken, not drop it.
+ */
+async function reissueCustomer(claims: Record<string, unknown>, loginAt: number): Promise<string> {
   const session: CustomerSession = {
     id: String(claims.id ?? ''),
     customerId: String(claims.customerId ?? ''),
     name: String(claims.name ?? ''),
     agentId: String(claims.agentId ?? ''),
   }
-  return signCustomerToken(session)
+  return signCustomerToken(session, { loginAt, expSeconds: IDLE_SECONDS.customer })
 }
 
 async function applyCookies(
@@ -182,10 +198,11 @@ async function applyCookies(
     }
     // slide: re-mint with a fresh idle exp, same name + standardised attributes.
     const claims = action.claims ?? {}
+    const loginAt = action.loginAt ?? Math.floor(Date.now() / 1000)
     const value =
       action.actor === 'customer'
-        ? await reissueCustomer(claims)
-        : await reissueNextAuth(claims, action.actor)
+        ? await reissueCustomer(claims, loginAt)
+        : await reissueNextAuth(claims, action.actor, loginAt)
     res.cookies.set({
       name,
       value,

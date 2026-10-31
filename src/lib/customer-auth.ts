@@ -1,10 +1,13 @@
 import { SignJWT, jwtVerify } from 'jose'
 import { cookies } from 'next/headers'
 import { requireEnv } from '@/lib/env'
+import { IDLE_SECONDS } from '@/lib/session-policy'
 
 const SECRET = new TextEncoder().encode(requireEnv('NEXTAUTH_SECRET'))
 const COOKIE = 'customer_token'
-const EXPIRY = '30d'
+// The idle window is the single source of truth (no magic numbers). The jose
+// token's own exp now enforces idle, matching the cookie maxAge below.
+const EXPIRY_SECONDS = IDLE_SECONDS.customer
 
 export interface CustomerSession {
   id: string
@@ -13,11 +16,26 @@ export interface CustomerSession {
   agentId: string
 }
 
-export async function signCustomerToken(payload: CustomerSession): Promise<string> {
-  return new SignJWT({ ...payload })
+export interface SignCustomerTokenOptions {
+  /** Stable login anchor (epoch seconds) for the absolute cap; persisted into the token. */
+  loginAt?: number
+  /** Token lifetime in seconds from now; defaults to the customer idle window. */
+  expSeconds?: number
+}
+
+export async function signCustomerToken(
+  payload: CustomerSession,
+  opts?: SignCustomerTokenOptions,
+): Promise<string> {
+  const expSeconds = opts?.expSeconds ?? EXPIRY_SECONDS
+  const now = Math.floor(Date.now() / 1000)
+  return new SignJWT({
+    ...payload,
+    ...(opts?.loginAt != null ? { loginAt: opts.loginAt } : {}),
+  })
     .setProtectedHeader({ alg: 'HS256' })
-    .setIssuedAt()
-    .setExpirationTime(EXPIRY)
+    .setIssuedAt(now)
+    .setExpirationTime(now + expSeconds)
     .sign(SECRET)
 }
 
@@ -45,6 +63,6 @@ export function customerCookieOptions(token: string) {
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'lax' as const,
     path: '/',
-    maxAge: 30 * 24 * 60 * 60,
+    maxAge: IDLE_SECONDS.customer,
   }
 }
