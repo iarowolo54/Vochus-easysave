@@ -1,65 +1,204 @@
+/**
+ * Next.js 16 Proxy (formerly "middleware" — renamed framework-wide in v16; see
+ * node_modules/next/dist/docs/01-app/01-getting-started/16-proxy.md). Only ONE
+ * proxy file is supported per project and it runs on the Node.js runtime by
+ * default (the `runtime` config option is not available in a proxy file and
+ * throws if set), so `next-auth/jwt` and `jose` both run here directly.
+ *
+ * Responsibilities:
+ *  1. Session expiry — idle (sliding cookie `exp`) + absolute cap — for all
+ *     three actors, enforced server-side via the pure `decideForRequest` core.
+ *  2. Authorization (preserved from the prior proxy, REQUIRED by
+ *     .claude/rules/auth-security.md): admin API + superadmin pages must check
+ *     `role === 'superadmin'`, not merely a decodable cookie — the agent and
+ *     admin NextAuth configs share NEXTAUTH_SECRET, so an agent token placed in
+ *     the admin cookie decodes fine and must still be rejected on role.
+ *
+ * No Prisma here (not edge/node-proxy friendly and unnecessary). Secret is read
+ * fail-closed via requireEnv.
+ */
 import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
-import { getToken } from 'next-auth/jwt'
+import { decode, encode } from 'next-auth/jwt'
 import { requireEnv } from '@/lib/env'
+import { verifyCustomerToken, signCustomerToken, type CustomerSession } from '@/lib/customer-auth'
+import { IDLE_SECONDS, type Actor } from '@/lib/session-policy'
+import {
+  decideForRequest,
+  AGENT_COOKIE,
+  ADMIN_COOKIE,
+  CUSTOMER_COOKIE,
+  type Decoder,
+  type CookieAction,
+} from '@/lib/session-middleware'
 
-const AGENT_SECRET = requireEnv('NEXTAUTH_SECRET')
-const ADMIN_SECRET = requireEnv('NEXTAUTH_SECRET')
+const SECRET = requireEnv('NEXTAUTH_SECRET')
 
-export async function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl
+// In production (https) NextAuth names the agent cookie with a `__Secure-`
+// prefix; dev uses the bare name. We accept whichever is actually present and
+// re-issue under that same name.
+const AGENT_COOKIE_SECURE = `__Secure-${AGENT_COOKIE}`
 
-  if (
+/** Auth endpoints own their own cookies — never touch them. */
+function isAuthEndpoint(pathname: string): boolean {
+  return (
+    pathname.startsWith('/api/auth') ||
+    pathname.startsWith('/api/admin-auth') ||
+    pathname.startsWith('/api/customer/auth')
+  )
+}
+
+function isAdminApi(pathname: string): boolean {
+  return (
     pathname.startsWith('/api/admin/') ||
     pathname === '/api/admin' ||
     pathname.startsWith('/api/superadmin/') ||
     pathname === '/api/superadmin'
+  )
+}
+
+/** Pull `loginAt`/`iat` off an arbitrary claims bag without introducing `any`. */
+function numClaim(claims: Record<string, unknown>, key: string): number | undefined {
+  const v = claims[key]
+  return typeof v === 'number' && Number.isFinite(v) ? v : undefined
+}
+
+/** Decoder for the next-auth v4 JWE (agent + admin). */
+const nextAuthDecoder: Decoder = async (raw) => {
+  const token = await decode({ token: raw, secret: SECRET })
+  if (!token) return null
+  const claims = token as Record<string, unknown>
+  return { loginAt: numClaim(claims, 'loginAt'), iat: numClaim(claims, 'iat'), claims }
+}
+
+/** Decoder for the jose customer token. */
+const customerDecoder: Decoder = async (raw) => {
+  const session = await verifyCustomerToken(raw)
+  if (!session) return null
+  // The runtime payload carries iat (and, after Task 3, loginAt); the typed
+  // return narrows them away, so widen precisely (not `any`).
+  const claims = session as CustomerSession & { iat?: number; loginAt?: number }
+  return {
+    loginAt: typeof claims.loginAt === 'number' ? claims.loginAt : undefined,
+    iat: typeof claims.iat === 'number' ? claims.iat : undefined,
+    claims: claims as unknown as Record<string, unknown>,
+  }
+}
+
+export async function proxy(request: NextRequest) {
+  const { pathname } = request.nextUrl
+
+  // 1. Let auth/login endpoints manage their own cookies, untouched.
+  if (isAuthEndpoint(pathname)) return NextResponse.next()
+
+  // 2. Resolve the agent cookie name actually present (secure prefix in prod).
+  const presentAgentName = request.cookies.has(AGENT_COOKIE_SECURE)
+    ? AGENT_COOKIE_SECURE
+    : AGENT_COOKIE
+  // Map the canonical cookie name used by the decision core → the real request
+  // cookie name, so slide/clear re-issue under the correct name.
+  const actualName: Record<string, string> = {
+    [AGENT_COOKIE]: presentAgentName,
+    [ADMIN_COOKIE]: ADMIN_COOKIE,
+    [CUSTOMER_COOKIE]: CUSTOMER_COOKIE,
+  }
+
+  const cookies: Record<string, string | undefined> = {
+    [AGENT_COOKIE]: request.cookies.get(presentAgentName)?.value,
+    [ADMIN_COOKIE]: request.cookies.get(ADMIN_COOKIE)?.value,
+    [CUSTOMER_COOKIE]: request.cookies.get(CUSTOMER_COOKIE)?.value,
+  }
+
+  const decoders: Record<string, Decoder> = {
+    [AGENT_COOKIE]: nextAuthDecoder,
+    [ADMIN_COOKIE]: nextAuthDecoder,
+    [CUSTOMER_COOKIE]: customerDecoder,
+  }
+
+  const nowSec = Math.floor(Date.now() / 1000)
+  const { cookieActions, redirectTo } = await decideForRequest({ pathname, cookies, nowSec, decoders })
+
+  // 3. Authorization overrides (role, not just a session) — preserved behaviour.
+  const adminSlide = cookieActions.find((a) => a.cookieName === ADMIN_COOKIE && a.action === 'slide')
+  const adminRole = adminSlide?.claims?.role
+  const adminIsSuper = adminRole === 'superadmin'
+
+  if (isAdminApi(pathname)) {
+    if (!adminSlide) return applyCookies(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }), cookieActions, actualName)
+    if (!adminIsSuper) return applyCookies(NextResponse.json({ error: 'Forbidden' }, { status: 403 }), cookieActions, actualName)
+  }
+
+  // Superadmin pages: a valid-but-wrong-role token must also be bounced.
+  let effectiveRedirect = redirectTo
+  if (
+    pathname.startsWith('/superadmin') &&
+    !pathname.startsWith('/superadmin/login') &&
+    adminSlide &&
+    !adminIsSuper
   ) {
-    const token = await getToken({
-      req: request,
-      secret: ADMIN_SECRET,
-      cookieName: 'next-admin-auth.session-token',
-    })
-    if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-    if ((token as any).role !== 'superadmin')
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    return NextResponse.next()
+    effectiveRedirect = '/superadmin/login'
   }
 
-  if (pathname.startsWith('/superadmin')) {
-    if (pathname.startsWith('/superadmin/login')) {
-      return NextResponse.next()
-    }
+  // 4. Build the response and apply cookie slides/clears to it.
+  const res = effectiveRedirect
+    ? NextResponse.redirect(new URL(effectiveRedirect, request.url), 307)
+    : NextResponse.next()
 
-    const token = await getToken({
-      req: request,
-      secret: ADMIN_SECRET,
-      cookieName: 'next-admin-auth.session-token',
-    })
+  return applyCookies(res, cookieActions, actualName)
+}
 
-    if (!token || (token as any).role !== 'superadmin') {
-      return NextResponse.redirect(new URL('/superadmin/login', request.url))
-    }
+/** Re-sign a next-auth token, preserving all claims + loginAt, with a fresh idle exp. */
+async function reissueNextAuth(claims: Record<string, unknown>, actor: Actor): Promise<string> {
+  const payload = { ...claims }
+  // encode stamps a fresh iat/exp from maxAge; drop the stale ones + jti.
+  delete payload.iat
+  delete payload.exp
+  delete payload.jti
+  return encode({ token: payload, secret: SECRET, maxAge: IDLE_SECONDS[actor] })
+}
 
-    return NextResponse.next()
+/** Re-sign the customer jose token. See the Task-3 seam note in the report. */
+async function reissueCustomer(claims: Record<string, unknown>): Promise<string> {
+  const session: CustomerSession = {
+    id: String(claims.id ?? ''),
+    customerId: String(claims.customerId ?? ''),
+    name: String(claims.name ?? ''),
+    agentId: String(claims.agentId ?? ''),
   }
+  return signCustomerToken(session)
+}
 
-  if (pathname.startsWith('/dashboard')) {
-    const token = await getToken({
-      req: request,
-      secret: AGENT_SECRET,
-    })
-
-    if (!token) {
-      return NextResponse.redirect(new URL('/', request.url))
+async function applyCookies(
+  res: NextResponse,
+  actions: CookieAction[],
+  actualName: Record<string, string>,
+): Promise<NextResponse> {
+  const secure = process.env.NODE_ENV === 'production'
+  for (const action of actions) {
+    const name = actualName[action.cookieName] ?? action.cookieName
+    if (action.action === 'clear') {
+      res.cookies.delete({ name, path: '/' })
+      continue
     }
-
-    return NextResponse.next()
+    // slide: re-mint with a fresh idle exp, same name + standardised attributes.
+    const claims = action.claims ?? {}
+    const value =
+      action.actor === 'customer'
+        ? await reissueCustomer(claims)
+        : await reissueNextAuth(claims, action.actor)
+    res.cookies.set({
+      name,
+      value,
+      httpOnly: true,
+      sameSite: 'lax',
+      path: '/',
+      secure,
+      maxAge: IDLE_SECONDS[action.actor],
+    })
   }
-
-  return NextResponse.next()
+  return res
 }
 
 export const config = {
-  matcher: ['/dashboard/:path*', '/superadmin/:path*', '/api/admin/:path*', '/api/superadmin/:path*'],
+  matcher: ['/dashboard/:path*', '/superadmin/:path*', '/customer/:path*', '/api/:path*'],
 }
