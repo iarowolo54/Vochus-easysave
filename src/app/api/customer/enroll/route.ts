@@ -216,12 +216,15 @@ export async function POST(req: NextRequest) {
     })
   }
 
-  const token = await signCustomerToken({
-    id: customer.id,
-    customerId: customer.customerId,
-    name: `${customer.firstName} ${customer.lastName}`,
-    agentId: agentDbId,
-  })
+  const token = await signCustomerToken(
+    {
+      id: customer.id,
+      customerId: customer.customerId,
+      name: `${customer.firstName} ${customer.lastName}`,
+      agentId: agentDbId,
+    },
+    { loginAt: Math.floor(Date.now() / 1000) },
+  )
 
   // Send welcome email
   if (customer.email) {

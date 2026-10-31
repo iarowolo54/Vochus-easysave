@@ -47,6 +47,9 @@ export const adminAuthOptions: NextAuthOptions = {
       if (user) {
         token.role = (user as any).role
         token.email = (user as any).email
+        // Anchor the absolute session cap at sign-in (the custom login route
+        // stamps this too; this covers the NextAuth [...nextauth] sign-in path).
+        token.loginAt = Math.floor(Date.now() / 1000)
       }
       return token
     },
