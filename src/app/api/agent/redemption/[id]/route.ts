@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { notifySuperAdminsRedemptionPending } from '@/lib/redemption-notify'
 
 export async function GET() {
   const session = await getServerSession(authOptions)
@@ -106,6 +107,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     actorId: agent.id,
     actorName: agent.name,
   })
+
+  // The redemption has now reached the admin-approval stage — tell the super admins it is
+  // awaiting their final approval. Fire-and-forget; never throws.
+  notifySuperAdminsRedemptionPending(prisma, {
+    customerName,
+    amountNaira: redemption.netPayout,
+    planGoal: redemption.savingsPlan.goal,
+    ref: redemption.ref,
+  }).catch(() => {})
 
   return NextResponse.json({ ok: true, status: 'AgentApproved', message: 'Sent to admin for final approval' })
 }

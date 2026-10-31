@@ -6,7 +6,6 @@ import { IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
 import { sendSMS } from '@/lib/kudisms'
 import { sendMail } from '@/lib/mail'
 import { createRedemptionWithUniqueCode } from '@/lib/redemption-create'
-import { notifySuperAdminsRedemptionPending } from '@/lib/redemption-notify'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
@@ -98,9 +97,8 @@ export async function POST(req: NextRequest) {
       actorName: agent.name,
     })
 
-    // Tell the super admins a redemption is awaiting approval. Fire-and-forget; never throws.
-    notifySuperAdminsRedemptionPending(prisma, { customerName, amountNaira: netPayout, planGoal: plan.goal, ref }).catch(() => {})
-
+    // Super admins are notified at the admin-approval stage (when the agent approves and
+    // sends to admin — see api/agent/redemption/[id]), not at request creation.
     return NextResponse.json({ ref, tokenExpiry, balance: plan.balance, deduction, netPayout, customerName, sentTo: { phone: plan.customer.phone, email: plan.customer.email ?? null } })
   } catch (err: any) {
     console.error('[redemption/request]', err)

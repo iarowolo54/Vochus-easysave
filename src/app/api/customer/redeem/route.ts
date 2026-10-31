@@ -12,7 +12,6 @@ import { sendMail } from '@/lib/mail'
 import { redemptionTokenMatches } from '@/lib/redemption-token'
 import { createRedemptionWithUniqueCode } from '@/lib/redemption-create'
 import { reserveRedemptionAttempt } from '@/lib/redemption-attempts'
-import { notifySuperAdminsRedemptionPending } from '@/lib/redemption-notify'
 
 export async function GET() {
   const session = await getCustomerSession()
@@ -136,14 +135,8 @@ export async function POST(req: NextRequest) {
     }).catch(() => {})
   }
 
-  // Tell the super admins a redemption is awaiting approval. Fire-and-forget; never throws.
-  notifySuperAdminsRedemptionPending(prisma, {
-    customerName: `${customer.firstName} ${customer.lastName}`,
-    amountNaira: netPayout,
-    planGoal: plan.goal,
-    ref: redemption.ref,
-  }).catch(() => {})
-
+  // Super admins are notified at the admin-approval stage (when the agent approves and
+  // sends to admin — see api/agent/redemption/[id]), not at request creation.
   return NextResponse.json({ ref: redemption.ref, isEarly, deduction, interest, netPayout, balance: plan.balance })
 }
 

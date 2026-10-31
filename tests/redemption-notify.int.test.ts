@@ -74,13 +74,21 @@ test('a failing client does not throw out', async () => {
   await withEnv('production', async () => { await notify(broken, input) })
 })
 
-test('wiring: both redemption-creating routes fire the notification after creation, fire-and-forget', async () => {
+test('wiring: the agent-approval route fires the notification at the AgentApproved transition, fire-and-forget', async () => {
+  const { readFileSync } = await import('node:fs')
+  const f = 'src/app/api/agent/redemption/[id]/route.ts'
+  const src = readFileSync(f, 'utf8')
+  const approve = src.indexOf(`status: 'AgentApproved'`)
+  const call = src.indexOf('notifySuperAdminsRedemptionPending(prisma')
+  assert.ok(approve > -1, `${f}: must set AgentApproved`)
+  assert.ok(call > approve, `${f}: notify must follow the AgentApproved update`)
+  assert.match(src.slice(call, call + 400), /\.catch\(\(\) => \{\}\)/, `${f}: must be fire-and-forget`)
+})
+
+test('wiring: the two redemption-creating routes no longer notify at creation', async () => {
   const { readFileSync } = await import('node:fs')
   for (const f of ['src/app/api/customer/redeem/route.ts', 'src/app/api/transactions/redemption/request/route.ts']) {
     const src = readFileSync(f, 'utf8')
-    const create = src.indexOf('createRedemptionWithUniqueCode(prisma')
-    const call = src.indexOf('notifySuperAdminsRedemptionPending(prisma')
-    assert.ok(create > -1 && call > create, `${f}: notify must follow the create`)
-    assert.match(src.slice(call, call + 400), /\.catch\(\(\) => \{\}\)/, `${f}: must be fire-and-forget`)
+    assert.equal(src.indexOf('notifySuperAdminsRedemptionPending'), -1, `${f}: must not notify at creation — the email fires at the admin-approval stage`)
   }
 })
