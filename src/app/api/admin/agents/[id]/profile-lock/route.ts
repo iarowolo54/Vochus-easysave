@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireSuperAdmin } from '@/lib/admin-guard'
+import { requireSuperAdmin, adminActor } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 
@@ -23,7 +23,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     entityId: agent.id,
     details: `Agent ${agent.name} (${agent.agentId}) profile ${unlock ? 'unlocked for editing' : 'locked'}`,
     actorType: 'admin',
-    actorName: 'SuperAdmin',
+    ...adminActor(session),
   })
 
   return NextResponse.json({ agent: { id: agent.id, profileUnlocked: agent.profileUnlocked } })

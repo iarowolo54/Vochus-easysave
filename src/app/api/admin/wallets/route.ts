@@ -41,6 +41,7 @@ export async function GET(req: NextRequest) {
       location: a.location,
       walletBalance: a.walletBalance,
       commissionBalance: a.commissionBalance,
+      floatLimit: a.floatLimit,
       status: a.status,
       todayActivity,
       lastFunded,

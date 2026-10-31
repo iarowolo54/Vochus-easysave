@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { randomBytes } from 'crypto'
-import { requireSuperAdmin } from '@/lib/admin-guard'
+import { requireSuperAdmin, adminActor } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { money } from '@/lib/wallet-guard'
@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
     entityId: agent.id,
     details: `Commission payout ₦${commAmt} to agent ${agent.name} (${agent.agentId}) — ref ${ref}`,
     actorType: 'admin',
-    actorName: 'SuperAdmin',
+    ...adminActor(session),
   })
 
   return NextResponse.json({ success: true, amount: commAmt })

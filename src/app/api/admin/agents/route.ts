@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireSuperAdmin } from '@/lib/admin-guard'
+import { requireSuperAdmin, adminActor } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import bcrypt from 'bcryptjs'
 import { randomBytes } from 'crypto'
@@ -111,7 +111,7 @@ export async function POST(req: NextRequest) {
     },
   })
 
-  logAudit({ action: 'agent', entity: 'Agent', entityId: agent.id, details: `Agent created — ${name} (${agentId})`, actorType: 'admin', actorName: 'SuperAdmin' })
+  logAudit({ action: 'agent', entity: 'Agent', entityId: agent.id, details: `Agent created — ${name} (${agentId})`, actorType: 'admin', ...adminActor(session) })
 
   if (email && verifyToken) {
     const verifyUrl = `${process.env.NEXTAUTH_URL}/api/verify-email?token=${verifyToken}`
