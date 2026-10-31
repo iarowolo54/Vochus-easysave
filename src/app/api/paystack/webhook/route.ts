@@ -1,10 +1,7 @@
-// NOTE: there are TWO webhook handlers in this repo (api/paystack/webhook and api/webhooks/paystack); confirm which one Paystack is configured to POST before relying on this in prod.
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
-import { verifyTransaction } from '@/lib/paystack'
-import { creditAutoDebitAttempt } from '@/lib/auto-debit-credit'
 
 export async function POST(req: NextRequest) {
   const body = await req.text()
@@ -49,32 +46,6 @@ export async function POST(req: NextRequest) {
       actorType: 'system',
       actorName: 'Paystack Webhook',
     })
-  }
-
-  // Scheduled auto-debit charges only ('autodebit-'); 'addenroll-' enrollment refs are handled elsewhere.
-  if (type === 'charge.success' && typeof data?.reference === 'string' && data.reference.startsWith('autodebit-')) {
-    try {
-      const reference = data.reference as string
-      // Never trust the webhook body for crediting: re-verify with Paystack.
-      const verified = await verifyTransaction(reference)
-      if (verified.status === 'success') {
-        const attempt = await prisma.autoDebitAttempt.findUnique({ where: { reference } })
-        if (attempt) {
-          // Test mode verifies with amount 0, so only enforce amount/currency when a real amount came back.
-          const hasAmount = verified.amountNaira > 0
-          const ok = !hasAmount || (verified.currency === 'NGN' && verified.amountNaira >= attempt.creditAmount)
-          if (ok) {
-            await creditAutoDebitAttempt(prisma, {
-              reference,
-              settledAmountNaira: hasAmount ? verified.amountNaira : attempt.grossCharged,
-            })
-          }
-        }
-      }
-    } catch (e: unknown) {
-      // Swallow so Paystack gets a 200; the reconciliation sweep recovers anything missed.
-      console.error('auto-debit webhook credit failed:', e instanceof Error ? e.message : 'unknown error')
-    }
   }
 
   return NextResponse.json({ ok: true })

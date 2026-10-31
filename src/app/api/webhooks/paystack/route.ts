@@ -4,6 +4,8 @@ import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { money } from '@/lib/wallet-guard'
 import { creditRegistrationReward } from '@/lib/reward'
+import { verifyTransaction } from '@/lib/paystack'
+import { creditAutoDebitAttempt } from '@/lib/auto-debit-credit'
 
 export async function POST(req: NextRequest) {
   const body = await req.text()
@@ -36,6 +38,34 @@ export async function POST(req: NextRequest) {
   const meta = txData.metadata ?? {}
   const agentId = meta.agentId as string | undefined
   const customerId = meta.customerId as string | undefined
+
+  // Scheduled auto-debit charges ('autodebit-'): credit the attempt's contribution, NOT the grossed-up
+  // charge. Must run before the generic customer self-pay branch below. ('addenroll-' enrollment refs
+  // intentionally fall through to the generic branch.)
+  if (reference.startsWith('autodebit-')) {
+    try {
+      // Never trust the webhook body for crediting: re-verify with Paystack.
+      const verified = await verifyTransaction(reference)
+      if (verified.status === 'success') {
+        const attempt = await prisma.autoDebitAttempt.findUnique({ where: { reference } })
+        if (attempt) {
+          // Test mode verifies with amount 0, so only enforce amount/currency when a real amount came back.
+          const hasAmount = verified.amountNaira > 0
+          const ok = !hasAmount || (verified.currency === 'NGN' && verified.amountNaira >= attempt.creditAmount)
+          if (ok) {
+            await creditAutoDebitAttempt(prisma, {
+              reference,
+              settledAmountNaira: hasAmount ? verified.amountNaira : attempt.grossCharged,
+            })
+          }
+        }
+      }
+    } catch (e: unknown) {
+      // Swallow so Paystack gets a 200; the reconciliation sweep recovers anything missed.
+      console.error('auto-debit webhook credit failed:', e instanceof Error ? e.message : 'unknown error')
+    }
+    return NextResponse.json({ ok: true })
+  }
 
   const existing = await prisma.transaction.findUnique({ where: { ref: reference } })
   if (existing) return NextResponse.json({ ok: true })
