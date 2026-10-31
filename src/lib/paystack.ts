@@ -200,6 +200,11 @@ export async function verifyTransaction(reference: string): Promise<{
   raw: unknown
 }> {
   if (isTestMode() && reference.startsWith('addenroll-')) {
+    // test-mode hook: refs carrying 'noauth' simulate Paystack confirming the charge but returning
+    // no authorization at all (the card charged once but no saveable authorization came back).
+    if (reference.includes('noauth')) {
+      return { status: 'success', amountNaira: 50, currency: 'NGN', channel: 'card', gatewayResponse: 'Approved', raw: null }
+    }
     return {
       status: 'success',
       amountNaira: 50,

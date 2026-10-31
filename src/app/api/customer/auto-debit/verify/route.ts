@@ -63,10 +63,9 @@ export async function POST(req: NextRequest) {
   if (money(verified.amountNaira) !== money(intent.amount)) {
     return NextResponse.json({ error: 'Amount mismatch' }, { status: 400 })
   }
-  if (!verified.authorization) {
-    return NextResponse.json({ error: 'Card cannot be used for auto-debit' }, { status: 400 })
-  }
-  const authorization = verified.authorization
+  // A reusable authorization yields a mandate. If Paystack confirms the charge but returns no
+  // authorization (or a non-reusable one), there is no mandate — but the money WAS taken, so it
+  // must still be saved to the plan below (handoff #31), never silently dropped.
   const amount = money(intent.amount)
 
   const plan = intent.planId
@@ -76,7 +75,7 @@ export async function POST(req: NextRequest) {
     : null
   if (!plan) return NextResponse.json({ error: 'No active plan' }, { status: 400 })
 
-  const reusable = authorization.reusable === true
+  const reusable = verified.authorization?.reusable === true
   const email = customer.email ?? `${customer.customerId.toLowerCase()}@vochus.ng`
 
   try {
@@ -84,14 +83,14 @@ export async function POST(req: NextRequest) {
       const consumed = await consumePaymentIntent(tx, reference, { customerId: customer.id })
       if (!consumed) throw new RouteError('ALREADY_PROCESSED')
 
-      // Non-reusable card: no mandate, but the charge taken is still saved below.
-      if (reusable) {
+      // Non-reusable / no-authorization card: no mandate, but the charge taken is still saved below.
+      if (reusable && verified.authorization) {
         // 'exists' = already enrolled: idempotent, still credit the charge that was taken.
         const m = await createMandateFromAuthorization(tx, {
           customerId: customer.id,
           plan: { id: plan.id, source: plan.source, cadence: plan.cadence, dailyAmount: plan.dailyAmount },
           email,
-          authorization,
+          authorization: verified.authorization,
         })
         if ('error' in m) {
           if (m.error === 'not_reusable') throw new RouteError('NOT_SELF')
@@ -109,7 +108,7 @@ export async function POST(req: NextRequest) {
           amount,
           method: 'Paystack',
           status: 'Done',
-          note: reusable ? 'Auto-debit enrollment first charge' : 'Auto-debit enrollment charge saved (card not reusable)',
+          note: reusable ? 'Auto-debit enrollment first charge' : 'Auto-debit enrollment charge saved (no reusable card authorization)',
         },
       })
       await tx.savingsPlan.update({ where: { id: plan.id }, data: { balance: { increment: amount } } })

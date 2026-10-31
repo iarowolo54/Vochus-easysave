@@ -126,3 +126,28 @@ test('non-reusable card: no mandate, N50 credited once as saving, savedInstead; 
   assert.equal(await prisma.transaction.count({ where: { ref } }), 1)
   assert.equal(await prisma.autoDebitMandate.count({ where: { savingsPlanId: plan.id } }), 0)
 })
+
+test('success but no authorization returned: N50 still credited as saving, savedInstead; replay stays one credit (handoff #31)', async () => {
+  const { c, plan } = await mk(7)
+  // test-mode verifyTransaction returns success with NO authorization for refs carrying 'noauth'
+  const ref = `addenroll-noauth-${plan.id}-${rid}7`
+  refs.push(ref)
+  await prisma.paymentIntent.create({ data: { ref, actorType: 'customer', customerId: c.id, planId: plan.id, amount: 50 } })
+  const r = await call(c, ref)
+  assert.equal(r.status, 200)
+  assert.equal(r.body.active, false)
+  assert.equal(r.body.savedInstead, true)
+  assert.equal(await prisma.autoDebitMandate.count({ where: { savingsPlanId: plan.id } }), 0)
+  assert.equal((await prisma.savingsPlan.findUnique({ where: { id: plan.id } }))?.balance, 50)
+  const txs = await prisma.transaction.findMany({ where: { ref } })
+  assert.equal(txs.length, 1)
+  assert.equal(txs[0].type, 'saving')
+  assert.equal(txs[0].amount, 50)
+  assert.equal(txs[0].status, 'Done')
+
+  // Replay: the pending intent was consumed, so a second verify credits nothing more.
+  const r2 = await call(c, ref)
+  assert.equal(r2.status, 200)
+  assert.equal((await prisma.savingsPlan.findUnique({ where: { id: plan.id } }))?.balance, 50)
+  assert.equal(await prisma.transaction.count({ where: { ref } }), 1)
+})

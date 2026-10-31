@@ -85,6 +85,13 @@ export async function POST(req: NextRequest) {
   // duration, never a rate chosen by the requesting agent.
   const rateConfig = await prisma.interestRate.findUnique({ where: { durationDays: days } })
   if (!rateConfig) return NextResponse.json({ error: 'No interest rate is configured for this loan duration' }, { status: 400 })
+  // Honour the admin tier controls (handoff #29): a length can be turned off, or capped.
+  if (rateConfig.enabled === false) {
+    return NextResponse.json({ error: "This loan length isn't offered right now" }, { status: 400 })
+  }
+  if (rateConfig.maxAmount != null && p > rateConfig.maxAmount) {
+    return NextResponse.json({ error: `The largest loan for ${days} days is ₦${rateConfig.maxAmount.toLocaleString('en-NG')}` }, { status: 400 })
+  }
   const rate = rateConfig.rate
 
   const interest = (p * rate) / 100
