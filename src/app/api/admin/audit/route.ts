@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
+import { parsePaging } from '@/lib/paging'
 
 export async function GET(req: NextRequest) {
   const guard = await requireSuperAdmin()
@@ -10,6 +11,8 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const search = searchParams.get('search') ?? ''
   const action = searchParams.get('action') ?? ''
+
+  const { page, limit, skip } = parsePaging(searchParams)
 
   const where: Record<string, unknown> = {}
   if (action) where.action = { contains: action }
@@ -23,11 +26,10 @@ export async function GET(req: NextRequest) {
     ]
   }
 
-  const logs = await prisma.auditLog.findMany({
-    where,
-    orderBy: { createdAt: 'desc' },
-    take: 200,
-  })
+  const [total, logs] = await Promise.all([
+    prisma.auditLog.count({ where }),
+    prisma.auditLog.findMany({ where, orderBy: { createdAt: 'desc' }, take: limit, skip }),
+  ])
 
-  return NextResponse.json({ logs })
+  return NextResponse.json({ logs, total, page, limit })
 }

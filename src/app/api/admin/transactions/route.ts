@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
+import { parsePaging } from '@/lib/paging'
 
 export async function GET(req: NextRequest) {
   const guard = await requireSuperAdmin()
@@ -11,6 +12,8 @@ export async function GET(req: NextRequest) {
   const type = searchParams.get('type') ?? ''
   const date = searchParams.get('date') ?? ''
 
+  const { page, limit, skip } = parsePaging(searchParams)
+
   const where: any = {}
   if (type) where.type = type
   if (date) {
@@ -20,17 +23,24 @@ export async function GET(req: NextRequest) {
     where.createdAt = { gte: d, lt: next }
   }
 
-  const transactions = await prisma.transaction.findMany({
+  const [total, transactions] = await Promise.all([
+    prisma.transaction.count({ where }),
+    prisma.transaction.findMany({
     where,
     include: {
       agent: { select: { name: true, agentId: true } },
       customer: { select: { firstName: true, lastName: true, customerId: true } },
     },
     orderBy: { createdAt: 'desc' },
-    take: 200,
-  })
+    take: limit,
+    skip,
+  }),
+  ])
 
   return NextResponse.json({
+    total,
+    page,
+    limit,
     transactions: transactions.map(t => ({
       id: t.id,
       ref: t.ref,
