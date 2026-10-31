@@ -130,7 +130,19 @@ model SavingsPlan {
   notes             String?
   transactions      Transaction[]
   earlyRedemptions  EarlyRedemption[]
+  dayCoverages      PlanDayCoverage[]
 
+}
+
+model PlanDayCoverage {
+  id            String      @id @default(cuid())
+  savingsPlanId String
+  savingsPlan   SavingsPlan @relation(fields: [savingsPlanId], references: [id])
+  coversKey     String // local 'YYYY-MM-DD'
+  ref           String
+  createdAt     DateTime    @default(now())
+
+  @@unique([savingsPlanId, coversKey])
 }
 
 model Transaction {
@@ -577,6 +589,7 @@ model PaymentIntent {
   status     String    @default("Pending") // Pending | Done
   createdAt  DateTime  @default(now())
   consumedAt DateTime?
+  coversKeys String? // JSON array of day-keys
 
   @@index([customerId])
   @@index([agentId])
