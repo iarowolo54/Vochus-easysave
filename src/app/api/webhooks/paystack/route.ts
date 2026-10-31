@@ -57,6 +57,9 @@ export async function POST(req: NextRequest) {
               reference,
               settledAmountNaira: hasAmount ? verified.amountNaira : attempt.grossCharged,
             })
+          } else {
+            // Breadcrumb for reconciliation; the cron sweep still recovers it. No auth code / body.
+            console.warn(`[paystack webhook] autodebit credit skipped (amount/currency mismatch) attempt=${attempt.id} reference=${reference}`)
           }
         }
       }

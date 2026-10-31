@@ -75,7 +75,12 @@ test('Blocked card: unlink succeeds and clears the link', async () => {
   const after = await prisma.memberCard.findUniqueOrThrow({ where: { id: card.id } })
   assert.equal(after.customerId, null)
   assert.equal(after.agentId, null)
-  assert.equal(after.status, 'Unlinked')
+  assert.equal(after.status, 'Blocked') // unlink must not launder Blocked into Unlinked
+  // ...so it still cannot be relinked.
+  assert.equal((await patch(card.serial, { customerId: ids.custFree })).status, 400)
+  const again = await prisma.memberCard.findUniqueOrThrow({ where: { id: card.id } })
+  assert.equal(again.status, 'Blocked')
+  assert.equal(again.customerId, null)
 })
 
 test('Expired card: relink -> 400, card unchanged', async () => {

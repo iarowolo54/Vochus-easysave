@@ -26,7 +26,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ se
   if (action === 'unlink') {
     const updated = await prisma.memberCard.update({
       where: { serial },
-      data: { customerId: null, agentId: null, status: 'Unlinked', linkedAt: null },
+      // Preserve Blocked: unlinking must never launder a blocked card into a relinkable one.
+      data: { customerId: null, agentId: null, status: card.status === 'Blocked' ? 'Blocked' : 'Unlinked', linkedAt: null },
     })
     await logAudit({
       action: 'card_unlink',
