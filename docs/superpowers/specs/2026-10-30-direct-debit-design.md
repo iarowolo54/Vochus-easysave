@@ -79,8 +79,8 @@ the single most-requested convenience from the client.
 | D4 | **On failure: retry a few times, then notify + pause auto-debit only** (plan stays Active, customer can re-enable). | owner |
 | D5 | **Customer pays the Paystack fee** — the debit is grossed up so the full contribution still lands in savings. | owner |
 | D6 | **Mechanism: card recurring (`charge_authorization`) is the primary rail**; Paystack bank **Direct Debit** is an optional later rail, not in the first build. | builder call (see below) |
-| D7 | **Daily plans are debited weekly** (contributions batched), not daily. | builder call (see below) |
-| D8 | **Auto-debit stops at `maturityDate`** — fires on cadence boundaries from enrollment until maturity, never on/after it, so total pulled never exceeds the committed term. Final partial cycle is pro-rated to the days remaining; stops immediately if the plan leaves `Active`. | builder-check resolution |
+| D7 | **Daily plans are debited daily.** Owner decision 2026-10-31, overriding the earlier weekly-batching recommendation. | owner |
+| D8 | **Auto-debit stops at `maturityDate`** — fires on cadence boundaries from enrollment until maturity, never on/after it, so total pulled never exceeds the committed term. No debit fires on or after maturity (every cycle is one `dailyAmount`, so no pro-rating); stops immediately if the plan leaves `Active`. | builder-check resolution |
 | D9 | **Per-cycle amount = `plan.dailyAmount`** (one contribution), charged once per cadence period — NOT `dailyAmount × days`. Confirmed against the existing manual deposit path (`customer/paystack/init` defaults the deposit to `plan.dailyAmount`). | code-grounded |
 | D10 | **Per-attempt record + reconciliation.** A new `AutoDebitAttempt` row per cycle; the daily cron re-verifies any attempt stuck `processing` via `GET /transaction/verify/:reference`, so a charge that never produces a webhook is still reconciled and still advances the failure count. | builder-check resolution |
 | D11 | **Fee residual absorbed like the manual path; actual amounts recorded.** The plan is credited exactly `dailyAmount` (keeps interest/plan math exact); the card is charged the grossed-up amount (D5); any small gap between our gross-up estimate and Paystack's actual fee is absorbed by the merchant, exactly as the current manual deposit does (it credits the committed amount and doesn't reconcile the fee). The grossed-up charge, the estimated fee, and the actual settled amount are stored on the attempt for dispute support. **No `PlatformWallet` entry** — this is the customer's own money, unlike platform-funded interest. | code-grounded |
@@ -118,16 +118,14 @@ Research ([recurring charges](https://docs-v2.paystack.com/docs/payments/recurri
 So card recurring is the first rail. The data model (below) uses a neutral
 `channel` field so a Direct Debit rail can be added later without reshaping it.
 
-### D7 detail — daily plans debited weekly
-Card repeat charges can trigger bank 2FA (GTB/Access/UBA/Zenith/First can return
-`paused: true` + an `authorization_url`, which breaks unattended debit), and tiny
-daily debits fail often on a low-balance audience. Debiting a **daily** plan once a
-week for the week's worth of contributions (e.g. 7 × ₦100 = ₦700) saves the same
-money into the same plan, cuts failure surface ~7×, and is gentler on the customer's
-account. Weekly and monthly plans debit on their own cadence. *This is the one
-builder call that changes customer-visible timing; flagged for the owner to confirm
-on approval — if daily-means-daily is required, we debit daily and accept the higher
-failure rate.*
+### D7 detail — daily plans debited daily
+Owner decision (2026-10-31): a daily plan is debited every day for one day's
+contribution (`dailyAmount`), overriding the earlier recommendation to batch daily
+plans into weekly debits. The trade-off we accept: card repeat charges can trigger bank
+2FA (GTB/Access/UBA/Zenith/First can return `paused: true` + an `authorization_url`,
+which breaks unattended debit) and tiny daily debits fail more often on a low-balance
+audience, so the failure surface is higher than with weekly batching. Weekly and
+monthly plans debit on their own cadence.
 
 ---
 
@@ -219,8 +217,9 @@ Add two steps to the existing daily cron.
 - Select mandates where `status='active'` and `nextRunAt <= now` **and the plan is
   still `Active` and before `maturityDate`** (D8). A mandate whose plan has reached
   maturity is marked done and skipped — auto-debit never fires on/after maturity.
-- Compute this cycle's `creditAmount` = `plan.dailyAmount`, pro-rated down for a
-  final partial cycle so the committed term is never exceeded (D8/D9); compute
+- Compute this cycle's `creditAmount` = `plan.dailyAmount` for every cadence (one
+  contribution per cycle; no pro-rating needed since daily plans debit daily) and 0
+  on/after maturity (D8/D9); compute
   `grossCharged` from the fee gross-up (D5/D11).
 - Build `ref = autodebit-{planId}-{yyyymmdd}`; if a `Transaction` **or**
   `AutoDebitAttempt` with that `ref` exists, skip (idempotent).
@@ -301,15 +300,15 @@ without either a credit or a recorded, counted failure.
 ## Calls I made while you slept (review in the morning — none block the build)
 The owner approved the design and said to build overnight, so the builder-check's
 open questions were settled conservatively rather than waiting:
-- **D8 — termination:** auto-debit stops at `maturityDate`, final cycle pro-rated,
+- **D8 — termination:** auto-debit stops at `maturityDate` (no debit on/after it),
   never debits past the committed term. (If you'd rather it run until the goal
   amount is hit, or keep going until cancelled, say so — it's a one-line rule change.)
-- **D9 — per-cycle amount = `dailyAmount`** once per cadence (grounded in the existing
+- **D9 — per-cycle amount = `dailyAmount`** for every cadence, once per cycle (grounded in the existing
   manual-deposit code, not guessed).
 - **D11 — fee residual** absorbed by the merchant exactly like today's manual deposit;
   plan credited the full contribution; actual charged/settled amounts recorded.
-- **D7 — daily→weekly batching** (still my recommendation; flip to strictly-daily if
-  you want).
+- **D7 — daily plans debited daily** (owner decision 2026-10-31, overriding the earlier
+  weekly-batching recommendation).
 - **First-charge handling:** the ₦50 authorization charge is **applied to the plan**
   (customer loses nothing), not refunded.
 

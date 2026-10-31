@@ -61,7 +61,9 @@ test('self + reusable creates an active mandate with masked fields', async () =>
   assert.equal(m.expMonth, '12')
   assert.equal(m.expYear, '2030')
   assert.equal(m.amountPerCycle, 500)
-  assert.ok(m.nextRunAt.getTime() > before + 6 * 86_400_000)
+  // daily plan -> first run one day out (D7: daily is daily)
+  assert.ok(m.nextRunAt.getTime() > before + 23 * 3_600_000)
+  assert.ok(m.nextRunAt.getTime() < before + 2 * 86_400_000)
   assert.ok(!JSON.stringify(m).match(/\b\d{13,19}\b/), 'no raw PAN')
 })
 

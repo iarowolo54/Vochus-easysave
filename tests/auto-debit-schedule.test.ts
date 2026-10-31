@@ -4,10 +4,14 @@ import { autoDebitCadence, nextRunAt, cycleCreditAmount } from '../src/lib/auto-
 
 const d = (y: number, m: number, day: number) => new Date(Date.UTC(y, m - 1, day))
 
-test('autoDebitCadence batches daily to weekly', () => {
-  assert.equal(autoDebitCadence('daily'), 'weekly')
+test('autoDebitCadence maps each plan cadence to itself (daily is daily)', () => {
+  assert.equal(autoDebitCadence('daily'), 'daily')
   assert.equal(autoDebitCadence('weekly'), 'weekly')
   assert.equal(autoDebitCadence('monthly'), 'monthly')
+})
+
+test('nextRunAt daily adds 1 day', () => {
+  assert.equal(nextRunAt(d(2026, 1, 1), 'daily').toISOString(), d(2026, 1, 2).toISOString())
 })
 
 test('nextRunAt weekly adds 7 days', () => {
@@ -19,10 +23,10 @@ test('nextRunAt monthly clamps to month end', () => {
   assert.equal(nextRunAt(d(2026, 1, 15), 'monthly').toISOString(), d(2026, 2, 15).toISOString())
 })
 
-test('cycleCreditAmount daily plan batches 7 days, pro-rates the last batch', () => {
+test('cycleCreditAmount daily plan charges one day, zero at/after maturity', () => {
   const cycle = d(2026, 1, 1)
-  assert.equal(cycleCreditAmount({ dailyAmount: 100, cadence: 'daily', maturityDate: d(2026, 12, 1) }, cycle), 700)
-  assert.equal(cycleCreditAmount({ dailyAmount: 100, cadence: 'daily', maturityDate: d(2026, 1, 4) }, cycle), 300)
+  assert.equal(cycleCreditAmount({ dailyAmount: 100, cadence: 'daily', maturityDate: d(2026, 12, 1) }, cycle), 100)
+  assert.equal(cycleCreditAmount({ dailyAmount: 100, cadence: 'daily', maturityDate: d(2026, 1, 4) }, cycle), 100)
   assert.equal(cycleCreditAmount({ dailyAmount: 100, cadence: 'daily', maturityDate: cycle }, cycle), 0)
   assert.equal(cycleCreditAmount({ dailyAmount: 100, cadence: 'daily', maturityDate: d(2025, 12, 1) }, cycle), 0)
 })
