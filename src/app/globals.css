@@ -2001,6 +2001,7 @@ button.ui-bottom-nav-item { border: 0; background: none; cursor: pointer; font-f
 .ag-cal-head { display: flex; align-items: center; gap: var(--ui-s3); margin-bottom: var(--ui-s4); }
 .ag-cal-head .ui-avatar { width: 48px; height: 48px; }
 .ag-cal-record { min-height: 44px; font-size: var(--ui-fs-sm); text-decoration: none; flex-shrink: 0; }
+.ag-cal-catchup { margin-bottom: var(--ui-s4); text-decoration: none; }
 .ag-cal-layout { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--ui-s4); align-items: start; }
 @media (min-width: 1024px) { .ag-cal-layout { grid-template-columns: minmax(0, 1fr) 340px; } }
 .ag-cal-side { display: grid; gap: var(--ui-s3); min-width: 0; }

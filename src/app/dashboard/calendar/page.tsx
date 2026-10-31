@@ -247,6 +247,13 @@ function CalendarPage() {
         </Link>
       </section>
 
+      {plan && (
+        <Link href={`/dashboard/savings?cid=${encodeURIComponent(selected.customerId)}&bulk=1`}
+          className="ui-btn ui-btn--secondary ui-btn--block ag-cal-catchup">
+          <Icons.calendar size={18} aria-hidden="true" /> Catch up or pay ahead
+        </Link>
+      )}
+
       <div className="ag-cal-layout">
         <section className="ui-card ag-month" aria-label={`${MONTHS[calMonth]} ${calYear}`}>
           <div className="ag-month-nav">

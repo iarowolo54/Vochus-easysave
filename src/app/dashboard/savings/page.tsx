@@ -162,6 +162,12 @@ function SavingsContent() {
       .catch(() => {})
   }, [searchParams])
 
+  // Deep-link from the habit calendar's "Catch up or pay ahead" action lands straight in the
+  // several-days (bulk) picker, so agents don't have to find the toggle themselves.
+  useEffect(() => {
+    if (searchParams.get('bulk') === '1') setBulkMode(true)
+  }, [searchParams])
+
   const search = useCallback(async () => {
     const q = query.trim()
     if (!q) { setResults([]); setSearchedFor(''); setSearchFailed(false); return }
