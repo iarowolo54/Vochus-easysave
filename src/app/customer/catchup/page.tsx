@@ -1,5 +1,5 @@
 'use client'
-import { Suspense, useMemo, useState } from 'react'
+import { Suspense, useEffect, useMemo, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { CatchupCalendar } from '@/components/customer/SavingsCard'
 import { useCustomerMe } from '@/components/customer/useCustomerMe'
@@ -39,6 +39,13 @@ function CatchupScreen() {
     [plan, deposits],
   )
   const selectable = useMemo(() => new Set(selectableKeys(slots)), [slots])
+
+  // Returning from Paystack via the back/forward cache restores this page with `paying` still true.
+  useEffect(() => {
+    const onShow = (e: PageTransitionEvent) => { if (e.persisted) setPaying(false) }
+    window.addEventListener('pageshow', onShow)
+    return () => window.removeEventListener('pageshow', onShow)
+  }, [])
 
   const back = () => router.push('/customer/dashboard')
 
@@ -107,9 +114,11 @@ function CatchupScreen() {
     })
   }
 
+  const allChosen = count > 0 && count >= Math.min(selectable.size, MAX_CATCHUP_KEYS)
+
   function selectAll() {
     setError('')
-    setSelected(new Set([...selectable].slice(0, MAX_CATCHUP_KEYS)))
+    setSelected(allChosen ? new Set() : new Set([...selectable].slice(0, MAX_CATCHUP_KEYS)))
   }
 
   async function pay() {
@@ -136,8 +145,9 @@ function CatchupScreen() {
           </p>
           <CatchupCalendar plan={plan} deposits={deposits} selectable={selectable} selected={selected} onToggle={toggle} />
           <button type="button" className="ui-link" onClick={selectAll} disabled={paying}>
-            Select all missed {unit}s ({Math.min(selectable.size, MAX_CATCHUP_KEYS)})
+            {allChosen ? 'Clear selection' : `Select all missed ${unit}s (${Math.min(selectable.size, MAX_CATCHUP_KEYS)})`}
           </button>
+          <p className="ui-catchup-legend">Dashed {unit}s are missed: tap to pay. Green {unit}s are already paid. A tick means selected.</p>
         </section>
 
         <FormError message={error} />
@@ -149,8 +159,9 @@ function CatchupScreen() {
           </div>
           {atCap && <p className="ui-catchup-note">You can catch up on up to {MAX_CATCHUP_KEYS} {unit}s at a time.</p>}
           <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={pay} disabled={count === 0 || paying}>
-            {paying ? 'Opening payment…' : count === 0 ? `Select a ${unit} to pay` : hide ? 'Pay' : `Pay ${formatNaira(total)}`}
+            {paying ? 'Opening payment…' : count === 0 ? `Select a ${unit} to pay` : hide ? 'Pay by card' : `Pay ${formatNaira(total)} by card`}
           </button>
+          <p className="ui-catchup-note">You’ll enter your card details on the next screen.</p>
         </div>
       </main>
     </div>
