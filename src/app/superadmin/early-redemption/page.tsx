@@ -10,6 +10,7 @@ import {
   TableSkeleton, dateTime, nairaKobo, useDebounced, useToast,
   ResultModal, type Result, type ResultRow,
 } from '../_components/admin-ui'
+import { ManualModeBanner, usePayoutMode } from '../_components/payout-mode'
 
 interface RedemptionRecord {
   id: string
@@ -161,6 +162,7 @@ export default function RedemptionsPage() {
   const [pinValue, setPinValue] = useState('')
   const [pinError, setPinError] = useState('')
   const [approveError, setApproveError] = useState('')
+  const manual = usePayoutMode()?.customer === 'manual'
   const [pinLoading, setPinLoading] = useState(false)
   const [otpModal, setOtpModal] = useState<{ id: string; ref: string; customerName: string; amount: number } | null>(null)
   const [result, setResult] = useState<Result | null>(null)
@@ -363,12 +365,15 @@ export default function RedemptionsPage() {
         { label: 'Reference', value: target.ref },
       ]
       if (isBank(target.payoutMethod)) {
-        const sent = d.bankTransferStatus === 'success'
+        const wasManual = d.bankTransferStatus === 'manual'
+        const sent = d.bankTransferStatus === 'success' || wasManual
         setResult({
-          heading: sent ? 'Payout sent' : 'Payout approved',
-          title: sent ? `${nairaKobo(target.amount)} sent` : 'Paystack is sending the money',
+          heading: wasManual ? 'Payout recorded' : sent ? 'Payout sent' : 'Payout approved',
+          title: wasManual ? `${nairaKobo(target.amount)} marked as paid` : sent ? `${nairaKobo(target.amount)} sent` : 'Paystack is sending the money',
           pending: !sent,
-          text: sent
+          text: wasManual
+            ? <>Recorded as paid manually. No Paystack transfer was made, so make sure {target.accountName ?? target.customerName} has been paid. The plan is closed.</>
+            : sent
             ? <>Paystack has paid {target.accountName ?? target.customerName}’s bank account. The plan is closed.</>
             : <>The plan is closed. The transfer usually lands within minutes; check the request’s transfer status to confirm.</>,
           rows: [...base, { label: 'Account', value: `${target.accountName ?? '—'} · ${target.bankName ?? '—'} ${last4(target.accountNumber)}` }, { label: 'Net payout', value: nairaKobo(target.amount), total: true }],
@@ -451,7 +456,7 @@ export default function RedemptionsPage() {
     if (r.status === 'Finalizing') return <span className="bdg bdg-b">Finalising payout</span>
     return (
       <div className="a-row-actions">
-        <button type="button" className="btn btn-sm btn-green" onClick={() => openApprove(r)}>Approve</button>
+        <button type="button" className="btn btn-sm btn-green" onClick={() => openApprove(r)}>{manual && isBank(r.payoutMethod) ? 'Mark as paid' : 'Approve'}</button>
         <button type="button" className="btn btn-sm btn-outline" onClick={() => openReject(r)}>Reject</button>
       </div>
     )
@@ -471,12 +476,13 @@ export default function RedemptionsPage() {
     <>
       <PageHeader
         title="Redemptions"
-        sub="Approve early and matured savings payouts, and see every payout made."
+        sub={manual ? 'Approve early and matured savings payouts, and see every payout made. Bank transfers are paid by you, then marked as paid.' : 'Approve early and matured savings payouts, and see every payout made.'}
         actions={<>
           <button type="button" className="btn btn-outline" onClick={exportCurrent}><Icons.download size={16} aria-hidden="true" /> Export</button>
           <button type="button" className="btn btn-green" onClick={openNewRequest}><Icons.add size={18} aria-hidden="true" /> New request</button>
         </>}
       />
+      {manual && <ManualModeBanner> Cash payouts are unchanged.</ManualModeBanner>}
 
       <div className="stats-grid">
         <div className="stat">
@@ -763,11 +769,11 @@ export default function RedemptionsPage() {
 
       {/* Approve: review + PIN */}
       {pinModal && (
-        <Modal error={approveError || undefined} icon="redeem" tone="money" title="Approve payout" sub={`${pinModal.ref}`} onClose={() => { setPinModal(null); setPinValue(''); setPinError(''); setApproveError('') }} busy={pinLoading}
+        <Modal error={approveError || undefined} icon="redeem" tone="money" title={manual && isBank(pinModal.payoutMethod) ? 'Mark payout as paid' : 'Approve payout'} sub={`${pinModal.ref}`} onClose={() => { setPinModal(null); setPinValue(''); setPinError(''); setApproveError('') }} busy={pinLoading}
           footer={<>
             <button type="button" className="btn btn-outline" onClick={() => { setPinModal(null); setPinValue(''); setPinError(''); setApproveError('') }} disabled={pinLoading}>Cancel</button>
             <button type="button" className="btn btn-green" disabled={pinLoading || !pinValue} onClick={confirmApprove}>
-              {pinLoading ? 'Approving…' : `Approve ${nairaKobo(pinModal.amount)}`}
+              {pinLoading ? ((manual && isBank(pinModal.payoutMethod)) ? 'Saving…' : 'Approving…') : (manual && isBank(pinModal.payoutMethod)) ? `Mark ${nairaKobo(pinModal.amount)} as paid` : `Approve ${nairaKobo(pinModal.amount)}`}
             </button>
           </>}>
           <div className="dlg-hero">
@@ -776,7 +782,7 @@ export default function RedemptionsPage() {
             <div className="dlg-hero-sub">To <strong>{pinModal.customerName}</strong> ({pinModal.customerId})</div>
             {isBank(pinModal.payoutMethod) && pinModal.bankName ? (
               <div className="dlg-hero-extra">
-                <span className="dlg-hero-lbl">Paystack bank transfer</span>
+                <span className="dlg-hero-lbl">{(manual && isBank(pinModal.payoutMethod)) ? 'Bank transfer (you pay)' : 'Paystack bank transfer'}</span>
                 <strong>{pinModal.accountName}</strong>
                 <span>{pinModal.bankName} {last4(pinModal.accountNumber)}</span>
               </div>
@@ -785,7 +791,9 @@ export default function RedemptionsPage() {
             )}
           </div>
           <p className="a-hint cm-gap">
-            {isBank(pinModal.payoutMethod)
+            {(manual && isBank(pinModal.payoutMethod))
+              ? 'Paystack is bypassed. Only confirm after you have paid this customer’s bank account yourself. The plan closes when you confirm.'
+              : isBank(pinModal.payoutMethod)
               ? 'Paystack sends the money as soon as you approve. Paystack may text a code to your admin phone to release it.'
               : 'The agent pays the customer in cash, and their wallet is credited back with this amount. The customer’s plan closes.'}
           </p>
@@ -839,7 +847,7 @@ export default function RedemptionsPage() {
         <Modal icon="redeem" title={detail.ref} sub="Redemption request" onClose={() => setDetail(null)}
           footer={DECIDABLE.includes(detail.status) ? <>
             <button type="button" className="btn btn-outline" onClick={() => { const r = detail; setDetail(null); openReject(r) }}>Reject</button>
-            <button type="button" className="btn btn-green" onClick={() => { const r = detail; setDetail(null); openApprove(r) }}>Approve</button>
+            <button type="button" className="btn btn-green" onClick={() => { const r = detail; setDetail(null); openApprove(r) }}>{manual && isBank(detail.payoutMethod) ? 'Mark as paid' : 'Approve'}</button>
           </> : detail.status === 'AwaitingOTP' ? <>
             <button type="button" className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>
             <button type="button" className="btn btn-green" onClick={() => { const r = detail; setDetail(null); setOtpValue(''); setOtpError(''); setOtpModal({ id: r.id, ref: r.ref, customerName: r.customerName, amount: r.netPayout }) }}>Enter Paystack code</button>

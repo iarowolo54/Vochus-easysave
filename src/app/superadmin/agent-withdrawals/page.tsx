@@ -8,6 +8,7 @@ import {
   AmountHero, Empty, Field, Ledger, LedgerRow, LoadError, Modal, PageHeader, Pager, TableSkeleton, dateTime, naira, useToast,
   ResultModal, type Result,
 } from '../_components/admin-ui'
+import { ManualModeBanner, usePayoutMode } from '../_components/payout-mode'
 
 interface WithdrawalRecord {
   id: string
@@ -59,7 +60,7 @@ function StatusBadge({ s }: { s: string }) {
 }
 
 const PAYSTACK: Record<string, string> = {
-  success: 'Sent', pending: 'Pending', otp: 'Needs OTP', failed: 'Failed', reversed: 'Reversed', processing: 'Processing',
+  success: 'Sent', pending: 'Pending', otp: 'Needs OTP', failed: 'Failed', reversed: 'Reversed', processing: 'Processing', manual: 'Paid manually',
 }
 const paystackLabel = (s: string | null) => s ? (PAYSTACK[s] ?? s) : '—'
 const last4 = (n: string | null) => n ? `••••${n.slice(-4)}` : '—'
@@ -78,6 +79,8 @@ export default function AgentWithdrawalsPage() {
   const [toastNode, toast] = useToast()
   const [detailRecord, setDetailRecord] = useState<WithdrawalRecord | null>(null)
   const [verifying, setVerifying] = useState<string | null>(null)
+  const manual = usePayoutMode()?.agent === 'manual'
+  const [transferRef, setTransferRef] = useState('')
 
   const [pinModal, setPinModal] = useState<WithdrawalRecord | null>(null)
   const [pinValue, setPinValue] = useState('')
@@ -117,7 +120,7 @@ export default function AgentWithdrawalsPage() {
   const history = data.records.filter(r => !PENDING_STATUSES.includes(r.status))
   const historyPage = history.slice((histPage - 1) * PAGE_SIZE, histPage * PAGE_SIZE)
 
-  function openApprove(r: WithdrawalRecord) { setDetailRecord(null); setPinModal(r); setPinValue(''); setPinError(''); setApproveError('') }
+  function openApprove(r: WithdrawalRecord) { setDetailRecord(null); setPinModal(r); setPinValue(''); setPinError(''); setApproveError(''); setTransferRef('') }
   function openReject(r: WithdrawalRecord) { setDetailRecord(null); setRejectModal(r); setRejectNote(''); setRejectError('') }
   function openOtp(r: WithdrawalRecord) { setDetailRecord(null); setOtpModal({ id: r.id, ref: r.ref, agentName: r.agentName, amount: r.amount }); setOtpValue(''); setOtpError('') }
 
@@ -128,7 +131,7 @@ export default function AgentWithdrawalsPage() {
     try {
       const res = await fetch(`/api/admin/agent-withdrawal/${pinModal.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'approve', pin: pinValue }),
+        body: JSON.stringify(manual && transferRef.trim() ? { action: 'approve', pin: pinValue, adminNote: transferRef.trim() } : { action: 'approve', pin: pinValue }),
       })
       const d = await readJson(res)
       if (!res.ok) {
@@ -142,12 +145,15 @@ export default function AgentWithdrawalsPage() {
         setOtpModal({ id: pend.id, ref: pend.ref, agentName: pend.agentName, amount: pend.amount }); setOtpValue(''); setOtpError('')
         toast('Paystack sent an OTP. Enter it to finish the payout.')
       } else {
-        const sent = d.bankTransferStatus === 'success'
+        const wasManual = d.bankTransferStatus === 'manual'
+        const sent = d.bankTransferStatus === 'success' || wasManual
         setResult({
           heading: sent ? 'Withdrawal paid' : 'Withdrawal approved',
-          title: sent ? `${naira(pend.amount)} sent` : 'Paystack is sending the money',
+          title: wasManual ? `${naira(pend.amount)} marked as paid` : sent ? `${naira(pend.amount)} sent` : 'Paystack is sending the money',
           pending: !sent,
-          text: sent
+          text: wasManual
+            ? <>Recorded as paid manually. No Paystack transfer was made, so make sure {pend.agentName} has been paid.</>
+            : sent
             ? <>Paystack has paid {pend.agentName}’s bank account.</>
             : <>It usually lands within minutes. Use <strong>Check status</strong> on the request to confirm it’s paid.</>,
           rows: [
@@ -235,7 +241,7 @@ export default function AgentWithdrawalsPage() {
       </button>
     )
     return <>
-      <button type="button" className="btn btn-sm btn-green" onClick={() => openApprove(r)} aria-label={`Approve ${naira(r.amount)} for ${r.agentName}`}>Approve</button>
+      <button type="button" className="btn btn-sm btn-green" onClick={() => openApprove(r)} aria-label={`${manual ? 'Mark as paid' : 'Approve'} ${naira(r.amount)} for ${r.agentName}`}>{manual ? 'Mark as paid' : 'Approve'}</button>
       <button type="button" className="btn btn-sm btn-outline" onClick={() => openReject(r)} aria-label={`Reject ${naira(r.amount)} for ${r.agentName}`}>Reject</button>
     </>
   }
@@ -245,7 +251,8 @@ export default function AgentWithdrawalsPage() {
 
   return (
     <>
-      <PageHeader title="Agent withdrawals" sub="Agents asking to withdraw their commission to a bank account. Approving sends the money through Paystack." />
+      <PageHeader title="Agent withdrawals" sub={manual ? 'Agents asking to withdraw their commission to a bank account. You pay them yourself, then mark the request as paid.' : 'Agents asking to withdraw their commission to a bank account. Approving sends the money through Paystack.'} />
+      {manual && <ManualModeBanner />}
 
       <div className="stats-grid">
         <div className="stat"><div className="stat-lbl">Waiting for you</div><div className={`stat-val${data.pending ? ' amber' : ''}`}>{statVal(data.pending.toLocaleString('en-NG'))}</div><div className="stat-sub">Need approval</div></div>
@@ -354,7 +361,7 @@ export default function AgentWithdrawalsPage() {
               : detailRecord.status === 'Processing' || detailRecord.status === 'Finalizing' ? <button type="button" className="btn btn-outline" disabled={verifying === detailRecord.id} onClick={() => { const id = detailRecord.id; setDetailRecord(null); verify(id) }}>Check status with Paystack</button>
               : <>
                 <button type="button" className="btn btn-outline" onClick={() => openReject(detailRecord)}>Reject</button>
-                <button type="button" className="btn btn-green" onClick={() => openApprove(detailRecord)}>Approve {naira(detailRecord.amount)}</button>
+                <button type="button" className="btn btn-green" onClick={() => openApprove(detailRecord)}>{manual ? 'Mark as paid' : 'Approve'} {naira(detailRecord.amount)}</button>
               </>
           ) : <button type="button" className="btn btn-outline" onClick={() => setDetailRecord(null)}>Close</button>}>
           <h3 className="dlg-sec-h">Withdrawal</h3>
@@ -391,12 +398,12 @@ export default function AgentWithdrawalsPage() {
       )}
 
       {pinModal && (
-        <Modal error={approveError || undefined} icon="withdraw" tone="money" title="Approve this withdrawal?" sub="Enter your approval PIN. The money is sent through Paystack straight away."
+        <Modal error={approveError || undefined} icon="withdraw" tone="money" title={manual ? 'Mark this withdrawal as paid?' : 'Approve this withdrawal?'} sub={manual ? 'Enter your approval PIN. Paystack is bypassed. Only confirm after you have paid the agent yourself.' : 'Enter your approval PIN. The money is sent through Paystack straight away.'}
           onClose={() => { setPinModal(null); setPinValue(''); setPinError(''); setApproveError('') }} busy={pinLoading}
           footnote={<><Icons.audit size={14} aria-hidden="true" /> Recorded in the audit log</>}
           footer={<>
             <button type="button" className="btn btn-outline" onClick={() => { setPinModal(null); setPinValue(''); setPinError(''); setApproveError('') }} disabled={pinLoading}>Cancel</button>
-            <button type="button" className="btn btn-green" disabled={pinLoading || !pinValue} onClick={confirmApprove}>{pinLoading ? 'Sending…' : `Approve and send ${naira(pinModal.amount)}`}</button>
+            <button type="button" className="btn btn-green" disabled={pinLoading || !pinValue} onClick={confirmApprove}>{pinLoading ? (manual ? 'Saving…' : 'Sending…') : manual ? `Mark ${naira(pinModal.amount)} as paid` : `Approve and send ${naira(pinModal.amount)}`}</button>
           </>}>
           <AmountHero label="You’re sending" amount={naira(pinModal.amount)} sub={<>to <strong>{pinModal.agentName}</strong> · {pinModal.agentDisplayId}</>} />
           <Ledger>
@@ -404,6 +411,12 @@ export default function AgentWithdrawalsPage() {
             <LedgerRow label="Bank">{pinModal.bankName ?? '—'} · {last4(pinModal.accountNumber)}</LedgerRow>
           </Ledger>
           <form onSubmit={e => { e.preventDefault(); confirmApprove() }} noValidate>
+            {manual && (
+              <Field id="wd-ref" label="Transfer reference (optional)" hint="Your bank transfer reference. It is saved with the payout.">
+                <input id="wd-ref" className="a-input" type="text" maxLength={120} autoComplete="off"
+                  value={transferRef} onChange={e => setTransferRef(e.target.value)} />
+              </Field>
+            )}
             <Field id="wd-pin" label="Approval PIN" error={pinError}>
               <input id="wd-pin" className="a-input am-pin" type="password" inputMode="numeric" maxLength={6} autoComplete="off"
                 value={pinValue} aria-invalid={!!pinError} placeholder="••••"
