@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requirePermission, adminActor } from '@/lib/admin-guard'
+import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { getPayoutMode, type PayoutChannel, type PayoutMode } from '@/lib/payout-mode'
@@ -41,7 +41,6 @@ export async function POST(req: NextRequest) {
     create: { key: SETTING_KEY, value: JSON.stringify(value) },
   })
 
-  const actor = adminActor(session)
   logAudit({
     action: 'payout_mode_updated',
     entity: 'PlatformSetting',
