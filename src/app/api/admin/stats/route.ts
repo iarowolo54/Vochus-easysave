@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server'
-import { requireSuperAdmin } from '@/lib/admin-guard'
+import { requireAdminArea } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 
 export async function GET() {
-  const guard = await requireSuperAdmin()
+  const guard = await requireAdminArea()
   if (!guard.ok) return guard.response
 
   const [

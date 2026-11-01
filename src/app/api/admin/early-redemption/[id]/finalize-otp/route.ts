@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { requireSuperAdmin } from '@/lib/admin-guard'
+import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { finalizeTransfer, PaystackRejected } from '@/lib/paystack'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
@@ -8,7 +8,7 @@ import { logAudit } from '@/lib/audit'
 import { interestPayoutOps } from '@/lib/redemption-interest-ops'
 
 export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
-  const guard = await requireSuperAdmin()
+  const guard = await requirePermission('customers')
   if (!guard.ok) return guard.response
   const session = guard.session
 

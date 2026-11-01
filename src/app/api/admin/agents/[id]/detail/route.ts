@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireSuperAdmin } from '@/lib/admin-guard'
+import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 
 // Explicit selects only: never return password/PIN hashes, tokens, BVN/NIN, device ids or base64 blobs.
@@ -8,7 +8,7 @@ const txSelect = {
 } as const
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireSuperAdmin()
+  const guard = await requirePermission('agents')
   if (!guard.ok) return guard.response
 
   const { id } = await params

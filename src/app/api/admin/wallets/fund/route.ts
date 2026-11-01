@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { randomBytes } from 'crypto'
-import { requireSuperAdmin, adminActor } from '@/lib/admin-guard'
+import { requirePermission, adminActor } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { isValidAmount, MAX_ADMIN_FUND } from '@/lib/wallet-guard'
 
 export async function POST(req: NextRequest) {
-  const guard = await requireSuperAdmin()
+  const guard = await requirePermission('money')
   if (!guard.ok) return guard.response
   const session = guard.session
 

@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireSuperAdmin } from '@/lib/admin-guard'
+import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 
 export async function GET(req: NextRequest) {
-  const guard = await requireSuperAdmin()
+  const guard = await requirePermission('money')
   if (!guard.ok) return guard.response
   const session = guard.session
 

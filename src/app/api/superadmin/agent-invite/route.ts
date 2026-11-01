@@ -1,12 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireSuperAdmin } from '@/lib/admin-guard'
+import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { randomBytes } from 'crypto'
 import { sendMail } from '@/lib/mail'
 import { logAudit } from '@/lib/audit'
 
 export async function POST(req: NextRequest) {
-  const guard = await requireSuperAdmin()
+  const guard = await requirePermission('agents')
   if (!guard.ok) return guard.response
   const session = guard.session
 
@@ -82,7 +82,7 @@ export async function POST(req: NextRequest) {
 }
 
 export async function GET(req: NextRequest) {
-  const guard = await requireSuperAdmin()
+  const guard = await requirePermission('agents')
   if (!guard.ok) return guard.response
   const session = guard.session
 

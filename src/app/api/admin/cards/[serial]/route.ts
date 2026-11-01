@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireSuperAdmin } from '@/lib/admin-guard'
+import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 
@@ -8,7 +8,7 @@ import { logAudit } from '@/lib/audit'
 //   PATCH { action: "unlink" }      -> clears the link
 //   PATCH { customerId: "<id>" }    -> relinks to that customer
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ serial: string }> }) {
-  const guard = await requireSuperAdmin()
+  const guard = await requirePermission('cards')
   if (!guard.ok) return guard.response
 
   const { serial } = await params

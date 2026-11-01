@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { requireSuperAdmin } from '@/lib/admin-guard'
+import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { verifyApprovalPin } from '@/lib/approval-pin'
 import { createRecipient, initiateTransfer } from '@/lib/paystack'
@@ -51,7 +51,7 @@ async function notifyManualOutcome(
 const conflict = (error = 'Already processed') => NextResponse.json({ error }, { status: 409 })
 
 export async function PATCH(req: Request, context: { params: Promise<{ id: string }> }) {
-  const guard = await requireSuperAdmin()
+  const guard = await requirePermission('customers')
   if (!guard.ok) return guard.response
   const session = guard.session
 

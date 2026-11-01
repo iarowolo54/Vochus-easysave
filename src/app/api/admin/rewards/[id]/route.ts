@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireSuperAdmin, isNotFound, adminActor } from '@/lib/admin-guard'
+import { requirePermission, isNotFound, adminActor } from '@/lib/admin-guard'
 import { logAudit } from '@/lib/audit'
 import { prisma } from '@/lib/prisma'
 
 export async function PATCH(req: NextRequest, context: { params: Promise<{ id: string }> }) {
-  const guard = await requireSuperAdmin()
+  const guard = await requirePermission('agents')
   if (!guard.ok) return guard.response
   const session = guard.session
 
@@ -64,7 +64,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
 }
 
 export async function DELETE(_req: NextRequest, context: { params: Promise<{ id: string }> }) {
-  const guard = await requireSuperAdmin()
+  const guard = await requirePermission('agents')
   if (!guard.ok) return guard.response
   const session = guard.session
 

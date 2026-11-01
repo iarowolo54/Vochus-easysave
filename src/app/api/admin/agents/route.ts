@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireSuperAdmin, adminActor } from '@/lib/admin-guard'
+import { requirePermission, adminActor } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import bcrypt from 'bcryptjs'
 import { randomBytes } from 'crypto'
@@ -10,7 +10,7 @@ import { findIdentityConflict } from '@/lib/identity'
 import { identityConflictResponse } from '@/lib/identity-response'
 
 export async function GET(req: NextRequest) {
-  const guard = await requireSuperAdmin()
+  const guard = await requirePermission('agents')
   if (!guard.ok) return guard.response
   const session = guard.session
 
@@ -72,7 +72,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-  const guard = await requireSuperAdmin()
+  const guard = await requirePermission('agents')
   if (!guard.ok) return guard.response
   const session = guard.session
 

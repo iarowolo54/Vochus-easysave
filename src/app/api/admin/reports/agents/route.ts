@@ -1,10 +1,10 @@
-import { requireSuperAdmin } from '@/lib/admin-guard'
+import { requirePermission } from '@/lib/admin-guard'
 import { agentReportCsv, buildAgentReport } from '@/lib/agent-report'
 
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const guard = await requireSuperAdmin()
+  const guard = await requirePermission('oversight')
   if (!guard.ok) return guard.response
 
   const now = new Date()

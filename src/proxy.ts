@@ -10,7 +10,9 @@
  *     three actors, enforced server-side via the pure `decideForRequest` core.
  *  2. Authorization (preserved from the prior proxy, REQUIRED by
  *     .claude/rules/auth-security.md): admin API + superadmin pages must check
- *     `role === 'superadmin'`, not merely a decodable cookie — the agent and
+ *     the role, not merely a decodable cookie. Only `superadmin` or `staff`
+ *     roles are admitted; per-area permissions are enforced downstream in the
+ *     route guards (`requirePermission` / `requireAdminArea`). The agent and
  *     admin NextAuth configs share NEXTAUTH_SECRET, so an agent token placed in
  *     the admin cookie decodes fine and must still be rejected on role.
  *

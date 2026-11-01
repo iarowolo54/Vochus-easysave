@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireSuperAdmin } from '@/lib/admin-guard'
+import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 
 export async function GET() {
-  const guard = await requireSuperAdmin()
+  const guard = await requirePermission('customers')
   if (!guard.ok) return guard.response
   const session = guard.session
   const rates = await prisma.interestRate.findMany({ orderBy: { durationDays: 'asc' } })
@@ -12,7 +12,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const guard = await requireSuperAdmin()
+  const guard = await requirePermission('customers')
   if (!guard.ok) return guard.response
   const session = guard.session
 

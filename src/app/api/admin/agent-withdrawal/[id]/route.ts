@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server'
-import { requireSuperAdmin } from '@/lib/admin-guard'
+import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { verifyApprovalPin } from '@/lib/approval-pin'
 import { createRecipient, initiateTransfer, resolveAccount } from '@/lib/paystack'
@@ -8,7 +8,7 @@ import { getPayoutMode } from '@/lib/payout-mode'
 import { notifyAgentPayoutPaid, notifyAgentPayoutDeclined } from '@/lib/payout-notify'
 
 export async function PATCH(req: Request, context: { params: Promise<{ id: string }> }) {
-  const guard = await requireSuperAdmin()
+  const guard = await requirePermission('agents')
   if (!guard.ok) return guard.response
   const session = guard.session
 

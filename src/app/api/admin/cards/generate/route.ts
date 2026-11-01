@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireSuperAdmin, adminActor } from '@/lib/admin-guard'
+import { requirePermission, adminActor } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { createCardBatch } from '@/lib/member-card'
@@ -7,7 +7,7 @@ import { createCardBatch } from '@/lib/member-card'
 const MAX_BATCH = 5000
 
 export async function POST(req: NextRequest) {
-  const guard = await requireSuperAdmin()
+  const guard = await requirePermission('cards')
   if (!guard.ok) return guard.response
 
   const body = await req.json().catch(() => null)

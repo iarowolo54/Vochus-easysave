@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server'
 import { randomBytes } from 'crypto'
-import { requireSuperAdmin } from '@/lib/admin-guard'
+import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
@@ -14,7 +14,7 @@ function genRef() {
 }
 
 export async function GET() {
-  const guard = await requireSuperAdmin()
+  const guard = await requirePermission('customers')
   if (!guard.ok) return guard.response
   const session = guard.session
 
@@ -110,7 +110,7 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const guard = await requireSuperAdmin()
+  const guard = await requirePermission('customers')
   if (!guard.ok) return guard.response
   const session = guard.session
 
