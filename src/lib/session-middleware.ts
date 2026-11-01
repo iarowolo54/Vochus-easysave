@@ -62,9 +62,24 @@ export interface DecideInput {
   decoders: Record<string, Decoder | undefined>
 }
 
+/**
+ * Per-cookie validity decoupled from any cookie action. The proxy's
+ * authorization (admin role, superadmin-page gate) keys off THIS, not off a
+ * slide action — a valid cookie on a non-heartbeat request has no slide action
+ * but is still a valid session.
+ */
+export interface CookieState {
+  cookieName: string
+  actor: Actor
+  status: 'valid' | 'cleared'
+  /** decoded claims; present only when status === 'valid'. */
+  claims?: Record<string, unknown>
+}
+
 export interface DecideResult {
   cookieActions: CookieAction[]
   redirectTo?: string
+  cookieStates: CookieState[]
 }
 
 /**
@@ -80,9 +95,25 @@ function resolveLoginAt(decoded: DecodedToken, nowSec: number): number {
   return nowSec
 }
 
+/**
+ * The idle window is EXTENDED (cookie re-issued with a fresh exp) only on the
+ * activity heartbeat. Every other matched request still DECODES + ENFORCES
+ * (clears an invalid/expired/past-cap cookie and drives page redirects) but a
+ * valid cookie is left UNTOUCHED — otherwise background pollers (chat/redeem
+ * every few seconds) would keep a session alive forever and idle never fires.
+ */
+export const HEARTBEAT_PATH = '/api/session/ping'
+
 export async function decideForRequest(input: DecideInput): Promise<DecideResult> {
   const { pathname, cookies, nowSec, decoders } = input
   const cookieActions: CookieAction[] = []
+  const cookieStates: CookieState[] = []
+  // Extend the idle window ONLY on the heartbeat; otherwise just enforce.
+  const extend = pathname === HEARTBEAT_PATH
+  // Validity per cookie, so redirects (and the proxy's authz) key off VALIDITY
+  // (not a slide action — a valid cookie on a normal page has no slide action
+  // but must NOT redirect or lose authorization).
+  const status = new Map<string, 'valid' | 'cleared'>()
 
   for (const { cookieName, actor } of COOKIE_ACTORS) {
     const raw = cookies[cookieName]
@@ -101,6 +132,8 @@ export async function decideForRequest(input: DecideInput): Promise<DecideResult
       decoded = null
     }
     if (!decoded) {
+      status.set(cookieName, 'cleared')
+      cookieStates.push({ cookieName, actor, status: 'cleared' })
       cookieActions.push({ cookieName, actor, action: 'clear' })
       continue
     }
@@ -108,29 +141,36 @@ export async function decideForRequest(input: DecideInput): Promise<DecideResult
     const loginAt = resolveLoginAt(decoded, nowSec)
     const decision = evaluateSession(actor, loginAt, nowSec)
     if (decision.action === 'expire') {
+      status.set(cookieName, 'cleared')
+      cookieStates.push({ cookieName, actor, status: 'cleared' })
       cookieActions.push({ cookieName, actor, action: 'clear' })
     } else {
-      cookieActions.push({
-        cookieName,
-        actor,
-        action: 'slide',
-        newExp: decision.newExp,
-        loginAt,
-        claims: decoded.claims,
-      })
+      // Valid within the cap. Re-issue a fresh idle exp ONLY on the heartbeat.
+      status.set(cookieName, 'valid')
+      cookieStates.push({ cookieName, actor, status: 'valid', claims: decoded.claims })
+      if (extend) {
+        cookieActions.push({
+          cookieName,
+          actor,
+          action: 'slide',
+          newExp: decision.newExp,
+          loginAt,
+          claims: decoded.claims,
+        })
+      }
     }
   }
 
   let redirectTo: string | undefined
-  // Only guarded PAGE requests redirect; APIs never do.
+  // Only guarded PAGE requests redirect; APIs never do. Redirect when the
+  // guarding actor's cookie is not VALID (absent or cleared).
   const page = actorForPage(pathname)
   if (page && !pathname.startsWith('/api')) {
     const cookieName = COOKIE_ACTORS.find((c) => c.actor === page.actor)?.cookieName
-    const slid = cookieActions.find((a) => a.cookieName === cookieName && a.action === 'slide')
-    if (!slid) redirectTo = page.loginUrl
+    if (!cookieName || status.get(cookieName) !== 'valid') redirectTo = page.loginUrl
   }
 
-  return { cookieActions, redirectTo }
+  return { cookieActions, redirectTo, cookieStates }
 }
 
 /**

@@ -23,7 +23,10 @@ export default function SessionKeepAlive() {
       last = now
       fetch('/api/session/ping', { credentials: 'same-origin' }).catch(() => {})
     }
-    const events = ['pointerdown', 'keydown', 'touchstart'] as const
+    // Include scroll + mousemove so a user who is reading/scrolling (not
+    // clicking) still counts as present. All passive; the 90s shouldPing
+    // throttle keeps the ping rate low regardless of event frequency.
+    const events = ['pointerdown', 'keydown', 'touchstart', 'scroll', 'mousemove'] as const
     events.forEach(e => window.addEventListener(e, onActivity, { passive: true }))
     return () => events.forEach(e => window.removeEventListener(e, onActivity))
   }, [])

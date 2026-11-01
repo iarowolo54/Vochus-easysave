@@ -126,15 +126,18 @@ export async function proxy(request: NextRequest) {
   }
 
   const nowSec = Math.floor(Date.now() / 1000)
-  const { cookieActions, redirectTo } = await decideForRequest({ pathname, cookies, nowSec, decoders })
+  const { cookieActions, redirectTo, cookieStates } = await decideForRequest({ pathname, cookies, nowSec, decoders })
 
   // 3. Authorization overrides (role, not just a session) — preserved behaviour.
-  const adminSlide = cookieActions.find((a) => a.cookieName === ADMIN_COOKIE && a.action === 'slide')
-  const adminRole = adminSlide?.claims?.role
+  // Key off the cookie's VALIDITY + claims, NOT a slide action: a valid admin
+  // cookie on a non-heartbeat request (e.g. any admin API call) has no slide
+  // action but is still an authorized session.
+  const adminValid = cookieStates.find((s) => s.cookieName === ADMIN_COOKIE && s.status === 'valid')
+  const adminRole = adminValid?.claims?.role
   const adminIsSuper = adminRole === 'superadmin'
 
   if (isAdminApi(pathname)) {
-    if (!adminSlide) return applyCookies(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }), cookieActions, actualName)
+    if (!adminValid) return applyCookies(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }), cookieActions, actualName)
     if (!adminIsSuper) return applyCookies(NextResponse.json({ error: 'Forbidden' }, { status: 403 }), cookieActions, actualName)
   }
 
@@ -143,7 +146,7 @@ export async function proxy(request: NextRequest) {
   if (
     pathname.startsWith('/superadmin') &&
     !pathname.startsWith('/superadmin/login') &&
-    adminSlide &&
+    adminValid &&
     !adminIsSuper
   ) {
     effectiveRedirect = '/superadmin/login'
@@ -222,7 +225,10 @@ async function applyCookies(
   for (const action of actions) {
     const name = actualName[action.cookieName] ?? action.cookieName
     if (action.action === 'clear') {
-      res.cookies.delete({ name, path: '/' })
+      // Use an explicit expired Set-Cookie (not .delete): a `__Secure-`-prefixed
+      // name (the agent cookie in prod) is IGNORED by browsers unless the
+      // Set-Cookie also carries `Secure`, so .delete() wouldn't actually clear it.
+      res.cookies.set({ name, value: '', maxAge: 0, path: '/', secure })
       continue
     }
     // slide: re-mint with a fresh idle exp, same name + standardised attributes.
