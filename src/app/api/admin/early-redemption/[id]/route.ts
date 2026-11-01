@@ -3,13 +3,11 @@ import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { verifyApprovalPin } from '@/lib/approval-pin'
 import { createRecipient, initiateTransfer } from '@/lib/paystack'
-import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
-import { interestPayoutOps } from '@/lib/redemption-interest-ops'
+import { redemptionCompletionOps, ConflictError } from '@/lib/redemption-complete'
 
 const OPEN_STATUSES = ['Pending', 'TokenValidated', 'AgentApproved']
 
-class ConflictError extends Error {}
 const conflict = (error = 'Already processed') => NextResponse.json({ error }, { status: 409 })
 
 export async function PATCH(req: Request, context: { params: Promise<{ id: string }> }) {
@@ -183,64 +181,23 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       }
     }
 
-    const agentComm = money(record.penalty * (3 / 5))
-    const platformFee = money(record.penalty * (2 / 5))
-    const revenueCredit = platformFee
-
     const agentForBalance = await prisma.agent.findUnique({ where: { id: agentId }, select: { walletBalance: true } })
     const walletAfter = isBankTransfer
       ? (agentForBalance?.walletBalance ?? 0)
       : (agentForBalance?.walletBalance ?? 0) + record.netPayout
 
     try {
-      await prisma.$transaction(async (tx) => {
-        // Bank: the Processing claim (and plan lock) was taken above. Cash: claim record + plan here.
-        const claim = await tx.earlyRedemption.updateMany({
-          where: { id, status: isBankTransfer ? 'Processing' : { in: OPEN_STATUSES } },
-          data: {
-            status: 'Approved',
-            decidedAt: new Date(),
-            decidedBy,
-            ...(isBankTransfer && { paystackRecipientCode, paystackTransferCode, bankTransferStatus }),
-          },
-        })
-        if (claim.count === 0) throw new ConflictError()
-        if (!isBankTransfer) {
-          const plan = await tx.savingsPlan.updateMany({
-            where: { id: record.savingsPlanId, status: { not: 'Redeemed' }, balance: { gt: 0 } },
-            data: { status: 'Redeemed', balance: 0 },
-          })
-          if (plan.count === 0) throw new ConflictError('This plan has already been redeemed')
-        }
-        await tx.platformWallet.upsert({
-          where: { type: 'Revenue' },
-          update: { balance: { increment: revenueCredit } },
-          create: { type: 'Revenue', balance: revenueCredit },
-        })
-        await tx.agent.update({
-          where: { id: agentId },
-          data: {
-            commissionBalance: { increment: agentComm },
-            // For cash payout the agent physically pays out; credit their wallet back with netPayout.
-            // For bank transfer Paystack pays directly so no wallet credit.
-            ...(isBankTransfer ? {} : { walletBalance: { increment: record.netPayout } }),
-          },
-        })
-        await tx.transaction.create({
-          data: {
-            ref: record.ref,
-            agentId,
-            customerId,
-            planId: record.savingsPlanId,
-            type: 'redemption',
-            amount: record.netPayout,
-            method: record.payoutMethod ?? 'Cash',
-            status: 'Done',
-            walletAfter,
-          },
-        })
-        for (const op of interestPayoutOps(tx, record, agentId, customerId)) await op
-      })
+      await prisma.$transaction((tx) =>
+        redemptionCompletionOps(tx, record, agentId, customerId, {
+          decidedBy,
+          isBankTransfer,
+          bankTransferStatus,
+          paystackRecipientCode,
+          paystackTransferCode,
+          claimFrom: isBankTransfer ? 'Processing' : OPEN_STATUSES,
+          walletAfter,
+        }),
+      )
     } catch (err) {
       if (err instanceof ConflictError) return conflict(err.message || 'Already processed')
       throw err
