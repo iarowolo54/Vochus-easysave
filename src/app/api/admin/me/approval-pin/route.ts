@@ -12,11 +12,12 @@ export async function POST(req: NextRequest) {
 
   const body: unknown = await req.json().catch(() => null)
   const { pin, currentPassword } = (body ?? {}) as { pin?: unknown; currentPassword?: unknown }
-  if (!pin || String(pin).length < 4) return NextResponse.json({ error: 'PIN must be at least 4 digits' }, { status: 400 })
+  if (typeof pin !== 'string' || !/^\d{4,}$/.test(pin)) return NextResponse.json({ error: 'PIN must be at least 4 digits' }, { status: 400 })
   if (!currentPassword || typeof currentPassword !== 'string') return NextResponse.json({ error: 'Current password required' }, { status: 400 })
 
-  const user = guard.session.user as { id?: string; email?: string; role?: unknown }
-  const where = user.id ? { id: user.id } : { email: user.email }
+  const user = guard.session.user as { id?: string; role?: unknown }
+  if (!user.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const where = { id: user.id }
   const isStaff = resolvePinOwner(user.role) === 'staff'
   const actor = isStaff
     ? await prisma.staffUser.findFirst({ where, select: { id: true, name: true, email: true, password: true } })
@@ -26,7 +27,7 @@ export async function POST(req: NextRequest) {
   const validPassword = await bcrypt.compare(currentPassword, actor.password)
   if (!validPassword) return NextResponse.json({ error: 'Incorrect password' }, { status: 403 })
 
-  const hashed = await bcrypt.hash(String(pin), 10)
+  const hashed = await bcrypt.hash(pin, 10)
   if (isStaff) await prisma.staffUser.update({ where: { id: actor.id }, data: { approvalPin: hashed } })
   else await prisma.superAdmin.update({ where: { id: actor.id }, data: { approvalPin: hashed } })
 

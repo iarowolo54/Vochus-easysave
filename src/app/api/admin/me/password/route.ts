@@ -15,8 +15,9 @@ export async function POST(req: NextRequest) {
   if (!currentPassword || typeof currentPassword !== 'string') return NextResponse.json({ error: 'Current password required' }, { status: 400 })
   if (typeof newPassword !== 'string' || newPassword.length < 8) return NextResponse.json({ error: 'New password must be at least 8 characters' }, { status: 400 })
 
-  const user = guard.session.user as { id?: string; email?: string; role?: unknown }
-  const where = user.id ? { id: user.id } : { email: user.email }
+  const user = guard.session.user as { id?: string; role?: unknown }
+  if (!user.id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const where = { id: user.id }
   const isStaff = resolvePinOwner(user.role) === 'staff'
   const actor = isStaff
     ? await prisma.staffUser.findFirst({ where, select: { id: true, name: true, email: true, password: true } })

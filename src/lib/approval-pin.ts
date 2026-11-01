@@ -17,7 +17,11 @@ export function resolvePinOwner(role: unknown): 'staff' | 'superadmin' {
 
 export async function verifyApprovalPin(session: Session, pin: unknown): Promise<PinResult> {
   const user = session.user as { id?: string; email?: string; role?: unknown }
-  const where = user.id ? { id: user.id } : { email: user.email }
+  // Fail closed: never resolve by a missing/undefined filter (Prisma would drop it and match any row).
+  if (!user.id) {
+    return { ok: false, response: NextResponse.json({ error: 'No approval PIN set. Contact system administrator.' }, { status: 403 }) }
+  }
+  const where = { id: user.id }
   const select = { id: true, name: true, approvalPin: true }
   const admin =
     resolvePinOwner(user.role) === 'staff'
