@@ -3,6 +3,7 @@ import { encode } from 'next-auth/jwt'
 import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { pickIdentity } from '@/lib/admin-identity'
 import { requireEnv } from '@/lib/env'
 import { IDLE_SECONDS } from '@/lib/session-policy'
 
@@ -16,29 +17,47 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing credentials' }, { status: 400 })
   }
 
-  const admin = await prisma.superAdmin.findUnique({
-    where: { email: email.trim().toLowerCase() },
-  })
+  const normalizedEmail = email.trim().toLowerCase()
+  const admin = await prisma.superAdmin.findUnique({ where: { email: normalizedEmail } })
+  // Only consult StaffUser when no SuperAdmin owns this email (never shadowed).
+  const staff = admin ? null : await prisma.staffUser.findUnique({ where: { email: normalizedEmail } })
 
-  if (!admin || !(await bcrypt.compare(password, admin.password))) {
+  const identity = pickIdentity({ superAdmin: admin, staff })
+  const hash = identity.kind === 'superadmin' ? admin?.password : identity.kind === 'staff' ? staff?.password : undefined
+
+  if (identity.kind === 'none' || !hash || !(await bcrypt.compare(password, hash))) {
     return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 })
   }
 
+  const role = identity.kind === 'staff' ? 'staff' : 'superadmin'
   const token = await encode({
-    token: { sub: admin.id, email: admin.email, name: admin.name, role: 'superadmin', loginAt: Math.floor(Date.now() / 1000) },
+    token: { sub: identity.id, email: identity.email, name: identity.name, role, loginAt: Math.floor(Date.now() / 1000) },
     secret: SECRET,
     maxAge: IDLE_SECONDS.admin,
   })
 
-  logAudit({
-    action: 'admin_login',
-    entity: 'SuperAdmin',
-    entityId: admin.id,
-    details: `Admin ${admin.name} (${admin.email}) logged in`,
-    actorType: 'admin',
-    actorId: admin.id,
-    actorName: admin.name,
-  })
+  if (identity.kind === 'staff') {
+    await prisma.staffUser.update({ where: { id: identity.id }, data: { lastActiveAt: new Date() } })
+    logAudit({
+      action: 'admin_login',
+      entity: 'StaffUser',
+      entityId: identity.id!,
+      details: `Staff ${identity.name} (${identity.email}) logged in`,
+      actorType: 'staff',
+      actorId: identity.id,
+      actorName: identity.name,
+    })
+  } else {
+    logAudit({
+      action: 'admin_login',
+      entity: 'SuperAdmin',
+      entityId: admin!.id,
+      details: `Admin ${admin!.name} (${admin!.email}) logged in`,
+      actorType: 'admin',
+      actorId: admin!.id,
+      actorName: admin!.name,
+    })
+  }
 
   const res = NextResponse.json({ ok: true })
   res.cookies.set(COOKIE_NAME, token, {
