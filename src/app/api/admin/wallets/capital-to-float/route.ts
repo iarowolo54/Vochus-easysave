@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requirePermission, adminActor } from '@/lib/admin-guard'
+import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 
@@ -27,8 +27,9 @@ export async function POST(req: NextRequest) {
       action: 'capital_to_float',
       entity: 'Wallet',
       details: `Moved ₦${amount} from Capital to Float wallet`,
-      actorType: 'admin',
-      ...adminActor(session),
+      actorType: guard.actor.type,
+      actorId: guard.actor.id,
+      actorName: guard.actor.name,
     })
 
     return NextResponse.json({ success: true })

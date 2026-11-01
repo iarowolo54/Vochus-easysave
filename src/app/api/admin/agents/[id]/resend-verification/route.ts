@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requirePermission, adminActor } from '@/lib/admin-guard'
+import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { randomBytes } from 'crypto'
 import { sendMail } from '@/lib/mail'
@@ -39,8 +39,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     entity: 'Agent',
     entityId: agent.id,
     details: `Resent verification email to ${agent.name} (${agent.agentId}) — ${agent.email}`,
-    actorType: 'admin',
-    ...adminActor(session),
+    actorType: guard.actor.type,
+    actorId: guard.actor.id,
+    actorName: guard.actor.name,
   })
 
   return NextResponse.json({ ok: true })

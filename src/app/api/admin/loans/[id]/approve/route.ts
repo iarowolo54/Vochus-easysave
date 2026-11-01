@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requirePermission, adminActor } from '@/lib/admin-guard'
+import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 
@@ -9,7 +9,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   if (!guard.ok) return guard.response
   const session = guard.session
 
-  const adminName = (session.user as any).name ?? 'Super Admin'
+  const adminName = guard.actor.name
 
   // Conditional claim: only a Pending loan can be decided (guards stale tabs / two admins).
   const claimed = await prisma.loan.updateMany({
@@ -32,8 +32,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     entity: 'Loan',
     entityId: loan.id,
     details: `Loan ${loan.ref} ₦${loan.principal} approved for ${loan.customer.firstName} ${loan.customer.lastName} (${loan.customer.customerId})`,
-    actorType: 'admin',
-    ...adminActor(session),
+    actorType: guard.actor.type,
+    actorId: guard.actor.id,
+    actorName: guard.actor.name,
   })
 
   return NextResponse.json({ loan })

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requirePermission, isNotFound, adminActor } from '@/lib/admin-guard'
+import { requirePermission, isNotFound } from '@/lib/admin-guard'
 import { logAudit } from '@/lib/audit'
 import { prisma } from '@/lib/prisma'
 
@@ -56,8 +56,9 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
     entity: 'RewardPromo',
     entityId: promo.id,
     details: `Reward promo "${promo.name}" updated (${Object.keys(body as object).join(', ')})`,
-    actorType: 'admin',
-    ...adminActor(session),
+    actorType: guard.actor.type,
+    actorId: guard.actor.id,
+    actorName: guard.actor.name,
   })
 
   return NextResponse.json({ promo })

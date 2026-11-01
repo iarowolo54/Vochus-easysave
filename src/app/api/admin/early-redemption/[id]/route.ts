@@ -78,7 +78,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   if (!OPEN_STATUSES.includes(record.status)) return conflict('Already decided')
 
   const adminUser = session.user as { name?: string }
-  const decidedBy = adminUser.name ?? 'Super Admin'
+  const decidedBy = guard.actor.name
 
   if (action === 'reject') {
     const customerName = `${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName}`
@@ -110,9 +110,9 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       entity: 'EarlyRedemption',
       entityId: id,
       details: `Admin rejected ${record.ref} — customer ${customerName} balance ₦${planBalance.toLocaleString()} restored to Active | agent wallet ₦${(agentForBal?.walletBalance ?? 0).toLocaleString()}`,
-      actorType: 'admin',
-      actorId: (session.user as any).id,
-      actorName: decidedBy,
+      actorType: guard.actor.type,
+      actorId: guard.actor.id,
+      actorName: guard.actor.name,
     })
 
     // Manual mode: tell the customer + agent. Mode read and notify are isolated — the reject is committed.
@@ -267,9 +267,9 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       entity: 'EarlyRedemption',
       entityId: id,
       details: `Admin approved ${record.ref} — payout ₦${record.netPayout.toLocaleString()} via ${record.payoutMethod ?? 'Cash'} | customer ${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName} balance ₦${record.balance.toLocaleString()} → ₦0 | agent wallet after ₦${walletAfter.toLocaleString()}`,
-      actorType: 'admin',
-      actorId: (session.user as any).id,
-      actorName: decidedBy,
+      actorType: guard.actor.type,
+      actorId: guard.actor.id,
+      actorName: guard.actor.name,
     })
     if (manualBank) {
       await notifyManualOutcome({ kind: 'paid' }, record, customerId, agentId)

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requirePermission, adminActor } from '@/lib/admin-guard'
+import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { isValidAmount, MAX_ADMIN_FUND, money } from '@/lib/wallet-guard'
@@ -29,8 +29,9 @@ export async function POST(req: NextRequest) {
       entity: 'Wallet',
       entityId: wallet.id,
       details: `Capital wallet injected with ₦${value} (new balance ₦${money(wallet.balance)}), reference: ${ref || '(no reference)'}`,
-      actorType: 'admin',
-      ...adminActor(session),
+      actorType: guard.actor.type,
+      actorId: guard.actor.id,
+      actorName: guard.actor.name,
     })
 
     return NextResponse.json({ wallet })

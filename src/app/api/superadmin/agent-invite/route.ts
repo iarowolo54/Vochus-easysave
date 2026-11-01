@@ -40,8 +40,9 @@ export async function POST(req: NextRequest) {
       entity: 'AgentInvite',
       entityId: existingInvite.id,
       details: `Resent existing agent invite to ${email}`,
-      actorType: 'admin',
-      actorName: 'SuperAdmin',
+      actorType: guard.actor.type,
+      actorId: guard.actor.id,
+    actorName: guard.actor.name,
     })
 
     return NextResponse.json({ token: existingInvite.token, link, reused: true })
@@ -57,8 +58,9 @@ export async function POST(req: NextRequest) {
     entity: 'AgentInvite',
     entityId: invite.id,
     details: `New agent invite created for ${email}`,
-    actorType: 'admin',
-    actorName: 'SuperAdmin',
+    actorType: guard.actor.type,
+    actorId: guard.actor.id,
+    actorName: guard.actor.name,
   })
 
   const link = `${process.env.NEXTAUTH_URL}/agent/onboard/${token}`

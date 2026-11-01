@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requirePermission, adminActor } from '@/lib/admin-guard'
+import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 
@@ -30,8 +30,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     entity: 'Loan',
     entityId: loan.id,
     details: `Loan ${loan.ref} ₦${loan.principal} rejected for ${loan.customer.firstName} ${loan.customer.lastName} (${loan.customer.customerId})`,
-    actorType: 'admin',
-    ...adminActor(session),
+    actorType: guard.actor.type,
+    actorId: guard.actor.id,
+    actorName: guard.actor.name,
   })
 
   return NextResponse.json({ loan })

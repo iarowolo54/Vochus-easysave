@@ -20,8 +20,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ se
   if (!card) return NextResponse.json({ error: 'Card not found' }, { status: 404 })
 
   const actor = guard.session.user as { id?: string; name?: string | null }
-  const actorId = actor.id
-  const actorName = actor.name ?? undefined
+  const actorId = guard.actor.id
+  const actorName = guard.actor.name
 
   if (action === 'unlink') {
     const updated = await prisma.memberCard.update({
@@ -34,7 +34,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ se
       entity: 'MemberCard',
       entityId: updated.id,
       details: `Admin unlinked card ${serial} (was customer ${card.customerId ?? 'none'})`,
-      actorType: 'admin',
+      actorType: guard.actor.type,
       actorId,
       actorName,
     })
@@ -71,7 +71,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ se
       entity: 'MemberCard',
       entityId: updated.id,
       details: `Admin relinked card ${serial} to ${customer.firstName} ${customer.lastName} (${customer.customerId})`,
-      actorType: 'admin',
+      actorType: guard.actor.type,
       actorId,
       actorName,
     })

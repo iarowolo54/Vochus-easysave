@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requirePermission, adminActor, isNotFound } from '@/lib/admin-guard'
+import { requirePermission, isNotFound } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 
@@ -18,8 +18,9 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     entity: 'Agent',
     entityId: agent.id,
     details: `Reset bound device for ${agent.name} (${agent.agentId})`,
-    actorType: 'admin',
-    ...adminActor(session),
+    actorType: guard.actor.type,
+    actorId: guard.actor.id,
+    actorName: guard.actor.name,
   })
 
   return NextResponse.json({ ok: true })

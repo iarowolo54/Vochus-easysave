@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { randomBytes } from 'crypto'
-import { requirePermission, adminActor } from '@/lib/admin-guard'
+import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { isValidAmount, MAX_ADMIN_FUND } from '@/lib/wallet-guard'
@@ -47,8 +47,9 @@ export async function POST(req: NextRequest) {
     entity: 'Wallet',
     entityId: agent.id,
     details: `Admin funded agent ${agent.name} (${agent.agentId}) wallet with ₦${amount} (ref ${ref})`,
-    actorType: 'admin',
-    ...adminActor(session),
+    actorType: guard.actor.type,
+    actorId: guard.actor.id,
+    actorName: guard.actor.name,
   })
 
   return NextResponse.json({ agent: updated })

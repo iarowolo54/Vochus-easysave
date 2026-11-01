@@ -22,7 +22,7 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
   }
 
   const admin = session.user as { name?: string }
-  const decidedBy = admin.name ?? 'Super Admin'
+  const decidedBy = guard.actor.name
 
   // Only an in-flight transfer may change status; every transition is a conditional claim so a
   // refund (failed/reversed) can be applied at most once however many times verify is hit.
@@ -74,8 +74,9 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
     entity: 'AgentWithdrawal',
     entityId: record.id,
     details: `${decidedBy} verified ${record.ref}: Paystack=${result.status}, internal=${newStatus}`,
-    actorType: 'superadmin',
-    actorName: decidedBy,
+    actorType: guard.actor.type,
+    actorId: guard.actor.id,
+    actorName: guard.actor.name,
   })
 
   return NextResponse.json({ ok: true, status: newStatus, bankTransferStatus: result.status, raw: result.raw })

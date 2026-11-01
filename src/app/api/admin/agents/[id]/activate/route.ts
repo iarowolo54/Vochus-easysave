@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requirePermission, adminActor } from '@/lib/admin-guard'
+import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { sendMail } from '@/lib/mail'
 import { logAudit } from '@/lib/audit'
@@ -34,7 +34,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   logAudit({
     action: 'agent_activate', entity: 'Agent', entityId: agent.id,
     details: `Agent activated — ${agent.name} (${agent.agentId})${notes ? '. Notes: ' + notes : ''}`,
-    actorType: 'admin', ...adminActor(session),
+    actorType: guard.actor.type, actorId: guard.actor.id, actorName: guard.actor.name,
   })
 
   if (agent.email) {

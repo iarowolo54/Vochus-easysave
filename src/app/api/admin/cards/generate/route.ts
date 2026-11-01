@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requirePermission, adminActor } from '@/lib/admin-guard'
+import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { createCardBatch } from '@/lib/member-card'
@@ -37,8 +37,9 @@ export async function POST(req: NextRequest) {
     entity: 'CardBatch',
     entityId: batchId,
     details: `Generated batch "${batchName}" (${batchId}) — ${cards.length} cards, expiry ${expiryDate}`,
-    actorType: 'admin',
-    ...adminActor(guard.session),
+    actorType: guard.actor.type,
+    actorId: guard.actor.id,
+    actorName: guard.actor.name,
   })
 
   return NextResponse.json({ batchId, count: cards.length, cards }, { status: 201 })

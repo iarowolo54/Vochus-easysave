@@ -63,9 +63,9 @@ export async function POST(req: NextRequest) {
     action: 'interest_rates_updated',
     entity: 'InterestRate',
     details: `Updated ${rates.length} interest rate(s): ${rates.map((r: { durationDays: number; rate: number }) => `${r.durationDays}d→${r.rate}%`).join(', ')}`,
-    actorType: 'admin',
-    actorId: (adminUser as any).id,
-    actorName: adminUser.name ?? 'Admin',
+    actorType: guard.actor.type,
+    actorId: guard.actor.id,
+    actorName: guard.actor.name,
   })
 
   return NextResponse.json({ ok: true })

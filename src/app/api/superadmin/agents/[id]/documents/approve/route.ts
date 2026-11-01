@@ -91,8 +91,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     details: action === 'approve'
       ? `Approved ${docType} document for ${document.agent.name}`
       : `Rejected ${docType} document for ${document.agent.name} — ${reason}`,
-    actorType: 'admin',
-    actorName: 'SuperAdmin',
+    actorType: guard.actor.type,
+    actorId: guard.actor.id,
+    actorName: guard.actor.name,
   })
 
   return NextResponse.json({ ok: true })

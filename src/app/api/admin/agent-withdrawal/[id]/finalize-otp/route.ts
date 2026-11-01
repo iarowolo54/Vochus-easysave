@@ -45,7 +45,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
   }
 
   const adminUser = session.user as { name?: string }
-  const decidedBy = adminUser.name ?? 'Super Admin'
+  const decidedBy = guard.actor.name
 
   try {
     const fin = await prisma.agentWithdrawal.updateMany({
@@ -64,8 +64,9 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     entity: 'AgentWithdrawal',
     entityId: record.id,
     details: `${decidedBy} finalised OTP for ${record.ref} (₦${record.amount}) — Paystack status: ${finalStatus}`,
-    actorType: 'superadmin',
-    actorName: decidedBy,
+    actorType: guard.actor.type,
+    actorId: guard.actor.id,
+    actorName: guard.actor.name,
   })
 
   return NextResponse.json({ ok: true, status: 'Approved', bankTransferStatus: finalStatus })

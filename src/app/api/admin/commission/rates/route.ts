@@ -43,9 +43,9 @@ export async function POST(req: NextRequest) {
     action: 'commission_rates_updated',
     entity: 'PlatformSetting',
     details: `Commission rates updated: agent savings ${rates.agentSavings}%, agent loan ${rates.agentLoan}%, platform savings ${rates.platformSavings}%, platform loan ${rates.platformLoan}%`,
-    actorType: 'admin',
-    actorId: adminUser.id,
-    actorName: adminUser.name ?? 'Admin',
+    actorType: guard.actor.type,
+    actorId: guard.actor.id,
+    actorName: guard.actor.name,
   })
 
   return NextResponse.json({ ok: true })

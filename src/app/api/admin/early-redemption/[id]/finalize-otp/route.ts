@@ -58,7 +58,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
   }
 
   const adminUser = session.user as { name?: string }
-  const decidedBy = adminUser.name ?? 'Super Admin'
+  const decidedBy = guard.actor.name
   const agentId = record.savingsPlan.customer.agentId
   const customerId = record.savingsPlan.customer.id
 
@@ -112,9 +112,9 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     entity: 'EarlyRedemption',
     entityId: id,
     details: `Admin finalized OTP for redemption ${record.ref} — bank transfer status: ${finalStatus}, payout ₦${record.netPayout.toLocaleString()}`,
-    actorType: 'admin',
-    actorId: (session.user as any).id,
-    actorName: decidedBy,
+    actorType: guard.actor.type,
+    actorId: guard.actor.id,
+    actorName: guard.actor.name,
   })
 
   return NextResponse.json({ ok: true, status: 'Approved', bankTransferStatus: finalStatus })

@@ -46,9 +46,9 @@ export async function POST(req: NextRequest) {
     action: 'payout_mode_updated',
     entity: 'PlatformSetting',
     details: `agent ${before.agent}→${value.agent}, customer ${before.customer}→${value.customer}`,
-    actorType: 'admin',
-    actorId: actor.actorId,
-    actorName: actor.actorName,
+    actorType: guard.actor.type,
+    actorId: guard.actor.id,
+    actorName: guard.actor.name,
   })
 
   return NextResponse.json({ ok: true })

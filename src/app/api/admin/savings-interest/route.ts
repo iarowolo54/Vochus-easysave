@@ -42,16 +42,16 @@ export async function POST(req: NextRequest) {
   }
 
   const user = guard.session.user as { id?: string; name?: string | null }
-  const actorId = user.id ?? 'unknown'
+  const actorId = guard.actor.id ?? 'unknown'
   await appendSavingsRate(prisma, annualRate, actorId)
 
   logAudit({
     action: 'savings_interest_rate_updated',
     entity: 'SavingsInterestRate',
     details: `Savings interest rate set to ${annualRate}% per year (effective now)`,
-    actorType: 'admin',
+    actorType: guard.actor.type,
     actorId,
-    actorName: user.name ?? 'Admin',
+    actorName: guard.actor.name,
   })
 
   return NextResponse.json({ ok: true, ...(await snapshot()) })

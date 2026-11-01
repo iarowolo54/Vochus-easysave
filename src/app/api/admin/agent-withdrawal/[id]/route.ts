@@ -29,7 +29,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
 
   const adminUser = session.user as { name?: string }
-  const decidedBy = adminUser.name ?? 'Super Admin'
+  const decidedBy = guard.actor.name
 
   if (action === 'reject') {
     // Claim the Pending -> Rejected transition first; only the winner refunds.
@@ -51,8 +51,9 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       entity: 'AgentWithdrawal',
       entityId: record.id,
       details: `${decidedBy} rejected ₦${record.amount} withdrawal for ${agent.name} (${agent.agentId}) — refunded to commission balance`,
-      actorType: 'superadmin',
-      actorName: decidedBy,
+      actorType: guard.actor.type,
+      actorId: guard.actor.id,
+      actorName: guard.actor.name,
     })
     // Manual mode only: tell the agent it was declined (Auto stays silent). Best-effort; never throws.
     try {
@@ -94,8 +95,9 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
         entity: 'AgentWithdrawal',
         entityId: record.id,
         details: `${decidedBy} approved ₦${record.amount} withdrawal for ${agent.name} (${agent.agentId}) — manual payout (off-Paystack)${adminNote ? `, ref: ${adminNote}` : ''}`,
-        actorType: 'superadmin',
-        actorName: decidedBy,
+        actorType: guard.actor.type,
+        actorId: guard.actor.id,
+        actorName: guard.actor.name,
       })
 
       try {
@@ -208,8 +210,9 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       entity: 'AgentWithdrawal',
       entityId: record.id,
       details: `${decidedBy} approved ₦${record.amount} withdrawal for ${agent.name} (${agent.agentId}) — Paystack: ${bankTransferStatus}, internal: ${finalStatus}`,
-      actorType: 'superadmin',
-      actorName: decidedBy,
+      actorType: guard.actor.type,
+      actorId: guard.actor.id,
+      actorName: guard.actor.name,
     })
 
     return NextResponse.json({ ok: true, status: finalStatus, bankTransferStatus })
