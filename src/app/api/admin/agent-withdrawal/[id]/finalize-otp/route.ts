@@ -44,7 +44,6 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     return NextResponse.json({ error: 'Could not confirm the Paystack finalisation. It is being verified; do not retry. Contact support.' }, { status: 502 })
   }
 
-  const adminUser = session.user as { name?: string }
   const decidedBy = guard.actor.name
 
   try {

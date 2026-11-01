@@ -58,7 +58,6 @@ export async function POST(req: NextRequest) {
     })
   )
 
-  const adminUser = session.user as { name?: string; id?: string }
   logAudit({
     action: 'interest_rates_updated',
     entity: 'InterestRate',

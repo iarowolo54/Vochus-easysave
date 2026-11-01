@@ -28,7 +28,6 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   const agent = await prisma.agent.findUnique({ where: { id: record.agentId } })
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
 
-  const adminUser = session.user as { name?: string }
   const decidedBy = guard.actor.name
 
   if (action === 'reject') {

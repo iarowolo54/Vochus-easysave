@@ -77,7 +77,6 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   if (!record) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (!OPEN_STATUSES.includes(record.status)) return conflict('Already decided')
 
-  const adminUser = session.user as { name?: string }
   const decidedBy = guard.actor.name
 
   if (action === 'reject') {

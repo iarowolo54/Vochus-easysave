@@ -36,9 +36,9 @@ export async function POST(req: NextRequest) {
     entity: isStaff ? 'StaffUser' : 'SuperAdmin',
     entityId: actor.id,
     details: `${actor.name} (${actor.email}) changed their approval PIN`,
-    actorType: 'admin',
-    actorId: actor.id,
-    actorName: actor.name ?? 'Admin',
+    actorType: guard.actor.type,
+    actorId: guard.actor.id,
+    actorName: guard.actor.name,
   })
 
   return NextResponse.json({ ok: true })

@@ -38,7 +38,6 @@ export async function POST(req: NextRequest) {
     create: { key: SETTING_KEY, value: JSON.stringify(rates) },
   })
 
-  const adminUser = session.user as any
   logAudit({
     action: 'commission_rates_updated',
     entity: 'PlatformSetting',
