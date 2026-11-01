@@ -7,7 +7,7 @@ import { IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
 import { redemptionDeduction } from '@/lib/wallet-rates'
 import {
   ConfirmModal, Empty, Field, LoadError, Modal, PageHeader, Pager, SearchField, Segmented,
-  TableSkeleton, dateTime, nairaKobo, useDebounced, useToast,
+  TableSkeleton, dateTime, shortDate, nairaKobo, useDebounced, useToast,
   ResultModal, type Result, type ResultRow,
 } from '../_components/admin-ui'
 import { ManualModeBanner, PayoutModeError, usePayoutMode } from '../_components/payout-mode'
@@ -34,10 +34,15 @@ interface RedemptionRecord {
   decidedBy: string | null
   customerName: string
   customerId: string
+  customerPhone?: string | null
   agentName: string
   agentId: string
   savingsPlanId: string
   planStatus: string
+  planGoal?: string | null
+  planStartDate?: string | null
+  planMaturityDate?: string | null
+  customerPlans?: { id: string; goal: string; balance: number; status: string; startDate: string; maturityDate: string }[]
 }
 
 interface PageData {
@@ -554,6 +559,7 @@ export default function RedemptionsPage() {
                           <td data-label="Customer">
                             <div className="td-name">{r.customerName}</div>
                             <div className="td-sub">{r.customerId}</div>
+                            {r.planGoal && <div className="td-sub">Plan: {r.planGoal}</div>}
                           </td>
                           <td data-label="Agent">
                             <div className="td-name">{r.agentName}</div>
@@ -866,7 +872,7 @@ export default function RedemptionsPage() {
             <button type="button" className="btn btn-green" onClick={() => { const r = detail; setDetail(null); setOtpValue(''); setOtpError(''); setOtpModal({ id: r.id, ref: r.ref, customerName: r.customerName, amount: r.netPayout }) }}>Enter Paystack code</button>
           </> : <button type="button" className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>}>
           <div className="dlg-hero">
-            <div className="dlg-hero-lbl">Net payout</div>
+            <div className="dlg-hero-lbl">Amount to collect</div>
             <div className="dlg-hero-amt">{nairaKobo(detail.netPayout)}</div>
             <span className="cm-badges"><StatusBadge status={detail.status} /><TypeBadge type={detail.type} /></span>
           </div>
@@ -876,16 +882,29 @@ export default function RedemptionsPage() {
             <dl className="dlg-ledger">
               <DlRow label="Name">{detail.customerName}</DlRow>
               <DlRow label="Customer ID">{detail.customerId}</DlRow>
+              {detail.customerPhone && <DlRow label="Phone"><span className="cm-ref">{detail.customerPhone}</span></DlRow>}
               <DlRow label="Agent">{detail.agentName} ({detail.agentId})</DlRow>
             </dl>
           </div>
+
+          {detail.planGoal && (
+            <div className="cm-sec">
+              <h3 className="cm-sec-title">Plan being redeemed</h3>
+              <dl className="dlg-ledger">
+                <DlRow label="Plan">{detail.planGoal}</DlRow>
+                {detail.planStartDate && <DlRow label="Started">{shortDate(detail.planStartDate)}</DlRow>}
+                {detail.planMaturityDate && <DlRow label="Matures">{shortDate(detail.planMaturityDate)}</DlRow>}
+                <DlRow label="Plan status">{detail.planStatus}</DlRow>
+              </dl>
+            </div>
+          )}
 
           <div className="cm-sec">
             <h3 className="cm-sec-title">Payout</h3>
             <dl className="dlg-ledger">
               <DlRow label="Plan balance">{nairaKobo(detail.balance)}</DlRow>
-              {detail.penalty > 0 && <DlRow label="Fee deducted"><span className="cm-neg">−{nairaKobo(detail.penalty)}</span></DlRow>}
-              <DlRow label="Net payout" total>{nairaKobo(detail.netPayout)}</DlRow>
+              {detail.penalty > 0 && <DlRow label="Fee deducted (commission)"><span className="cm-neg">−{nairaKobo(detail.penalty)}</span></DlRow>}
+              <DlRow label="Amount to collect" total>{nairaKobo(detail.netPayout)}</DlRow>
               <DlRow label="Method">{detail.payoutMethod ?? 'Cash'}</DlRow>
             </dl>
           </div>
@@ -898,6 +917,19 @@ export default function RedemptionsPage() {
                 <DlRow label="Bank">{detail.bankName}</DlRow>
                 <DlRow label="Account number"><span className="cm-ref">{detail.accountNumber ?? '—'}</span></DlRow>
                 {detail.bankTransferStatus && <DlRow label="Transfer status">{detail.bankTransferStatus}</DlRow>}
+              </dl>
+            </div>
+          )}
+
+          {detail.customerPlans && detail.customerPlans.length > 0 && (
+            <div className="cm-sec">
+              <h3 className="cm-sec-title">All savings plans ({detail.customerPlans.length})</h3>
+              <dl className="dlg-ledger">
+                {detail.customerPlans.map(p => (
+                  <DlRow key={p.id} label={p.id === detail.savingsPlanId ? `${p.goal} — redeeming now` : p.goal}>
+                    {nairaKobo(p.balance)} · {p.status} · matures {shortDate(p.maturityDate)}
+                  </DlRow>
+                ))}
               </dl>
             </div>
           )}

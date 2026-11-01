@@ -24,7 +24,7 @@ export async function GET() {
         include: {
           customer: {
             select: {
-              customerId: true, firstName: true, lastName: true,
+              id: true, customerId: true, firstName: true, lastName: true, phone: true,
               agent: { select: { name: true, agentId: true } },
             },
           },
@@ -35,6 +35,27 @@ export async function GET() {
   })
 
   const now = new Date()
+
+  // The redeemer's full plan list is only shown in the detail of an actionable record, so fetch it
+  // once for just those customers (not joined onto every historical row). id is used server-side only.
+  const actionableCustomerIds = [
+    ...new Set(records.filter(r => AWAITING_ACTION_STATUSES.includes(r.status)).map(r => r.savingsPlan.customer.id)),
+  ]
+  const customerPlans = actionableCustomerIds.length
+    ? await prisma.savingsPlan.findMany({
+        where: { customerId: { in: actionableCustomerIds } },
+        select: { id: true, customerId: true, goal: true, balance: true, status: true, startDate: true, maturityDate: true },
+        orderBy: { startDate: 'desc' },
+      })
+    : []
+  const plansByCustomer = new Map<string, { id: string; goal: string; balance: number; status: string; startDate: Date; maturityDate: Date }[]>()
+  for (const p of customerPlans) {
+    const { customerId, ...plan } = p
+    const list = plansByCustomer.get(customerId) ?? []
+    list.push(plan)
+    plansByCustomer.set(customerId, list)
+  }
+
   const pending = records.filter(r => AWAITING_ACTION_STATUSES.includes(r.status)).length
   const approved = records.filter(r => r.status === 'Approved').length
   const rejected = records.filter(r => r.status === 'Rejected').length
@@ -72,10 +93,18 @@ export async function GET() {
       decidedBy: r.decidedBy,
       customerName: `${r.savingsPlan.customer.firstName} ${r.savingsPlan.customer.lastName}`,
       customerId: r.savingsPlan.customer.customerId,
+      customerPhone: r.savingsPlan.customer.phone,
       agentName: r.savingsPlan.customer.agent.name,
       agentId: r.savingsPlan.customer.agent.agentId,
       savingsPlanId: r.savingsPlanId,
       planStatus: r.savingsPlan.status,
+      // The plan being redeemed.
+      planGoal: r.savingsPlan.goal,
+      planStartDate: r.savingsPlan.startDate,
+      planMaturityDate: r.savingsPlan.maturityDate,
+      // Every savings plan this redeemer holds (the one being redeemed is flagged by id === savingsPlanId);
+      // present only for actionable records (the detail modal's "All savings plans" section).
+      customerPlans: plansByCustomer.get(r.savingsPlan.customer.id),
     })),
   })
 }
