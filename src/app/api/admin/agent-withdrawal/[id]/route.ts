@@ -4,6 +4,8 @@ import { prisma } from '@/lib/prisma'
 import { verifyApprovalPin } from '@/lib/approval-pin'
 import { createRecipient, initiateTransfer, resolveAccount } from '@/lib/paystack'
 import { logAudit } from '@/lib/audit'
+import { getPayoutMode } from '@/lib/payout-mode'
+import { notifyAgentPayoutPaid, notifyAgentPayoutDeclined } from '@/lib/payout-notify'
 
 export async function PATCH(req: Request, context: { params: Promise<{ id: string }> }) {
   const guard = await requireSuperAdmin()
@@ -52,10 +54,58 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       actorType: 'superadmin',
       actorName: decidedBy,
     })
+    // Manual mode only: tell the agent it was declined (Auto stays silent). Best-effort; never throws.
+    try {
+      if ((await getPayoutMode()).agent === 'manual') {
+        await notifyAgentPayoutDeclined(agent, {
+          amountNaira: record.amount,
+          ref: record.ref,
+          reason: adminNote || 'No reason given',
+        })
+      }
+    } catch (e) {
+      console.error('[agent-withdrawal] decline notification failed', e instanceof Error ? e.message : e)
+    }
     return NextResponse.json({ ok: true, status: 'Rejected' })
   }
 
   if (action === 'approve') {
+    // Fail closed: a mode-read error surfaces as a 500 rather than silently picking a rail.
+    const manual = (await getPayoutMode()).agent === 'manual'
+    if (manual) {
+      // Manual rail: admin pays outside Paystack. Commission was already debited at request
+      // time, so no balance change here. Same single conditional claim guards double-approval.
+      const claimed = await prisma.agentWithdrawal.updateMany({
+        where: { id, status: 'Pending' },
+        data: {
+          status: 'Approved',
+          decidedAt: new Date(),
+          decidedBy,
+          adminNote: adminNote || null,
+          bankTransferStatus: 'manual',
+          paystackRecipientCode: null,
+          paystackTransferCode: null,
+        },
+      })
+      if (claimed.count === 0) return NextResponse.json({ error: 'Already processed' }, { status: 409 })
+
+      logAudit({
+        action: 'agent_withdrawal_approve',
+        entity: 'AgentWithdrawal',
+        entityId: record.id,
+        details: `${decidedBy} approved ₦${record.amount} withdrawal for ${agent.name} (${agent.agentId}) — manual payout (off-Paystack)${adminNote ? `, ref: ${adminNote}` : ''}`,
+        actorType: 'superadmin',
+        actorName: decidedBy,
+      })
+
+      try {
+        await notifyAgentPayoutPaid(agent, { amountNaira: record.amount, ref: record.ref })
+      } catch (e) {
+        console.error('[agent-withdrawal] paid notification failed', e instanceof Error ? e.message : e)
+      }
+      return NextResponse.json({ ok: true, status: 'Approved', bankTransferStatus: 'manual' })
+    }
+
     if (!record.accountNumber || !record.bankCode) {
       return NextResponse.json({ error: 'Bank account details missing on this withdrawal record' }, { status: 400 })
     }

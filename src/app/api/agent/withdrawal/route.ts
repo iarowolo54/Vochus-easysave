@@ -6,6 +6,8 @@ import { IN_FLIGHT_WITHDRAWAL_STATUSES } from '@/lib/redemption-statuses'
 import { logAudit } from '@/lib/audit'
 import { assertSufficient, insufficientResponse, InsufficientFundsError, money } from '@/lib/wallet-guard'
 import { debitAgentBalance } from '@/lib/wallet-debit'
+import { getPayoutMode } from '@/lib/payout-mode'
+import { notifySuperAdminsAgentWithdrawal } from '@/lib/payout-notify'
 
 const MIN_WITHDRAWAL = 1
 
@@ -102,6 +104,15 @@ export async function POST(req: NextRequest) {
     actorId: agent.id,
     actorName: agent.name,
   })
+
+  // Manual mode only: alert super admins to pay this out. Must never break request creation.
+  try {
+    if ((await getPayoutMode()).agent === 'manual') {
+      await notifySuperAdminsAgentWithdrawal(prisma, { agentName: agent.name, amountNaira: amount, ref: record.ref })
+    }
+  } catch (e) {
+    console.error('[agent-withdrawal] admin notification failed', e instanceof Error ? e.message : e)
+  }
 
   return NextResponse.json({ withdrawal: record }, { status: 201 })
 }
