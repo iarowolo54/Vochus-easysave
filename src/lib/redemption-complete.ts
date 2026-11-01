@@ -51,7 +51,8 @@ export async function redemptionCompletionOps(
     },
   })
   if (claim.count === 0) throw new ConflictError()
-  if (!isBankTransfer) {
+  // Lock the plan unless it was already locked by a Processing pre-claim (auto bank transfer).
+  if (claimFrom !== 'Processing') {
     const plan = await tx.savingsPlan.updateMany({
       where: { id: record.savingsPlanId, status: { not: 'Redeemed' }, balance: { gt: 0 } },
       data: { status: 'Redeemed', balance: 0 },
