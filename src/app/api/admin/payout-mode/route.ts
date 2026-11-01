@@ -1,0 +1,55 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { requireSuperAdmin, adminActor } from '@/lib/admin-guard'
+import { prisma } from '@/lib/prisma'
+import { logAudit } from '@/lib/audit'
+import { getPayoutMode, type PayoutChannel, type PayoutMode } from '@/lib/payout-mode'
+
+const SETTING_KEY = 'payoutMode'
+const CHANNELS: PayoutChannel[] = ['agent', 'customer']
+const VALID_MODES: PayoutMode[] = ['auto', 'manual']
+
+export async function GET() {
+  const guard = await requireSuperAdmin()
+  if (!guard.ok) return guard.response
+
+  return NextResponse.json({ mode: await getPayoutMode() })
+}
+
+export async function POST(req: NextRequest) {
+  const guard = await requireSuperAdmin()
+  if (!guard.ok) return guard.response
+  const session = guard.session
+
+  const body = await req.json().catch(() => null)
+  const mode: unknown = body && typeof body === 'object' ? (body as { mode?: unknown }).mode : undefined
+  if (!mode || typeof mode !== 'object') return NextResponse.json({ error: 'Invalid payload' }, { status: 400 })
+
+  const next = mode as Record<string, unknown>
+  for (const ch of CHANNELS) {
+    const v = next[ch]
+    if (typeof v !== 'string' || !VALID_MODES.includes(v as PayoutMode)) {
+      return NextResponse.json({ error: `Invalid mode for ${ch}` }, { status: 400 })
+    }
+  }
+  const value = { agent: next.agent as PayoutMode, customer: next.customer as PayoutMode }
+
+  const before = await getPayoutMode()
+
+  await prisma.platformSetting.upsert({
+    where: { key: SETTING_KEY },
+    update: { value: JSON.stringify(value) },
+    create: { key: SETTING_KEY, value: JSON.stringify(value) },
+  })
+
+  const actor = adminActor(session)
+  logAudit({
+    action: 'payout_mode_updated',
+    entity: 'PlatformSetting',
+    details: `agent ${before.agent}→${value.agent}, customer ${before.customer}→${value.customer}`,
+    actorType: 'admin',
+    actorId: actor.actorId,
+    actorName: actor.actorName,
+  })
+
+  return NextResponse.json({ ok: true })
+}
