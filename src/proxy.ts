@@ -21,6 +21,7 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { decode, encode } from 'next-auth/jwt'
 import { requireEnv } from '@/lib/env'
+import { isAdminAreaRole } from '@/lib/permissions'
 import { verifyCustomerToken, signCustomerToken, type CustomerSession } from '@/lib/customer-auth'
 import { IDLE_SECONDS, type Actor } from '@/lib/session-policy'
 import {
@@ -134,11 +135,11 @@ export async function proxy(request: NextRequest) {
   // action but is still an authorized session.
   const adminValid = cookieStates.find((s) => s.cookieName === ADMIN_COOKIE && s.status === 'valid')
   const adminRole = adminValid?.claims?.role
-  const adminIsSuper = adminRole === 'superadmin'
+  const adminIsAdminArea = isAdminAreaRole(adminRole)
 
   if (isAdminApi(pathname)) {
     if (!adminValid) return applyCookies(NextResponse.json({ error: 'Unauthorized' }, { status: 401 }), cookieActions, actualName)
-    if (!adminIsSuper) return applyCookies(NextResponse.json({ error: 'Forbidden' }, { status: 403 }), cookieActions, actualName)
+    if (!adminIsAdminArea) return applyCookies(NextResponse.json({ error: 'Forbidden' }, { status: 403 }), cookieActions, actualName)
   }
 
   // Superadmin pages: a valid-but-wrong-role token must also be bounced.
@@ -147,7 +148,7 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith('/superadmin') &&
     !pathname.startsWith('/superadmin/login') &&
     adminValid &&
-    !adminIsSuper
+    !adminIsAdminArea
   ) {
     effectiveRedirect = '/superadmin/login'
   }
