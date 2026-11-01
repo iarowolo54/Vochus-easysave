@@ -10,12 +10,19 @@ export const PIN_WINDOW_MS = 15 * 60_000
 
 type PinResult = { ok: true } | { ok: false; response: NextResponse }
 
+/** Which table owns the PIN for this session role: staff sessions use StaffUser, everything else SuperAdmin. */
+export function resolvePinOwner(role: unknown): 'staff' | 'superadmin' {
+  return role === 'staff' ? 'staff' : 'superadmin'
+}
+
 export async function verifyApprovalPin(session: Session, pin: unknown): Promise<PinResult> {
-  const user = session.user as { id?: string; email?: string }
-  const admin = await prisma.superAdmin.findFirst({
-    where: user.id ? { id: user.id } : { email: user.email },
-    select: { id: true, name: true, approvalPin: true },
-  })
+  const user = session.user as { id?: string; email?: string; role?: unknown }
+  const where = user.id ? { id: user.id } : { email: user.email }
+  const select = { id: true, name: true, approvalPin: true }
+  const admin =
+    resolvePinOwner(user.role) === 'staff'
+      ? await prisma.staffUser.findFirst({ where, select })
+      : await prisma.superAdmin.findFirst({ where, select })
   if (!admin?.approvalPin) {
     return { ok: false, response: NextResponse.json({ error: 'No approval PIN set. Contact system administrator.' }, { status: 403 }) }
   }
