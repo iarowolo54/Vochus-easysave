@@ -37,7 +37,12 @@ export async function POST(req: NextRequest) {
   })
 
   if (identity.kind === 'staff') {
-    await prisma.staffUser.update({ where: { id: identity.id }, data: { lastActiveAt: new Date() } })
+    // Best-effort: a locked SQLite write must never fail a valid login.
+    try {
+      await prisma.staffUser.update({ where: { id: identity.id }, data: { lastActiveAt: new Date() } })
+    } catch (err) {
+      console.error('admin-auth login: failed to update lastActiveAt', err instanceof Error ? err.message : err)
+    }
     logAudit({
       action: 'admin_login',
       entity: 'StaffUser',
