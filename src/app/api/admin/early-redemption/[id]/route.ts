@@ -134,10 +134,11 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       return NextResponse.json({ error: 'This plan has already been redeemed' }, { status: 409 })
     }
     // Manual mode changes only the payout rail: no Paystack, same ledger. A throw here => 500 (fail closed).
-    const manual = (await getPayoutMode()).customer === 'manual'
     const agentId = record.savingsPlan.customer.agentId
     const customerId = record.savingsPlan.customer.id
     const isBankTransfer = record.payoutMethod === 'Bank Transfer' || record.payoutMethod === 'BankTransfer'
+    // Manual applies to bank transfers only; Cash never reads the mode. A throw here => 500 (fail closed).
+    const manualBank = isBankTransfer && (await getPayoutMode()).customer === 'manual'
     const originalStatus = record.status
     const originalPlanStatus = record.savingsPlan.status
     const originalPlanBalance = record.savingsPlan.balance
@@ -146,7 +147,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     let paystackTransferCode: string | null = null
     let bankTransferStatus: string | null = null
 
-    if (isBankTransfer && !manual) {
+    if (isBankTransfer && !manualBank) {
       if (!record.accountNumber || !record.bankCode || !record.accountName) {
         return NextResponse.json({ error: 'Bank account details missing on this redemption record' }, { status: 400 })
       }
@@ -245,10 +246,10 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
           decidedBy,
           isBankTransfer,
           // Manual bank transfer: no Paystack pre-claim happened, so claim from OPEN and let the helper lock the plan.
-          bankTransferStatus: manual ? 'manual' : bankTransferStatus,
+          bankTransferStatus: manualBank ? 'manual' : bankTransferStatus,
           paystackRecipientCode,
           paystackTransferCode,
-          claimFrom: manual ? OPEN_STATUSES : isBankTransfer ? 'Processing' : OPEN_STATUSES,
+          claimFrom: manualBank ? OPEN_STATUSES : isBankTransfer ? 'Processing' : OPEN_STATUSES,
           walletAfter,
         }),
       )
@@ -266,10 +267,10 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       actorId: (session.user as any).id,
       actorName: decidedBy,
     })
-    if (manual) {
+    if (manualBank) {
       await notifyManualOutcome({ kind: 'paid' }, record, customerId, agentId)
     }
-    return NextResponse.json({ ok: true, status: 'Approved', bankTransferStatus: manual ? 'manual' : bankTransferStatus })
+    return NextResponse.json({ ok: true, status: 'Approved', bankTransferStatus: manualBank ? 'manual' : bankTransferStatus })
   }
 
   return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
