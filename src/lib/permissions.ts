@@ -78,3 +78,23 @@ export function decideAdminAccess(input: {
   }
   return 'deny-403'
 }
+
+// Validates a client-supplied permission list for a role. Strict: unknown string
+// keys are reported (never silently dropped); any non-string entry makes the whole
+// input invalid (reported stringified) so a typo can't quietly under-grant.
+export function validateRolePermissions(
+  input: unknown,
+): { ok: true; areas: Area[] } | { ok: false; unknown: string[] } {
+  if (!Array.isArray(input)) return { ok: false, unknown: [] }
+  const unknown: string[] = []
+  const areas: Area[] = []
+  for (const entry of input) {
+    if (isArea(entry)) {
+      if (!areas.includes(entry)) areas.push(entry)
+    } else {
+      unknown.push(typeof entry === 'string' ? entry : String(JSON.stringify(entry) ?? entry))
+    }
+  }
+  if (unknown.length > 0) return { ok: false, unknown }
+  return { ok: true, areas }
+}
