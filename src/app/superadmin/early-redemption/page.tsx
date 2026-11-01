@@ -10,7 +10,7 @@ import {
   TableSkeleton, dateTime, nairaKobo, useDebounced, useToast,
   ResultModal, type Result, type ResultRow,
 } from '../_components/admin-ui'
-import { ManualModeBanner, usePayoutMode } from '../_components/payout-mode'
+import { ManualModeBanner, PayoutModeError, usePayoutMode } from '../_components/payout-mode'
 
 interface RedemptionRecord {
   id: string
@@ -162,7 +162,9 @@ export default function RedemptionsPage() {
   const [pinValue, setPinValue] = useState('')
   const [pinError, setPinError] = useState('')
   const [approveError, setApproveError] = useState('')
-  const manual = usePayoutMode()?.customer === 'manual'
+  const [transferRef, setTransferRef] = useState('')
+  const { modes: payoutModes, error: payoutModeError, reload: reloadPayoutMode } = usePayoutMode()
+  const manual = payoutModes?.customer === 'manual'
   const [pinLoading, setPinLoading] = useState(false)
   const [otpModal, setOtpModal] = useState<{ id: string; ref: string; customerName: string; amount: number } | null>(null)
   const [result, setResult] = useState<Result | null>(null)
@@ -310,7 +312,7 @@ export default function RedemptionsPage() {
       id: r.id, ref: r.ref, customerName: r.customerName, customerId: r.customerId, amount: r.netPayout,
       payoutMethod: r.payoutMethod ?? 'Cash', accountName: r.accountName ?? null, bankName: r.bankName ?? null, accountNumber: r.accountNumber ?? null,
     })
-    setPinValue(''); setPinError(''); setApproveError('')
+    setPinValue(''); setPinError(''); setApproveError(''); setTransferRef('')
   }
 
   function openReject(r: RedemptionRecord) {
@@ -343,7 +345,11 @@ export default function RedemptionsPage() {
     try {
       const res = await fetch(`/api/admin/early-redemption/${pinModal.id}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'approve', pin: pinValue }),
+        body: JSON.stringify(
+          manual && isBank(pinModal.payoutMethod) && transferRef.trim()
+            ? { action: 'approve', pin: pinValue, adminNote: transferRef.trim() }
+            : { action: 'approve', pin: pinValue },
+        ),
       })
       if (!res.ok) {
         const msg = await errorOf(res, 'The payout wasn’t approved. Nothing was paid. Try again.')
@@ -482,6 +488,7 @@ export default function RedemptionsPage() {
           <button type="button" className="btn btn-green" onClick={openNewRequest}><Icons.add size={18} aria-hidden="true" /> New request</button>
         </>}
       />
+      {payoutModeError && <PayoutModeError onRetry={reloadPayoutMode} />}
       {manual && <ManualModeBanner> Cash payouts are unchanged.</ManualModeBanner>}
 
       <div className="stats-grid">
@@ -769,9 +776,9 @@ export default function RedemptionsPage() {
 
       {/* Approve: review + PIN */}
       {pinModal && (
-        <Modal error={approveError || undefined} icon="redeem" tone="money" title={manual && isBank(pinModal.payoutMethod) ? 'Mark payout as paid' : 'Approve payout'} sub={`${pinModal.ref}`} onClose={() => { setPinModal(null); setPinValue(''); setPinError(''); setApproveError('') }} busy={pinLoading}
+        <Modal error={approveError || undefined} icon="redeem" tone="money" title={manual && isBank(pinModal.payoutMethod) ? 'Mark payout as paid' : 'Approve payout'} sub={`${pinModal.ref}`} onClose={() => { setPinModal(null); setPinValue(''); setPinError(''); setApproveError(''); setTransferRef('') }} busy={pinLoading}
           footer={<>
-            <button type="button" className="btn btn-outline" onClick={() => { setPinModal(null); setPinValue(''); setPinError(''); setApproveError('') }} disabled={pinLoading}>Cancel</button>
+            <button type="button" className="btn btn-outline" onClick={() => { setPinModal(null); setPinValue(''); setPinError(''); setApproveError(''); setTransferRef('') }} disabled={pinLoading}>Cancel</button>
             <button type="button" className="btn btn-green" disabled={pinLoading || !pinValue} onClick={confirmApprove}>
               {pinLoading ? ((manual && isBank(pinModal.payoutMethod)) ? 'Saving…' : 'Approving…') : (manual && isBank(pinModal.payoutMethod)) ? `Mark ${nairaKobo(pinModal.amount)} as paid` : `Approve ${nairaKobo(pinModal.amount)}`}
             </button>
@@ -798,6 +805,12 @@ export default function RedemptionsPage() {
               : 'The agent pays the customer in cash, and their wallet is credited back with this amount. The customer’s plan closes.'}
           </p>
           <form onSubmit={e => { e.preventDefault(); confirmApprove() }} noValidate>
+            {manual && isBank(pinModal.payoutMethod) && (
+              <Field id="ap-ref" label="Transfer reference (optional)" hint="Your bank transfer reference. It is saved with the payout.">
+                <input id="ap-ref" className="a-input" type="text" maxLength={120} autoComplete="off"
+                  value={transferRef} onChange={e => setTransferRef(e.target.value)} />
+              </Field>
+            )}
             <Field id="ap-pin" label="Your approval PIN" error={pinError}>
               <input id="ap-pin" className="a-input cm-code" type="password" inputMode="numeric" autoComplete="off" maxLength={6}
                 value={pinValue} aria-invalid={!!pinError} placeholder="••••"

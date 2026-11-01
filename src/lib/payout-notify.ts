@@ -3,14 +3,16 @@ import { sendMail } from '@/lib/mail'
 import { sendSMS } from '@/lib/kudisms'
 import { emailLogo } from '@/lib/email-brand'
 import { formatNaira } from '@/lib/format'
+import { escapeHtml } from '@/lib/escape-html'
 import type { CustomerType } from '@/lib/customer-type'
 
 type Client = Pick<PrismaClient, 'superAdmin'>
 type Contact = { email: string | null; phone: string }
 type Channel = { via: 'email'; to: string } | { via: 'sms'; to: string }
 
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`)
+/** Cap a free-text reason so one declined SMS can't balloon into several billable segments. */
+function capReason(reason: string): string {
+  return reason.length > 120 ? `${reason.slice(0, 119)}…` : reason
 }
 
 function hasEmail(email: string | null): email is string {
@@ -73,8 +75,9 @@ export async function notifySuperAdminsAgentWithdrawal(
       if (!a.email) continue
       try {
         await sendMail({ to: a.email, subject: 'Agent withdrawal awaiting payout', html })
-      } catch {
-        // one failed recipient must not stop the others
+      } catch (err) {
+        // one failed recipient must not stop the others, but don't fail silently
+        console.error('[payout-notify] admin recipient send failed:', err instanceof Error ? err.message : 'unknown error')
       }
     }
   } catch (err) {
@@ -103,7 +106,7 @@ export async function notifyAgentPayoutDeclined(
   await dispatch(
     agentNotifyChannel(agent),
     'Your withdrawal was declined',
-    `Vochus Easy Save: your withdrawal of ${amt} was declined. Reason: ${input.reason}. Ref ${input.ref}.`,
+    `Vochus Easy Save: your withdrawal of ${amt} was declined. Reason: ${capReason(input.reason)}. Ref ${input.ref}.`,
     [
       `Your withdrawal of <strong>${e(amt)}</strong> was declined.`,
       `Reason: ${e(input.reason)}`,
@@ -152,7 +155,7 @@ export async function notifyAgentRedemptionDeclined(
   await dispatch(
     agentNotifyChannel(agent),
     'Customer redemption declined',
-    `Vochus Easy Save: ${input.customerName}'s redemption of ${amt} was declined. Reason: ${input.reason}. Ref ${input.ref}.`,
+    `Vochus Easy Save: ${input.customerName}'s redemption of ${amt} was declined. Reason: ${capReason(input.reason)}. Ref ${input.ref}.`,
     [
       `The redemption of <strong>${e(amt)}</strong> for your customer <strong>${e(input.customerName)}</strong> was declined.`,
       `Reason: ${e(input.reason)}`,
@@ -184,7 +187,7 @@ export async function notifyCustomerRedemptionDeclined(
   await dispatch(
     customerNotifyChannel(customer, type),
     'Your redemption was declined',
-    `Vochus Easy Save: your redemption of ${amt} was declined. Reason: ${input.reason}. Ref ${input.ref}.`,
+    `Vochus Easy Save: your redemption of ${amt} was declined. Reason: ${capReason(input.reason)}. Ref ${input.ref}.`,
     [
       `Your redemption of <strong>${e(amt)}</strong> was declined.`,
       `Reason: ${e(input.reason)}`,

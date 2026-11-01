@@ -8,7 +8,7 @@ import {
   AmountHero, Empty, Field, Ledger, LedgerRow, LoadError, Modal, PageHeader, Pager, TableSkeleton, dateTime, naira, useToast,
   ResultModal, type Result,
 } from '../_components/admin-ui'
-import { ManualModeBanner, usePayoutMode } from '../_components/payout-mode'
+import { ManualModeBanner, PayoutModeError, usePayoutMode } from '../_components/payout-mode'
 
 interface WithdrawalRecord {
   id: string
@@ -79,7 +79,8 @@ export default function AgentWithdrawalsPage() {
   const [toastNode, toast] = useToast()
   const [detailRecord, setDetailRecord] = useState<WithdrawalRecord | null>(null)
   const [verifying, setVerifying] = useState<string | null>(null)
-  const manual = usePayoutMode()?.agent === 'manual'
+  const { modes: payoutModes, error: payoutModeError, reload: reloadPayoutMode } = usePayoutMode()
+  const manual = payoutModes?.agent === 'manual'
   const [transferRef, setTransferRef] = useState('')
 
   const [pinModal, setPinModal] = useState<WithdrawalRecord | null>(null)
@@ -252,6 +253,7 @@ export default function AgentWithdrawalsPage() {
   return (
     <>
       <PageHeader title="Agent withdrawals" sub={manual ? 'Agents asking to withdraw their commission to a bank account. You pay them yourself, then mark the request as paid.' : 'Agents asking to withdraw their commission to a bank account. Approving sends the money through Paystack.'} />
+      {payoutModeError && <PayoutModeError onRetry={reloadPayoutMode} />}
       {manual && <ManualModeBanner />}
 
       <div className="stats-grid">
@@ -389,7 +391,7 @@ export default function AgentWithdrawalsPage() {
               <dl className="dlg-ledger">
                 <div><dt>Decided by</dt><dd>{detailRecord.decidedBy ?? '—'}</dd></div>
                 <div><dt>Decided on</dt><dd>{detailRecord.decidedAt ? dateTime(detailRecord.decidedAt) : '—'}</dd></div>
-                {detailRecord.adminNote && <div><dt>Reason given</dt><dd>{detailRecord.adminNote}</dd></div>}
+                {detailRecord.adminNote && <div><dt>{detailRecord.bankTransferStatus === 'manual' ? 'Transfer reference' : 'Reason given'}</dt><dd>{detailRecord.adminNote}</dd></div>}
                 {detailRecord.bankTransferStatus && <div><dt>Paystack</dt><dd>{paystackLabel(detailRecord.bankTransferStatus)}</dd></div>}
               </dl>
             </>

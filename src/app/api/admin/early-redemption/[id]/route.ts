@@ -251,6 +251,10 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
           paystackTransferCode,
           claimFrom: manualBank ? OPEN_STATUSES : isBankTransfer ? 'Processing' : OPEN_STATUSES,
           walletAfter,
+          // Optional transfer reference, recorded only for a manual payout (admin paid out-of-band).
+          adminNote: manualBank && typeof body.adminNote === 'string' && body.adminNote.trim()
+            ? body.adminNote.trim().slice(0, 200)
+            : undefined,
         }),
       )
     } catch (err) {

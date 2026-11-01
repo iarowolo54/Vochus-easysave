@@ -26,6 +26,8 @@ export interface RedemptionCompletionOpts {
   /** 'Processing' (bank transfer already pre-claimed, plan already locked) or the open statuses. */
   claimFrom: 'Processing' | string[]
   walletAfter: number
+  /** Optional transfer reference for a manual payout; written to the record only when provided. */
+  adminNote?: string | null
 }
 
 export async function redemptionCompletionOps(
@@ -35,7 +37,7 @@ export async function redemptionCompletionOps(
   customerId: string | null,
   opts: RedemptionCompletionOpts,
 ): Promise<void> {
-  const { decidedBy, isBankTransfer, bankTransferStatus, paystackRecipientCode, paystackTransferCode, claimFrom, walletAfter } = opts
+  const { decidedBy, isBankTransfer, bankTransferStatus, paystackRecipientCode, paystackTransferCode, claimFrom, walletAfter, adminNote } = opts
   const agentComm = money(record.penalty * (3 / 5))
   const platformFee = money(record.penalty * (2 / 5))
   const revenueCredit = platformFee
@@ -48,6 +50,7 @@ export async function redemptionCompletionOps(
       decidedAt: new Date(),
       decidedBy,
       ...(isBankTransfer && { paystackRecipientCode, paystackTransferCode, bankTransferStatus }),
+      ...(adminNote != null && { adminNote }),
     },
   })
   if (claim.count === 0) throw new ConflictError()

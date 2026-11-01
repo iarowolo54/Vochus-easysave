@@ -329,6 +329,7 @@ model EarlyRedemption {
   requestedAt            DateTime  @default(now())
   decidedAt              DateTime?
   decidedBy              String?
+  adminNote              String?
 }
 
 model MemberCard {

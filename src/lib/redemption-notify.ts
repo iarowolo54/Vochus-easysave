@@ -1,12 +1,9 @@
 import type { PrismaClient } from '@prisma/client'
 import { sendMail } from '@/lib/mail'
 import { formatNaira } from '@/lib/format'
+import { escapeHtml } from '@/lib/escape-html'
 
 type Client = Pick<PrismaClient, 'superAdmin'>
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`)
-}
 
 /**
  * Email every super admin that a customer's redemption is awaiting approval.
