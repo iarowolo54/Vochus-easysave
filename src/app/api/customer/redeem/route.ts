@@ -12,6 +12,8 @@ import { sendMail } from '@/lib/mail'
 import { redemptionTokenMatches } from '@/lib/redemption-token'
 import { createRedemptionWithUniqueCode } from '@/lib/redemption-create'
 import { reserveRedemptionAttempt } from '@/lib/redemption-attempts'
+import { getPayoutMode } from '@/lib/payout-mode'
+import { notifyAgentRedemptionToReview } from '@/lib/payout-notify'
 
 export async function GET() {
   const session = await getCustomerSession()
@@ -177,6 +179,25 @@ export async function PATCH(req: NextRequest) {
     where: { ref },
     data: { status: 'TokenValidated' },
   })
+
+  // Manual mode: the agent now has something to review. Fully isolated — can never break validation.
+  try {
+    if ((await getPayoutMode()).customer === 'manual') {
+      const cust = await prisma.customer.findUnique({
+        where: { id: session.id },
+        select: { firstName: true, lastName: true, agent: { select: { email: true, phone: true } } },
+      })
+      if (cust?.agent) {
+        await notifyAgentRedemptionToReview(cust.agent, {
+          customerName: `${cust.firstName} ${cust.lastName}`,
+          amountNaira: redemption.netPayout,
+          ref: redemption.ref,
+        })
+      }
+    }
+  } catch {
+    /* best-effort */
+  }
 
   return NextResponse.json({ ok: true, message: 'Token validated. Awaiting agent approval.' })
 }

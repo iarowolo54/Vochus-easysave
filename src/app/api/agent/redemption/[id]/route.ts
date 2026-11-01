@@ -4,6 +4,9 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { notifySuperAdminsRedemptionPending } from '@/lib/redemption-notify'
+import { getPayoutMode } from '@/lib/payout-mode'
+import { customerType } from '@/lib/customer-type'
+import { notifyCustomerRedemptionDeclined } from '@/lib/payout-notify'
 
 export async function GET() {
   const session = await getServerSession(authOptions)
@@ -86,6 +89,20 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       actorId: agent.id,
       actorName: agent.name,
     })
+    // Manual mode: tell the customer. Isolated — the reject is already committed.
+    try {
+      if ((await getPayoutMode()).customer === 'manual') {
+        const cust = redemption.savingsPlan.customer
+        const plans = await prisma.savingsPlan.findMany({ where: { customerId: cust.id }, select: { source: true } })
+        await notifyCustomerRedemptionDeclined(cust, customerType(plans), {
+          amountNaira: redemption.netPayout,
+          ref: redemption.ref,
+          reason: 'declined by your agent',
+        })
+      }
+    } catch {
+      /* best-effort */
+    }
     return NextResponse.json({ ok: true, status: 'Rejected' })
   }
 

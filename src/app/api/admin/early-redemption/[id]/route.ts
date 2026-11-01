@@ -5,8 +5,48 @@ import { verifyApprovalPin } from '@/lib/approval-pin'
 import { createRecipient, initiateTransfer } from '@/lib/paystack'
 import { logAudit } from '@/lib/audit'
 import { redemptionCompletionOps, ConflictError } from '@/lib/redemption-complete'
+import { getPayoutMode } from '@/lib/payout-mode'
+import { customerType } from '@/lib/customer-type'
+import {
+  notifyCustomerRedemptionPaid,
+  notifyCustomerRedemptionDeclined,
+  notifyAgentRedemptionPaid,
+  notifyAgentRedemptionDeclined,
+} from '@/lib/payout-notify'
 
 const OPEN_STATUSES = ['Pending', 'TokenValidated', 'AgentApproved']
+
+/**
+ * Manual-mode customer/agent notifications for a decided redemption. Best-effort: loads the
+ * contacts itself and swallows every error so it can never fail an already-committed decision.
+ */
+async function notifyManualOutcome(
+  outcome: { kind: 'paid' } | { kind: 'declined'; reason: string },
+  r: { ref: string; netPayout: number },
+  customerId: string,
+  agentId: string,
+): Promise<void> {
+  try {
+    const [customer, agent, plans] = await Promise.all([
+      prisma.customer.findUnique({ where: { id: customerId }, select: { firstName: true, lastName: true, email: true, phone: true } }),
+      prisma.agent.findUnique({ where: { id: agentId }, select: { email: true, phone: true } }),
+      prisma.savingsPlan.findMany({ where: { customerId }, select: { source: true } }),
+    ])
+    if (!customer) return
+    const type = customerType(plans)
+    const customerName = `${customer.firstName} ${customer.lastName}`
+    const base = { amountNaira: r.netPayout, ref: r.ref }
+    if (outcome.kind === 'paid') {
+      await notifyCustomerRedemptionPaid(customer, type, base)
+      if (agent) await notifyAgentRedemptionPaid(agent, { customerName, ...base })
+    } else {
+      await notifyCustomerRedemptionDeclined(customer, type, { ...base, reason: outcome.reason })
+      if (agent) await notifyAgentRedemptionDeclined(agent, { customerName, ...base, reason: outcome.reason })
+    }
+  } catch (err) {
+    console.error('[early-redemption] manual notify failed:', err instanceof Error ? err.message : 'unknown error')
+  }
+}
 
 const conflict = (error = 'Already processed') => NextResponse.json({ error }, { status: 409 })
 
@@ -16,7 +56,8 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   const session = guard.session
 
   const { id } = await context.params
-  const { action, pin } = await req.json()
+  const body = await req.json()
+  const { action, pin } = body
 
   if (action === 'approve') {
     if (!pin) return NextResponse.json({ error: 'Approval PIN required' }, { status: 400 })
@@ -73,6 +114,16 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       actorId: (session.user as any).id,
       actorName: decidedBy,
     })
+
+    // Manual mode: tell the customer + agent. Mode read and notify are isolated — the reject is committed.
+    try {
+      if ((await getPayoutMode()).customer === 'manual') {
+        const reason = typeof body.reason === 'string' && body.reason.trim() ? body.reason.trim().slice(0, 200) : 'declined by admin'
+        await notifyManualOutcome({ kind: 'declined', reason }, record, record.savingsPlan.customer.id, record.savingsPlan.customer.agentId)
+      }
+    } catch {
+      /* best-effort */
+    }
     return NextResponse.json({ ok: true, status: 'Rejected' })
   }
 
@@ -82,6 +133,8 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     if (record.savingsPlan.status === 'Redeemed' || record.savingsPlan.balance <= 0) {
       return NextResponse.json({ error: 'This plan has already been redeemed' }, { status: 409 })
     }
+    // Manual mode changes only the payout rail: no Paystack, same ledger. A throw here => 500 (fail closed).
+    const manual = (await getPayoutMode()).customer === 'manual'
     const agentId = record.savingsPlan.customer.agentId
     const customerId = record.savingsPlan.customer.id
     const isBankTransfer = record.payoutMethod === 'Bank Transfer' || record.payoutMethod === 'BankTransfer'
@@ -93,7 +146,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     let paystackTransferCode: string | null = null
     let bankTransferStatus: string | null = null
 
-    if (isBankTransfer) {
+    if (isBankTransfer && !manual) {
       if (!record.accountNumber || !record.bankCode || !record.accountName) {
         return NextResponse.json({ error: 'Bank account details missing on this redemption record' }, { status: 400 })
       }
@@ -191,10 +244,11 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
         redemptionCompletionOps(tx, record, agentId, customerId, {
           decidedBy,
           isBankTransfer,
-          bankTransferStatus,
+          // Manual bank transfer: no Paystack pre-claim happened, so claim from OPEN and let the helper lock the plan.
+          bankTransferStatus: manual ? 'manual' : bankTransferStatus,
           paystackRecipientCode,
           paystackTransferCode,
-          claimFrom: isBankTransfer ? 'Processing' : OPEN_STATUSES,
+          claimFrom: manual ? OPEN_STATUSES : isBankTransfer ? 'Processing' : OPEN_STATUSES,
           walletAfter,
         }),
       )
@@ -212,7 +266,10 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       actorId: (session.user as any).id,
       actorName: decidedBy,
     })
-    return NextResponse.json({ ok: true, status: 'Approved', bankTransferStatus })
+    if (manual) {
+      await notifyManualOutcome({ kind: 'paid' }, record, customerId, agentId)
+    }
+    return NextResponse.json({ ok: true, status: 'Approved', bankTransferStatus: manual ? 'manual' : bankTransferStatus })
   }
 
   return NextResponse.json({ error: 'Invalid action' }, { status: 400 })
