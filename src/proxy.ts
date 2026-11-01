@@ -66,7 +66,16 @@ function numClaim(claims: Record<string, unknown>, key: string): number | undefi
 
 /** Decoder for the next-auth v4 JWE (agent + admin). */
 const nextAuthDecoder: Decoder = async (raw) => {
-  const token = await decode({ token: raw, secret: SECRET })
+  // `decode` THROWS on a malformed/garbage JWE (not just returns null), e.g. a
+  // stale, truncated, or key-rotated cookie. Treat any failure as logged out so
+  // a bad cookie never 500s the request (decideForRequest also catches, belt
+  // and suspenders).
+  let token: Awaited<ReturnType<typeof decode>>
+  try {
+    token = await decode({ token: raw, secret: SECRET })
+  } catch {
+    return null
+  }
   if (!token) return null
   const claims = token as Record<string, unknown>
   return { loginAt: numClaim(claims, 'loginAt'), iat: numClaim(claims, 'iat'), claims }

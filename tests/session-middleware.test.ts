@@ -62,6 +62,33 @@ test('garbage admin cookie (null) on /api/admin/... → clear, NO redirect', asy
   assert.deepEqual(res.cookieActions, [{ cookieName: ADMIN_COOKIE, actor: 'admin', action: 'clear' }])
 })
 
+test('decoder that THROWS (malformed JWE) → treated as logged out, clear + redirect, never a 500', async () => {
+  const throwing: Record<string, Decoder> = {
+    [ADMIN_COOKIE]: async () => {
+      throw new Error('JWEInvalid: malformed cookie')
+    },
+  }
+  // On a page the thrown decode must become a clean redirect (not an unhandled throw).
+  const page = await decideForRequest({
+    pathname: '/superadmin/dashboard',
+    cookies: { [ADMIN_COOKIE]: 'totally-not-a-jwe' },
+    nowSec: NOW,
+    decoders: throwing,
+  })
+  assert.equal(page.redirectTo, '/superadmin/login')
+  assert.deepEqual(page.cookieActions, [{ cookieName: ADMIN_COOKIE, actor: 'admin', action: 'clear' }])
+
+  // On an API the thrown decode must clear without redirect, also without throwing.
+  const api = await decideForRequest({
+    pathname: '/api/admin/customers',
+    cookies: { [ADMIN_COOKIE]: 'totally-not-a-jwe' },
+    nowSec: NOW,
+    decoders: throwing,
+  })
+  assert.equal(api.redirectTo, undefined)
+  assert.deepEqual(api.cookieActions, [{ cookieName: ADMIN_COOKIE, actor: 'admin', action: 'clear' }])
+})
+
 test('no cookie on /superadmin/login → no actions, no redirect (public page)', async () => {
   const res = await decideForRequest({
     pathname: '/superadmin/login',

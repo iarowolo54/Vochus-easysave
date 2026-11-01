@@ -90,8 +90,16 @@ export async function decideForRequest(input: DecideInput): Promise<DecideResult
     const decoder = decoders[cookieName]
     if (!decoder) continue
 
-    const decoded = await decoder(raw)
-    // Any decode/verify failure (incl. expired `exp`) = logged out for this cookie.
+    // Any decode/verify failure = logged out for this cookie. A decoder may
+    // RETURN null (e.g. verify failed) OR THROW (next-auth/jwt `decode` throws
+    // on a malformed/garbage JWE) — both must be treated as logged out, never
+    // surface as a 500. Catch here so every decoder (incl. future ones) is safe.
+    let decoded: DecodedToken | null
+    try {
+      decoded = await decoder(raw)
+    } catch {
+      decoded = null
+    }
     if (!decoded) {
       cookieActions.push({ cookieName, actor, action: 'clear' })
       continue
