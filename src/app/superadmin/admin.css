@@ -504,6 +504,7 @@
   display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 10px 16px;
   background: var(--amber-lt); border-radius: var(--r); color: var(--text); text-decoration: none; font-weight: 600;
 }
+.admin-root button.ov-attention-item { width: 100%; border: 0; font: inherit; text-align: left; cursor: pointer; }
 .admin-root .ov-attention-ic { width: 36px; height: 36px; border-radius: 50%; background: var(--surface); color: var(--amber); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
 .admin-root .ov-attention-text { flex: 1; min-width: 0; }
 .admin-root .ov-attention-cta { display: inline-flex; align-items: center; gap: 2px; font-size: 14px; color: var(--amber); white-space: nowrap; }

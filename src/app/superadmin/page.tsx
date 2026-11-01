@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { Icons, type IconName } from '@/components/ui/icons'
+import type { Area } from '@/lib/permissions'
 
 interface Stats {
   totalAgents: number
@@ -64,11 +65,21 @@ function greeting() {
   return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening'
 }
 
+/** A stat tile that links through only when the actor holds the area; otherwise a muted, non-link tile. */
+function Tile({ href, ok, children }: { href: string; ok: boolean; children: React.ReactNode }) {
+  if (ok) return <Link href={href} className="stat">{children}</Link>
+  return <div className="stat" style={{ opacity: 0.75 }}>{children}</div>
+}
+
 export default function SuperAdminDashboard() {
   const [stats, setStats] = useState<Stats | null>(null)
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [pendingLoans, setPendingLoans] = useState<Loan[]>([])
   const [agents, setAgents] = useState<Agent[]>([])
+  // Per-area sections whose endpoint 403s for this staffer are hidden, never an error.
+  const [denied, setDenied] = useState({ transactions: false, loans: false, agents: false })
+  // Areas this actor holds (null until known / if /me fails: nothing is hidden, the API still enforces).
+  const [areas, setAreas] = useState<Area[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
   const [toast, setToast] = useState('')
@@ -78,11 +89,12 @@ export default function SuperAdminDashboard() {
   const loadData = useCallback(async () => {
     setFailed(false)
     try {
-      const [sRes, tRes, lRes, aRes] = await Promise.all([
+      const [sRes, tRes, lRes, aRes, mRes] = await Promise.all([
         fetch('/api/admin/stats'),
         fetch('/api/admin/transactions'),
         fetch('/api/admin/loans?status=Pending'),
         fetch('/api/admin/agents'),
+        fetch('/api/admin/me').catch(() => null),
       ])
       if (!sRes.ok) throw new Error()
       const [s, t, l, a] = await Promise.all([
@@ -91,6 +103,9 @@ export default function SuperAdminDashboard() {
         lRes.ok ? lRes.json() : null,
         aRes.ok ? aRes.json() : null,
       ])
+      const me: { areas?: Area[] } | null = mRes?.ok ? await mRes.json().catch(() => null) : null
+      setAreas(Array.isArray(me?.areas) ? me.areas : null)
+      setDenied({ transactions: tRes.status === 403, loans: lRes.status === 403, agents: aRes.status === 403 })
       setStats(s)
       setTransactions((t?.transactions ?? []).slice(0, 8))
       setPendingLoans((l?.loans ?? []).slice(0, 5))
@@ -147,9 +162,14 @@ export default function SuperAdminDashboard() {
     )
   }
 
+  const has = (a: Area) => areas === null || areas.includes(a)
+  const showTx = !denied.transactions && has('money')
+  const showLoans = !denied.loans && has('loans')
+  const showAgents = !denied.agents && has('agents')
+
   const attention = [
-    stats.pendingLoans > 0 && { href: '/superadmin/loan-requests', icon: 'loan' as const, text: `${stats.pendingLoans} loan request${stats.pendingLoans === 1 ? '' : 's'} waiting for a decision` },
-    stats.pendingRedemptions > 0 && { href: '/superadmin/early-redemption', icon: 'redeem' as const, text: `${stats.pendingRedemptions} redemption${stats.pendingRedemptions === 1 ? '' : 's'} waiting to be processed` },
+    has('loans') && stats.pendingLoans > 0 && { href: '/superadmin/loan-requests', icon: 'loan' as const, text: `${stats.pendingLoans} loan request${stats.pendingLoans === 1 ? '' : 's'} waiting for a decision` },
+    has('customers') && stats.pendingRedemptions > 0 && { href: '/superadmin/early-redemption', icon: 'redeem' as const, text: `${stats.pendingRedemptions} redemption${stats.pendingRedemptions === 1 ? '' : 's'} waiting to be processed` },
   ].filter(Boolean) as { href: string; icon: IconName; text: string }[]
 
   return (
@@ -177,30 +197,30 @@ export default function SuperAdminDashboard() {
       )}
 
       <div className="stats-grid">
-        <Link href="/superadmin/savings-monitor" className="stat">
+        <Tile href="/superadmin/savings-monitor" ok={has('customers')}>
           <div className="stat-lbl">Savings held</div>
           <div className="stat-val">{fmt(stats.totalSavingsPool)}</div>
           <div className="stat-sub">Across all plans</div>
-        </Link>
-        <Link href="/superadmin/customers" className="stat">
+        </Tile>
+        <Tile href="/superadmin/customers" ok={has('customers')}>
           <div className="stat-lbl">Customers</div>
           <div className="stat-val">{stats.totalCustomers.toLocaleString('en-NG')}</div>
           <div className="stat-sub">Enrolled</div>
-        </Link>
-        <Link href="/superadmin/agents" className="stat">
+        </Tile>
+        <Tile href="/superadmin/agents" ok={has('agents')}>
           <div className="stat-lbl">Agents</div>
           <div className="stat-val">{stats.totalAgents.toLocaleString('en-NG')}</div>
           <div className="stat-sub">Registered</div>
-        </Link>
-        <Link href="/superadmin/loan-repay" className="stat">
+        </Tile>
+        <Tile href="/superadmin/loan-repay" ok={has('loans')}>
           <div className="stat-lbl">Loans out</div>
           <div className="stat-val">{fmt(stats.activeLoansPortfolio)}</div>
           <div className="stat-sub">{stats.activeLoans} active loan{stats.activeLoans === 1 ? '' : 's'}</div>
-        </Link>
+        </Tile>
       </div>
 
-      <div className="g65 ov-row">
-        <section className="card" aria-labelledby="ov-activity">
+      {(showTx || showLoans) && <div className="g65 ov-row">
+        {showTx && <section className="card" aria-labelledby="ov-activity">
           <div className="card-hd">
             <h3 id="ov-activity">Recent activity</h3>
             <Link href="/superadmin/transactions" className="card-link">See all</Link>
@@ -235,9 +255,9 @@ export default function SuperAdminDashboard() {
               })}
             </div>
           )}
-        </section>
+        </section>}
 
-        <section className="card" aria-labelledby="ov-loans">
+        {showLoans && <section className="card" aria-labelledby="ov-loans">
           <div className="card-hd">
             <h3 id="ov-loans">Loan requests</h3>
             <Link href="/superadmin/loan-requests" className="card-link">See all</Link>
@@ -281,10 +301,10 @@ export default function SuperAdminDashboard() {
               })}
             </div>
           )}
-        </section>
-      </div>
+        </section>}
+      </div>}
 
-      <section className="card" aria-labelledby="ov-agents">
+      {showAgents && <section className="card" aria-labelledby="ov-agents">
         <div className="card-hd">
           <h3 id="ov-agents">Agents with the most customers</h3>
           <Link href="/superadmin/agents" className="card-link">All agents</Link>
@@ -333,7 +353,7 @@ export default function SuperAdminDashboard() {
             </table>
           </div>
         )}
-      </section>
+      </section>}
 
       <div className={`a-toast${toast ? ' show' : ''}`} role="status" aria-live="polite">{toast}</div>
     </>

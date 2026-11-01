@@ -8,16 +8,23 @@ import '../admin.css'
 import Logo from '@/components/Logo'
 import SessionKeepAlive from '@/components/SessionKeepAlive'
 import { Icons, type IconName } from '@/components/ui/icons'
+import { AREA_LABELS, type Area } from '@/lib/permissions'
+import { useMyAccess, hasMoneyArea } from './useMyAccess'
+import NoAccess from './NoAccess'
+import { ChangePasswordModal, SetPinModal } from './SelfService'
+import { useToast } from './admin-ui'
 
-type NavItem = { label: string; icon: IconName; href: string; badge?: 'pendingLoans' }
+type NavItem = { label: string; icon: IconName; href: string; badge?: 'pendingLoans'; ownerOnly?: boolean }
 
-const navGroups: { label: string; items: NavItem[] }[] = [
+// `area` gates a group for staff (cosmetic; the API guards enforce). No area = always shown.
+const navGroups: { label: string; area?: Area; items: NavItem[] }[] = [
   {
     label: '',
     items: [{ label: 'Home', icon: 'home', href: '/superadmin' }],
   },
   {
     label: 'Agents',
+    area: 'agents',
     items: [
       { label: 'All agents', icon: 'customers', href: '/superadmin/agents' },
       { label: 'Agent wallets', icon: 'wallet', href: '/superadmin/agent-wallets' },
@@ -28,6 +35,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
   },
   {
     label: 'Customers',
+    area: 'customers',
     items: [
       { label: 'All customers', icon: 'plan', href: '/superadmin/customers' },
       { label: 'Savings monitor', icon: 'monitor', href: '/superadmin/savings-monitor' },
@@ -36,6 +44,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
   },
   {
     label: 'Loans',
+    area: 'loans',
     items: [
       { label: 'Loan requests', icon: 'loan', href: '/superadmin/loan-requests', badge: 'pendingLoans' },
       { label: 'Disbursements', icon: 'cash', href: '/superadmin/loan-disburse' },
@@ -45,6 +54,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
   },
   {
     label: 'Money',
+    area: 'money',
     items: [
       { label: 'Treasury', icon: 'treasury', href: '/superadmin/treasury' },
       { label: 'Wallet accounts', icon: 'deposit', href: '/superadmin/wallet-accounts' },
@@ -54,6 +64,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
   },
   {
     label: 'Cards',
+    area: 'cards',
     items: [
       { label: 'Card management', icon: 'card', href: '/superadmin/cards' },
       { label: 'Generate cards', icon: 'qr', href: '/superadmin/cards/generate' },
@@ -62,8 +73,9 @@ const navGroups: { label: string; items: NavItem[] }[] = [
   },
   {
     label: 'Oversight',
+    area: 'oversight',
     items: [
-      { label: 'Staff & access', icon: 'staff', href: '/superadmin/staff' },
+      { label: 'Staff & access', icon: 'staff', href: '/superadmin/staff', ownerOnly: true },
       { label: 'Devices', icon: 'device', href: '/superadmin/devices' },
       { label: 'Audit log', icon: 'audit', href: '/superadmin/audit' },
       { label: 'Reports', icon: 'reports', href: '/superadmin/reports' },
@@ -83,6 +95,16 @@ function activeHref(pathname: string) {
   return best
 }
 
+/** The area a path needs, from the nav group of its longest matching item. Unknown paths need none. */
+function areaForPath(pathname: string): { area?: Area; ownerOnly?: boolean } {
+  const href = activeHref(pathname)
+  for (const g of navGroups) {
+    const item = g.items.find(i => i.href === href)
+    if (item) return { area: g.area, ownerOnly: item.ownerOnly }
+  }
+  return {}
+}
+
 export default function AdminShell({ children }: { children: React.ReactNode }) {
   const { data: session, status } = useSession()
   const pathname = usePathname()
@@ -91,8 +113,12 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const [modal, setModal] = useState<'password' | 'pin' | null>(null)
+  const [toastNode, toast] = useToast()
 
   const isLoginPage = pathname === '/superadmin/login'
+
+  const { state: me, reload: reloadMe } = useMyAccess(status === 'authenticated' && !isLoginPage)
 
   useEffect(() => {
     if (!isLoginPage && status === 'unauthenticated') router.replace('/superadmin/login')
@@ -136,6 +162,17 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
   const initials = name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()
   const current = activeHref(pathname)
   const currentLabel = allItems.find(i => i.href === current)?.label ?? 'Admin'
+  const access = me.status === 'ready' ? me.access : null
+  const isOwner = access?.role === 'superadmin'
+  const can = (area?: Area) => !area || (!!access && (isOwner || access.areas.includes(area)))
+  const visibleGroups = navGroups
+    .filter(g => can(g.area))
+    .map(g => ({ ...g, items: g.items.filter(i => !i.ownerOnly || isOwner) }))
+    .filter(g => g.items.length > 0)
+  const need = areaForPath(pathname)
+  const blocked = me.status === 'ready' && ((need.ownerOnly && !isOwner) || !can(need.area))
+  const canPin = !!access && hasMoneyArea(access.areas)
+  const nudgePin = !!access && access.role === 'staff' && canPin && !access.hasApprovalPin
   const signOutNow = () => signOut({ callbackUrl: '/superadmin/login' })
 
   return (
@@ -157,7 +194,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
         </div>
 
         <nav className="a-nav">
-          {navGroups.map(group => (
+          {visibleGroups.map(group => (
             <div key={group.label || 'top'} className="a-nav-group">
               {group.label && <div className="a-nav-grp">{group.label}</div>}
               {group.items.map(item => {
@@ -179,6 +216,14 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
               })}
             </div>
           ))}
+          {me.status === 'error' && (
+            <div className="a-nav-group">
+              <button type="button" className="a-nav-item" onClick={reloadMe}>
+                <Icons.retry size={18} aria-hidden="true" className="ni-ic" />
+                <span className="ni-label">Couldn’t load your menu. Retry</span>
+              </button>
+            </div>
+          )}
         </nav>
 
         <div className="a-sb-bottom">
@@ -206,6 +251,18 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
                   <strong>{name}</strong>
                   {admin?.email && <span>{admin.email}</span>}
                 </div>
+                {access && (
+                  <>
+                    <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); setModal('password') }}>
+                      <Icons.settings size={16} aria-hidden="true" /> Change password
+                    </button>
+                    {canPin && (
+                      <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); setModal('pin') }}>
+                        <Icons.locked size={16} aria-hidden="true" /> {access.hasApprovalPin ? 'Change approval PIN' : 'Set approval PIN'}
+                      </button>
+                    )}
+                  </>
+                )}
                 <button type="button" role="menuitem" onClick={signOutNow}>
                   <Icons.logout size={16} aria-hidden="true" /> Sign out
                 </button>
@@ -215,9 +272,30 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
         </header>
 
         <div className="a-content">
-          {children}
+          {nudgePin && !blocked && (
+            <div className="ov-attention" role="list" aria-label="Set up your approval PIN">
+              <button type="button" className="ov-attention-item" role="listitem" onClick={() => setModal('pin')}>
+                <span className="ov-attention-ic" aria-hidden="true"><Icons.locked size={18} /></span>
+                <span className="ov-attention-text">Set an approval PIN so you can approve payouts and cash</span>
+                <span className="ov-attention-cta">Set PIN <Icons.next size={16} aria-hidden="true" /></span>
+              </button>
+            </div>
+          )}
+          {me.status === 'loading' && pathname !== '/superadmin' ? (
+            <div aria-busy="true"><div className="skel" style={{ width: 240, height: 30, marginBottom: 20 }} /><div className="card"><div className="skel" style={{ height: 220 }} /></div></div>
+          ) : blocked ? (
+            <NoAccess area={need.area ? AREA_LABELS[need.area] : undefined} />
+          ) : children}
         </div>
       </main>
+
+      {modal === 'password' && (
+        <ChangePasswordModal onClose={() => setModal(null)} onDone={() => { setModal(null); toast('Password changed', 'success') }} />
+      )}
+      {modal === 'pin' && access && (
+        <SetPinModal hasPin={access.hasApprovalPin} onClose={() => setModal(null)} onDone={() => { setModal(null); reloadMe(); toast('Approval PIN saved', 'success') }} />
+      )}
+      {toastNode}
     </div>
   )
 }
