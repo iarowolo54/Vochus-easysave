@@ -42,7 +42,7 @@ test('credits Capital by amount and audits real admin + reference', async () => 
   assert.equal(rows.length, 1)
   assert.equal(rows[0].actorId, RUN)
   assert.equal(rows[0].actorName, NAME)
-  assert.equal(rows[0].actorType, 'admin')
+  assert.equal(rows[0].actorType, 'superadmin')
   assert.ok(rows[0].details?.includes(`REF-${RUN}`))
   assert.ok(rows[0].details?.includes('1000.5'))
 })
