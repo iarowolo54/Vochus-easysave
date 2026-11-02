@@ -11,7 +11,11 @@ export type ReceiptTxn = {
   createdAt: Date
   planGoal: string | null
   method: string | null
+  /** Set for payout rows; see payoutOutcome. */
+  payout?: PayoutOutcome | null
 }
+
+export type PayoutOutcome = 'paid' | 'processing' | 'failed' | 'reversed'
 
 // Goal and names are free text. Without this, a line break in one could fake a receipt line.
 const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim().slice(0, 60)
@@ -54,29 +58,40 @@ export function payoutRef(t: { type: string; ref: string }): string | null {
 }
 
 /**
- * Why a payout's receipt can't be sent yet, or null if it can. Payout rows are written as Done once
- * Paystack accepts the transfer and aren't updated if it later fails, so the row's status can't be
- * trusted. An interest row's method is always Cash, so only the redemption record says how it was paid.
+ * What really happened to a payout. Payout rows are written as Done once Paystack accepts the
+ * transfer, so the row's status can't be trusted. An interest row's method is always Cash, so only
+ * the redemption record says how it was paid. Reads bankTransferStatus as stored, so once transfer
+ * webhooks update it, receipts follow without any change here.
  */
-export function payoutBlock(
+export function payoutOutcome(
   t: { type: string; method: string | null },
   record: { payoutMethod: string | null; bankTransferStatus: string | null } | null,
-): string | null {
-  const notConfirmed = 'This bank payout isn’t confirmed yet, so the receipt can’t be sent.'
+): PayoutOutcome {
   // No redemption record: an agent's direct payout, which only cash can vouch for.
-  if (!record) return t.type === 'redemption' && t.method?.toLowerCase() === 'cash' ? null : notConfirmed
+  if (!record) return t.type === 'redemption' && t.method?.toLowerCase() === 'cash' ? 'paid' : 'processing'
   // Same test as the admin approve route: anything else never goes through Paystack.
-  if (record.payoutMethod !== 'Bank Transfer' && record.payoutMethod !== 'BankTransfer') return null
+  if (record.payoutMethod !== 'Bank Transfer' && record.payoutMethod !== 'BankTransfer') return 'paid'
   const status = record.bankTransferStatus
-  if (status === 'success' || status === 'manual') return null
-  return status === 'failed' || status === 'reversed'
-    ? `This bank payout ${status === 'failed' ? 'failed' : 'was reversed'}, so the receipt can’t be sent.`
-    : notConfirmed
+  if (status === 'success' || status === 'manual') return 'paid'
+  return status === 'failed' || status === 'reversed' ? status : 'processing'
+}
+
+/** The status a receipt shows. For a payout, the outcome overrides the row's own Done. */
+export function receiptStatus(t: { status: string; payout?: PayoutOutcome | null }): string {
+  if (t.payout === 'processing') return 'Processing'
+  if (t.payout === 'failed') return 'Failed'
+  if (t.payout === 'reversed') return 'Reversed'
+  return statusLabel(t.status)
+}
+
+/** Earliest date first, then by ref, so a bulk receipt is the same whatever order the days were tapped. */
+export function earliestFirst<T extends { createdAt: Date; ref: string }>(txns: T[]): T[] {
+  return [...txns].sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime() || a.ref.localeCompare(b.ref, 'en', { numeric: true }))
 }
 
 /** One transaction gives a normal receipt; several (a Bulk Savings payment) give one combined receipt. */
 export function buildReceiptMessage(txns: ReceiptTxn[], who: { customerName: string; agentName: string }): string {
-  const [first] = txns
+  const [first] = earliestFirst(txns)
   const bulk = txns.length > 1
   const goal = oneLine(first.planGoal ?? '')
   // A customer's own Paystack deposit wasn't recorded by the agent.
@@ -93,7 +108,7 @@ export function buildReceiptMessage(txns: ReceiptTxn[], who: { customerName: str
 
   return [
     ...details,
-    `Status: ${statusLabel(first.status)}`,
+    `Status: ${receiptStatus(first)}`,
     `Customer: ${displayName(oneLine(who.customerName))}`,
     goal ? `Plan: ${goal}` : '',
     bulk ? `Paid for: ${paidFor(txns)}` : `Date: ${lagosDate(first.createdAt)}, ${lagosTime(first.createdAt)}`,

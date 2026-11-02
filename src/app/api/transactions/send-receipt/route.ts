@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
-import { buildReceiptMessage, payoutBlock, payoutRef } from '@/lib/receipt-message'
+import { buildReceiptMessage, earliestFirst, payoutOutcome, payoutRef } from '@/lib/receipt-message'
 
 const MAX_IDS = 90
 
@@ -35,9 +35,7 @@ export async function POST(req: NextRequest) {
   })
   if (rows.length !== ids.length) return NextResponse.json({ error: 'Transaction not found' }, { status: 404 })
 
-  // Request order, so "first reference" matches what the agent's screen shows.
-  const byId = new Map(rows.map(r => [r.id, r]))
-  const txns = ids.map(id => byId.get(id)!)
+  const txns = earliestFirst(rows)
   const [first] = txns
 
   const { customerId, customer } = first
@@ -52,14 +50,15 @@ export async function POST(req: NextRequest) {
   }
 
   const redemptionRef = payoutRef(first)
-  if (redemptionRef) {
-    const record = await prisma.earlyRedemption.findUnique({ where: { ref: redemptionRef }, select: { payoutMethod: true, bankTransferStatus: true } })
-    const blocked = payoutBlock(first, record)
-    if (blocked) return NextResponse.json({ error: blocked }, { status: 409 })
+  const payout = redemptionRef
+    ? payoutOutcome(first, await prisma.earlyRedemption.findUnique({ where: { ref: redemptionRef }, select: { payoutMethod: true, bankTransferStatus: true } }))
+    : null
+  if (payout === 'failed' || payout === 'reversed') {
+    return NextResponse.json({ error: `This bank payout ${payout === 'failed' ? 'failed' : 'was reversed'}, so the receipt can’t be sent.` }, { status: 409 })
   }
 
   const message = buildReceiptMessage(
-    txns.map(t => ({ ref: t.ref, type: t.type, amount: t.amount, status: t.status, createdAt: t.createdAt, planGoal: t.plan?.goal ?? null, method: t.method })),
+    txns.map(t => ({ ref: t.ref, type: t.type, amount: t.amount, status: t.status, createdAt: t.createdAt, planGoal: t.plan?.goal ?? null, method: t.method, payout })),
     { customerName: `${customer.firstName} ${customer.lastName}`, agentName: agent.name },
   )
 

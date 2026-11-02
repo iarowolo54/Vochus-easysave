@@ -1,7 +1,7 @@
 // Unit tests for the receipt text agents send to a customer's in-app chat.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildReceiptMessage, payoutBlock, payoutRef, type ReceiptTxn } from '../src/lib/receipt-message'
+import { buildReceiptMessage, earliestFirst, payoutOutcome, payoutRef, receiptStatus, type ReceiptTxn } from '../src/lib/receipt-message'
 
 const who = { customerName: 'ada obi', agentName: 'Bola Agent' }
 const txn = (over: Partial<ReceiptTxn> = {}): ReceiptTxn => ({
@@ -63,7 +63,7 @@ test('bulk is one message with the total, days and first reference +N more', () 
     'Plan: School fees',
     'Paid for: 3 days between 1 Mar 2026 and 3 Mar 2026',
     'Recorded by: Bola Agent',
-    'Reference: TXN-1 +2 more',
+    'Reference: TXN-2 +2 more',
   ].join('\n'))
 })
 
@@ -117,29 +117,60 @@ test('payoutRef finds the redemption behind payout rows only', () => {
   assert.equal(payoutRef({ type: 'saving', ref: 'ER-1-INT' }), null)
 })
 
-test('payoutBlock: bank payouts need a confirmed transfer', () => {
+test('payoutOutcome: bank payouts follow the stored transfer status', () => {
   const row = { type: 'redemption', method: 'Bank Transfer' }
-  const bank = (bankTransferStatus: string | null, payoutMethod = 'BankTransfer') => payoutBlock(row, { payoutMethod, bankTransferStatus })
-  assert.equal(bank('success'), null)
-  assert.equal(bank('manual', 'Bank Transfer'), null)
-  assert.match(bank('failed')!, /failed/)
-  assert.match(bank('reversed')!, /reversed/)
-  assert.match(bank('pending')!, /isn’t confirmed/)
-  assert.match(bank('otp')!, /isn’t confirmed/)
-  assert.match(bank(null)!, /isn’t confirmed/)
+  const bank = (bankTransferStatus: string | null, payoutMethod = 'BankTransfer') => payoutOutcome(row, { payoutMethod, bankTransferStatus })
+  assert.equal(bank('success'), 'paid')
+  assert.equal(bank('manual', 'Bank Transfer'), 'paid')
+  assert.equal(bank('failed'), 'failed')
+  assert.equal(bank('reversed'), 'reversed')
+  for (const status of ['pending', 'otp', null]) assert.equal(bank(status), 'processing')
 })
 
-test('payoutBlock: an interest row follows its redemption, not its own Cash method', () => {
+test('payoutOutcome: an interest row follows its redemption, not its own Cash method', () => {
   const row = { type: 'interest', method: 'Cash' }
-  assert.match(payoutBlock(row, { payoutMethod: 'BankTransfer', bankTransferStatus: 'failed' })!, /failed/)
-  assert.equal(payoutBlock(row, { payoutMethod: 'BankTransfer', bankTransferStatus: 'success' }), null)
-  assert.equal(payoutBlock(row, { payoutMethod: 'Cash', bankTransferStatus: null }), null)
-  assert.match(payoutBlock(row, null)!, /isn’t confirmed/)
+  assert.equal(payoutOutcome(row, { payoutMethod: 'BankTransfer', bankTransferStatus: 'failed' }), 'failed')
+  assert.equal(payoutOutcome(row, { payoutMethod: 'BankTransfer', bankTransferStatus: 'pending' }), 'processing')
+  assert.equal(payoutOutcome(row, { payoutMethod: 'BankTransfer', bankTransferStatus: 'success' }), 'paid')
+  assert.equal(payoutOutcome(row, { payoutMethod: 'Cash', bankTransferStatus: null }), 'paid')
+  assert.equal(payoutOutcome(row, null), 'processing')
 })
 
-test('payoutBlock: cash needs no transfer; no record and not cash is refused', () => {
-  assert.equal(payoutBlock({ type: 'redemption', method: 'Cash' }, { payoutMethod: 'Cash', bankTransferStatus: null }), null)
-  assert.equal(payoutBlock({ type: 'redemption', method: 'Cash' }, null), null)
-  assert.match(payoutBlock({ type: 'redemption', method: 'Bank Transfer' }, null)!, /isn’t confirmed/)
-  assert.match(payoutBlock({ type: 'redemption', method: null }, null)!, /isn’t confirmed/)
+test('payoutOutcome: cash is paid; no record and not cash stays processing', () => {
+  assert.equal(payoutOutcome({ type: 'redemption', method: 'Cash' }, { payoutMethod: 'Cash', bankTransferStatus: null }), 'paid')
+  assert.equal(payoutOutcome({ type: 'redemption', method: 'Cash' }, null), 'paid')
+  assert.equal(payoutOutcome({ type: 'redemption', method: 'Bank Transfer' }, null), 'processing')
+  assert.equal(payoutOutcome({ type: 'redemption', method: null }, null), 'processing')
+})
+
+test('receiptStatus: a Done payout row shows its outcome, and other rows their own status', () => {
+  assert.equal(receiptStatus({ status: 'Done', payout: 'processing' }), 'Processing')
+  assert.equal(receiptStatus({ status: 'Done', payout: 'paid' }), 'Completed')
+  assert.equal(receiptStatus({ status: 'Done', payout: 'failed' }), 'Failed')
+  assert.equal(receiptStatus({ status: 'Done', payout: 'reversed' }), 'Reversed')
+  assert.equal(receiptStatus({ status: 'Done' }), 'Completed')
+  assert.equal(receiptStatus({ status: 'Pending', payout: null }), 'Pending')
+})
+
+test('a processing payout never says Completed in the message', () => {
+  const text = buildReceiptMessage([txn({ type: 'redemption', payout: 'processing' })], who)
+  assert.match(text, /^Status: Processing$/m)
+  assert.doesNotMatch(text, /Completed/)
+})
+
+test('bulk reference is the earliest date whatever order the days were tapped', () => {
+  const late = txn({ ref: 'TXN-9003', createdAt: new Date('2026-11-03T11:00:00.000Z') })
+  const early = txn({ ref: 'TXN-9006', createdAt: new Date('2026-11-01T11:00:00.000Z') })
+  const mid = txn({ ref: 'TXN-9001', createdAt: new Date('2026-11-02T11:00:00.000Z') })
+  const expected = buildReceiptMessage([early, mid, late], who)
+  assert.match(expected, /Reference: TXN-9006 \+2 more/)
+  assert.equal(buildReceiptMessage([late, early, mid], who), expected)
+  assert.equal(buildReceiptMessage([mid, late, early], who), expected)
+})
+
+test('same-date bulk breaks ties by ref, numerically', () => {
+  const at = new Date('2026-11-01T11:00:00.000Z')
+  const rows = [txn({ ref: 'TXN-10000', createdAt: at }), txn({ ref: 'TXN-9999', createdAt: at })]
+  assert.deepEqual(earliestFirst(rows).map(t => t.ref), ['TXN-9999', 'TXN-10000'])
+  assert.deepEqual(rows.map(t => t.ref), ['TXN-10000', 'TXN-9999'], 'input is not reordered')
 })

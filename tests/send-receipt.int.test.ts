@@ -79,7 +79,9 @@ before(async () => {
   await payout('payFailed', 'BankTransfer', 'failed')
   await payout('payReversed', 'BankTransfer', 'reversed')
   await payout('payPending', 'BankTransfer', 'pending')
+  await payout('payOtp', 'BankTransfer', 'otp')
   await payout('payNull', 'BankTransfer', null)
+  await payout('payLater', 'BankTransfer', 'pending')
   await payout('payCash', 'Cash', null)
   await mk('directCash', { type: 'redemption', method: 'Cash' })
   await mk('directBank', { type: 'redemption', method: 'Bank Transfer' })
@@ -137,14 +139,17 @@ test('content and customer come from the database, never the request', async () 
   assert.equal((await messages(ids.custB)).length, 0)
 })
 
-test('several ids post one message, with the first reference in request order', async () => {
+test('several ids post one message, the same whatever order they arrive in', async () => {
   const res = await call({ ids: [tx.d2, tx.d1, tx.d3] })
   assert.equal(res.status, 200)
   const msgs = await messages(ids.custA)
   assert.equal(msgs.length, 1)
   assert.match(msgs[0].message, /Total: ₦300\.00/)
   assert.match(msgs[0].message, /Paid for: 3 days between 1 Mar 2026 and 3 Mar 2026/)
-  assert.match(msgs[0].message, new RegExp(`Reference: SR-d2-${RUN} \\+2 more`))
+  assert.match(msgs[0].message, new RegExp(`Reference: SR-d1-${RUN} \\+2 more`))
+  assert.equal((await call({ ids: [tx.d3, tx.d1, tx.d2] })).status, 200)
+  const again = await messages(ids.custA)
+  assert.equal(again[1].message, again[0].message)
 })
 
 test('enrolment receipt has no amount', async () => {
@@ -186,8 +191,8 @@ test('sending changes no balances', async () => {
   assert.equal(plan.balance, 555)
 })
 
-test('409 and nothing sent for a bank payout that is not confirmed, on the payout and its interest row', async () => {
-  for (const key of ['payFailed', 'payReversed', 'payPending', 'payNull']) {
+test('409 and nothing sent for a failed or reversed bank payout, on the payout and its interest row', async () => {
+  for (const key of ['payFailed', 'payReversed']) {
     for (const id of [tx[key], tx[`${key}Int`]]) {
       const res = await call({ ids: [id] })
       assert.equal(res.status, 409, key)
@@ -197,17 +202,38 @@ test('409 and nothing sent for a bank payout that is not confirmed, on the payou
   assert.equal((await messages(ids.custA)).length, 0)
 })
 
-test('confirmed bank payouts, manual payouts and cash payouts can be sent', async () => {
-  for (const key of ['paySuccess', 'payManual', 'payCash']) {
-    assert.equal((await call({ ids: [tx[key]] })).status, 200, key)
-    assert.equal((await call({ ids: [tx[`${key}Int`]] })).status, 200, `${key} interest`)
+test('confirmed bank, manual and cash payouts send as Completed', async () => {
+  for (const id of [tx.paySuccess, tx.paySuccessInt, tx.payManual, tx.payManualInt, tx.payCash, tx.payCashInt, tx.directCash]) {
+    assert.equal((await call({ ids: [id] })).status, 200)
   }
-  assert.equal((await messages(ids.custA)).length, 6)
+  const msgs = await messages(ids.custA)
+  assert.equal(msgs.length, 7)
+  for (const m of msgs) assert.match(m.message, /^Status: Completed$/m)
 })
 
-test('a direct payout with no redemption record needs to be cash', async () => {
-  assert.equal((await call({ ids: [tx.directCash] })).status, 200)
-  assert.equal((await call({ ids: [tx.directBank] })).status, 409)
+test('unconfirmed bank payouts send as Processing, never Completed', async () => {
+  for (const id of [tx.payPending, tx.payPendingInt, tx.payOtp, tx.payOtpInt, tx.payNull, tx.payNullInt, tx.directBank]) {
+    assert.equal((await call({ ids: [id] })).status, 200)
+  }
+  const msgs = await messages(ids.custA)
+  assert.equal(msgs.length, 7)
+  for (const m of msgs) {
+    assert.match(m.message, /^Status: Processing$/m)
+    assert.doesNotMatch(m.message, /Completed/)
+  }
+})
+
+test('a later status update corrects the receipt with no other change', async () => {
+  const ref = `ER-payLater-${RUN}`
+  await prisma.earlyRedemption.update({ where: { ref }, data: { bankTransferStatus: 'pending' } })
+  await call({ ids: [tx.payLater] })
+  await prisma.earlyRedemption.update({ where: { ref }, data: { bankTransferStatus: 'success' } })
+  await call({ ids: [tx.payLater] })
+  const msgs = await messages(ids.custA)
+  assert.match(msgs[0].message, /^Status: Processing$/m)
+  assert.match(msgs[1].message, /^Status: Completed$/m)
+  await prisma.earlyRedemption.update({ where: { ref }, data: { bankTransferStatus: 'failed' } })
+  assert.equal((await call({ ids: [tx.payLater] })).status, 409)
 })
 
 test('canOpenChat is false with no password, but the message is still posted', async () => {
@@ -225,7 +251,7 @@ test('canOpenChat is true with a password, and the hash is never returned', asyn
 })
 
 test('each send is audited with every id and ref, and not the message body', async () => {
-  const send = [tx.d1, tx.d2]
+  const send = [tx.d2, tx.d1]
   assert.equal((await call({ ids: send })).status, 200)
   const log = await prisma.auditLog.findFirstOrThrow({ where: { action: 'receipt_sent_to_chat', entityId: tx.d1 }, orderBy: { createdAt: 'desc' } })
   assert.equal(log.actorId, ids.agent)
