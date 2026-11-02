@@ -10,7 +10,6 @@ export default function UnlockPage() {
   const router = useRouter()
   const [step, setStep] = useState<Step>('identify')
   const [identifier, setIdentifier] = useState('')
-  const [maskedPhone, setMaskedPhone] = useState('')
   const [token, setToken] = useState('')
   const [newPin, setNewPin] = useState('')
   const [confirmPin, setConfirmPin] = useState('')
@@ -30,7 +29,6 @@ export default function UnlockPage() {
     const data = await res.json().catch(() => ({}))
     setLoading(false)
     if (res.ok) {
-      setMaskedPhone(data.phone)
       setStep('verify')
     } else {
       setError(data.error ?? 'Request failed')
@@ -39,7 +37,7 @@ export default function UnlockPage() {
 
   async function resetPin() {
     if (newPin !== confirmPin) { setError('PINs do not match'); return }
-    if (newPin.length < 4) { setError('PIN must be at least 4 characters'); return }
+    if (newPin.length < 6) { setError('PIN must be at least 6 characters'); return }
     setLoading(true)
     setError('')
     const res = await fetch('/api/agent/unlock/reset', {
@@ -108,8 +106,8 @@ export default function UnlockPage() {
             <div style={{ fontSize: 32, textAlign: 'center', marginBottom: 12 }}>📱</div>
             <h2 style={{ textAlign: 'center', marginBottom: 6 }}>Enter Unlock Code</h2>
             <p style={{ fontSize: 13, color: 'var(--text3)', textAlign: 'center', marginBottom: 20, lineHeight: 1.6 }}>
-              A 6-digit code was sent to <strong style={{ color: 'var(--text)' }}>{maskedPhone}</strong>.<br />
-              It expires in 15 minutes.
+              If this account is locked, we’ve sent a 6-digit code to its phone number by SMS. It can take a minute to arrive.<br />
+              It expires in 10 minutes.
             </p>
             {error && <div className="lerr">{error}</div>}
             <label className="lbl">Unlock Code</label>

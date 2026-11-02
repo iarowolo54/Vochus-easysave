@@ -10,8 +10,6 @@ export default function ForgotPasswordPage() {
   const router = useRouter()
   const [stage, setStage] = useState<Stage>('phone')
   const [phone, setPhone] = useState('')
-  const [maskedTarget, setMaskedTarget] = useState('')
-  const [channel, setChannel] = useState<'email' | 'sms'>('email')
   const [code, setCode] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [showPass, setShowPass] = useState(false)
@@ -29,8 +27,6 @@ export default function ForgotPasswordPage() {
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? 'Failed to send code'); return }
-      setMaskedTarget(data.maskedTarget ?? data.maskedEmail ?? '')
-      setChannel(data.channel === 'sms' ? 'sms' : 'email')
       setStage('reset')
     } finally { setLoading(false) }
   }
@@ -59,7 +55,7 @@ export default function ForgotPasswordPage() {
           <div style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 22, fontWeight: 900 }}>Forgot Password</div>
           <div style={{ fontSize: 13, color: 'var(--mu)', marginTop: 4 }}>
             {stage === 'phone' && 'Enter your phone number to receive a reset code'}
-            {stage === 'reset' && `Code sent via ${channel === 'sms' ? 'SMS' : 'email'} to ${maskedTarget} — enter it below with your new password`}
+            {stage === 'reset' && 'If this number has an account, we’ve sent a 6-digit code by SMS or email. It can take a minute to arrive. Enter it below with your new password.'}
             {stage === 'done' && 'Password reset successfully'}
           </div>
         </div>

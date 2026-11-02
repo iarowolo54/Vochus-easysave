@@ -82,13 +82,21 @@ export interface BvnResolution {
   gender?: string | null
 }
 
+/** Keeps the HTTP status, so a wrong key (401) can be told from an unknown BVN without logging anything from the reply. */
+export class BvnLookupFailed extends Error {
+  constructor(public httpStatus: number, message: string) {
+    super(message)
+    this.name = 'BvnLookupFailed'
+  }
+}
+
 export async function resolveBvn(bvn: string): Promise<BvnResolution> {
   if (isTestMode()) {
     // Paystack test mode doesn't validate real BVNs — return a deterministic dummy
     return { bvn, firstName: 'TEST', lastName: 'CUSTOMER', dob: '1990-01-01', phone: null, gender: 'M' }
   }
-  const data = await call('GET', `/bank/resolve_bvn/${bvn}`)
-  if (!data.status) throw new Error(data.message ?? 'Could not verify BVN')
+  const { httpStatus, data } = await request('GET', `/bank/resolve_bvn/${bvn}`)
+  if (!data.status) throw new BvnLookupFailed(httpStatus, data.message ?? 'Could not verify BVN')
   const d = data.data ?? {}
   return {
     bvn: d.bvn ?? bvn,

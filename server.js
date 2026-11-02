@@ -12,7 +12,14 @@ app.prepare().then(() => {
   })
 
   const port = process.env.PORT || 3000
-  server.listen(port, () => {
-    console.log(`> Ready on http://localhost:${port}`)
+  // In production only nginx should reach the app. Listening publicly would let anyone connect
+  // directly and forge X-Forwarded-For, which the IP limits rely on.
+  const host = dev ? undefined : '127.0.0.1'
+  server.on('error', (err) => {
+    console.error(`> Server failed to start: ${err.message}`)
+    process.exit(1)
+  })
+  server.listen(port, host, () => {
+    console.log(`> Ready on http://${host ?? 'localhost'}:${port}`)
   })
 })

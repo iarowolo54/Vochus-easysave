@@ -3,7 +3,8 @@
 import { useSession, signOut } from 'next-auth/react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { leaveEndedSession, sessionHasEnded } from '@/lib/session-ended'
 import BottomNav from '@/components/BottomNav'
 import { AGENT_NAV } from '@/components/nav-items'
 import IdleTimeout from '@/components/IdleTimeout'
@@ -69,12 +70,31 @@ const pageTitles: Record<string, string> = {
 }
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { data: session } = useSession()
+  const { data: session, status: sessionStatus } = useSession()
   const pathname = usePathname()
   const router = useRouter()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [chatUnread, setChatUnread] = useState(0)
   const [canOpenAppSettings, setCanOpenAppSettings] = useState(false)
+  const [ended, setEnded] = useState(false)
+  const leaving = useRef(false)
+
+  // The server ended this session (suspended, password changed, past the cap). Every API call now returns 401,
+  // so send the agent to login instead of leaving a dashboard that can't load anything.
+  const sessionEnded = useCallback(() => {
+    setEnded(true)
+    if (leaving.current) return
+    leaving.current = true
+    leaveEndedSession(
+      () => signOut({ callbackUrl: '/login?ended=1' }),
+      () => window.location.assign('/login?ended=1'),
+    )
+  }, [])
+
+  const sessionCleared = sessionStatus === 'authenticated' && !session?.user
+  useEffect(() => {
+    if (sessionCleared) sessionEnded()
+  }, [sessionCleared, sessionEnded])
 
   // Only the agent app has a printer/fingerprint sheet; older installs don't announce it.
   useEffect(() => {
@@ -93,6 +113,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     async function pollChat() {
       try {
         const res = await fetch('/api/agent/customer-chat')
+        // One 401 can be a busy database, so ask before signing out an agent who is fine.
+        if (res.status === 401) {
+          if (await sessionHasEnded()) sessionEnded()
+          return
+        }
         const data = await res.json()
         const total = (data.customers ?? []).reduce((s: number, c: any) => s + (c.unread ?? 0), 0)
         setChatUnread(total)
@@ -101,7 +126,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     pollChat()
     const iv = setInterval(pollChat, 10000)
     return () => clearInterval(iv)
-  }, [])
+  }, [sessionEnded])
 
   useEffect(() => {
     const agent = session?.user as any
@@ -165,6 +190,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   }, [sidebarOpen])
   useEffect(() => { setSidebarOpen(false) }, [pathname])
 
+
+  if (ended || sessionCleared) {
+    return (
+      <div className="ui-screen ui-screen--center" role="status">
+        <div className="ui-empty">
+          <span className="ui-spinner" aria-hidden="true" />
+          <p className="ui-empty-title ui-gap-top">Signing you out…</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="ag-shell">

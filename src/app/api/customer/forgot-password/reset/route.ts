@@ -2,9 +2,16 @@ import { NextRequest, NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { INVALID_CODE_MESSAGE, limitByIp, readBody, text, verifyResetCode } from '@/lib/password-reset'
 
 export async function POST(req: NextRequest) {
-  const { phone, code, newPassword } = await req.json()
+  const limited = limitByIp(req, 'guess')
+  if (limited) return limited
+
+  const body = await readBody(req)
+  const phone = text(body.phone)
+  const code = text(body.code)
+  const newPassword = typeof body.newPassword === 'string' ? body.newPassword : ''
   if (!phone || !code || !newPassword) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 })
   }
@@ -12,40 +19,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Password must be at least 6 characters' }, { status: 400 })
   }
 
-  const cleanPhone = phone.trim()
-  const customer = await prisma.customer.findFirst({ where: { phone: cleanPhone } })
-  if (!customer) {
-    return NextResponse.json({ error: 'Account not found' }, { status: 404 })
-  }
-
-  // Accept the OTP if it matches EITHER the email OTP or the phone OTP for this customer.
-  const [emailOtp, phoneOtp] = await Promise.all([
-    customer.email
-      ? prisma.emailOTP.findFirst({
-          where: { email: customer.email, code, expiresAt: { gte: new Date() } },
-          orderBy: { createdAt: 'desc' },
-        })
-      : null,
-    prisma.phoneOTP.findFirst({
-      where: { phone: cleanPhone, code, expiresAt: { gte: new Date() } },
-      orderBy: { createdAt: 'desc' },
-    }),
-  ])
-
-  if (!emailOtp && !phoneOtp) {
-    return NextResponse.json({ error: 'Invalid or expired code — request a new one' }, { status: 400 })
+  const customer = await prisma.customer.findFirst({ where: { phone } })
+  if (!customer || !(await verifyResetCode('customer', customer.id, code))) {
+    return NextResponse.json({ error: INVALID_CODE_MESSAGE }, { status: 400 })
   }
 
   const hashed = await bcrypt.hash(newPassword, 10)
-  await prisma.customer.update({ where: { id: customer.id }, data: { password: hashed } })
-  if (customer.email) await prisma.emailOTP.deleteMany({ where: { email: customer.email } })
-  await prisma.phoneOTP.deleteMany({ where: { phone: cleanPhone } })
+  // A reset ends every existing session and fingerprint sign-in on the account.
+  await prisma.$transaction([
+    prisma.customer.update({ where: { id: customer.id }, data: { password: hashed, tokenVersion: { increment: 1 } } }),
+    prisma.biometricToken.updateMany({ where: { customerId: customer.id, revokedAt: null }, data: { revokedAt: new Date() } }),
+  ])
 
-  logAudit({
+  await logAudit({
     action: 'customer_password_reset',
     entity: 'Customer',
     entityId: customer.id,
-    details: `Customer ${customer.firstName} ${customer.lastName} (${customer.customerId}) reset password via forgot-password flow (${phoneOtp ? 'SMS' : 'email'})`,
+    details: `Customer ${customer.firstName} ${customer.lastName} (${customer.customerId}) reset password via forgot-password flow`,
     actorType: 'customer',
     actorId: customer.id,
     actorName: `${customer.firstName} ${customer.lastName}`,

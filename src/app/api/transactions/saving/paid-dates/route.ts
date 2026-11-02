@@ -14,7 +14,10 @@ export async function GET(req: NextRequest) {
   const planId = req.nextUrl.searchParams.get('planId')
   if (!planId) return NextResponse.json({ error: 'planId required' }, { status: 400 })
 
-  const plan = await prisma.savingsPlan.findUnique({ where: { id: planId } })
+  const agent = await prisma.agent.findFirst({ where: { agentId: session.user.agentId }, select: { id: true } })
+  if (!agent) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const plan = await prisma.savingsPlan.findFirst({ where: { id: planId, customer: { agentId: agent.id } } })
   if (!plan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 })
 
   const txns = await prisma.transaction.findMany({
