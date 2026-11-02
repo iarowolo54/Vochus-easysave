@@ -30,7 +30,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
   if (!record.paystackTransferCode) return NextResponse.json({ error: 'Missing Paystack transfer code on record' }, { status: 400 })
 
   // Last point before money moves: refuse if a deposit landed after the pre-claim, while waiting for the code.
-  if (!readyToFinalize(record.savingsPlan.balance, record.balance)) {
+  if (!readyToFinalize(record.savingsPlan, record.balance)) {
     return NextResponse.json({ error: BALANCE_CHANGED_AWAITING_OTP }, { status: 409 })
   }
 

@@ -265,9 +265,39 @@ test('finalize: money landing while waiting for the code refuses BEFORE Paystack
   assert.equal(await prisma.transaction.count({ where: { ref: r.ref } }), 0)
 })
 
+test('finalize: a deposit of exactly the requested amount on a pre-claimed plan is still refused', async () => {
+  const planId = await mkPlan(10000, 'Redeemed')
+  const r = await mkRedemption({ planId, method: 'BankTransfer', status: 'AwaitingOTP', transferCode: `TRF_${RUN}_c` })
+  const m0 = await money()
+  assert.equal((await finalize(r.id)).status, 409)
+  assert.equal((await erRow(r.id)).status, 'AwaitingOTP')
+  assert.equal((await planRow(planId)).balance, 10000)
+  assert.deepEqual(await money(), m0)
+})
+
+test('finalize: a record with no pre-claim (plan still open at the requested balance) completes', async () => {
+  const planId = await mkPlan(10000)
+  const r = await mkRedemption({ planId, method: 'BankTransfer', status: 'AwaitingOTP', transferCode: `TRF_${RUN}_d` })
+  assert.equal((await finalize(r.id)).status, 200)
+  assert.equal((await planRow(planId)).balance, 0)
+  assert.equal((await planRow(planId)).status, 'Redeemed')
+})
+
+test('finalize: an open plan with a different balance is refused', async () => {
+  for (const balance of [0, 55000]) {
+    const planId = await mkPlan(balance)
+    const r = await mkRedemption({ planId, method: 'BankTransfer', status: 'AwaitingOTP', transferCode: `TRF_${RUN}_e${balance}` })
+    assert.equal((await finalize(r.id)).status, 409, String(balance))
+    assert.equal((await planRow(planId)).balance, balance)
+  }
+})
+
 test('closePlanAfterFinalize zeroes a settled plan but never a deposit', async () => {
   const preClaimed = await mkPlan(0, 'Redeemed')
   assert.equal(await closePlanAfterFinalize(prisma, preClaimed, 10000), true)
+  const sameAmount = await mkPlan(10000, 'Redeemed')
+  assert.equal(await closePlanAfterFinalize(prisma, sameAmount, 10000), false)
+  assert.equal((await planRow(sameAmount)).balance, 10000)
   const legacy = await mkPlan(10000)
   assert.equal(await closePlanAfterFinalize(prisma, legacy, 10000), true)
   assert.equal((await planRow(legacy)).balance, 0)

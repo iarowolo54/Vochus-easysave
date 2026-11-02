@@ -31,16 +31,23 @@ export async function claimPlanForPayout(client: Client, planId: string, request
 }
 
 /**
- * An OTP payout's plan was already zeroed by the pre-claim, so 0 is the expected balance here. The
- * requested balance is also accepted for records that reached AwaitingOTP without a pre-claim.
- * Anything else is money that landed after the pre-claim.
+ * An OTP payout's plan was already closed and zeroed by the pre-claim, so a Redeemed plan must be at 0:
+ * anything on it is money that landed since, even if it happens to equal the requested amount. The
+ * requested balance only applies to an open plan, on records that reached AwaitingOTP without a pre-claim.
  */
-export const readyToFinalize = (current: number, requested: number) => balanceUnchanged(current, 0) || balanceUnchanged(current, requested)
+export const readyToFinalize = (plan: { status: string; balance: number }, requested: number) =>
+  balanceUnchanged(plan.balance, plan.status === 'Redeemed' ? 0 : requested)
 
 /** Paystack has already accepted the transfer by now. False means a deposit landed; it must not be zeroed. */
 export async function closePlanAfterFinalize(client: Client, planId: string, requestedBalance: number): Promise<boolean> {
   const closed = await client.savingsPlan.updateMany({
-    where: { id: planId, OR: [{ balance: near(0) }, { balance: near(requestedBalance) }] },
+    where: {
+      id: planId,
+      OR: [
+        { status: 'Redeemed', balance: near(0) },
+        { status: { not: 'Redeemed' }, balance: near(requestedBalance) },
+      ],
+    },
     data: { status: 'Redeemed', balance: 0 },
   })
   return closed.count === 1

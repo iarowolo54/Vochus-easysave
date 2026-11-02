@@ -52,7 +52,7 @@ async function mkWithdrawal() {
 }
 async function mkRedemption(planStatus = 'Redeemed') {
   const p = await prisma.savingsPlan.create({
-    data: { customerId, dailyAmount: 100, periodDays: 180, goal: 'x', startDate: new Date(), maturityDate: new Date(Date.now() + 1e10), balance: 1000, status: planStatus, source: 'agent' },
+    data: { customerId, dailyAmount: 100, periodDays: 180, goal: 'x', startDate: new Date(), maturityDate: new Date(Date.now() + 1e10), balance: planStatus === 'Redeemed' ? 0 : 1000, status: planStatus, source: 'agent' },
   })
   planIds.push(p.id)
   const ref = `ERF-${rid}-${erIds.length}`
