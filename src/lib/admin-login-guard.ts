@@ -1,22 +1,24 @@
-// The limit on super admin sign-in, shared by both paths in (the login route and the NextAuth provider) so failures on
-// one count on the other. Counts live in LoginAttempt, so they hold across PM2 instances.
+// The limit on super admin sign-in. Counts live in LoginAttempt, so they hold across PM2 instances.
 //
-// The lock is deliberately short: someone who only knows the owner's email can trigger it, and it mustn't keep the owner
-// out for long. Tries during a lock aren't counted and don't extend it, and the count restarts when a lock ends. Attempts
-// are counted for unknown emails too, and the answers are the same, so neither the lock nor the timing says whether an
-// account exists.
+// The lock has to balance two things. Someone who only knows the owner's email can trigger it, so it always ends on its
+// own. But if it stayed short, guessing could carry on all day, so repeats get longer: 5 failures lock for 5 minutes, the
+// next 5 for 15, then 60 from there on, about 120 guesses a day at most. A quiet day starts over. Tries during a lock aren't
+// counted and don't extend it. Attempts are counted for unknown emails too, and the answers are the same, so neither the
+// lock nor the timing says whether an account exists.
 import { randomBytes } from 'node:crypto'
-import { isIP } from 'node:net'
 import bcrypt from 'bcryptjs'
 import type { SuperAdmin } from '@prisma/client'
 import { logAudit } from './audit'
-import { refundAttempt, reserveAttempt, sweepStaleLoginAttempts } from './login-attempt'
+import type { ReservedAttempt } from './login-attempt'
+import { ADMIN_QUIET_MS, refundAttempt, reserveAttempt, sweepStaleLoginAttempts } from './login-attempt'
 import { prisma } from './prisma'
 
 export const ADMIN_ACCOUNT_FAIL_LIMIT = 5
 export const ADMIN_IP_FAIL_LIMIT = 10
-const ADMIN_ACCOUNT_LOCK_MS = 5 * 60_000
-const ADMIN_IP_LOCK_MS = 15 * 60_000
+const MINUTE = 60_000
+const ADMIN_ACCOUNT_LOCK_STEPS_MS = [5 * MINUTE, 15 * MINUTE, 60 * MINUTE]
+const ADMIN_IP_LOCK_STEPS_MS = [15 * MINUTE, 60 * MINUTE]
+const AUDIT_UNKNOWN_EMAIL_LENGTH = 12
 const MAX_EMAIL_LENGTH = 254
 
 export type AdminLoginResult = { kind: 'ok'; admin: SuperAdmin } | { kind: 'invalid' } | { kind: 'locked' }
@@ -28,13 +30,6 @@ function lockedAudit(what: string): Promise<void> {
   return logAudit({ action: 'admin_login_locked', entity: 'SuperAdmin', details: `Admin sign-in locked: ${what}`, actorType: 'system', actorName: 'Admin login limit' })
 }
 
-/** The rightmost X-Forwarded-For entry is the one our proxy appended; the rest are client-supplied. */
-export function adminIpFromForwarded(xff: string | string[] | null | undefined): string | null {
-  const header = Array.isArray(xff) ? xff.join(',') : xff
-  const ip = header?.split(',').map(s => s.trim()).filter(Boolean).pop()
-  return ip && isIP(ip) ? ip : null
-}
-
 export async function verifyAdminLogin(emailInput: string, password: string, ip: string | null): Promise<AdminLoginResult> {
   const email = emailInput.trim().toLowerCase()
   const accountKey = email.length <= MAX_EMAIL_LENGTH ? `admin:${email}` : null
@@ -43,15 +38,15 @@ export async function verifyAdminLogin(emailInput: string, password: string, ip:
 
   // This is the highest-privilege login, so an attempt that can't be counted doesn't get to try: unlike customer login,
   // it fails closed. The address goes first, so a blocked address never touches the account's count.
-  let ipSlot = { allowed: true, startedLock: false }
-  let accountSlot = { allowed: true, startedLock: false }
+  let ipSlot: ReservedAttempt = { allowed: true, startedLock: false, firstLock: false }
+  let accountSlot: ReservedAttempt = { allowed: true, startedLock: false, firstLock: false }
   try {
     if (ipKey) {
-      ipSlot = await reserveAttempt(ipKey, ADMIN_IP_FAIL_LIMIT, ADMIN_IP_LOCK_MS, now)
+      ipSlot = await reserveAttempt(ipKey, ADMIN_IP_FAIL_LIMIT, ADMIN_IP_LOCK_STEPS_MS, ADMIN_QUIET_MS, now)
       if (!ipSlot.allowed) return { kind: 'locked' }
     }
     if (accountKey) {
-      accountSlot = await reserveAttempt(accountKey, ADMIN_ACCOUNT_FAIL_LIMIT, ADMIN_ACCOUNT_LOCK_MS, now)
+      accountSlot = await reserveAttempt(accountKey, ADMIN_ACCOUNT_FAIL_LIMIT, ADMIN_ACCOUNT_LOCK_STEPS_MS, ADMIN_QUIET_MS, now)
       if (!accountSlot.allowed) {
         if (ipKey) await refundAttempt(ipKey, ipSlot.startedLock)
         return { kind: 'locked' }
@@ -70,8 +65,12 @@ export async function verifyAdminLogin(emailInput: string, password: string, ip:
     return { kind: 'ok', admin }
   }
 
-  if (accountSlot.startedLock) await lockedAudit(`${email} after ${ADMIN_ACCOUNT_FAIL_LIMIT} failures, for ${ADMIN_ACCOUNT_LOCK_MS / 60_000} minutes`)
-  if (ipSlot.startedLock) await lockedAudit(`address ${ip} after ${ADMIN_IP_FAIL_LIMIT} failures, for ${ADMIN_IP_LOCK_MS / 60_000} minutes`)
+  // Only the first lock after a quiet window: repeats would just be noise. An unknown "email" may be a pasted password.
+  if (accountSlot.firstLock) {
+    const who = admin ? email : `unknown email ${email.slice(0, AUDIT_UNKNOWN_EMAIL_LENGTH)}…`
+    await lockedAudit(`${who} after ${ADMIN_ACCOUNT_FAIL_LIMIT} failures, for ${ADMIN_ACCOUNT_LOCK_STEPS_MS[0] / MINUTE} minutes, longer on repeats`)
+  }
+  if (ipSlot.firstLock) await lockedAudit(`address ${ip} after ${ADMIN_IP_FAIL_LIMIT} failures, for ${ADMIN_IP_LOCK_STEPS_MS[0] / MINUTE} minutes, longer on repeats`)
   if (Math.random() < 0.02) void sweepStaleLoginAttempts(now).catch(() => {})
   return { kind: 'invalid' }
 }

@@ -7,7 +7,8 @@ import bcrypt from 'bcryptjs'
 import { NextRequest } from 'next/server'
 import { prisma } from '../src/lib/prisma'
 import { adminAuthOptions } from '../src/lib/auth-admin'
-import { ADMIN_ACCOUNT_FAIL_LIMIT, ADMIN_IP_FAIL_LIMIT, adminIpFromForwarded } from '../src/lib/admin-login-guard'
+import { ADMIN_ACCOUNT_FAIL_LIMIT, ADMIN_IP_FAIL_LIMIT } from '../src/lib/admin-login-guard'
+import { sweepStaleLoginAttempts } from '../src/lib/login-attempt'
 import { POST } from '../src/app/api/admin-auth/login/route'
 
 const rid = Math.random().toString(36).slice(2, 8)
@@ -27,10 +28,6 @@ async function mkAdmin() {
 const freshIp = () => { const ip = `172.16.${(++n) % 250}.${Math.floor(Math.random() * 250)}`; keys.push(`ip:admin:${ip}`); return ip }
 const login = (email: string, password: string, ip = freshIp()) =>
   POST(new NextRequest('http://localhost/api/admin-auth/login', { method: 'POST', body: JSON.stringify({ email, password }), headers: { 'x-forwarded-for': ip } }))
-
-type Authorize = (c: Record<string, string>, req?: unknown) => Promise<{ id: string } | null>
-const authorize = (adminAuthOptions.providers[0] as unknown as { options: { authorize: Authorize } }).options.authorize
-const viaNextAuth = (email: string, password: string, ip = freshIp()) => authorize({ email, password }, { headers: { 'x-forwarded-for': ip } })
 
 after(async () => {
   await prisma.loginAttempt.deleteMany({ where: { key: { in: keys } } })
@@ -99,17 +96,8 @@ test('an unknown email gets the same answers, so the account is not revealed', a
   assert.deepEqual(await a.json(), await b.json())
 })
 
-test('both sign-in paths share the count: failures on one lock the other', async () => {
-  const a = await mkAdmin()
-  for (let i = 0; i < ADMIN_ACCOUNT_FAIL_LIMIT; i++) assert.equal(await viaNextAuth(a, 'wrong'), null)
-  assert.equal((await login(a, PASSWORD)).status, 429)
-
-  const b = await mkAdmin()
-  await failUntilLocked(b)
-  assert.equal(await viaNextAuth(b, PASSWORD), null)
-
-  const c = await mkAdmin()
-  assert.equal((await viaNextAuth(c, PASSWORD))?.id !== undefined, true)
+test('the login route is the only way to sign in: NextAuth has no credentials provider left', () => {
+  assert.equal(adminAuthOptions.providers.length, 0)
 })
 
 test('one address guessing across accounts is stopped, without locking those accounts', async () => {
@@ -169,7 +157,7 @@ test('signing in does not count against the address', async () => {
   for (let i = 0; i < ADMIN_IP_FAIL_LIMIT + 2; i++) assert.equal((await login(email, PASSWORD, ip)).status, 200)
 })
 
-test('after a lock ends the count starts again, so one typo does not re-lock', async () => {
+test('after a lock ends, one typo does not re-lock', async () => {
   const email = await mkAdmin()
   await failUntilLocked(email)
   await prisma.loginAttempt.update({ where: { key: `admin:${email}` }, data: { lockedUntil: new Date(Date.now() - 1000) } })
@@ -188,18 +176,6 @@ test('if the limit cannot be recorded, sign-in is refused rather than left uncou
     delegate.updateMany = real
   }
   assert.equal((await login(email, PASSWORD)).status, 200, 'and recovers once the database does')
-})
-
-test('a malformed forwarded address is not used as a key', () => {
-  assert.equal(adminIpFromForwarded('1.2.3.4, 5.6.7.8'), '5.6.7.8')
-  assert.equal(adminIpFromForwarded('::1'), '::1')
-  assert.equal(adminIpFromForwarded('1.2.3.4, not-an-ip'), null)
-  assert.equal(adminIpFromForwarded(null), null)
-})
-
-test('the NextAuth path also refuses non-string credentials rather than crashing', async () => {
-  assert.equal(await authorize({ email: { contains: '@' }, password: 'x' } as unknown as Record<string, string>), null)
-  assert.equal(await authorize({ email: 'a@b.c', password: { not: '' } } as unknown as Record<string, string>), null)
 })
 
 test('the random cleanup running on every failure never turns a normal attempt into a false lock', async () => {
@@ -250,4 +226,67 @@ test('a brief database lock is retried, so the owner is not refused for it', asy
   } finally {
     delegate.updateMany = real
   }
+})
+
+const endLock = (email: string) => prisma.loginAttempt.update({ where: { key: `admin:${email}` }, data: { lockedUntil: new Date(Date.now() - 1000) } })
+const lockMinutes = async (email: string) => {
+  const row = await prisma.loginAttempt.findUniqueOrThrow({ where: { key: `admin:${email}` } })
+  return (row.lockedUntil!.getTime() - Date.now()) / 60_000
+}
+
+test('repeat locks get longer, 5 then 15 then 60 minutes, and stay at 60', async () => {
+  const email = await mkAdmin()
+  for (const expected of [5, 15, 60, 60]) {
+    await failUntilLocked(email)
+    const minutes = await lockMinutes(email)
+    assert.ok(minutes > expected - 1 && minutes <= expected, `expected ${expected}, got ${minutes}`)
+    await endLock(email)
+  }
+})
+
+test('a quiet day starts over at 5 minutes', async () => {
+  const email = await mkAdmin()
+  await failUntilLocked(email)
+  await endLock(email)
+  await failUntilLocked(email)
+  assert.ok(await lockMinutes(email) > 14)
+  await prisma.loginAttempt.update({ where: { key: `admin:${email}` }, data: { lockedUntil: new Date(Date.now() - 1000), lastFailAt: new Date(Date.now() - 25 * 60 * 60_000) } })
+  await failUntilLocked(email)
+  assert.ok(await lockMinutes(email) <= 5)
+})
+
+test('less than a quiet day keeps the longer step: waiting out a lock does not reset it', async () => {
+  const email = await mkAdmin()
+  await failUntilLocked(email)
+  await prisma.loginAttempt.update({ where: { key: `admin:${email}` }, data: { lockedUntil: new Date(Date.now() - 1000), lastFailAt: new Date(Date.now() - 2 * 60 * 60_000) } })
+  await failUntilLocked(email)
+  assert.ok(await lockMinutes(email) > 14)
+})
+
+test('the stale-row sweep does not wipe an account or address on its way up the steps', async () => {
+  const email = await mkAdmin()
+  await failUntilLocked(email)
+  await prisma.loginAttempt.update({ where: { key: `admin:${email}` }, data: { lockedUntil: new Date(Date.now() - 1000), lastFailAt: new Date(Date.now() - 2 * 60 * 60_000) } })
+  await sweepStaleLoginAttempts()
+  assert.equal(await prisma.loginAttempt.count({ where: { key: `admin:${email}` } }), 1)
+  await prisma.loginAttempt.update({ where: { key: `admin:${email}` }, data: { lastFailAt: new Date(Date.now() - 25 * 60 * 60_000) } })
+  await sweepStaleLoginAttempts()
+  assert.equal(await prisma.loginAttempt.count({ where: { key: `admin:${email}` } }), 0)
+})
+
+test('only a lock after a quiet window is audited, not its repeats', async () => {
+  const email = await mkAdmin()
+  await failUntilLocked(email)
+  await endLock(email)
+  await failUntilLocked(email)
+  assert.equal(await prisma.auditLog.count({ where: { action: 'admin_login_locked', details: { contains: email } } }), 1)
+})
+
+test('an unknown email is truncated in the audit text; a real admin email is not', async () => {
+  const pasted = `${'p'.repeat(30)}${'SECRET-PASTED-PASSWORD'}${rid}@test.local`
+  keys.push(`admin:${pasted.toLowerCase()}`)
+  for (let i = 0; i < ADMIN_ACCOUNT_FAIL_LIMIT; i++) await login(pasted, 'wrong')
+  const row = await prisma.auditLog.findFirst({ where: { action: 'admin_login_locked', details: { contains: 'ppppp' } }, orderBy: { createdAt: 'desc' } })
+  assert.ok(row)
+  assert.doesNotMatch(row.details ?? '', /secret-pasted/i)
 })

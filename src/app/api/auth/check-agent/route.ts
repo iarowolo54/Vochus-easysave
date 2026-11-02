@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
   const unverifiedEmail = !!(agent?.email && !agent.emailVerified)
 
   // If this address is blocked, that's why the sign-in failed, whatever the account's state.
-  const ip = agentLoginIpKey(req.headers.get('x-forwarded-for') ?? undefined)
+  const ip = agentLoginIpKey(req.headers.get('x-forwarded-for'))
   const throttle = ip ? await checkLoginThrottle({ ip }).catch(() => null) : null
 
   return NextResponse.json({

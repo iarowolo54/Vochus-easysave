@@ -1,7 +1,7 @@
 // Unit test: what the agent login screen says after a failed sign-in.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { canReachAuth, loginFailure } from '../src/lib/login-failure'
+import { authReachability, loginFailure, reachabilityMessage } from '../src/lib/login-failure'
 
 test('a suspended agent is told so, by password or fingerprint', () => {
   for (const via of ['password', 'fingerprint'] as const) {
@@ -59,8 +59,15 @@ test('too many attempts from this network is said plainly, by password or finger
   }
 })
 
-test('canReachAuth: only a real answer counts, so next-auth never bounces an offline agent to its error page', async () => {
-  assert.equal(await canReachAuth(async () => new Response('{}', { status: 200 })), true)
-  assert.equal(await canReachAuth(async () => new Response('', { status: 500 })), false)
-  assert.equal(await canReachAuth(async () => { throw new TypeError('Failed to fetch') }), false)
+test('authReachability: tells no connection apart from a server fault', async () => {
+  assert.equal(await authReachability(async () => new Response('{}', { status: 200 })), 'ok')
+  assert.equal(await authReachability(async () => new Response('', { status: 500 })), 'server')
+  assert.equal(await authReachability(async () => new Response('', { status: 503 })), 'server')
+  assert.equal(await authReachability(async () => { throw new TypeError('Failed to fetch') }), 'offline')
+})
+
+test('a server fault is not reported as no internet', () => {
+  assert.match(reachabilityMessage('offline'), /internet/i)
+  assert.doesNotMatch(reachabilityMessage('server'), /internet/i)
+  assert.match(reachabilityMessage('server'), /our side/i)
 })

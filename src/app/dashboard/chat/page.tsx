@@ -1,5 +1,6 @@
 'use client'
 
+import { isChatImage } from '@/lib/chat-image'
 import { useCallback, useEffect, useRef, useState, type ChangeEvent } from 'react'
 import Link from 'next/link'
 import BottomSheet from '@/components/ui/BottomSheet'
@@ -271,7 +272,7 @@ export default function AgentChatPage() {
                       {newDay && <p className="ag-chat-day"><span>{dayLabel(m.createdAt)}</span></p>}
                       <div className={`ag-msg${mine ? ' is-mine' : ''}${m.local === 'failed' ? ' is-failed' : ''}`}>
                         <div className="ag-msg-bubble" {...(m.local === 'failed' ? { role: 'button', tabIndex: 0, onClick: () => send(m), onKeyDown: e => { if (e.key === 'Enter') send(m) } } : {})}>
-                          {m.imageUrl && (
+                          {isChatImage(m.imageUrl) && (
                             <a href={m.imageUrl} target="_blank" rel="noreferrer" className="ag-msg-img" onClick={e => { if (m.local) e.preventDefault() }}>
                               <img src={m.imageUrl} alt={mine ? 'Photo you sent' : `Photo from ${first}`} />
                             </a>

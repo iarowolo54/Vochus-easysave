@@ -4,13 +4,20 @@ import CredentialsProvider from 'next-auth/providers/credentials'
 import bcrypt from 'bcryptjs'
 import { prisma } from './prisma'
 import { isPastAbsoluteCap, IDLE_SECONDS } from '@/lib/session-policy'
-import { checkLoginThrottle, recordLoginFailure } from '@/lib/login-attempt'
+import { refundAttempt, reserveAgentAttempt, reserveAttempt } from '@/lib/login-attempt'
+import { rightmostForwardedIp } from '@/lib/rate-limit'
 
-/** The address nginx appended (rightmost; the rest is client-supplied), namespaced apart from customer login's counts. */
-export function agentLoginIpKey(xff: string | string[] | undefined): string | null {
-  const header = Array.isArray(xff) ? xff.join(',') : xff
-  const ip = header?.split(',').map(s => s.trim()).filter(Boolean).pop()
-  return ip && ip.length <= 45 ? `agent:${ip}` : null
+const AGENT_IP_FAIL_LIMIT = 20
+const AGENT_IP_LOCK_MS = 15 * 60_000
+
+/** The address nginx appended, namespaced apart from customer login's counts. */
+export function agentLoginIpKey(xff: string | string[] | null | undefined): string | null {
+  const ip = rightmostForwardedIp(xff)
+  return ip ? `agent:${ip}` : null
+}
+
+const logWriteFailure = (what: string) => (e: unknown) => {
+  console.error(`[agent-login] ${what} failed:`, e instanceof Error ? e.message : 'unknown')
 }
 
 export const authOptions: NextAuthOptions = {
@@ -38,14 +45,24 @@ export const authOptions: NextAuthOptions = {
         if (!identifier) return null
         if (!password && !biometricToken) return null
 
-        // Across both PM2 instances, since the count is in the database. A failure of the throttle itself must not
-        // take down login: if the database is truly gone, the lookup below fails too.
-        const ip = agentLoginIpKey(req?.headers?.['x-forwarded-for'])
-        if (ip) {
-          const throttle = await checkLoginThrottle({ ip }).catch(() => null)
-          if (throttle?.blocked) return null
+        // Password attempts count against the address before anything else, in the database so it holds across both PM2
+        // instances. Fingerprint attempts don't: a token can't be guessed, so a valid one gets through a blocked address
+        // and a wrong one isn't a reason to block it. An attempt that can't be counted isn't allowed to try.
+        const ipKey = biometricToken ? null : agentLoginIpKey(req?.headers?.['x-forwarded-for'])
+        let ipLockStarted = false
+        const refundIp = async () => {
+          if (ipKey) await refundAttempt(`ip:${ipKey}`, ipLockStarted).catch(logWriteFailure('refund'))
         }
-        const countFailure = async () => { if (ip) await recordLoginFailure({ ip }).catch(() => {}) }
+        if (ipKey) {
+          try {
+            const slot = await reserveAttempt(`ip:${ipKey}`, AGENT_IP_FAIL_LIMIT, [AGENT_IP_LOCK_MS])
+            if (!slot.allowed) return null
+            ipLockStarted = slot.startedLock
+          } catch (e) {
+            logWriteFailure('count address')(e)
+            return null
+          }
+        }
 
         const id = identifier.trim().toLowerCase()
 
@@ -59,10 +76,7 @@ export const authOptions: NextAuthOptions = {
           },
         })
 
-        if (!agent) {
-          await countFailure()
-          return null
-        }
+        if (!agent) return null
 
         // Auto-unlock after 30 min
         const LOCKOUT_MS = 30 * 60 * 1000
@@ -71,10 +85,11 @@ export const authOptions: NextAuthOptions = {
             await prisma.agent.update({
               where: { id: agent.id },
               data: { lockedAt: null, loginAttempts: 0 },
-            }).catch(() => {})
+            }).catch(logWriteFailure('auto-unlock'))
             agent.lockedAt = null
             agent.loginAttempts = 0
           } else {
+            await refundIp()
             return null
           }
         }
@@ -93,31 +108,31 @@ export const authOptions: NextAuthOptions = {
             })
             if (t) {
               valid = true
-              await prisma.biometricToken.update({ where: { id: t.id }, data: { lastUsedAt: new Date() } }).catch(() => {})
+              await prisma.biometricToken.update({ where: { id: t.id }, data: { lastUsedAt: new Date() } }).catch(logWriteFailure('fingerprint last used'))
             }
           }
         } else if (password) {
+          let reserved: boolean
+          try {
+            reserved = await reserveAgentAttempt(agent.id)
+          } catch (e) {
+            logWriteFailure('count attempt')(e)
+            await refundIp()
+            return null
+          }
+          if (!reserved) {
+            await refundIp()
+            return null
+          }
           valid = await bcrypt.compare(password, agent.password)
+          if (valid) {
+            // The password was right, whatever happens next: this attempt shouldn't build toward a lock.
+            await prisma.agent.update({ where: { id: agent.id }, data: { loginAttempts: 0, lockedAt: null } }).catch(logWriteFailure('reset attempts'))
+            await refundIp()
+          }
         }
 
-        if (!valid) {
-          await countFailure()
-          if (!biometricToken) {
-            const newAttempts = agent.loginAttempts + 1
-            if (newAttempts >= 3) {
-              await prisma.agent.update({
-                where: { id: agent.id },
-                data: { loginAttempts: newAttempts, lockedAt: new Date() },
-              }).catch(() => {})
-            } else {
-              await prisma.agent.update({
-                where: { id: agent.id },
-                data: { loginAttempts: newAttempts },
-              }).catch(() => {})
-            }
-          }
-          return null
-        }
+        if (!valid) return null
 
         if (agent.email && !agent.emailVerified) return null
 
@@ -130,14 +145,14 @@ export const authOptions: NextAuthOptions = {
           if (agent.boundDeviceId) {
             if (agent.boundDeviceId !== deviceId) return null
           } else if (deviceId) {
-            await prisma.agent.update({ where: { id: agent.id }, data: { boundDeviceId: deviceId } }).catch(() => {})
+            await prisma.agent.update({ where: { id: agent.id }, data: { boundDeviceId: deviceId } }).catch(logWriteFailure('bind device'))
           }
         }
 
         await prisma.agent.update({
           where: { id: agent.id },
           data: { loginAttempts: 0 },
-        }).catch(() => {})
+        }).catch(logWriteFailure('reset attempts'))
 
         if (app && deviceId) {
           const { recordDeviceSession } = await import('./device-session')

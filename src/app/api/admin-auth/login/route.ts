@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { encode } from 'next-auth/jwt'
 import { logAudit } from '@/lib/audit'
-import { adminIpFromForwarded, verifyAdminLogin } from '@/lib/admin-login-guard'
+import { verifyAdminLogin } from '@/lib/admin-login-guard'
+import { rightmostForwardedIp } from '@/lib/rate-limit'
 import { requireEnv } from '@/lib/env'
 import { IDLE_SECONDS } from '@/lib/session-policy'
 
@@ -15,7 +16,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Missing credentials' }, { status: 400 })
   }
 
-  const result = await verifyAdminLogin(email, password, adminIpFromForwarded(req.headers.get('x-forwarded-for')))
+  const result = await verifyAdminLogin(email, password, rightmostForwardedIp(req.headers.get('x-forwarded-for')))
   if (result.kind === 'locked') {
     return NextResponse.json({ error: 'Too many attempts. Please wait a few minutes and try again.' }, { status: 429 })
   }

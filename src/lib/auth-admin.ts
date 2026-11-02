@@ -1,36 +1,10 @@
 import { NextAuthOptions } from 'next-auth'
 import { requireEnv } from '@/lib/env'
-import CredentialsProvider from 'next-auth/providers/credentials'
-import { adminIpFromForwarded, verifyAdminLogin } from './admin-login-guard'
 import { isPastAbsoluteCap, IDLE_SECONDS } from '@/lib/session-policy'
 
 export const adminAuthOptions: NextAuthOptions = {
-  providers: [
-    CredentialsProvider({
-      id: 'superadmin-credentials',
-      name: 'Super Admin',
-      credentials: {
-        email: { label: 'Email', type: 'email' },
-        password: { label: 'Password', type: 'password' },
-      },
-      async authorize(credentials, req) {
-        // NextAuth accepts JSON bodies, so these can arrive as objects.
-        const { email, password } = (credentials ?? {}) as { email?: unknown; password?: unknown }
-        if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) return null
-
-        const result = await verifyAdminLogin(email, password, adminIpFromForwarded(req?.headers?.['x-forwarded-for']))
-        if (result.kind !== 'ok') return null
-        const { admin } = result
-
-        return {
-          id: admin.id,
-          name: admin.name,
-          email: admin.email,
-          role: 'superadmin',
-        }
-      },
-    }),
-  ],
+  // Admins sign in only through /api/admin-auth/login, which applies the sign-in limit. This config just reads the session.
+  providers: [],
   session: { strategy: 'jwt', maxAge: IDLE_SECONDS.admin },
   cookies: {
     sessionToken: {

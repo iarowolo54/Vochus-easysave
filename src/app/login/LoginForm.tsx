@@ -8,7 +8,7 @@ import PasswordInput from '@/components/auth/PasswordInput'
 import { FieldError, FormError } from '@/components/ui/FormErrors'
 import { Icons } from '@/components/ui/icons'
 import { describeFailure, NETWORK_MESSAGE, postJson } from '@/lib/http'
-import { FINGERPRINT_FAILED, canReachAuth, loginFailure, type AgentCheck } from '@/lib/login-failure'
+import { FINGERPRINT_FAILED, authReachability, loginFailure, reachabilityMessage, type AgentCheck } from '@/lib/login-failure'
 
 export default function LoginForm() {
   return (
@@ -58,8 +58,9 @@ function LoginPageInner() {
       setNotice('')
       setFieldErrors({ identifier: '', password: '' })
       try {
-        if (!await canReachAuth()) {
-          setError(NETWORK_MESSAGE)
+        const reachable = await authReachability()
+        if (reachable !== 'ok') {
+          setError(reachabilityMessage(reachable))
           return
         }
         const device = (window as unknown as { __vochusDevice?: Record<string, string> }).__vochusDevice
@@ -118,6 +119,11 @@ function LoginPageInner() {
     const deviceId = w.__vochusDeviceId ?? ''
     const device = w.__vochusDevice ? JSON.stringify(w.__vochusDevice) : ''
     try {
+      const reachable = await authReachability()
+      if (reachable !== 'ok') {
+        setError(reachabilityMessage(reachable))
+        return
+      }
       const result = await signIn('credentials', {
         identifier: identifier.trim(),
         password,

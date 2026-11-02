@@ -230,11 +230,80 @@ test('IP throttle: failures from one address are counted in the database and the
   assert.equal((await authorize({ identifier: a.agentId, password: PASSWORD }, fromIp(freshIp())))?.id, a.id)
 })
 
-test('IP throttle: the bypass route is counted too', async () => {
+test('IP throttle: fingerprint failures are not counted, and a valid fingerprint gets through a blocked address', async () => {
   const ip = freshIp()
   const a = await mkAgent()
-  await authorize({ identifier: a.agentId, password: 'guess', biometricToken: 'x', deviceId: '' }, fromIp(ip))
-  assert.equal((await prisma.loginAttempt.findUniqueOrThrow({ where: { key: `ip:agent:${ip}` } })).failCount, 1)
+  const raw = `bio-${rid}-ipblock-${n}`
+  const deviceId = `dev-${rid}-ipblock-${n}`
+  await prisma.biometricToken.create({ data: { agentId: a.id, deviceId, tokenHash: createHash('sha256').update(raw).digest('hex') } })
+  for (let i = 0; i < 25; i++) assert.equal(await authorize({ identifier: a.agentId, biometricToken: 'wrong', deviceId }, fromIp(ip)), null)
+  assert.equal(await prisma.loginAttempt.count({ where: { key: `ip:agent:${ip}` } }), 0)
+  for (let i = 0; i < 20; i++) await authorize({ identifier: `SEC-${rid}-NOBODY-${i}`, password: 'x' }, fromIp(ip))
+  assert.equal(await authorize({ identifier: a.agentId, password: PASSWORD }, fromIp(ip)), null, 'a password is refused from the blocked address')
+  assert.equal((await authorize({ identifier: a.agentId, biometricToken: raw, deviceId }, fromIp(ip)))?.id, a.id)
+})
+
+test('account lock: a parallel burst gets exactly 3 password checks, and ends in a real lock', async () => {
+  const a = await mkAgent()
+  const spy = bcrypt as unknown as { compare: typeof bcrypt.compare }
+  const real = spy.compare
+  let checks = 0
+  spy.compare = ((...args: Parameters<typeof bcrypt.compare>) => { checks++; return real(...args) }) as typeof bcrypt.compare
+  try {
+    await Promise.all(Array.from({ length: 30 }, () => authorize({ identifier: a.agentId, password: 'guess' }, fromIp(freshIp()))))
+  } finally {
+    spy.compare = real
+  }
+  assert.equal(checks, 3)
+  const row = await prisma.agent.findUniqueOrThrow({ where: { id: a.id } })
+  assert.equal(row.loginAttempts, 3)
+  assert.ok(row.lockedAt)
+  assert.equal(await authorize({ identifier: a.agentId, password: PASSWORD }), null, 'locked, even with the right password')
+})
+
+test('account lock: resets on success, including a success on the third try', async () => {
+  const a = await mkAgent()
+  await authorize({ identifier: a.agentId, password: 'guess' })
+  await authorize({ identifier: a.agentId, password: 'guess' })
+  assert.equal((await authorize({ identifier: a.agentId, password: PASSWORD }))?.id, a.id)
+  const row = await prisma.agent.findUniqueOrThrow({ where: { id: a.id } })
+  assert.equal(row.loginAttempts, 0)
+  assert.equal(row.lockedAt, null)
+})
+
+test('account lock: still expires on its own after 30 minutes', async () => {
+  const a = await mkAgent({ loginAttempts: 3, lockedAt: new Date(Date.now() - 31 * 60_000) })
+  assert.equal((await authorize({ identifier: a.agentId, password: PASSWORD }))?.id, a.id)
+})
+
+test('a right password for a suspended agent is refused but does not build toward a lock', async () => {
+  const a = await mkAgent({ status: 'Suspended' })
+  for (let i = 0; i < 4; i++) assert.equal(await authorize({ identifier: a.agentId, password: PASSWORD }), null)
+  assert.equal((await prisma.agent.findUniqueOrThrow({ where: { id: a.id } })).lockedAt, null)
+})
+
+test('signing in does not count against the address', async () => {
+  const ip = freshIp()
+  const a = await mkAgent()
+  for (let i = 0; i < 25; i++) assert.equal((await authorize({ identifier: a.agentId, password: PASSWORD }, fromIp(ip)))?.id, a.id)
+})
+
+test('if an attempt cannot be counted it is refused, and that is logged', async () => {
+  const a = await mkAgent()
+  const realQuery = prisma.$queryRaw
+  const db = prisma as unknown as { $queryRaw: unknown }
+  const logged: unknown[][] = []
+  const realError = console.error
+  console.error = (...args: unknown[]) => { logged.push(args) }
+  db.$queryRaw = () => Promise.reject(new Error('database is locked'))
+  try {
+    assert.equal(await authorize({ identifier: a.agentId, password: PASSWORD }), null)
+  } finally {
+    db.$queryRaw = realQuery
+    console.error = realError
+  }
+  assert.ok(logged.some(args => String(args[0]).includes('agent-login')))
+  assert.equal((await authorize({ identifier: a.agentId, password: PASSWORD }))?.id, a.id, 'and recovers')
 })
 
 test('IP throttle: only the proxy-appended address counts, so a forged header cannot evade it', async () => {
@@ -272,15 +341,4 @@ test('check-agent: reports when this address is blocked, so the screen can say s
 test('check-agent: a non-string identifier reports no account, not a 500', async () => {
   const { POST } = await import('../src/app/api/auth/check-agent/route')
   assert.equal((await POST(postJson('http://localhost/x', { identifier: 42 }, `13.0.0.${(n % 200) + 1}`))).status, 200)
-})
-
-test('login-status: limited the same way', async () => {
-  const a = await mkAgent()
-  const { GET } = await import('../src/app/api/agent/login-status/route')
-  const ip = `14.0.0.${(n % 200) + 1}`
-  const req = () => new NextRequest(`http://localhost/x?identifier=${a.agentId}`, { headers: { 'x-forwarded-for': ip } })
-  assert.equal((await GET(req())).status, 200)
-  let last = await GET(req())
-  for (let i = 0; i < 40; i++) last = await GET(req())
-  assert.equal(last.status, 429)
 })

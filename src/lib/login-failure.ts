@@ -9,16 +9,24 @@ export type LoginFailure = { message: string; field?: 'identifier' | 'password' 
 
 export const FINGERPRINT_FAILED = 'Fingerprint sign-in didn’t work. Please sign in with your password.'
 
+export type AuthReachability = 'ok' | 'offline' | 'server'
+
 /**
  * next-auth's signIn sends the browser to its bare error page when it can't load the provider list, even with
- * redirect: false. Asking first keeps an agent with no connection on the login form.
+ * redirect: false. Asking first keeps the agent on the login form, and tells no connection apart from a fault of ours.
  */
-export async function canReachAuth(fetchProviders: () => Promise<Response> = () => fetch('/api/auth/providers')): Promise<boolean> {
+export async function authReachability(fetchProviders: () => Promise<Response> = () => fetch('/api/auth/providers')): Promise<AuthReachability> {
   try {
-    return (await fetchProviders()).ok
+    return (await fetchProviders()).ok ? 'ok' : 'server'
   } catch {
-    return false
+    return 'offline'
   }
+}
+
+export function reachabilityMessage(state: Exclude<AuthReachability, 'ok'>): string {
+  return state === 'offline'
+    ? 'No internet connection. Check your data or Wi-Fi and try again.'
+    : 'Something went wrong on our side. Please try again in a moment.'
 }
 
 export function loginFailure(c: AgentCheck, via: 'password' | 'fingerprint'): LoginFailure {
