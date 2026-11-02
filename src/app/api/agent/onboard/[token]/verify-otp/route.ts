@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
-import { SIX_DIGITS, readBody, sameCode, text } from '@/lib/password-reset'
+import { SIX_DIGITS, limitByIp, readBody, sameCode, text } from '@/lib/password-reset'
 
 const MAX_ATTEMPTS = 5
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ token: string }> }) {
+  const limited = limitByIp(req, 'guess')
+  if (limited) return limited
+
   const { token } = await params
   const invite = await prisma.agentInvite.findUnique({ where: { token } })
   if (!invite || invite.status === 'Completed' || invite.expiresAt < new Date()) {

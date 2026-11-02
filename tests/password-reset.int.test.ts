@@ -752,3 +752,21 @@ test('admin route: wrong PIN refused; right PIN sends past the cap, audits, and 
     stubbedAdmin = null
   }
 })
+
+test('a successful reset retires live codes of every purpose', async () => {
+  const a = await mkAgent()
+  const t0 = Date.now()
+  const unlock = (await issueResetCode('agent', a.id, t0, 'unlock'))!
+  const admin = await issueAdminResetCode('agent', a.id, t0)
+  const reset = (await issueResetCode('agent', a.id, t0, 'reset'))!
+  assert.equal(await verifyResetCode('agent', a.id, reset.resetId, reset.code, t0 + 1), true)
+  assert.equal(await verifyResetCode('agent', a.id, unlock.resetId, unlock.code, t0 + 1, 'unlock'), false)
+  assert.equal(await verifyResetCode('agent', a.id, admin.resetId, admin.code, t0 + 1), false)
+})
+
+test('onboarding verify is limited per IP', async () => {
+  const { POST } = await import('../src/app/api/agent/onboard/[token]/verify-otp/route')
+  const params = { params: Promise.resolve({ token: `none-${rid}` }) }
+  for (let i = 0; i < IP_GUESSES_PER_15_MIN; i++) assert.equal((await POST(req({ code: '123456' }, '10.0.0.7') as never, params)).status, 400)
+  assert.equal((await POST(req({ code: '123456' }, '10.0.0.7') as never, params)).status, 429)
+})

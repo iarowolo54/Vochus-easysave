@@ -249,9 +249,10 @@ export async function verifyResetCode(
   // Single use, even under concurrent requests. A successful reset retires every other live code too.
   const consumed = await prisma.passwordResetOtp.updateMany({ where: { id: otp.id, consumedAt: null }, data: { consumedAt: at } })
   if (consumed.count !== 1) return false
-  // The code was right, so a failure retiring the others mustn't fail the reset. They expire within minutes anyway.
+  // A new password ends every other live code on the account, whatever its purpose. The code was
+  // right, so a failure here mustn't fail the reset; the others expire within minutes anyway.
   await prisma.passwordResetOtp
-    .updateMany({ where: { actorType, actorId, purpose: otp.purpose, consumedAt: null }, data: { consumedAt: at } })
+    .updateMany({ where: { actorType, actorId, consumedAt: null }, data: { consumedAt: at } })
     .catch(() => console.error('Older password reset codes could not be retired'))
   return true
 }
