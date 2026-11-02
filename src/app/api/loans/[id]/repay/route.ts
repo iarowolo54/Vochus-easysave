@@ -43,7 +43,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const totalRepaid = current.repayments.reduce((s, r) => s + r.amount, 0)
       outstanding = money(current.totalAmount - totalRepaid)
       if (amt > outstanding) throw new RepayRefused('Amount exceeds outstanding balance')
-      fullyRepaid = totalRepaid + amt >= current.totalAmount
+      fullyRepaid = money(totalRepaid + amt) >= money(current.totalAmount)
 
       const txnCount = await tx.transaction.count()
       ref = `RPY-${String(txnCount + 1).padStart(5, '0')}`
@@ -72,5 +72,5 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     actorName: agent.name,
   })
 
-  return NextResponse.json({ success: true, fullyRepaid, outstanding: outstanding - amt })
+  return NextResponse.json({ success: true, fullyRepaid, outstanding: money(outstanding - amt) })
 }

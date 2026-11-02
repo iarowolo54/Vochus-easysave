@@ -3,7 +3,7 @@
 //
 // Two key kinds:
 //  - "phone:<phone>"  — per-account HARD LOCK. Locked once failCount reaches the
-//    limit; cleared only by unlockAccount() (OTP) or a successful login. No time
+//    limit; cleared only by unlockAccount() (OTP, password reset, admin) or a successful login. No time
 //    expiry. lockedUntil is unused for these rows.
 //  - "ip:<addr>"      — per-IP spray rule, a loose TIME lock via lockedUntil.
 import { prisma } from './prisma'

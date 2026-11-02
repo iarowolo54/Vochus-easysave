@@ -5,7 +5,7 @@ import {
   Avatar, ConfirmModal, Empty, LoadError, Modal, PageHeader, Pager, SearchField, Segmented,
   TableSkeleton, naira, shortDate, useDebounced, useToast,
 } from '../_components/admin-ui'
-import { SendResetCodeModal } from '../_components/send-reset-code'
+import { ClearSignInLockModal, SendResetCodeModal } from '../_components/send-reset-code'
 
 interface Customer {
   id: string
@@ -98,6 +98,7 @@ export default function CustomersPage() {
   // Lock / unlock confirmation
   const [lockTarget, setLockTarget] = useState<Customer | null>(null)
   const [sendCodeFor, setSendCodeFor] = useState<Customer | null>(null)
+  const [clearLockFor, setClearLockFor] = useState<Customer | null>(null)
   const [lockBusy, setLockBusy] = useState(false)
   const [lockError, setLockError] = useState('')
 
@@ -257,6 +258,7 @@ export default function CustomersPage() {
           footer={<>
             <button type="button" className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>
             <button type="button" className="btn btn-outline" onClick={() => { setSendCodeFor(detail); setDetail(null) }}>Send reset code</button>
+            <button type="button" className="btn btn-outline" onClick={() => { setClearLockFor(detail); setDetail(null) }}>Clear sign-in lock</button>
             {(detail.status === 'Active' || detail.status === 'Locked') && (
               <button type="button" className={`btn ${detail.status === 'Active' ? 'btn-danger' : 'btn-green'}`} onClick={() => { const c = detail; setDetail(null); askLock(c) }}>
                 {detail.status === 'Active' ? 'Lock account' : 'Unlock account'}
@@ -329,6 +331,10 @@ export default function CustomersPage() {
       )}
 
       {toastNode}
+      {clearLockFor && (
+        <ClearSignInLockModal id={clearLockFor.id} name={clearLockFor.name} onClose={() => setClearLockFor(null)}
+          onDone={msg => { setClearLockFor(null); toast(msg, 'success') }} />
+      )}
       {sendCodeFor && (
         <SendResetCodeModal actorType="customer" id={sendCodeFor.id} name={sendCodeFor.name} onClose={() => setSendCodeFor(null)}
           onSent={msg => { setSendCodeFor(null); toast(msg, 'success') }} />

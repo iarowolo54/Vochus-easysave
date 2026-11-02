@@ -60,6 +60,14 @@ export async function POST(req: NextRequest) {
 
   if (!delivered) {
     await cancelResetCode(issued.id)
+    await logAudit({
+      action: 'admin_password_reset_code_failed',
+      entity: type === 'customer' ? 'Customer' : 'Agent',
+      entityId: account.id,
+      details: `A password reset code for ${label} could not be sent by ${channel}`,
+      actorType: 'admin',
+      ...adminActor(guard.session),
+    })
     return NextResponse.json({ error: 'The code couldn’t be sent. Try again.' }, { status: 502 })
   }
 

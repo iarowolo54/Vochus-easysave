@@ -46,7 +46,7 @@ function LoanRepayContent() {
 
   const loadLoans = useCallback(async () => {
     try {
-      const res = await fetch('/api/loans?status=Disbursed,Approved')
+      const res = await fetch('/api/loans?status=Disbursed')
       const data = await res.json()
       setLoans(data.loans ?? [])
     } catch {

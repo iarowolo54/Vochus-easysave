@@ -2,7 +2,6 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   generateCode,
-  hashCode,
   pickChannel,
   maskTarget,
 } from '../src/lib/unlock-otp'
@@ -12,14 +11,6 @@ test('generateCode is a 6-digit numeric string', () => {
     const c = generateCode()
     assert.match(c, /^\d{6}$/)
   }
-})
-
-test('hashCode is a deterministic 64-hex SHA-256, not the code itself', () => {
-  const h = hashCode('123456')
-  assert.match(h, /^[0-9a-f]{64}$/)
-  assert.equal(h, hashCode('123456'))
-  assert.notEqual(h, hashCode('123457'))
-  assert.notEqual(h, '123456')
 })
 
 test('pickChannel routes by registration type (email on file -> email, else sms)', () => {

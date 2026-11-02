@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
-import { INVALID_CODE_MESSAGE, limitByIp, readBody, text, verifyResetCode } from '@/lib/password-reset'
+import { INVALID_CODE_MESSAGE, limitByIp, readBody, redeemResetCode, text } from '@/lib/password-reset'
 
 export async function POST(req: NextRequest) {
   const limited = limitByIp(req, 'guess')
@@ -28,7 +28,8 @@ export async function POST(req: NextRequest) {
       ],
     },
   })
-  if (!agent || !(await verifyResetCode('agent', agent.id, text(body.resetId), code))) {
+  const redeemed = agent ? await redeemResetCode('agent', agent.id, text(body.resetId), code) : null
+  if (!agent || !redeemed) {
     return NextResponse.json({ error: INVALID_CODE_MESSAGE }, { status: 400 })
   }
 
@@ -46,7 +47,7 @@ export async function POST(req: NextRequest) {
     action: 'agent_password_reset',
     entity: 'Agent',
     entityId: agent.id,
-    details: `Agent ${agent.name} (${agent.agentId}) reset password via forgot-password flow`,
+    details: `Agent ${agent.name} (${agent.agentId}) reset password via forgot-password flow${redeemed === 'admin' ? ' with a code sent by an administrator' : ''}`,
     actorType: 'agent',
     actorId: agent.id,
     actorName: agent.name,

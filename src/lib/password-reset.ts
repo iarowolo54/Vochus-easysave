@@ -1,4 +1,5 @@
-// One-time codes for forgot-password and agent unlock, which both set a new password.
+// One-time codes for forgot-password and agent unlock, which both set a new password, and for
+// customer login unlock, which only clears the lock.
 //
 // Security posture (see .claude/rules/auth-security.md):
 //  - Only an HMAC of the code is stored; the code is never persisted, logged or returned to a caller.
@@ -10,13 +11,12 @@
 //
 // Limits are generous because market customers may share a phone or a mobile network. A stranger can
 // still use up an account's daily sends; an admin can send a code past that limit (issueAdminResetCode).
-import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
+import { createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { prisma } from './prisma'
 import { logAudit } from './audit'
 import { requireEnv } from './env'
 import { clientIp, createRateLimiter } from './rate-limit'
-import { generateCode } from './unlock-otp'
 
 export const OTP_TTL_MS = 10 * 60_000
 export const MAX_VERIFY_ATTEMPTS = 5
@@ -24,6 +24,7 @@ export const RESEND_COOLDOWN_MS = 60_000
 export const MAX_SENDS_PER_DAY = 10
 export const MAX_FAILED_GUESSES_PER_DAY = 50
 export const LOCK_SPIKE_PER_HOUR = 20
+export const GUESS_ALARM_PER_HOUR = 200
 export const IP_REQUESTS_PER_HOUR = 30
 export const IP_GUESSES_PER_15_MIN = 60
 
@@ -43,7 +44,11 @@ export function newResetId() {
 }
 
 export type ResetActor = 'customer' | 'agent'
-export type ResetPurpose = 'reset' | 'unlock' | 'admin'
+export type ResetPurpose = 'reset' | 'unlock' | 'admin' | 'login_unlock'
+
+export function generateCode(): string {
+  return randomInt(0, 1_000_000).toString().padStart(6, '0')
+}
 
 // Per process, so a caller spread across both PM2 instances gets up to twice this. That's fine for
 // a soft network-level cap; the exact limits are the per-account ones above, held in the database.
@@ -144,8 +149,8 @@ async function auditDailyCap(actorType: ResetActor, actorId: string, purpose: Re
  * Sends the code without making the caller wait, so a known account doesn't answer slower than an
  * unknown one. A failed send cancels only this code, and the row still counts toward the limits.
  */
-export function deliverInBackground(rowId: string, send: () => Promise<boolean>) {
-  void send()
+export function deliverInBackground(rowId: string, send: () => Promise<boolean>): Promise<void> {
+  return send()
     .catch(() => false)
     .then(async (ok) => {
       if (ok) return
@@ -184,16 +189,19 @@ async function auditOnce(action: string, actorType: ResetActor | null, actorId: 
   })
 }
 
-/** Checks a code against the row its resetId names, consuming it on success. All failures look the same to the caller. */
-export async function verifyResetCode(
+/**
+ * Checks a code against the row its resetId names, consuming it on success, and returns the purpose of the
+ * row it matched. All failures look the same to the caller.
+ */
+export async function redeemResetCode(
   actorType: ResetActor,
   actorId: string,
   resetId: string,
   code: string,
   now: number = Date.now(),
   purpose: ResetPurpose = 'reset',
-): Promise<boolean> {
-  if (!resetId) return false
+): Promise<ResetPurpose | null> {
+  if (!resetId) return null
   const at = new Date(now)
   const otp = await prisma.passwordResetOtp.findFirst({
     where: {
@@ -202,7 +210,7 @@ export async function verifyResetCode(
       purpose: purpose === 'reset' ? { in: ['reset', 'admin'] } : purpose,
     },
   })
-  if (!otp) return false
+  if (!otp) return null
 
   if (otp.purpose !== 'admin') {
     const guessed = await prisma.passwordResetOtp.aggregate({
@@ -211,7 +219,19 @@ export async function verifyResetCode(
     })
     if ((guessed._sum.attempts ?? 0) >= MAX_FAILED_GUESSES_PER_DAY) {
       await auditOnce('password_reset_guess_ceiling', actorType, actorId, `Password reset guesses stopped after ${MAX_FAILED_GUESSES_PER_DAY} in 24 hours`, DAY_MS, now)
-      return false
+      return null
+    }
+    // Guessing across many accounts: each code gets one try until it calms down. A first try is never
+    // refused and admin codes are exempt, so a stranger causing this can't stop anyone using a code they have.
+    if (otp.attempts >= 1) {
+      const recent = await prisma.passwordResetOtp.aggregate({
+        where: { purpose: { not: 'admin' }, createdAt: { gt: new Date(now - HOUR_MS), lte: at } },
+        _sum: { attempts: true },
+      })
+      if ((recent._sum.attempts ?? 0) >= GUESS_ALARM_PER_HOUR) {
+        await auditOnce('password_reset_guess_alarm', null, null, `Over ${GUESS_ALARM_PER_HOUR} code guesses in an hour across all accounts; each code now gets one try`, HOUR_MS, now)
+        return null
+      }
     }
   }
 
@@ -220,7 +240,7 @@ export async function verifyResetCode(
     where: { id: otp.id, consumedAt: null, attempts: { lt: MAX_VERIFY_ATTEMPTS }, expiresAt: { gt: at } },
     data: { attempts: { increment: 1 } },
   })
-  if (reserved.count === 0) return false
+  if (reserved.count === 0) return null
 
   if (!sameHash(otp.codeHash, hashResetCode(code))) {
     const spent = await prisma.passwordResetOtp.updateMany({
@@ -243,18 +263,30 @@ export async function verifyResetCode(
         await auditOnce('password_reset_lock_spike', null, null, `${locks} password reset codes cancelled for wrong guesses in the last hour`, HOUR_MS, now)
       }
     }
-    return false
+    return null
   }
 
   // Single use, even under concurrent requests. A successful reset retires every other live code too.
   const consumed = await prisma.passwordResetOtp.updateMany({ where: { id: otp.id, consumedAt: null }, data: { consumedAt: at } })
-  if (consumed.count !== 1) return false
-  // A new password ends every other live code on the account, whatever its purpose. The code was
-  // right, so a failure here mustn't fail the reset; the others expire within minutes anyway.
+  if (consumed.count !== 1) return null
+  // A new password ends every other live code on the account, whatever its purpose; a login unlock sets
+  // no password, so it ends only other unlock codes. The code was right, so a failure here mustn't fail
+  // the reset; the others expire within minutes anyway.
   await prisma.passwordResetOtp
-    .updateMany({ where: { actorType, actorId, consumedAt: null }, data: { consumedAt: at } })
+    .updateMany({ where: { actorType, actorId, consumedAt: null, ...(otp.purpose === 'login_unlock' ? { purpose: 'login_unlock' } : {}) }, data: { consumedAt: at } })
     .catch(() => console.error('Older password reset codes could not be retired'))
-  return true
+  return otp.purpose as ResetPurpose
+}
+
+export async function verifyResetCode(
+  actorType: ResetActor,
+  actorId: string,
+  resetId: string,
+  code: string,
+  now: number = Date.now(),
+  purpose: ResetPurpose = 'reset',
+): Promise<boolean> {
+  return (await redeemResetCode(actorType, actorId, resetId, code, now, purpose)) !== null
 }
 
 export const INVALID_CODE_MESSAGE = 'That code didn’t work or has expired. Check it, or request a new one.'

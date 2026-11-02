@@ -8,7 +8,7 @@ import { RESENT_MESSAGE, useResendCooldown, useResetId, waitMessage } from '@/co
 
 const BODY: React.CSSProperties = { fontSize: 13, color: 'rgba(255,255,255,.85)', textAlign: 'center', marginBottom: 20, lineHeight: 1.6 }
 const LABEL: React.CSSProperties = { color: 'rgba(255,255,255,.85)' }
-const LINK: React.CSSProperties = { background: 'none', border: 'none', color: 'rgba(255,255,255,.85)', fontSize: 13, cursor: 'pointer', textDecoration: 'underline', padding: 8 }
+const LINK: React.CSSProperties = { background: 'none', border: 'none', color: 'rgba(255,255,255,.85)', fontSize: 13, cursor: 'pointer', textDecoration: 'underline', padding: 8, minHeight: 44 }
 
 type Step = 'identify' | 'reset' | 'done'
 
@@ -23,8 +23,12 @@ export default function UnlockPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  const { remember, idFor, forget } = useResetId('unlock')
   const { secondsLeft, start: startCooldown } = useResendCooldown()
+  const { remember, idFor, forget, changeAccount } = useResetId('unlock', (account, cooldownLeft) => {
+    setIdentifier(account)
+    setStep('reset')
+    startCooldown(cooldownLeft)
+  })
   const [notice, setNotice] = useState('')
 
   async function requestUnlock() {
@@ -95,7 +99,7 @@ export default function UnlockPage() {
               type="text"
               placeholder="e.g. AGT-00142 or 0801 234 5678"
               value={identifier}
-              onChange={e => setIdentifier(e.target.value)}
+              onChange={e => { changeAccount(); setIdentifier(e.target.value) }}
               autoComplete="off"
               onKeyDown={e => e.key === 'Enter' && requestUnlock()}
             />
@@ -171,7 +175,7 @@ export default function UnlockPage() {
               {loading ? 'Saving…' : 'Unlock and Set Password →'}
             </button>
             <div style={{ textAlign: 'center', marginTop: 14, display: 'flex', flexWrap: 'wrap', justifyContent: 'center', gap: 8 }}>
-              <button type="button" style={LINK} onClick={() => { setError(''); setNotice(''); setStep('identify') }}>
+              <button type="button" style={LINK} onClick={() => { changeAccount(); setToken(''); setError(''); setNotice(''); setStep('identify') }}>
                 ← Change Agent ID
               </button>
               <button type="button" style={LINK} disabled={loading} onClick={() => { setError(''); requestUnlock() }}>

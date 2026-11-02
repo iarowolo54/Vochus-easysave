@@ -18,14 +18,18 @@ export default function ForgotPasswordPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  const { remember, idFor, forget, fromLink, clearFromLink } = useResetId('customer')
   const { secondsLeft, start: startCooldown } = useResendCooldown()
+  const { remember, idFor, forget, changeAccount, fromLink } = useResetId('customer', (account, cooldownLeft) => {
+    setPhone(account)
+    setStage('reset')
+    startCooldown(cooldownLeft)
+  })
   const [notice, setNotice] = useState('')
 
   async function sendCode() {
     if (!phone.trim()) { setError('Enter your phone number'); return }
     if (stage === 'reset' && secondsLeft > 0) { setError(''); setNotice(waitMessage(secondsLeft)); return }
-    if (fromLink) { clearFromLink(); setError(''); setStage('reset'); return }
+    if (fromLink) { setError(''); setStage('reset'); return }
     setError(''); setLoading(true)
     try {
       const res = await fetch('/api/customer/forgot-password', {
@@ -104,14 +108,15 @@ export default function ForgotPasswordPage() {
                   style={{ paddingRight: 44 }}
                   onKeyDown={e => e.key === 'Enter' && resetPassword()} autoComplete="new-password" />
                 <button type="button" aria-label={showPass ? 'Hide password' : 'Show password'} onClick={() => setShowPass(p => !p)}
-                  style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-72%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 18 }}>
+                  style={{ position: 'absolute', right: 2, top: '50%', transform: 'translateY(calc(-50% - 5px))', minWidth: 44, minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, background: 'none', border: 'none', cursor: 'pointer', fontSize: 18 }}>
                   {showPass ? <Icons.hide size={20} aria-hidden="true" /> : <Icons.show size={20} aria-hidden="true" />}
                 </button>
               </div>
               <button onClick={resetPassword} disabled={loading} style={btnStyle}>
                 {loading ? 'Resetting…' : 'Reset Password'}
               </button>
-              <button onClick={sendCode} disabled={loading} style={linkBtnStyle}>{secondsLeft > 0 ? `Resend code in ${secondsLeft}s` : 'Resend code'}</button>
+              {!fromLink && <button onClick={sendCode} disabled={loading} style={linkBtnStyle}>{secondsLeft > 0 ? `Resend code in ${secondsLeft}s` : 'Resend code'}</button>}
+              <button type="button" disabled={loading} style={linkBtnStyle} onClick={() => { changeAccount(); setCode(''); setError(''); setNotice(''); setStage('phone') }}>Use a different number</button>
               {notice && <p role="status" style={{ marginTop: 8, fontSize: 13, textAlign: 'center', color: 'var(--mu)' }}>{notice}</p>}
             </>
           )}
@@ -131,7 +136,7 @@ export default function ForgotPasswordPage() {
         {stage === 'phone' && (
           <div style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: 'var(--mu)' }}>
             Remember your password?{' '}
-            <span style={{ color: 'var(--g)', fontWeight: 700, cursor: 'pointer' }} onClick={() => router.push('/customer/login')}>Sign In</span>
+            <span style={{ color: 'var(--g)', fontWeight: 700, cursor: 'pointer', display: 'inline-block', lineHeight: '44px' }} onClick={() => router.push('/customer/login')}>Sign In</span>
           </div>
         )}
       </div>
@@ -148,5 +153,5 @@ const btnStyle: React.CSSProperties = {
 }
 const linkBtnStyle: React.CSSProperties = {
   width: '100%', marginTop: 10, background: 'none', border: 'none', cursor: 'pointer',
-  fontSize: 13, color: 'var(--g)', fontWeight: 700, padding: 4,
+  fontSize: 13, color: 'var(--g)', fontWeight: 700, padding: 4, minHeight: 44,
 }

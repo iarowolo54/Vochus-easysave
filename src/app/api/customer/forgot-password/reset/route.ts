@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
-import { INVALID_CODE_MESSAGE, limitByIp, readBody, text, verifyResetCode } from '@/lib/password-reset'
+import { unlockAccount } from '@/lib/login-attempt'
+import { INVALID_CODE_MESSAGE, limitByIp, readBody, redeemResetCode, text } from '@/lib/password-reset'
 
 export async function POST(req: NextRequest) {
   const limited = limitByIp(req, 'guess')
@@ -20,7 +21,8 @@ export async function POST(req: NextRequest) {
   }
 
   const customer = await prisma.customer.findFirst({ where: { phone } })
-  if (!customer || !(await verifyResetCode('customer', customer.id, text(body.resetId), code))) {
+  const redeemed = customer ? await redeemResetCode('customer', customer.id, text(body.resetId), code) : null
+  if (!customer || !redeemed) {
     return NextResponse.json({ error: INVALID_CODE_MESSAGE }, { status: 400 })
   }
 
@@ -31,11 +33,14 @@ export async function POST(req: NextRequest) {
     prisma.biometricToken.updateMany({ where: { customerId: customer.id, revokedAt: null }, data: { revokedAt: new Date() } }),
   ])
 
+  // Proving the code proves the owner, so a stranger's failed sign-ins mustn't keep them out.
+  await unlockAccount(customer.phone).catch(() => console.error('Sign-in lock could not be cleared after a reset'))
+
   await logAudit({
     action: 'customer_password_reset',
     entity: 'Customer',
     entityId: customer.id,
-    details: `Customer ${customer.firstName} ${customer.lastName} (${customer.customerId}) reset password via forgot-password flow`,
+    details: `Customer ${customer.firstName} ${customer.lastName} (${customer.customerId}) reset password via forgot-password flow${redeemed === 'admin' ? ' with a code sent by an administrator' : ''}`,
     actorType: 'customer',
     actorId: customer.id,
     actorName: `${customer.firstName} ${customer.lastName}`,

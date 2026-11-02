@@ -9,6 +9,7 @@ import { decodeJwt } from 'jose'
 import { NextRequest } from 'next/server'
 import { prisma } from '../src/lib/prisma'
 import {
+  GUESS_ALARM_PER_HOUR,
   IP_GUESSES_PER_15_MIN,
   IP_REQUESTS_PER_HOUR,
   MAX_FAILED_GUESSES_PER_DAY,
@@ -79,7 +80,11 @@ before(async () => {
   agentCode = a.agentId
 })
 
-beforeEach(() => resetIpLimiterForTests())
+// Guesses from finished tests would otherwise trip the alarm that counts across all accounts.
+beforeEach(async () => {
+  resetIpLimiterForTests()
+  await prisma.passwordResetOtp.updateMany({ where: { attempts: { gt: 0 } }, data: { attempts: 0 } })
+})
 
 after(async () => {
   await prisma.$disconnect()
@@ -618,7 +623,8 @@ test('customer unlock request answers the same for unknown phones, and is limite
   const { POST } = await import('../src/app/api/customer/auth/unlock/request/route')
   for (let i = 0; i < IP_REQUESTS_PER_HOUR; i++) {
     const r = await POST(req({ phone: `09${rid}996` }, '10.0.0.9'))
-    assert.deepEqual(await r.json(), { ok: true })
+    const body = await r.json()
+    assert.deepEqual(Object.keys(body).sort(), ['ok', 'resetId'])
   }
   assert.equal((await POST(req({ phone: `09${rid}996` }, '10.0.0.9'))).status, 429)
 })
@@ -671,6 +677,22 @@ test('loan repay: Disbursed only, and concurrent payments can’t overpay', asyn
   assert.equal((await res.json()).fullyRepaid, true)
   assert.equal((await prisma.loan.findUniqueOrThrow({ where: { id: ok.id } })).status, 'Repaid')
   assert.equal((await prisma.loanRepayment.findFirstOrThrow({ where: { loanId: ok.id } })).method, 'Cash')
+  stubbedAgentId = null
+})
+
+test('loan repay: paying the rounded balance closes a loan whose total has a third decimal', async () => {
+  const { POST } = await import('../src/app/api/loans/[id]/repay/route')
+  stubbedAgentId = agentCode
+  const c = await mkCustomer()
+  const loan = await prisma.loan.create({
+    data: { ref: `LN-${rid}-frac`, agentId: agentPk, customerId: c.id, principal: 1000, interestRate: 0, interestAmount: 147.663, totalAmount: 1147.663, durationDays: 30, status: 'Disbursed', dueDate: new Date(Date.now() + 30 * 86_400_000) },
+  })
+  const res = await POST(req({ amount: 1147.66 }) as never, { params: Promise.resolve({ id: loan.id }) })
+  assert.equal(res.status, 200)
+  const body = await res.json()
+  assert.equal(body.fullyRepaid, true)
+  assert.equal(body.outstanding, 0)
+  assert.equal((await prisma.loan.findUniqueOrThrow({ where: { id: loan.id } })).status, 'Repaid')
   stubbedAgentId = null
 })
 
@@ -794,4 +816,124 @@ test('customer email-otp can’t reset onboarding’s send count', async () => {
   assert.equal((await route(req({ email }))).status, 429)
   assert.equal((await send(req({}) as never, params)).status, 429)
   assert.equal(await prisma.emailOTP.count({ where: { email } }), 10)
+})
+
+// ── Lockouts and limits ─────────────────────────────────────────────────────
+
+test('a password reset clears the sign-in lock', async () => {
+  const { POST } = await import('../src/app/api/customer/forgot-password/reset/route')
+  const { isPhoneLocked, recordLoginFailure } = await import('../src/lib/login-attempt')
+  const c = await mkCustomer()
+  for (let i = 0; i < 4; i++) await recordLoginFailure({ phone: c.phone })
+  assert.equal(await isPhoneLocked(c.phone), true)
+  const { code, resetId } = (await issueResetCode('customer', c.id))!
+  assert.equal((await POST(req({ phone: c.phone, code, newPassword: 'newpass1', resetId }))).status, 200)
+  assert.equal(await isPhoneLocked(c.phone), false)
+})
+
+test('the reset audit says when an admin sent the code', async () => {
+  const { POST } = await import('../src/app/api/customer/forgot-password/reset/route')
+  const c = await mkCustomer()
+  const { code, resetId } = await issueAdminResetCode('customer', c.id)
+  assert.equal((await POST(req({ phone: c.phone, code, newPassword: 'newpass1', resetId }))).status, 200)
+  const row = await prisma.auditLog.findFirstOrThrow({ where: { action: 'customer_password_reset', entityId: c.id } })
+  assert.match(row.details ?? '', /sent by an administrator/)
+})
+
+test('admin sign-in lock clear: needs admin and PIN, audits only a real clear, leaves password and status alone', async () => {
+  const { POST } = await import('../src/app/api/admin/customers/[id]/login-unlock/route')
+  const { isPhoneLocked, recordLoginFailure } = await import('../src/lib/login-attempt')
+  const c = await mkCustomer({ status: 'Locked' })
+  const call = (id: string, pin: unknown) => POST(req({ pin }) as never, { params: Promise.resolve({ id }) })
+  for (let i = 0; i < 4; i++) await recordLoginFailure({ phone: c.phone })
+
+  assert.equal((await call(c.id, '4321')).status, 401)
+  stubbedAgentId = agentCode
+  assert.ok([401, 403].includes((await call(c.id, '4321')).status), 'an agent session is refused')
+  stubbedAgentId = null
+
+  const admin = await prisma.superAdmin.create({
+    data: { email: `clear-${rid}@example.com`, name: 'Test Admin', password: 'x', approvalPin: await bcrypt.hash('4321', 4) },
+  })
+  stubbedAdmin = { user: { id: admin.id, role: 'superadmin', name: 'Test Admin' } }
+  try {
+    assert.equal((await call(c.id, '0000')).status, 403)
+    assert.equal(await isPhoneLocked(c.phone), true)
+    assert.equal((await call('missing', '4321')).status, 404)
+
+    const res = await call(c.id, '4321')
+    assert.equal(res.status, 200)
+    assert.deepEqual(await res.json(), { cleared: true })
+    assert.equal(await isPhoneLocked(c.phone), false)
+    assert.deepEqual(await (await call(c.id, '4321')).json(), { cleared: false })
+    assert.equal(await prisma.auditLog.count({ where: { action: 'customer_login_lock_cleared', entityId: c.id } }), 1)
+
+    const after = await prisma.customer.findUniqueOrThrow({ where: { id: c.id } })
+    assert.equal(after.status, 'Locked')
+    assert.equal(after.password, c.password)
+  } finally {
+    stubbedAdmin = null
+  }
+})
+
+test('a failed admin send is audited', async () => {
+  const route = (await import('../src/app/api/admin/password-reset/route')).POST
+  const c = await mkCustomer({ phone: 'not-a-number' })
+  const admin = await prisma.superAdmin.create({
+    data: { email: `fail-${rid}@example.com`, name: 'Test Admin', password: 'x', approvalPin: await bcrypt.hash('4321', 4) },
+  })
+  stubbedAdmin = { user: { id: admin.id, role: 'superadmin', name: 'Test Admin' } }
+  process.env.NEXTAUTH_URL = 'http://localhost:3000'
+  const realFetch = globalThis.fetch
+  const env = process.env as Record<string, string | undefined>
+  const realEnv = env.NODE_ENV
+  env.NODE_ENV = 'production' // outside production the SMS helper reports success without sending
+  globalThis.fetch = (async () => { throw new Error('no network in tests') }) as typeof fetch
+  try {
+    assert.equal((await route(req({ actorType: 'customer', id: c.id, pin: '4321' }))).status, 502)
+    assert.equal(await prisma.auditLog.count({ where: { action: 'admin_password_reset_code_failed', entityId: c.id } }), 1)
+  } finally {
+    env.NODE_ENV = realEnv
+    globalThis.fetch = realFetch
+    stubbedAdmin = null
+  }
+})
+
+test('under a guessing alarm each code gets one try; first tries and admin codes still work', async () => {
+  // A time far from every other test, so their rows don't count.
+  const t0 = Date.now() + 400 * 24 * 60 * 60_000
+  const load = await mkCustomer()
+  const heavy = (await issueResetCode('customer', load.id, t0))!
+  await prisma.passwordResetOtp.update({ where: { id: heavy.id }, data: { attempts: GUESS_ALARM_PER_HOUR } })
+
+  const c = await mkCustomer()
+  const first = (await issueResetCode('customer', c.id, t0))!
+  assert.equal(await verifyResetCode('customer', c.id, first.resetId, wrong(first.code), t0 + 1), false)
+  assert.equal(await verifyResetCode('customer', c.id, first.resetId, first.code, t0 + 2), false, 'a second try is refused')
+  assert.equal(await prisma.auditLog.count({ where: { action: 'password_reset_guess_alarm', createdAt: { gt: new Date(Date.now() - 60_000) } } }) >= 1, true)
+
+  const d = await mkCustomer()
+  const untouched = (await issueResetCode('customer', d.id, t0))!
+  assert.equal(await verifyResetCode('customer', d.id, untouched.resetId, untouched.code, t0 + 3), true, 'a first try goes through')
+
+  const e = await mkCustomer()
+  const admin = await issueAdminResetCode('customer', e.id, t0)
+  assert.equal(await verifyResetCode('customer', e.id, admin.resetId, wrong(admin.code), t0 + 4), false)
+  assert.equal(await verifyResetCode('customer', e.id, admin.resetId, admin.code, t0 + 5), true, 'an admin code keeps its tries')
+})
+
+test('otp/send audits each send and caps an agent in the database', async () => {
+  const { POST } = await import('../src/app/api/otp/send/route')
+  const a = await mkAgent()
+  stubbedAgentId = a.agentId
+  const phone = `0813${String(Date.now()).slice(-7)}`
+  assert.equal((await POST(req({ phone }))).status, 200)
+  const row = await prisma.auditLog.findFirstOrThrow({ where: { action: 'enrol_phone_code_sent', actorId: a.agentId } })
+  assert.ok(!(row.details ?? '').includes(phone), 'the phone is masked')
+
+  await prisma.auditLog.createMany({ data: Array.from({ length: 40 }, () => ({ action: 'enrol_phone_code_sent', entity: 'PhoneOTP', actorType: 'agent', actorId: a.agentId })) })
+  const other = `0814${String(Date.now()).slice(-7)}`
+  assert.equal((await POST(req({ phone: other }))).status, 429)
+  assert.equal(await prisma.phoneOTP.count({ where: { phone: other } }), 0)
+  stubbedAgentId = null
 })

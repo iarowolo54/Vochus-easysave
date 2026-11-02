@@ -5,7 +5,9 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { sendSMS } from '@/lib/kudisms'
 import { sendMail } from '@/lib/mail'
+import { logAudit } from '@/lib/audit'
 import { hmacCode, readBody, text } from '@/lib/password-reset'
+import { maskTarget } from '@/lib/unlock-otp'
 import { clientIp, createRateLimiter } from '@/lib/rate-limit'
 
 const TTL_MS = 10 * 60_000
@@ -15,7 +17,8 @@ const HOUR_MS = 60 * 60_000
 const MAX_PER_PHONE_PER_DAY = 10
 const MAX_PER_AGENT_PER_HOUR = 40
 const MAX_PER_IP_PER_HOUR = 60
-// Per process, so up to double across PM2 instances. The per-phone limits are exact, in the database.
+const AUDIT_ACTION = 'enrol_phone_code_sent'
+// Per process, so up to double across PM2 instances. The phone and agent limits are in the database.
 const limiter = createRateLimiter()
 
 // Sends a paid SMS, so it needs an agent session. Only the agent enrolment screen calls it.
@@ -29,24 +32,34 @@ export async function POST(req: NextRequest) {
   }
 
   const ip = clientIp(req)
-  const byAgent = limiter.check(`agent:${session.user.agentId}`, MAX_PER_AGENT_PER_HOUR, HOUR_MS)
-  const byIp = ip === 'unknown' ? byAgent : limiter.check(`ip:${ip}`, MAX_PER_IP_PER_HOUR, HOUR_MS)
-  if (!byAgent.allowed || !byIp.allowed) {
+  if (ip !== 'unknown' && !limiter.check(`ip:${ip}`, MAX_PER_IP_PER_HOUR, HOUR_MS).allowed) {
     return NextResponse.json({ error: 'Too many codes sent. Please wait and try again.' }, { status: 429 })
   }
 
   const code = randomInt(100000, 1000000).toString()
   const id = randomUUID()
   const now = Date.now()
+  const agentId = session.user.agentId
   // One statement, so concurrent requests can't both pass the limits.
   const inserted = await prisma.$executeRaw`
     INSERT INTO "PhoneOTP" ("id", "phone", "code", "expiresAt", "verified", "createdAt")
     SELECT ${id}, ${phone}, ${hmacCode('phone-otp', code)}, ${now + TTL_MS}, false, ${now}
     WHERE NOT EXISTS (SELECT 1 FROM "PhoneOTP" WHERE "phone" = ${phone} AND "createdAt" > ${now - COOLDOWN_MS})
-    AND (SELECT COUNT(*) FROM "PhoneOTP" WHERE "phone" = ${phone} AND "createdAt" > ${now - DAY_MS}) < ${MAX_PER_PHONE_PER_DAY}`
+    AND (SELECT COUNT(*) FROM "PhoneOTP" WHERE "phone" = ${phone} AND "createdAt" > ${now - DAY_MS}) < ${MAX_PER_PHONE_PER_DAY}
+    AND (SELECT COUNT(*) FROM "AuditLog" WHERE "action" = ${AUDIT_ACTION} AND "actorId" = ${agentId} AND "createdAt" > ${now - HOUR_MS}) < ${MAX_PER_AGENT_PER_HOUR}`
   if (inserted !== 1) {
-    return NextResponse.json({ error: 'A code was sent recently. Please wait a minute and try again.' }, { status: 429 })
+    return NextResponse.json({ error: 'A code was sent recently. Please wait and try again.' }, { status: 429 })
   }
+
+  // Written before sending, because this row is what the per-agent cap counts.
+  await logAudit({
+    action: AUDIT_ACTION,
+    entity: 'PhoneOTP',
+    entityId: id,
+    details: `Phone check code requested for ${maskTarget('sms', phone)}`,
+    actorId: agentId,
+    actorName: session.user.name ?? undefined,
+  })
 
   const smsResult = await sendSMS(phone, `Your Vochus Easy Save verification code is: ${code}. Valid for 10 minutes.`)
   if (!smsResult.success) {

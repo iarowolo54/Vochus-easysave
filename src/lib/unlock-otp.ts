@@ -1,37 +1,14 @@
-// One-time codes for unlocking a hard-locked customer account.
+// One-time codes for unlocking a hard-locked customer account. They live in PasswordResetOtp under
+// their own purpose, so they get the same keyed hash, resetId binding and limits as password resets.
 //
-// Security posture (see .claude/rules/auth-security.md):
-//  - Codes are generated with node:crypto (not Math.random).
-//  - Only a SHA-256 hash is stored; the code is never persisted or returned.
-//  - Verification is attempt-limited and single-use, compared in constant time.
-//  - Sends are rate-limited per customer to prevent email/SMS bombing.
-//  - The channel follows registration type: email (link-registered) or SMS
-//    (agent-registered, no smartphone).
-import { randomInt, randomUUID, createHash, timingSafeEqual } from 'crypto'
-import { prisma } from './prisma'
+// The channel follows registration type: email (link-registered) or SMS (agent-registered, no smartphone).
 import { sendMail } from './mail'
 import { sendSMS } from './kudisms'
+import { deliverInBackground, issueResetCode } from './password-reset'
 
-export const OTP_TTL_MS = 10 * 60_000
-export const MAX_VERIFY_ATTEMPTS = 5
-export const RESEND_COOLDOWN_MS = 60_000
-export const MAX_SENDS_PER_DAY = 10
+export { generateCode } from './password-reset'
 
 type Channel = 'email' | 'sms'
-
-export function generateCode(): string {
-  return randomInt(0, 1_000_000).toString().padStart(6, '0')
-}
-
-export function hashCode(code: string): string {
-  return createHash('sha256').update(code).digest('hex')
-}
-
-function hashesEqual(a: string, b: string): boolean {
-  const ba = Buffer.from(a)
-  const bb = Buffer.from(b)
-  return ba.length === bb.length && timingSafeEqual(ba, bb)
-}
 
 export function pickChannel(customer: { email?: string | null; phone: string }): {
   channel: Channel
@@ -49,24 +26,6 @@ export function maskTarget(channel: Channel, target: string): string {
   }
   const last4 = target.slice(-4)
   return `${'*'.repeat(Math.max(target.length - 4, 0))}${last4}`
-}
-
-/** Store a hashed code for a customer (storage primitive; also used by tests). */
-export async function createUnlockOtp(
-  customerId: string,
-  channel: Channel,
-  code: string,
-  now: number = Date.now(),
-): Promise<void> {
-  await prisma.accountUnlockOtp.create({
-    data: {
-      customerId,
-      channel,
-      codeHash: hashCode(code),
-      expiresAt: new Date(now + OTP_TTL_MS),
-      createdAt: new Date(now), // explicit so cooldown/daily-cap math is testable
-    },
-  })
 }
 
 async function deliver(
@@ -94,72 +53,17 @@ async function deliver(
   return r.success
 }
 
-export interface RequestResult {
-  sent: boolean
-  channel?: Channel
-  maskedTarget?: string
-}
-
-/** Generate, store and send an unlock code for a locked account, rate-limiting
- *  resends. Never returns the code. Older codes stay valid, so a stranger's
- *  request can't retire the owner's. */
+/** Issue and send an unlock code without waiting for delivery, so a locked account doesn't answer
+ *  slower than any other. Null while the account is in its cooldown or over its daily cap. Older
+ *  codes stay valid, so a stranger's request can't retire the owner's. */
 export async function requestUnlockOtp(
   customer: { id: string; email?: string | null; phone: string; firstName: string },
   now: number = Date.now(),
   send: typeof deliver = deliver, // injectable for tests
-): Promise<RequestResult> {
-  const DAY_MS = 24 * 60 * 60_000
+): Promise<{ resetId: string; delivered: Promise<void> } | null> {
+  const issued = await issueResetCode('customer', customer.id, now, 'login_unlock')
+  if (!issued) return null
   const { channel, target } = pickChannel(customer)
-  const code = generateCode()
-  const id = randomUUID()
-  // One statement, so concurrent requests can't both pass the cooldown and daily cap. The row is
-  // written before sending, so a send can't happen without counting; a failed send keeps the row.
-  const inserted = await prisma.$executeRaw`
-    INSERT INTO "AccountUnlockOtp" ("id", "customerId", "channel", "codeHash", "expiresAt", "attempts", "createdAt")
-    SELECT ${id}, ${customer.id}, ${channel}, ${hashCode(code)}, ${now + OTP_TTL_MS}, 0, ${now}
-    WHERE NOT EXISTS (
-      SELECT 1 FROM "AccountUnlockOtp" WHERE "customerId" = ${customer.id} AND "createdAt" > ${now - RESEND_COOLDOWN_MS}
-    )
-    AND (
-      SELECT COUNT(*) FROM "AccountUnlockOtp" WHERE "customerId" = ${customer.id} AND "createdAt" > ${now - DAY_MS}
-    ) < ${MAX_SENDS_PER_DAY}`
-  if (inserted !== 1) return { sent: false }
-
-  const ok = await send(channel, target, customer.firstName, code).catch(() => false)
-  if (!ok) {
-    await prisma.accountUnlockOtp.updateMany({ where: { id, consumedAt: null }, data: { consumedAt: new Date(now) } })
-    return { sent: false }
-  }
-  return { sent: true, channel, maskedTarget: maskTarget(channel, target) }
-}
-
-/** Verify a code: latest unconsumed, unexpired, under the attempt cap, matching
- *  the stored hash. Consumes it on success. Never reveals which check failed. */
-export async function verifyUnlockOtp(
-  customerId: string,
-  code: string,
-  now: number = Date.now(),
-): Promise<{ ok: boolean }> {
-  const otp = await prisma.accountUnlockOtp.findFirst({
-    where: { customerId, consumedAt: null, expiresAt: { gt: new Date(now) } },
-    orderBy: { createdAt: 'desc' },
-  })
-  if (!otp) return { ok: false }
-
-  // Reserve an attempt ATOMICALLY and enforce the cap in the same statement, so
-  // a concurrent burst can't all slip past the check and get free guesses.
-  const reserved = await prisma.accountUnlockOtp.updateMany({
-    where: { id: otp.id, consumedAt: null, attempts: { lt: MAX_VERIFY_ATTEMPTS }, expiresAt: { gt: new Date(now) } },
-    data: { attempts: { increment: 1 } },
-  })
-  if (reserved.count === 0) return { ok: false } // cap reached, consumed, or expired
-
-  if (!hashesEqual(otp.codeHash, hashCode(code))) return { ok: false }
-
-  // Consume atomically so the code is single-use even under concurrent verifies.
-  const consumed = await prisma.accountUnlockOtp.updateMany({
-    where: { id: otp.id, consumedAt: null },
-    data: { consumedAt: new Date(now) },
-  })
-  return { ok: consumed.count === 1 }
+  const delivered = deliverInBackground(issued.id, () => send(channel, target, customer.firstName, issued.code))
+  return { resetId: issued.resetId, delivered }
 }
