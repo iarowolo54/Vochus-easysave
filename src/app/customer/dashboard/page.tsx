@@ -23,7 +23,7 @@ import InterestNudge, { InterestCard, InterestChip, earnsInterest } from '@/comp
 import AutoFunding from '@/components/customer/AutoFunding'
 import { displayName, formatDate, formatNaira } from '@/lib/format'
 import { getHideBalance, setHideBalance } from '@/lib/preferences'
-import { isEligiblePlan } from '@/lib/catchup'
+import { BULK_SAVINGS_LABEL, isEligiblePlan, selectableKeys } from '@/lib/catchup'
 import { buildSlots, dateKey, hasEnded, isWeekly } from '@/lib/savings-card'
 
 type Plan = {
@@ -183,10 +183,10 @@ export default function CustomerDashboard() {
     const daysIn = Math.max(0, Math.floor((Date.now() - startDay.getTime()) / 86400000))
     windowStart = dateKey(new Date(startDay.getFullYear(), startDay.getMonth(), startDay.getDate() + daysIn - (daysIn % 7)))
   }
-  // "Catch up" is offered only for eligible (active, self-service, daily/weekly) plans with a missed slot.
-  const canCatchUp = !!plan && !ended && !pending
+  // Bulk Savings is offered only for eligible (active, self-service, daily/weekly) plans with a day left to pay for.
+  const canBulkSave = !!plan && !ended && !pending
     && isEligiblePlan({ status: plan.status, source: plan.source ?? '', cadence: plan.cadence })
-    && buildSlots(plan, depositDates, plan.coveredKeys ?? []).some(x => x.state === 'missed')
+    && selectableKeys(buildSlots(plan, depositDates, plan.coveredKeys ?? [])).length > 0
   const recentForStatus = planTxs.filter(t => {
     const k = dateKey(new Date(t.createdAt))
     return k >= windowStart && k <= today
@@ -302,8 +302,8 @@ export default function CustomerDashboard() {
               onClick={() => router.push(plan ? `/customer/save?planId=${plan.id}` : '/customer/save')}
             />
           )}
-          {canCatchUp && plan && (
-            <ActionButton icon="history" label="Catch up" onClick={() => router.push(`/customer/catchup?planId=${encodeURIComponent(plan.id)}`)} />
+          {canBulkSave && plan && (
+            <ActionButton icon="history" label={BULK_SAVINGS_LABEL} onClick={() => router.push(`/customer/catchup?planId=${encodeURIComponent(plan.id)}`)} />
           )}
           <ActionButton icon="withdraw" label="Collect" onClick={() => router.push('/customer/redeem')} />
           <ActionButton

@@ -6,6 +6,7 @@ import { money } from '@/lib/wallet-guard'
 import { creditRegistrationReward } from '@/lib/reward'
 import { verifyTransaction } from '@/lib/paystack'
 import { creditAutoDebitAttempt } from '@/lib/auto-debit-credit'
+import { consumePaymentIntent, parseCoversKeys } from '@/lib/payment-intent'
 
 export async function POST(req: NextRequest) {
   const body = await req.text()
@@ -104,38 +105,63 @@ export async function POST(req: NextRequest) {
 
     const priorSavings = await prisma.transaction.count({ where: { customerId, type: 'saving' } })
 
+    // If this webhook beats the browser's verify callback, it must also do verify's other work: consume
+    // the intent and record the days paid for, or auto-debit would charge them again. Days come from the
+    // server-side intent, never Paystack metadata, and only if the payment matches what was initiated.
+    const intent = await prisma.paymentIntent.findFirst({ where: { ref: reference, customerId } })
+    const matchesIntent = !!intent && intent.planId === plan.id && money(intent.amount) === amount
+      && (!txData.currency || txData.currency === intent.currency)
+    if (intent && !matchesIntent && intent.coversKeys) {
+      console.warn(`[paystack webhook] payment does not match its intent, crediting without coverage ref=${reference}`)
+    }
+    const coversKeys = matchesIntent ? parseCoversKeys(intent.coversKeys) : []
+    const creditedPlanId = plan.id
+
     try {
-      await prisma.$transaction([
-        prisma.transaction.create({
+      await prisma.$transaction(async (tx) => {
+        if (intent) {
+          const consumed = await consumePaymentIntent(tx, reference, { customerId })
+          if (!consumed) throw new Error('ALREADY_PROCESSED')
+        }
+        await tx.transaction.create({
           data: {
             ref: reference,
             agentId: agent.id,
             customerId,
-            planId: plan.id,
+            planId: creditedPlanId,
             type: 'saving',
             amount,
             method: 'Paystack',
             status: 'Done',
             note: `Customer self-pay via Paystack webhook — ${txData.channel ?? 'card'}`,
           },
-        }),
-        prisma.savingsPlan.update({
-          where: { id: plan.id },
+        })
+        await tx.savingsPlan.update({
+          where: { id: creditedPlanId },
           data: { balance: { increment: amount } },
-        }),
-        prisma.customerPayment.create({
+        })
+        await tx.customerPayment.create({
           data: {
             ref: `PAY-${reference}`,
             customerId,
-            planId: plan.id,
+            planId: creditedPlanId,
             amount,
             status: 'Done',
             channel: txData.channel ?? 'card',
           },
-        }),
-      ])
-    } catch (e: any) {
-      if (e?.code !== 'P2002') throw e
+        })
+        for (const coversKey of coversKeys) {
+          await tx.planDayCoverage.upsert({
+            where: { savingsPlanId_coversKey: { savingsPlanId: creditedPlanId, coversKey } },
+            create: { savingsPlanId: creditedPlanId, coversKey, ref: reference },
+            update: {},
+          })
+        }
+      })
+    } catch (e: unknown) {
+      // The verify callback got there first: it credited this payment and wrote its coverage.
+      if (e instanceof Error && e.message === 'ALREADY_PROCESSED') return NextResponse.json({ ok: true })
+      if ((e as { code?: unknown } | null)?.code !== 'P2002') throw e
     }
 
     logAudit({

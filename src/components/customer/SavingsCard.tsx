@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import { Icons } from '@/components/ui/icons'
 import { formatDate, formatNaira, formatTime } from '@/lib/format'
 import { depositIcon, depositMethod } from './DepositReceipt'
+import { BULK_SAVINGS_LABEL } from '@/lib/catchup'
 import {
   buildSlots, currentWeekDays, dateKey, depositsByDay, hasEnded, isWeekly, slotEndKey,
   type Slot, type SlotState,
@@ -55,7 +56,7 @@ function stateClass(state: SlotState, ended: boolean) {
   return `ui-cal-day ui-cal-day--${ended && state === 'missed' ? 'unsaved' : state}`
 }
 
-/** Catch-up mode: only `selectable` (missed) slots can be toggled; everything else is shown but inert. */
+/** Bulk Savings mode: only `selectable` (not yet saved) slots can be toggled; everything else is shown but inert. */
 type Picker = { selectable: Set<string>; selected: Set<string> }
 
 function pickClass(slot: Slot, ended: boolean, picker?: Picker) {
@@ -68,7 +69,7 @@ function pickClass(slot: Slot, ended: boolean, picker?: Picker) {
 
 function pickLabel(slot: Slot, weekly: boolean, ended: boolean, picker?: Picker) {
   const base = slotLabel(slot, weekly, ended)
-  if (!picker || !picker.selectable.has(slot.key)) return slot.coveredOnly ? `${base} (covered in a catch-up payment)` : base
+  if (!picker || !picker.selectable.has(slot.key)) return slot.coveredOnly ? `${base} (paid for through ${BULK_SAVINGS_LABEL})` : base
   return `${base}, ${picker.selected.has(slot.key) ? 'selected' : 'tap to select'}`
 }
 
@@ -312,7 +313,7 @@ export function DayDetails({ selection, hideAmounts, onOpen }: { selection: DayS
   const { deposits, state, ended, coveredOnly } = selection
   if (deposits.length === 0) {
     const text = coveredOnly
-      ? 'Covered in a catch-up payment.'
+      ? `Paid for through ${BULK_SAVINGS_LABEL}.`
       : state === 'upcoming'
       ? 'This day hasn’t come yet.'
       : state === 'today'
@@ -342,7 +343,7 @@ export function DayDetails({ selection, hideAmounts, onOpen }: { selection: DayS
   )
 }
 
-/* ── Catch-up: pick missed days to pay for ──────────────────────────── */
+/* ── Bulk Savings: pick days to pay for ─────────────────────────────── */
 
 type CatchupProps = {
   plan: Plan

@@ -37,6 +37,17 @@ export function createPaymentIntent(data: IntentInput) {
   })
 }
 
+/** The day-keys stored on an intent. Malformed or absent means none. */
+export function parseCoversKeys(stored: string | null): string[] {
+  if (!stored) return []
+  try {
+    const parsed: unknown = JSON.parse(stored)
+    return Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === 'string') : []
+  } catch {
+    return []
+  }
+}
+
 /** The still-pending intent for this ref, but only if it belongs to the actor. */
 export function findOwnedPendingIntent(
   ref: string,

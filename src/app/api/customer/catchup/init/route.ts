@@ -4,13 +4,14 @@ import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { createPaymentIntent } from '@/lib/payment-intent'
-import { buildSlots } from '@/lib/savings-card'
+import { buildSlotsWat } from '@/lib/savings-card'
 import { isEligiblePlan, validateSelection } from '@/lib/catchup'
+import { inFlightKeys } from '@/lib/pay-ahead'
 
-// Online catch-up: a customer tops up previously *missed* days on their own
+// Bulk Savings: a customer pays for missed, today's or upcoming days on their own
 // self-service plan. The server validates the selected day-keys against the
-// plan's live slots and computes the amount from the plan rate — the client
-// amount is never trusted. The ref deliberately reuses the VCHS-CST- style so
+// plan's live slots (in WAT, where the customer's calendar is) and computes the
+// amount from the plan rate — the client amount is never trusted. The ref deliberately reuses the VCHS-CST- style so
 // /customer/save/callback routes it to the normal paystack/verify handler.
 export async function POST(req: NextRequest) {
   const session = await getCustomerSession()
@@ -35,7 +36,7 @@ export async function POST(req: NextRequest) {
     prisma.transaction.findMany({ where: { planId: plan.id, type: 'saving', status: 'Done' }, select: { createdAt: true } }),
     prisma.planDayCoverage.findMany({ where: { savingsPlanId: plan.id }, select: { coversKey: true } }),
   ])
-  const slots = buildSlots(
+  const slots = buildSlotsWat(
     { startDate: plan.startDate.toISOString(), maturityDate: plan.maturityDate.toISOString(), periodDays: plan.periodDays, cadence: plan.cadence },
     deposits.map(d => d.createdAt.toISOString()),
     coverage.map(c => c.coversKey),
@@ -44,6 +45,16 @@ export async function POST(req: NextRequest) {
   const result = validateSelection(plan, slots, keys)
   if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 })
   const amount = result.total
+
+  // A day auto-debit is charging right now would otherwise be paid for twice.
+  const processing = await prisma.autoDebitAttempt.findMany({
+    where: { savingsPlanId: plan.id, status: 'processing' },
+    select: { cycleDate: true },
+  })
+  const charging = new Set(inFlightKeys(plan, processing))
+  if (keys.some(k => charging.has(k))) {
+    return NextResponse.json({ error: 'Your card is being charged for one of these days. Remove it, or try again shortly.' }, { status: 409 })
+  }
 
   const email = customer.email ?? `${customer.customerId.toLowerCase()}@vochus.ng`
   const rand = randomBytes(9).toString('base64url').toUpperCase()

@@ -7,7 +7,7 @@ import EmptyState from '@/components/ui/EmptyState'
 import { FormError } from '@/components/ui/FormErrors'
 import { Icons } from '@/components/ui/icons'
 import { FormSkeleton } from '@/components/ui/Skeleton'
-import { MAX_CATCHUP_KEYS, isEligiblePlan, perSlotAmount, selectableKeys, selectionTotal } from '@/lib/catchup'
+import { BULK_SAVINGS_LABEL, MAX_CATCHUP_KEYS, allMissedChosen, isEligiblePlan, missedKeys, perSlotAmount, selectableKeys, selectionTotal, toggleAllMissed } from '@/lib/catchup'
 import { formatNaira } from '@/lib/format'
 import { describeFailure, postJson } from '@/lib/http'
 import { getHideBalance } from '@/lib/preferences'
@@ -39,6 +39,7 @@ function CatchupScreen() {
     [plan, deposits],
   )
   const selectable = useMemo(() => new Set(selectableKeys(slots)), [slots])
+  const missed = useMemo(() => missedKeys(slots), [slots])
 
   // Returning from Paystack via the back/forward cache restores this page with `paying` still true.
   useEffect(() => {
@@ -54,7 +55,7 @@ function CatchupScreen() {
       <button type="button" className="ui-icon-btn" onClick={back} aria-label="Back to home">
         <Icons.back size={22} aria-hidden="true" />
       </button>
-      <div className="ui-topbar-main"><h1 className="ui-topbar-title">Catch up</h1></div>
+      <div className="ui-topbar-main"><h1 className="ui-topbar-title">{BULK_SAVINGS_LABEL}</h1></div>
     </header>
   )
 
@@ -87,8 +88,8 @@ function CatchupScreen() {
           <section className="ui-card">
             <EmptyState
               icon="check"
-              title={blocked ? 'Catch-up isn’t available for this plan' : 'You’re all caught up'}
-              text={blocked ? 'You can only catch up on a running daily or weekly plan.' : 'You have no missed days to pay for.'}
+              title={blocked ? `${BULK_SAVINGS_LABEL} isn’t available for this plan` : 'Everything’s paid for'}
+              text={blocked ? 'It works on a running daily or weekly plan.' : 'There’s nothing left to pay for on this plan.'}
               action={<button type="button" className="ui-btn ui-btn--primary" onClick={back}>Back to home</button>}
             />
           </section>
@@ -114,11 +115,11 @@ function CatchupScreen() {
     })
   }
 
-  const allChosen = count > 0 && count >= Math.min(selectable.size, MAX_CATCHUP_KEYS)
+  const allChosen = allMissedChosen(selected, missed, MAX_CATCHUP_KEYS)
 
   function selectAll() {
     setError('')
-    setSelected(allChosen ? new Set() : new Set([...selectable].slice(0, MAX_CATCHUP_KEYS)))
+    setSelected(prev => toggleAllMissed(prev, missed, MAX_CATCHUP_KEYS))
   }
 
   async function pay() {
@@ -140,14 +141,16 @@ function CatchupScreen() {
       <main className="ui-container">
         <section className="ui-card">
           <p className="ui-card-status ui-card-status--neutral">
-            Tap the {unit}s you missed, then pay for them now. {hide ? '' : `Each ${unit} is ${formatNaira(perSlot, { minor: false })}. `}
-            The money is added to your savings today.
+            Pay for missed or upcoming {unit}s. {hide ? '' : `Each ${unit} is ${formatNaira(perSlot, { minor: false })}. `}
+            The money is added to your savings today, and auto-funding won’t charge {unit}s you’ve already paid for.
           </p>
           <CatchupCalendar plan={plan} deposits={deposits} selectable={selectable} selected={selected} onToggle={toggle} />
-          <button type="button" className="ui-link" onClick={selectAll} disabled={paying}>
-            {allChosen ? 'Clear selection' : `Select all missed ${unit}s (${Math.min(selectable.size, MAX_CATCHUP_KEYS)})`}
-          </button>
-          <p className="ui-catchup-legend">Dashed {unit}s are missed: tap to pay. Green {unit}s are already paid. A tick means selected.</p>
+          {(missed.length > 0 || count > 0) && (
+            <button type="button" className="ui-link" onClick={selectAll} disabled={paying}>
+              {allChosen ? 'Clear selection' : `Select all missed ${unit}s (${Math.min(missed.length, MAX_CATCHUP_KEYS)})`}
+            </button>
+          )}
+          <p className="ui-catchup-legend">Dashed {unit}s are missed. Green {unit}s are paid. A tick means selected.</p>
         </section>
 
         <FormError message={error} />
@@ -157,7 +160,7 @@ function CatchupScreen() {
             <span>{count} {unit}{count === 1 ? '' : 's'} selected</span>
             <strong>{hide ? '₦ ••••' : formatNaira(total)}</strong>
           </div>
-          {atCap && <p className="ui-catchup-note">You can catch up on up to {MAX_CATCHUP_KEYS} {unit}s at a time.</p>}
+          {atCap && <p className="ui-catchup-note">You can pay for up to {MAX_CATCHUP_KEYS} {unit}s at a time.</p>}
           <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={pay} disabled={count === 0 || paying}>
             {paying ? 'Opening payment…' : count === 0 ? `Select a ${unit} to pay` : hide ? 'Pay by card' : `Pay ${formatNaira(total)} by card`}
           </button>

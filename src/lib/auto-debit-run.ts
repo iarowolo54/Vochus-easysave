@@ -5,6 +5,7 @@ import { grossUpForFee } from '@/lib/auto-debit-fee'
 import { chargeAuthorization, verifyTransaction } from '@/lib/paystack'
 import { creditAutoDebitAttempt } from '@/lib/auto-debit-credit'
 import { recordAutoDebitFailure } from '@/lib/auto-debit-failure'
+import { isCycleCovered } from '@/lib/pay-ahead'
 
 const DEFAULT_RECONCILE_AGE_MS = 2 * 60 * 60 * 1000
 
@@ -41,6 +42,15 @@ export async function runDueAutoDebits(
 
       const creditAmount = cycleCreditAmount(plan, now)
       if (creditAmount <= 0) {
+        await advance()
+        skipped++
+        continue
+      }
+
+      // Already paid for through Bulk Savings: charge nothing for this cycle and move on. Not an attempt,
+      // so consecutiveFailures stays as it is.
+      const coverage = await client.planDayCoverage.findMany({ where: { savingsPlanId: plan.id }, select: { coversKey: true } })
+      if (isCycleCovered(plan, coverage.map(c => c.coversKey), now)) {
         await advance()
         skipped++
         continue

@@ -573,6 +573,8 @@ html[data-vochus-shell] .ui-browser-only { display: none; }
 
 /* Round actions */
 .ui-actions { display: flex; justify-content: center; gap: var(--ui-s5); margin-bottom: var(--ui-s5); }
+/* Four actions at 72px need 360px with the wider gap, more than a 360px phone has inside its gutters. */
+@media (max-width: 400px) { .ui-actions { gap: var(--ui-s2); } }
 .ui-action {
   display: flex; flex-direction: column; align-items: center; gap: var(--ui-s2);
   min-width: 72px; padding: 0; border: none; background: none; cursor: pointer;
