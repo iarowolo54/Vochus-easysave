@@ -1,10 +1,10 @@
 'use client'
-import { useEffect, useRef, useState } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { blockNonDigit, digitsOnly } from '@/lib/numeric'
 import Logo from '@/components/Logo'
 import { Icons } from '@/components/ui/icons'
-import { RESENT_MESSAGE, useResendCooldown, waitMessage } from '@/components/useResendCooldown'
+import { RESENT_MESSAGE, useResendCooldown, useResetId, waitMessage } from '@/components/useResendCooldown'
 
 type Stage = 'phone' | 'reset' | 'done'
 
@@ -18,27 +18,14 @@ export default function ForgotPasswordPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
-  // A resend inside the cooldown returns a throwaway id and sends nothing, so keep the id of the code already on its way.
-  const sent = useRef<{ id: string; at: number } | null>(null)
-  const fromLink = useRef(false)
-
-  useEffect(() => {
-    // An admin-sent code arrives with a link carrying its resetId.
-    const r = new URLSearchParams(window.location.search).get('r')
-    if (r) { sent.current = { id: r, at: 0 }; fromLink.current = true }
-  }, [])
-
-  function remember(id: unknown) {
-    if (typeof id === 'string' && (!sent.current || Date.now() - sent.current.at >= 60_000)) sent.current = { id, at: Date.now() }
-  }
-
+  const { remember, idFor, forget, fromLink, clearFromLink } = useResetId('customer')
   const { secondsLeft, start: startCooldown } = useResendCooldown()
   const [notice, setNotice] = useState('')
 
   async function sendCode() {
     if (!phone.trim()) { setError('Enter your phone number'); return }
     if (stage === 'reset' && secondsLeft > 0) { setError(''); setNotice(waitMessage(secondsLeft)); return }
-    if (fromLink.current) { fromLink.current = false; setError(''); setStage('reset'); return }
+    if (fromLink) { clearFromLink(); setError(''); setStage('reset'); return }
     setError(''); setLoading(true)
     try {
       const res = await fetch('/api/customer/forgot-password', {
@@ -48,7 +35,7 @@ export default function ForgotPasswordPage() {
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? 'Failed to send code'); return }
-      remember(data.resetId)
+      remember(data.resetId, phone.trim())
       startCooldown()
       setNotice(stage === 'reset' ? RESENT_MESSAGE : '')
       setStage('reset')
@@ -63,10 +50,11 @@ export default function ForgotPasswordPage() {
       const res = await fetch('/api/customer/forgot-password/reset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: phone.trim(), code, newPassword, resetId: sent.current?.id }),
+        body: JSON.stringify({ phone: phone.trim(), code, newPassword, resetId: idFor(phone.trim()) }),
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? 'Reset failed'); return }
+      forget()
       setStage('done')
     } finally { setLoading(false) }
   }

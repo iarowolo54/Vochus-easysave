@@ -1,10 +1,10 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Logo from '@/components/Logo'
 import { Icons } from '@/components/ui/icons'
-import { RESENT_MESSAGE, useResendCooldown, waitMessage } from '@/components/useResendCooldown'
+import { RESENT_MESSAGE, useResendCooldown, useResetId, waitMessage } from '@/components/useResendCooldown'
 
 const BODY: React.CSSProperties = { fontSize: 13, color: 'rgba(255,255,255,.85)', textAlign: 'center', marginBottom: 20, lineHeight: 1.6 }
 const LABEL: React.CSSProperties = { color: 'rgba(255,255,255,.85)' }
@@ -23,8 +23,7 @@ export default function UnlockPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
-  // A resend inside the cooldown returns a throwaway id and sends nothing, so keep the id of the code already on its way.
-  const sent = useRef<{ id: string; at: number } | null>(null)
+  const { remember, idFor, forget } = useResetId('unlock')
   const { secondsLeft, start: startCooldown } = useResendCooldown()
   const [notice, setNotice] = useState('')
 
@@ -41,7 +40,7 @@ export default function UnlockPage() {
     const data = await res.json().catch(() => ({}))
     setLoading(false)
     if (res.ok) {
-      if (typeof data.resetId === 'string' && (!sent.current || Date.now() - sent.current.at >= 60_000)) sent.current = { id: data.resetId, at: Date.now() }
+      remember(data.resetId, identifier.trim())
       startCooldown()
       setNotice(step === 'reset' ? RESENT_MESSAGE : '')
       setStep('reset')
@@ -60,11 +59,12 @@ export default function UnlockPage() {
     const res = await fetch('/api/agent/unlock/reset', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ identifier: identifier.trim(), token: token.trim(), newPin, resetId: sent.current?.id }),
+      body: JSON.stringify({ identifier: identifier.trim(), token: token.trim(), newPin, resetId: idFor(identifier.trim()) }),
     })
     const data = await res.json().catch(() => ({}))
     setLoading(false)
     if (res.ok) {
+      forget()
       setStep('done')
     } else {
       setError(data.error ?? 'Reset failed')
