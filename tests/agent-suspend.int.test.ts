@@ -138,6 +138,17 @@ test('suspending bumps tokenVersion; reinstating does not, so the old session st
   assert.equal((await callSession({ agentId: a.agentId, tokenVersion: 1 })).user?.id, a.id, 'a fresh login')
 })
 
+test('the status route returns only the id and status, never the password hash or other agent data', async () => {
+  const a = await mkAgent()
+  await prisma.agent.update({ where: { id: a.id }, data: { password: '$2a$10$secrethash', bvn: '22222222222' } })
+  jar = { 'next-admin-auth.session-token': await adminCookie() }
+  const { PATCH } = await import('../src/app/api/admin/agents/[id]/status/route')
+  const res = await PATCH(new NextRequest('http://localhost/x', { method: 'PATCH', body: JSON.stringify({ status: 'Suspended' }) }), { params: Promise.resolve({ id: a.id }) })
+  const text = await res.text()
+  assert.deepEqual(JSON.parse(text), { agent: { id: a.id, status: 'Suspended' } })
+  assert.ok(!text.includes('secrethash'))
+})
+
 test('the status route is still super-admin only', async () => {
   const a = await mkAgent()
   const status = await setStatus(a.id, 'Suspended', await agentCookie(a, 0))

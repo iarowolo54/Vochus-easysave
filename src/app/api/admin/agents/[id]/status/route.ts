@@ -20,6 +20,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     where: { id },
     // Bumping on suspension means reinstating doesn't revive old sessions: the agent has to log in again.
     data: { status, ...(status === 'Suspended' ? { tokenVersion: { increment: 1 } } : {}) },
+    select: { id: true, name: true, agentId: true, status: true },
   })
 
   logAudit({
@@ -31,5 +32,5 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     ...adminActor(session),
   })
 
-  return NextResponse.json({ agent })
+  return NextResponse.json({ agent: { id: agent.id, status: agent.status } })
 }
