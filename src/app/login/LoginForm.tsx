@@ -8,6 +8,7 @@ import PasswordInput from '@/components/auth/PasswordInput'
 import { FieldError, FormError } from '@/components/ui/FormErrors'
 import { Icons } from '@/components/ui/icons'
 import { describeFailure, NETWORK_MESSAGE, postJson } from '@/lib/http'
+import { FINGERPRINT_FAILED, loginFailure, type AgentCheck } from '@/lib/login-failure'
 
 export default function LoginForm() {
   return (
@@ -24,12 +25,13 @@ function LoginPageInner() {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
   const [fieldErrors, setFieldErrors] = useState({ identifier: '', password: '' })
 
   useEffect(() => {
     const err = searchParams.get('error')
     if (err) setError('Sign in failed. Check your details — or your account may be locked.')
-    else if (searchParams.get('ended')) setError('You’ve been signed out. Sign in again to continue.')
+    else if (searchParams.get('ended')) setNotice('You’ve been signed out. Sign in again to continue.')
   }, [searchParams])
 
   const [canBio, setCanBio] = useState(false)
@@ -61,9 +63,16 @@ function LoginPageInner() {
         device: device ? JSON.stringify(device) : '',
         redirect: false,
       })
+      if (r?.ok) {
+        setLoading(false)
+        router.push('/dashboard')
+        return
+      }
+      // Same question as a password sign-in, so a suspended agent is told why rather than just that it failed.
+      setNotice('')
+      const check = await postJson<AgentCheck>('/api/auth/check-agent', { identifier: creds.identifier, app: w.__vochusApp ?? '', deviceId: w.__vochusDeviceId ?? '' })
       setLoading(false)
-      if (r?.ok) router.push('/dashboard')
-      else setError('Fingerprint sign-in didn’t work. Please sign in with your password.')
+      setError(check.ok ? loginFailure(check.data, 'fingerprint').message : FINGERPRINT_FAILED)
     }
     return () => {
       clearTimeout(t1)
@@ -82,6 +91,7 @@ function LoginPageInner() {
   async function login(e?: FormEvent) {
     e?.preventDefault()
     setError('')
+    setNotice('')
     const next = {
       identifier: identifier.trim() ? '' : 'Enter your agent ID or phone number.',
       password: password ? '' : 'Enter your password.',
@@ -111,32 +121,15 @@ function LoginPageInner() {
         return
       }
       // signIn only says "failed"; ask why so the agent gets a specific answer.
-      const check = await postJson<{
-        locked?: boolean; lockedMinutesRemaining?: number; deviceMismatch?: boolean
-        unverifiedEmail?: boolean; exists?: boolean; status?: string
-      }>('/api/auth/check-agent', { identifier: identifier.trim(), app, deviceId })
+      const check = await postJson<AgentCheck>('/api/auth/check-agent', { identifier: identifier.trim(), app, deviceId })
       if (!check.ok) {
         setError(check.kind === 'http' ? 'That agent ID and password don’t match. Check them and try again.' : describeFailure(check))
         return
       }
-      const c = check.data
-      if (c.locked) {
-        setError(`Your account is locked after too many wrong passwords. Try again in ${c.lockedMinutesRemaining} min, or tap “Forgot password?” to reset it now.`)
-      } else if (c.deviceMismatch) {
-        setError('This account is linked to another phone. Ask your administrator to reset it.')
-      } else if (c.unverifiedEmail) {
-        setError('Your email isn’t verified yet. Check your inbox (and spam) for the link, or contact your administrator.')
-      } else if (c.exists && c.status === 'Suspended') {
-        setError('Your account has been suspended. Please contact your administrator.')
-      } else if (c.exists && c.status !== 'Active') {
-        setError('Your account is waiting to be activated. Please contact your administrator.')
-      } else if (c.exists) {
-        setFieldErrors({ identifier: '', password: 'Wrong password.' })
-        setError('Wrong password. Try again, or tap “Forgot password?” to reset it.')
-      } else {
-        setFieldErrors({ identifier: 'We can’t find this agent ID or phone number.', password: '' })
-        setError('No account found with that agent ID or phone number. Check it, or contact your administrator.')
-      }
+      const failure = loginFailure(check.data, 'password')
+      setError(failure.message)
+      if (failure.field === 'password') setFieldErrors({ identifier: '', password: 'Wrong password.' })
+      if (failure.field === 'identifier') setFieldErrors({ identifier: 'We can’t find this agent ID or phone number.', password: '' })
     } catch {
       setError(NETWORK_MESSAGE)
     } finally {
@@ -194,6 +187,12 @@ function LoginPageInner() {
           </div>
         </div>
 
+        {notice && (
+          <p className="ui-banner ui-banner--info" role="status">
+            <Icons.pending size={18} aria-hidden="true" />
+            <span>{notice}</span>
+          </p>
+        )}
         <FormError message={error} />
 
         <button type="submit" className="ui-btn ui-btn--primary ui-btn--block" disabled={loading} aria-busy={loading}>

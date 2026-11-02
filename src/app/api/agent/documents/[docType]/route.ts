@@ -17,14 +17,17 @@ export async function GET(
     ? await getServerSession(adminAuthOptions)
     : null
 
-  if (!agentSession?.user && !adminSession?.user) {
+  // The role, not just a session: the admin and agent configs share a secret, so an agent's token decodes in the admin cookie.
+  const isAdmin = (adminSession?.user as { role?: string } | undefined)?.role === 'superadmin'
+
+  if (!agentSession?.user && !isAdmin) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
   const { docType } = await params
 
   // Admins pass ?agentId=; agents view their own docs (agentIdParam optional).
-  const whereAgent = adminSession?.user && agentIdParam
+  const whereAgent = isAdmin && agentIdParam
     ? { id: agentIdParam }
     : agentIdParam
       ? { id: agentIdParam }
@@ -34,7 +37,7 @@ export async function GET(
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
 
   // An agent may only view their own documents.
-  if (!adminSession?.user && agent.agentId !== (agentSession?.user as any).agentId) {
+  if (!isAdmin && agent.agentId !== (agentSession?.user as any).agentId) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 

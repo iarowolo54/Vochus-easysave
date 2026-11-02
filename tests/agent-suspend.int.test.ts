@@ -14,6 +14,7 @@ import { authOptions } from '../src/lib/auth'
 const rid = Math.random().toString(36).slice(2, 8).toUpperCase()
 const created: string[] = []
 const customerIds: string[] = []
+const docAgentIds: string[] = []
 let n = 0
 
 // getServerSession reads these; each test sets the cookies it's sending.
@@ -89,6 +90,7 @@ before(async () => {
 })
 
 after(async () => {
+  await prisma.agentDocument.deleteMany({ where: { agentId: { in: docAgentIds } } })
   await prisma.biometricToken.deleteMany({ where: { agentId: { in: created } } })
   await prisma.customer.deleteMany({ where: { id: { in: customerIds } } })
   await prisma.agent.deleteMany({ where: { id: { in: created } } })
@@ -218,4 +220,47 @@ test('a customer of a suspended agent keeps their access', async () => {
   const { GET } = await import('../src/app/api/customer/me/route')
   const res = await GET()
   assert.equal(res.status, 200)
+})
+
+async function getDoc(forAgent: string | null, cookies: Record<string, string>) {
+  jar = cookies
+  const { GET } = await import('../src/app/api/agent/documents/[docType]/route')
+  const url = `http://localhost/api/agent/documents/nin${forAgent ? `?agentId=${forAgent}` : ''}`
+  return GET(new Request(url), { params: Promise.resolve({ docType: 'nin' }) })
+}
+
+async function mkDoc(agentId: string) {
+  await prisma.agentDocument.create({ data: { agentId, docType: 'nin', fileName: 'nin.pdf', fileData: 'data:application/pdf;base64,JVBERg==' } })
+  docAgentIds.push(agentId)
+}
+
+test("an agent's token in the admin cookie can't read another agent's documents", async () => {
+  const [victim, attacker] = [await mkAgent(), await mkAgent()]
+  await mkDoc(victim.id)
+  const res = await getDoc(victim.id, { 'next-admin-auth.session-token': await agentCookie(attacker, 0) })
+  assert.equal(res.status, 401)
+})
+
+test("the same token in both cookies still can't read another agent's documents", async () => {
+  const [victim, attacker] = [await mkAgent(), await mkAgent()]
+  await mkDoc(victim.id)
+  const token = await agentCookie(attacker, 0)
+  const res = await getDoc(victim.id, { 'next-admin-auth.session-token': token, 'next-auth.session-token': token })
+  assert.equal(res.status, 403)
+})
+
+test('a super admin can read any agent\'s documents', async () => {
+  const a = await mkAgent()
+  await mkDoc(a.id)
+  assert.equal((await getDoc(a.id, { 'next-admin-auth.session-token': await adminCookie() })).status, 200)
+})
+
+test('an agent can read their own documents, and a suspended one cannot', async () => {
+  const a = await mkAgent()
+  await mkDoc(a.id)
+  const cookies = { 'next-auth.session-token': await agentCookie(a, 0) }
+  assert.equal((await getDoc(null, cookies)).status, 200)
+  assert.equal((await getDoc(a.id, cookies)).status, 200)
+  await prisma.agent.update({ where: { id: a.id }, data: { status: 'Suspended' } })
+  assert.equal((await getDoc(null, cookies)).status, 401)
 })
