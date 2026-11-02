@@ -32,7 +32,7 @@ const { prisma } = require('../src/lib/prisma') as typeof import('../src/lib/pri
 const wallet = require('../src/app/api/wallet/route') as typeof import('../src/app/api/wallet/route')
 const bvnRoute = require('../src/app/api/identity/bvn/route') as typeof import('../src/app/api/identity/bvn/route')
 const enroll = require('../src/app/api/customer/enroll/route') as typeof import('../src/app/api/customer/enroll/route')
-const { BVN_LOOKUPS_PER_EMAIL, BVN_LOOKUPS_PER_IP_PER_HOUR, spendIpLookup } = require('../src/lib/bvn-lookup') as typeof import('../src/lib/bvn-lookup')
+const { BVN_LOOKUPS_PER_EMAIL_PER_HOUR, BVN_LOOKUPS_PER_IP_PER_HOUR, spendIpLookup } = require('../src/lib/bvn-lookup') as typeof import('../src/lib/bvn-lookup')
 /* eslint-enable @typescript-eslint/no-require-imports */
 
 const RUN = Math.random().toString(36).slice(2, 8)
@@ -55,9 +55,11 @@ const freshIp = () => {
 const lookup = (body: unknown, ip = freshIp()) => bvnRoute.POST({
   json: async () => body, headers: new Headers({ 'x-forwarded-for': ip }),
 } as never)
+const emailSpent = async (email: string) => (await prisma.loginAttempt.findUnique({ where: { key: `bvn-lookup:email:${email}` } }))?.failCount ?? 0
 async function verifiedEmail(over: { createdAt?: Date; verified?: boolean; attempts?: number } = {}) {
   const email = `wb-${RUN}-${emails.length}@test.local`
   emails.push(email)
+  ipKeys.push(`bvn-lookup:email:${email}`)
   await prisma.emailOTP.create({ data: { email, code: '123456', expiresAt: new Date(Date.now() + 6e5), verified: over.verified ?? true, attempts: over.attempts ?? 1, createdAt: over.createdAt ?? new Date() } })
   return email
 }
@@ -156,24 +158,28 @@ test('a name is required, before anything is spent', async () => {
   for (const names of [{}, { firstName: 'Ada' }, { firstName: ' ', lastName: 'Obi' }, { firstName: 1, lastName: 2 }]) {
     assert.equal((await lookup({ bvn: BVN, email, ...names })).status, 400)
   }
-  assert.equal((await prisma.emailOTP.findFirstOrThrow({ where: { email } })).attempts, 1)
+  assert.equal(await emailSpent(email), 0)
   assert.equal(lookups, 0)
 })
 
 test('bad BVN format is refused without spending anything', async () => {
   const email = await verifiedEmail()
   assert.equal((await lookup({ bvn: '123', email, ...MATCHING })).status, 400)
-  assert.equal((await prisma.emailOTP.findFirstOrThrow({ where: { email } })).attempts, 1)
+  assert.equal(await emailSpent(email), 0)
   assert.equal(lookups, 0)
 })
 
-test('one verified email has a capped number of lookups, even after using every code attempt', async () => {
-  const email = await verifiedEmail({ attempts: 5 })
-  for (let i = 0; i < BVN_LOOKUPS_PER_EMAIL; i++) assert.equal((await lookup({ bvn: BVN, email, ...MATCHING })).status, 200, `lookup ${i}`)
+test('one email is capped, and a new code does not reset it', async () => {
+  const email = await verifiedEmail()
+  for (let i = 0; i < BVN_LOOKUPS_PER_EMAIL_PER_HOUR; i++) assert.equal((await lookup({ bvn: BVN, email, ...MATCHING })).status, 200, `lookup ${i}`)
   const res = await lookup({ bvn: BVN, email, ...MATCHING })
   assert.equal(res.status, 429)
   assert.equal((await res.json()).ok, false)
-  assert.equal(lookups, BVN_LOOKUPS_PER_EMAIL)
+  // What email-otp does on a resend: the old row goes, a new verified row replaces it.
+  await prisma.emailOTP.deleteMany({ where: { email } })
+  await prisma.emailOTP.create({ data: { email, code: '654321', expiresAt: new Date(Date.now() + 6e5), verified: true } })
+  assert.equal((await lookup({ bvn: BVN, email, ...MATCHING })).status, 429)
+  assert.equal(lookups, BVN_LOOKUPS_PER_EMAIL_PER_HOUR)
 })
 
 test('one IP is capped across many verified emails', async () => {
@@ -223,7 +229,7 @@ test('enrol with a verified email still checks the BVN name, and spends the same
   assert.match(error, /doesn’t match the name you entered/)
   assert.ok(!IDENTITY.test(error), error)
   assert.equal(lookups, 1)
-  assert.equal((await prisma.emailOTP.findFirstOrThrow({ where: { email } })).attempts, 2)
+  assert.equal(await emailSpent(email), 1)
 })
 
 test('enrol does not pass on Paystack\'s error text', async () => {
