@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { adminAuthOptions } from '@/lib/auth-admin'
 import { prisma } from '@/lib/prisma'
+import { contentDisposition } from '@/lib/content-disposition'
 
 export async function GET(
   req: Request,
@@ -63,7 +64,7 @@ export async function GET(
   return new NextResponse(Buffer.from(base64, 'base64'), {
     headers: {
       'Content-Type': mime,
-      'Content-Disposition': `inline; filename="${doc.fileName}"`,
+      'Content-Disposition': contentDisposition('inline', doc.fileName),
       'Cache-Control': 'private, max-age=0, no-store',
     },
   })

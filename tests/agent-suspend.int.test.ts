@@ -264,3 +264,12 @@ test('an agent can read their own documents, and a suspended one cannot', async 
   await prisma.agent.update({ where: { id: a.id }, data: { status: 'Suspended' } })
   assert.equal((await getDoc(null, cookies)).status, 401)
 })
+
+test('a document with a non-Latin filename still opens for the admin', async () => {
+  const a = await mkAgent()
+  await prisma.agentDocument.create({ data: { agentId: a.id, docType: 'nin', fileName: 'Àṣàkẹ́.pdf', fileData: 'data:application/pdf;base64,JVBERg==' } })
+  docAgentIds.push(a.id)
+  const res = await getDoc(a.id, { 'next-admin-auth.session-token': await adminCookie() })
+  assert.equal(res.status, 200)
+  assert.match(res.headers.get('content-disposition') ?? '', /filename\*=UTF-8''/)
+})

@@ -54,25 +54,30 @@ function LoginPageInner() {
     w.__vochusPerformBiometricSignin = async (creds) => {
       if (!creds?.identifier || !creds?.token) return
       setLoading(true)
-      const device = (window as unknown as { __vochusDevice?: Record<string, string> }).__vochusDevice
-      const r = await signIn('credentials', {
-        identifier: creds.identifier,
-        biometricToken: creds.token,
-        app: w.__vochusApp ?? '',
-        deviceId: w.__vochusDeviceId ?? '',
-        device: device ? JSON.stringify(device) : '',
-        redirect: false,
-      })
-      if (r?.ok) {
-        setLoading(false)
-        router.push('/dashboard')
-        return
-      }
-      // Same question as a password sign-in, so a suspended agent is told why rather than just that it failed.
+      setError('')
       setNotice('')
-      const check = await postJson<AgentCheck>('/api/auth/check-agent', { identifier: creds.identifier, app: w.__vochusApp ?? '', deviceId: w.__vochusDeviceId ?? '' })
-      setLoading(false)
-      setError(check.ok ? loginFailure(check.data, 'fingerprint').message : FINGERPRINT_FAILED)
+      try {
+        const device = (window as unknown as { __vochusDevice?: Record<string, string> }).__vochusDevice
+        const r = await signIn('credentials', {
+          identifier: creds.identifier,
+          biometricToken: creds.token,
+          app: w.__vochusApp ?? '',
+          deviceId: w.__vochusDeviceId ?? '',
+          device: device ? JSON.stringify(device) : '',
+          redirect: false,
+        })
+        if (r?.ok) {
+          router.push('/dashboard')
+          return
+        }
+        // Same question as a password sign-in, so a suspended agent is told why rather than just that it failed.
+        const check = await postJson<AgentCheck>('/api/auth/check-agent', { identifier: creds.identifier, app: w.__vochusApp ?? '', deviceId: w.__vochusDeviceId ?? '' })
+        setError(check.ok ? loginFailure(check.data, 'fingerprint').message : FINGERPRINT_FAILED)
+      } catch {
+        setError(navigator.onLine === false ? NETWORK_MESSAGE : FINGERPRINT_FAILED)
+      } finally {
+        setLoading(false)
+      }
     }
     return () => {
       clearTimeout(t1)

@@ -40,3 +40,12 @@ test('unknown account: password points at the identifier field, fingerprint stay
   assert.equal(loginFailure({ exists: false }, 'password').field, 'identifier')
   assert.match(loginFailure({ exists: false }, 'fingerprint').message, /sign in with your password/i)
 })
+
+test('a locked account: fingerprint wording does not blame wrong passwords', () => {
+  const locked = { exists: true, status: 'Active', locked: true, lockedMinutesRemaining: 5 }
+  assert.match(loginFailure(locked, 'password').message, /too many wrong passwords/i)
+  const r = loginFailure(locked, 'fingerprint').message
+  assert.match(r, /locked/i)
+  assert.match(r, /5 min/)
+  assert.doesNotMatch(r, /wrong password/i)
+})

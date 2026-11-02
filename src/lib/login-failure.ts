@@ -10,6 +10,7 @@ export type LoginFailure = { message: string; field?: 'identifier' | 'password' 
 export const FINGERPRINT_FAILED = 'Fingerprint sign-in didn’t work. Please sign in with your password.'
 
 export function loginFailure(c: AgentCheck, via: 'password' | 'fingerprint'): LoginFailure {
+  if (c.locked && via === 'fingerprint') return { message: `Your account is locked. Try again in ${c.lockedMinutesRemaining} min, or tap “Forgot password?” to reset it now.` }
   if (c.locked) return { message: `Your account is locked after too many wrong passwords. Try again in ${c.lockedMinutesRemaining} min, or tap “Forgot password?” to reset it now.` }
   if (c.deviceMismatch) return { message: 'This account is linked to another phone. Ask your administrator to reset it.' }
   if (c.unverifiedEmail) return { message: 'Your email isn’t verified yet. Check your inbox (and spam) for the link, or contact your administrator.' }
