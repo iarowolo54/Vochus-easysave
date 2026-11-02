@@ -14,9 +14,11 @@ export const adminAuthOptions: NextAuthOptions = {
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials, req) {
-        if (!credentials?.email || !credentials?.password) return null
+        // NextAuth accepts JSON bodies, so these can arrive as objects.
+        const { email, password } = (credentials ?? {}) as { email?: unknown; password?: unknown }
+        if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) return null
 
-        const result = await verifyAdminLogin(credentials.email, credentials.password, adminIpFromForwarded(req?.headers?.['x-forwarded-for']))
+        const result = await verifyAdminLogin(email, password, adminIpFromForwarded(req?.headers?.['x-forwarded-for']))
         if (result.kind !== 'ok') return null
         const { admin } = result
 

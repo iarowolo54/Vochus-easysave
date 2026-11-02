@@ -26,9 +26,17 @@ export const authOptions: NextAuthOptions = {
         device: { label: 'Device Meta (JSON)', type: 'text' },
       },
       async authorize(credentials, req) {
-        if (!credentials?.identifier) return null
-        const biometricToken = (credentials as any).biometricToken as string | undefined
-        if (!credentials.password && !biometricToken) return null
+        // NextAuth accepts JSON bodies, so any of these can arrive as an object: passed to Prisma, { not: '' } is a filter
+        // that matches anything. Only a string counts as supplied.
+        const field = (name: string) => {
+          const value = (credentials as Record<string, unknown> | undefined)?.[name]
+          return typeof value === 'string' ? value : undefined
+        }
+        const identifier = field('identifier')
+        const password = field('password')
+        const biometricToken = field('biometricToken')
+        if (!identifier) return null
+        if (!password && !biometricToken) return null
 
         // Across both PM2 instances, since the count is in the database. A failure of the throttle itself must not
         // take down login: if the database is truly gone, the lookup below fails too.
@@ -39,7 +47,7 @@ export const authOptions: NextAuthOptions = {
         }
         const countFailure = async () => { if (ip) await recordLoginFailure({ ip }).catch(() => {}) }
 
-        const id = credentials.identifier.trim().toLowerCase()
+        const id = identifier.trim().toLowerCase()
 
         const agent = await prisma.agent.findFirst({
           where: {
@@ -71,25 +79,25 @@ export const authOptions: NextAuthOptions = {
           }
         }
 
-        const deviceIdForBio = (credentials as any).deviceId as string | undefined
+        const deviceId = field('deviceId')
 
         let valid = false
         // A request with a biometric token is only ever a biometric attempt. Its failures don't lock the account, so
         // falling through to the password here would give unlimited, uncounted guesses.
         if (biometricToken) {
-          if (deviceIdForBio) {
+          if (deviceId) {
             const { createHash } = await import('crypto')
             const hash = createHash('sha256').update(biometricToken).digest('hex')
             const t = await prisma.biometricToken.findFirst({
-              where: { agentId: agent.id, deviceId: deviceIdForBio, tokenHash: hash, revokedAt: null },
+              where: { agentId: agent.id, deviceId, tokenHash: hash, revokedAt: null },
             })
             if (t) {
               valid = true
               await prisma.biometricToken.update({ where: { id: t.id }, data: { lastUsedAt: new Date() } }).catch(() => {})
             }
           }
-        } else if (credentials.password) {
-          valid = await bcrypt.compare(credentials.password, agent.password)
+        } else if (password) {
+          valid = await bcrypt.compare(password, agent.password)
         }
 
         if (!valid) {
@@ -115,8 +123,7 @@ export const authOptions: NextAuthOptions = {
 
         if (agent.status !== 'Active') return null
 
-        const app = (credentials as any).app
-        const deviceId = (credentials as any).deviceId as string | undefined
+        const app = field('app')
 
         // Device binding only applies to the mobile app. Web browsers can always log in.
         if (app === 'agent') {
@@ -135,7 +142,8 @@ export const authOptions: NextAuthOptions = {
         if (app && deviceId) {
           const { recordDeviceSession } = await import('./device-session')
           let meta: Record<string, string | null> | undefined
-          try { meta = (credentials as any).device ? JSON.parse((credentials as any).device) : undefined } catch { meta = undefined }
+          const device = field('device')
+          try { meta = device ? JSON.parse(device) : undefined } catch { meta = undefined }
           recordDeviceSession({ deviceId, app, agentId: agent.id, meta })
         }
 

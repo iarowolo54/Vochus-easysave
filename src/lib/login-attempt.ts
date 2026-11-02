@@ -110,6 +110,8 @@ async function ipBump(key: string, now: number): Promise<void> {
 
 // -------- Reserved attempts with a time lock (admin sign-in) --------
 
+const RESERVE_RETRY_MS = 150
+
 /**
  * Count an attempt BEFORE checking the password, so a parallel burst can't all pass a lock check that no failure has
  * reached yet: at most `limit` attempts ever get to the password check per window. A lock that has ended, or a quiet
@@ -118,6 +120,21 @@ async function ipBump(key: string, now: number): Promise<void> {
 export async function reserveAttempt(
   key: string, limit: number, lockMs: number, now: number = Date.now(),
 ): Promise<{ allowed: boolean; startedLock: boolean }> {
+  // Once more on a brief "database is locked" (2 PM2 instances share this file), or if the sweep removed the row.
+  try {
+    const first = await reserveOnce(key, limit, lockMs, now)
+    if (first) return first
+  } catch {
+    await new Promise(resolve => setTimeout(resolve, RESERVE_RETRY_MS))
+  }
+  const second = await reserveOnce(key, limit, lockMs, now)
+  if (!second) throw new Error('attempt row keeps disappearing')
+  return second
+}
+
+async function reserveOnce(
+  key: string, limit: number, lockMs: number, now: number,
+): Promise<{ allowed: boolean; startedLock: boolean } | null> {
   const nowDate = toDate(now)!
   await prisma.loginAttempt.upsert({ where: { key }, create: { key, failCount: 0 }, update: {} }).catch((e: unknown) => {
     // Two first attempts at once: the other one created the row.
@@ -138,7 +155,11 @@ export async function reserveAttempt(
         "lockedUntil" = CASE WHEN "failCount" + 1 >= ${limit} THEN ${now + lockMs} ELSE "lockedUntil" END
     WHERE "key" = ${key} AND "lockedUntil" IS NULL
     RETURNING "failCount"`
-  if (rows.length === 0) return { allowed: false, startedLock: false }
+  if (rows.length === 0) {
+    // No row matched: it's locked, or it's gone. Only a row that's there is a lock.
+    const row = await prisma.loginAttempt.findUnique({ where: { key }, select: { id: true } })
+    return row ? { allowed: false, startedLock: false } : null
+  }
   return { allowed: true, startedLock: Number(rows[0].failCount) === limit }
 }
 
@@ -194,7 +215,8 @@ export async function sweepStaleLoginAttempts(now: number = Date.now()): Promise
     where: {
       AND: [
         { OR: [{ lockedUntil: null }, { lockedUntil: { lt: toDate(now)! } }] },
-        { OR: [{ lastFailAt: null }, { lastFailAt: { lt: toDate(now - THROTTLE.resetAfterMs)! } }] },
+        // A row with no failure yet is left alone until it's old: it may be an attempt being counted this moment.
+        { OR: [{ lastFailAt: { lt: toDate(now - THROTTLE.resetAfterMs)! } }, { lastFailAt: null, updatedAt: { lt: toDate(now - THROTTLE.resetAfterMs)! } }] },
         // never sweep a hard-locked account
         { NOT: { AND: [{ key: { startsWith: 'phone:' } }, { failCount: { gte: ACCOUNT_FAIL_LIMIT } }] } },
       ],

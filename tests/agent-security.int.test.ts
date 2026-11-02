@@ -183,6 +183,33 @@ test('a real fingerprint still signs in; a wrong one does not lock the account',
   assert.equal((await authorize({ identifier: a.agentId, biometricToken: raw, deviceId }))?.id, a.id)
 })
 
+test('a stolen fingerprint token with a Prisma filter for its device is refused', async () => {
+  const a = await mkAgent()
+  const raw = `bio-${rid}-filter-${n}`
+  await prisma.biometricToken.create({ data: { agentId: a.id, deviceId: `dev-${rid}-filter-${n}`, tokenHash: createHash('sha256').update(raw).digest('hex') } })
+  const creds = (extra: unknown) => ({ identifier: a.agentId, biometricToken: raw, ...(extra as object) }) as Record<string, string>
+  for (const deviceId of [{ not: '' }, { contains: 'dev' }, ['x'], 42, true]) {
+    assert.equal(await authorize(creds({ deviceId })), null, JSON.stringify(deviceId))
+  }
+})
+
+test('non-string credentials are refused, not passed on or crashed on', async () => {
+  const a = await mkAgent()
+  const bad = (c: unknown) => authorize(c as Record<string, string>)
+  assert.equal(await bad({ identifier: { contains: 'SEC' }, password: PASSWORD }), null)
+  assert.equal(await bad({ identifier: a.agentId, password: { not: '' } }), null)
+  assert.equal(await bad({ identifier: a.agentId, biometricToken: { not: '' }, deviceId: 'x' }), null)
+  assert.equal(await bad({ identifier: 42, password: 'x' }), null)
+  // A non-string extra field must not skip the app's device binding, or change the result of a good sign-in.
+  assert.equal((await bad({ identifier: a.agentId, password: PASSWORD, app: { x: 1 } }))?.id, a.id)
+  assert.equal((await prisma.agent.findUniqueOrThrow({ where: { id: a.id } })).boundDeviceId, null)
+})
+
+test('a device-bound agent in the app stays bound: another device is refused', async () => {
+  const a = await mkAgent({ boundDeviceId: `bound-${rid}-${n}` })
+  assert.equal(await authorize({ identifier: a.agentId, password: PASSWORD, app: 'agent', deviceId: 'other' }), null)
+})
+
 test('a normal password sign-in still works', async () => {
   const a = await mkAgent()
   assert.equal((await authorize({ identifier: a.agentId, password: PASSWORD }, fromIp(freshIp())))?.id, a.id)

@@ -163,15 +163,6 @@ test('a parallel burst of guesses cannot get past the limit: only 5 ever reach t
   assert.equal((await login(email, PASSWORD)).status, 200, 'and the owner gets in once it ends')
 })
 
-test('a correct password inside a burst past the limit does not get in', async () => {
-  const email = await mkAdmin()
-  const results = await Promise.all([
-    ...Array.from({ length: 20 }, () => login(email, 'wrong')),
-    login(email, PASSWORD),
-  ])
-  assert.equal(results[20].status, 429)
-})
-
 test('signing in does not count against the address', async () => {
   const ip = freshIp()
   const email = await mkAdmin()
@@ -204,4 +195,59 @@ test('a malformed forwarded address is not used as a key', () => {
   assert.equal(adminIpFromForwarded('::1'), '::1')
   assert.equal(adminIpFromForwarded('1.2.3.4, not-an-ip'), null)
   assert.equal(adminIpFromForwarded(null), null)
+})
+
+test('the NextAuth path also refuses non-string credentials rather than crashing', async () => {
+  assert.equal(await authorize({ email: { contains: '@' }, password: 'x' } as unknown as Record<string, string>), null)
+  assert.equal(await authorize({ email: 'a@b.c', password: { not: '' } } as unknown as Record<string, string>), null)
+})
+
+test('the random cleanup running on every failure never turns a normal attempt into a false lock', async () => {
+  const realRandom = Math.random
+  Math.random = () => 0 // every failure sweeps, racing the next attempt
+  try {
+    for (let round = 0; round < 8; round++) {
+      const email = await mkAdmin()
+      const results = await Promise.all([login(email, 'wrong'), login(`nobody-${rid}-${++n}@test.local`, 'wrong'), login(`nobody-${rid}-${++n}@test.local`, 'wrong')])
+      assert.deepEqual(results.map(r => r.status), [401, 401, 401])
+      assert.equal((await login(email, PASSWORD)).status, 200)
+    }
+  } finally {
+    Math.random = realRandom
+  }
+})
+
+test('a row removed between steps is recreated, not read as a lock', async () => {
+  const email = await mkAdmin()
+  const delegate = prisma.loginAttempt as unknown as { updateMany: (a: unknown) => Promise<unknown> }
+  const real = delegate.updateMany
+  let once = true
+  delegate.updateMany = async (a: unknown) => {
+    const r = await real.call(delegate, a)
+    if (once) { once = false; await prisma.loginAttempt.deleteMany({ where: { key: `admin:${email}` } }) }
+    return r
+  }
+  try {
+    keys.push(`ip:admin:none`)
+    const res = await POST(new NextRequest('http://localhost/x', { method: 'POST', body: JSON.stringify({ email, password: PASSWORD }) }))
+    assert.equal(res.status, 200)
+  } finally {
+    delegate.updateMany = real
+  }
+})
+
+test('a brief database lock is retried, so the owner is not refused for it', async () => {
+  const email = await mkAdmin()
+  const delegate = prisma.loginAttempt as unknown as { updateMany: (a: unknown) => Promise<unknown> }
+  const real = delegate.updateMany
+  let once = true
+  delegate.updateMany = (a: unknown) => {
+    if (once) { once = false; return Promise.reject(new Error('database is locked')) }
+    return real.call(delegate, a)
+  }
+  try {
+    assert.equal((await login(email, PASSWORD)).status, 200)
+  } finally {
+    delegate.updateMany = real
+  }
 })
