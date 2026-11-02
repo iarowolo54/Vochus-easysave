@@ -80,13 +80,16 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
       // this gap stays on the plan, in the same transaction as a flag for someone to sort it out.
       if (!(await closePlanAfterFinalize(tx, record.savingsPlanId, record.balance))) {
         reviewNeeded = true
-        const plan = await tx.savingsPlan.update({ where: { id: record.savingsPlanId }, data: { status: 'Redeemed' }, select: { balance: true } })
+        // A closed plan's balance is all new money. An open plan (no pre-claim) still holds what was just paid.
+        const current = await tx.savingsPlan.findUniqueOrThrow({ where: { id: record.savingsPlanId }, select: { status: true, balance: true } })
+        const deposit = current.status === 'Redeemed' ? current.balance : Math.max(0, money(current.balance - record.balance))
+        await tx.savingsPlan.update({ where: { id: record.savingsPlanId }, data: { status: 'Redeemed', balance: deposit } })
         await tx.auditLog.create({
           data: {
             action: 'early_redemption_review_needed',
             entity: 'EarlyRedemption',
             entityId: id,
-            details: `MANUAL REVIEW: ${record.ref} was paid by Paystack, but plan ${record.savingsPlanId} now holds ₦${plan.balance.toLocaleString()} that arrived during the payout. It was left on the closed plan.`,
+            details: `MANUAL REVIEW: ${record.ref} was paid by Paystack, but plan ${record.savingsPlanId} holds ₦${deposit.toLocaleString()} that arrived during the payout. It was left on the closed plan.`,
             actorType: 'system',
             actorName: 'Finalize OTP',
           },

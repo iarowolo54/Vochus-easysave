@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { redemptionTokenMatches } from '@/lib/redemption-token'
 import { reserveRedemptionAttempt } from '@/lib/redemption-attempts'
+import { confirmRequestWithCode } from '@/lib/redemption-balance'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -41,10 +42,8 @@ export async function POST(req: NextRequest) {
   }
   if (!redemptionTokenMatches(record.token, token)) return NextResponse.json({ valid: false, error: 'Invalid token' }, { status: 400 })
 
-  // A correct check is read-only (status stays Pending), so don't let the agent
-  // re-rendering/retrying the confirmation accumulate toward the cap and lock a
-  // legitimate redemption — give back the attempt this (successful) call reserved.
-  await prisma.earlyRedemption.updateMany({ where: { ref, attempts: { gt: 0 } }, data: { attempts: { decrement: 1 } } })
+  // A correct code is the confirmation the admin's approval depends on, so it's recorded here.
+  if (!(await confirmRequestWithCode(prisma, record.id))) return NextResponse.json({ valid: false, error: 'Record is no longer pending' }, { status: 400 })
 
   const customerName = `${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName}`
 

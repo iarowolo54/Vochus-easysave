@@ -80,6 +80,18 @@ export async function creditOpenPlan(client: Client, planId: string, amount: num
   if (credited.count !== 1) throw new PlanClosedError()
 }
 
+/**
+ * An agent checked the customer's code in person, so the request has been confirmed and goes to the admin.
+ * False if it had already moved on or the code ran out in the meantime.
+ */
+export async function confirmRequestWithCode(client: Client, id: string, now = new Date()): Promise<boolean> {
+  const moved = await client.earlyRedemption.updateMany({
+    where: { id, status: 'Pending', tokenExpiry: { gte: now } },
+    data: { status: 'AgentApproved', agentApprovedAt: now },
+  })
+  return moved.count === 1
+}
+
 const OPEN_STATUSES = IN_FLIGHT_REDEMPTION_STATUSES.filter(s => s !== 'Approved')
 
 /** Whether new money should be refused because a redemption is in progress. If an abandoned request is
