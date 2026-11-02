@@ -1,42 +1,34 @@
 import { NextResponse } from 'next/server'
-import { randomInt } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { sendSMS } from '@/lib/kudisms'
+import { deliverInBackground, issueResetCode, limitByIp, readBody, text } from '@/lib/password-reset'
 
 export async function POST(req: Request) {
-  try {
-    const { identifier } = await req.json()
-    if (!identifier) return NextResponse.json({ error: 'Agent ID or phone required' }, { status: 400 })
+  const limited = limitByIp(req, 'request')
+  if (limited) return limited
 
-    const id = identifier.trim().toLowerCase()
-    const agent = await prisma.agent.findFirst({
-      where: {
-        OR: [
-          { agentId: id.toUpperCase() },
-          { agentId: id },
-          { phone: id },
-        ],
-      },
+  const id = text((await readBody(req)).identifier).toLowerCase()
+  if (!id) return NextResponse.json({ error: 'Agent ID or phone required' }, { status: 400 })
+
+  const agent = await prisma.agent.findFirst({
+    where: {
+      OR: [
+        { agentId: id.toUpperCase() },
+        { agentId: id },
+        { phone: id },
+      ],
+    },
+  })
+
+  const issued = agent?.lockedAt ? await issueResetCode('agent', agent.id, Date.now(), 'unlock') : null
+
+  if (agent && issued) {
+    deliverInBackground(issued.id, async () => {
+      const sms = await sendSMS(agent.phone, `Vochus Easy Save: Your account unlock code is ${issued.code}. It expires in 10 minutes. Do not share this code.`)
+      return sms.success
     })
-
-    if (!agent) return NextResponse.json({ error: 'No agent found with that ID or phone number' }, { status: 404 })
-    if (!agent.lockedAt) return NextResponse.json({ error: 'This account is not locked' }, { status: 400 })
-
-    const token = randomInt(100000, 1000000).toString()
-    const expiry = new Date(Date.now() + 15 * 60 * 1000)
-
-    await prisma.agent.update({
-      where: { id: agent.id },
-      data: { unlockToken: token, unlockTokenExpiry: expiry },
-    })
-
-    await sendSMS(
-      agent.phone,
-      `Vochus Easy Save: Your account unlock code is ${token}. It expires in 15 minutes. Do not share this code.`,
-    )
-
-    return NextResponse.json({ ok: true, phone: agent.phone.replace(/(\d{4})\d{3}(\d{4})/, '$1***$2') })
-  } catch (err: any) {
-    return NextResponse.json({ error: err?.message ?? 'Server error' }, { status: 500 })
   }
+
+  // The same answer whether or not the account exists, is locked, or is in its cooldown.
+  return NextResponse.json({ ok: true })
 }

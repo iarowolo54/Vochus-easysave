@@ -662,7 +662,7 @@ html[data-vochus-shell] .ui-browser-only { display: none; }
 }
 .ui-empty-title { font-family: var(--ui-font-display); font-size: var(--ui-fs-md); font-weight: 700; }
 .ui-empty-text { font-size: var(--ui-fs-md); color: var(--ui-ink-2); margin: var(--ui-s1) 0 var(--ui-s4); }
-.ui-spinner { width: 32px; height: 32px; border-radius: 50%; border: 3px solid var(--ui-brand-tint); border-top-color: var(--ui-brand-ink); animation: ui-spin .8s linear infinite; }
+.ui-spinner { display: inline-block; width: 32px; height: 32px; border-radius: 50%; border: 3px solid var(--ui-brand-tint); border-top-color: var(--ui-brand-ink); animation: ui-spin .8s linear infinite; }
 @keyframes ui-spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .ui-spinner { animation-duration: 2s; } .ui-progress > span { transition: none; } }
 

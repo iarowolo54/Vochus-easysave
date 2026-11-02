@@ -2,17 +2,23 @@ import { NextRequest, NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { INVALID_CODE_MESSAGE, limitByIp, readBody, text, verifyResetCode } from '@/lib/password-reset'
 
 export async function POST(req: NextRequest) {
-  const { identifier, code, newPassword } = await req.json()
-  if (!identifier || !code || !newPassword) {
+  const limited = limitByIp(req, 'guess')
+  if (limited) return limited
+
+  const body = await readBody(req)
+  const id = text(body.identifier)
+  const code = text(body.code)
+  const newPassword = typeof body.newPassword === 'string' ? body.newPassword : ''
+  if (!id || !code || !newPassword) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 })
   }
   if (newPassword.length < 6) {
     return NextResponse.json({ error: 'Password must be at least 6 characters' }, { status: 400 })
   }
 
-  const id = identifier.trim()
   const agent = await prisma.agent.findFirst({
     where: {
       OR: [
@@ -22,28 +28,21 @@ export async function POST(req: NextRequest) {
       ],
     },
   })
-
-  if (!agent || !agent.email) {
-    return NextResponse.json({ error: 'Account not found' }, { status: 404 })
-  }
-
-  const otp = await prisma.emailOTP.findFirst({
-    where: { email: agent.email, code, expiresAt: { gte: new Date() } },
-    orderBy: { createdAt: 'desc' },
-  })
-
-  if (!otp) {
-    return NextResponse.json({ error: 'Invalid or expired code — request a new one' }, { status: 400 })
+  if (!agent || !(await verifyResetCode('agent', agent.id, code))) {
+    return NextResponse.json({ error: INVALID_CODE_MESSAGE }, { status: 400 })
   }
 
   const hashed = await bcrypt.hash(newPassword, 10)
-  await prisma.agent.update({
-    where: { id: agent.id },
-    data: { password: hashed, loginAttempts: 0, lockedAt: null },
-  })
-  await prisma.emailOTP.deleteMany({ where: { email: agent.email } })
+  // A reset ends every existing session and fingerprint sign-in on the account.
+  await prisma.$transaction([
+    prisma.agent.update({
+      where: { id: agent.id },
+      data: { password: hashed, loginAttempts: 0, lockedAt: null, tokenVersion: { increment: 1 } },
+    }),
+    prisma.biometricToken.updateMany({ where: { agentId: agent.id, revokedAt: null }, data: { revokedAt: new Date() } }),
+  ])
 
-  logAudit({
+  await logAudit({
     action: 'agent_password_reset',
     entity: 'Agent',
     entityId: agent.id,

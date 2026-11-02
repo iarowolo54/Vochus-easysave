@@ -142,16 +142,24 @@ export const authOptions: NextAuthOptions = {
     },
     async session({ session, token }) {
       if (session.user) {
+        // Without an agentId the lookup below would match an arbitrary agent (Prisma ignores undefined).
+        if (typeof token.agentId !== 'string' || !token.agentId) {
+          return { ...session, user: undefined } as unknown as typeof session
+        }
         (session.user as any).agentId = token.agentId
         ;(session.user as any).location = token.location
         const agent = await prisma.agent.findFirst({
-          where: { agentId: token.agentId as string },
+          where: { agentId: token.agentId },
           include: { documents: { select: { docType: true, docApprovalStatus: true } } },
         })
+        // A JWT outlives the login check, so a suspended or removed agent is cut off here, on their next request.
+        if (!agent || agent.status !== 'Active') {
+          return { ...session, user: undefined } as unknown as typeof session
+        }
         // Revoke tokens issued before the agent's last password change: if the
         // stored tokenVersion has moved on, clear the user so protected routes
         // (which all check session.user) treat this session as logged out.
-        if (agent && (agent.tokenVersion ?? 0) !== ((token.tokenVersion as number) ?? 0)) {
+        if ((agent.tokenVersion ?? 0) !== ((token.tokenVersion as number) ?? 0)) {
           return { ...session, user: undefined } as unknown as typeof session
         }
         // Absolute-cap defense-in-depth: the session-refresh endpoint is excluded

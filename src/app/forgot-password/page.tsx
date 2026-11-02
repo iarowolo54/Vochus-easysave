@@ -9,7 +9,6 @@ export default function AgentForgotPasswordPage() {
   const router = useRouter()
   const [stage, setStage] = useState<Stage>('identifier')
   const [identifier, setIdentifier] = useState('')
-  const [maskedEmail, setMaskedEmail] = useState('')
   const [code, setCode] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [showPass, setShowPass] = useState(false)
@@ -27,7 +26,6 @@ export default function AgentForgotPasswordPage() {
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? 'Failed to send code'); return }
-      setMaskedEmail(data.maskedEmail)
       setStage('reset')
     } finally { setLoading(false) }
   }
@@ -56,7 +54,7 @@ export default function AgentForgotPasswordPage() {
           <div style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 'clamp(20px, 5vw, 26px)', fontWeight: 900, color: '#fff' }}>Reset Password</div>
           <div style={{ fontSize: 12, color: 'rgba(255,255,255,.6)', marginTop: 4 }}>
             {stage === 'identifier' && 'Enter your Agent ID or phone to receive a reset code'}
-            {stage === 'reset' && `Code sent to ${maskedEmail} — enter it below with your new password`}
+            {stage === 'reset' && 'If this account has an email on file, we’ve sent a 6-digit code to it. It can take a minute to arrive. Enter it below with your new password. No email on file? Contact your administrator.'}
             {stage === 'done' && 'Password reset successfully'}
           </div>
         </div>

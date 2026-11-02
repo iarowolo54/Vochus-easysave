@@ -75,11 +75,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'BVN must be 11 digits' }, { status: 400 })
   }
 
-  const invite = ref ? await prisma.customerInvite.findUnique({ where: { token: ref } }) : null
+  const invite = typeof ref === 'string' && ref ? await prisma.customerInvite.findUnique({ where: { token: ref } }) : null
 
   const agent = invite
     ? await prisma.agent.findUnique({ where: { id: invite.agentId } })
-    : aid
+    : typeof aid === 'string' && aid
       ? await prisma.agent.findFirst({ where: { agentId: aid } })
       : null
 
@@ -223,6 +223,7 @@ export async function POST(req: NextRequest) {
       customerId: customer.customerId,
       name: `${customer.firstName} ${customer.lastName}`,
       agentId: agentDbId,
+      tokenVersion: customer.tokenVersion,
     },
     { loginAt: Math.floor(Date.now() / 1000) },
   )
