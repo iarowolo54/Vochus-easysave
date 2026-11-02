@@ -17,7 +17,7 @@ type Bank = { code: string; name: string }
 type Redemption = {
   id: string; ref: string; status: string; balance: number; penalty: number
   netPayout: number; requestedAt: string; token?: string; tokenExpiry?: string
-  reason: string; type: string
+  reason: string; type: string; expired?: boolean
 }
 type Plan = { source?: string; balance: number; interest?: number; dailyAmount: number; cadence?: string; maturityDate: string; hasCashDeposit?: boolean; goal?: string }
 type Result = { balance?: number; netPayout?: number }
@@ -187,7 +187,7 @@ export default function CustomerRedeemPage() {
   }
   const interest = plan?.interest ?? 0
   const netPayout = plan ? Math.round((plan.balance - savingsFee + interest) * 100) / 100 : 0
-  const inProgress = redemptions.find(r => OPEN_REDEMPTION_STATUSES.includes(r.status)) ?? null
+  const inProgress = redemptions.find(r => OPEN_REDEMPTION_STATUSES.includes(r.status) && !r.expired) ?? null
 
   const title = step === 'form' ? 'Collect savings' : step === 'token' || step === 'resume-token' ? 'Confirm your request' : step === 'awaiting' ? 'Your request' : step === 'done' ? 'Request sent' : 'Collect'
 
@@ -365,11 +365,11 @@ export default function CustomerRedeemPage() {
                 <div className="ui-section-head"><h2>Your requests</h2></div>
                 <section className="ui-card ui-card--list">
                   {redemptions.map(r => {
-                    const clickable = OPEN_REDEMPTION_STATUSES.includes(r.status)
+                    const clickable = OPEN_REDEMPTION_STATUSES.includes(r.status) && !r.expired
                     const value = (
                       <span className="ui-value-stack ag-txn-value">
                         <span>{formatNaira(r.netPayout ?? 0)}</span>
-                        <span className={`ui-status ui-status--sm ui-status--${statusTone(r.status)}`}>{statusLabel(r.status)}</span>
+                        <span className={`ui-status ui-status--sm ui-status--${statusTone(r.status)}`}>{r.expired ? 'Code expired' : statusLabel(r.status)}</span>
                       </span>
                     )
                     return (

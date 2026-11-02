@@ -2,10 +2,12 @@ import { NextResponse } from 'next/server'
 import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { verifyApprovalPin } from '@/lib/approval-pin'
-import { createRecipient, initiateTransfer } from '@/lib/paystack'
+import { createRecipient, initiateTransfer, PaystackRejected, verifyTransfer } from '@/lib/paystack'
 import { logAudit } from '@/lib/audit'
 import { redemptionCompletionOps, ConflictError } from '@/lib/redemption-complete'
+import { BALANCE_CHANGED, balanceUnchanged, CASH_NEEDS_ACTIVE_AGENT, claimPlanForPayout, NO_MONEY_LEFT, reopenPlanAfterNoTransfer, settlePlanAfterPayout, TRANSFER_ACCEPTED } from '@/lib/redemption-balance'
 import { getPayoutMode } from '@/lib/payout-mode'
+import { heldForNameCheck } from '@/lib/payout-account'
 import { customerType } from '@/lib/customer-type'
 import {
   notifyCustomerRedemptionPaid,
@@ -75,12 +77,26 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   })
 
   if (!record) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (!OPEN_STATUSES.includes(record.status)) return conflict('Already decided')
+  // Waiting for a Paystack code can be rejected too, once Paystack confirms the transfer hasn't gone (below).
+  const decidable = action === 'reject' ? [...OPEN_STATUSES, 'AwaitingOTP'] : OPEN_STATUSES
+  if (!decidable.includes(record.status)) return conflict('Already decided')
 
   const adminUser = session.user as { name?: string }
   const decidedBy = adminUser.name ?? 'Super Admin'
 
   if (action === 'reject') {
+    // The money goes back on the plan, so first make sure it didn't leave. No clear answer means no release.
+    if (record.status === 'AwaitingOTP') {
+      let stillUnsent = false
+      try {
+        const { status, raw } = await verifyTransfer(record.ref)
+        // Not otp: a transfer still waiting for its code can yet be finished, so this waits until it expires.
+        stillUnsent = raw?.reference === record.ref && NO_MONEY_LEFT.includes(status)
+      } catch {
+        /* treated as no clear answer */
+      }
+      if (!stillUnsent) return conflict('Paystack hasn’t confirmed this transfer is dead, so it can’t be rejected yet. A code expires about 30 minutes after it’s sent. Use Check with Paystack then.')
+    }
     const customerName = `${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName}`
     const planBalance = record.savingsPlan.balance
     const agentForBal = await prisma.agent.findUnique({
@@ -91,12 +107,19 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     try {
       await prisma.$transaction(async (tx) => {
         const claim = await tx.earlyRedemption.updateMany({
-          where: { id, status: { in: OPEN_STATUSES } },
+          // decidedAt too: if this moved on and came back while the admin was deciding, it's a different request now.
+          where: { id, status: record.status, decidedAt: record.decidedAt },
           data: { status: 'Rejected', decidedAt: new Date(), decidedBy },
         })
         if (claim.count === 0) throw new ConflictError()
-        await tx.savingsPlan.update({
-          where: { id: record.savingsPlanId },
+        // AwaitingOTP took the balance off the plan when it was pre-claimed, so it goes back on top of anything since.
+        if (record.status === 'AwaitingOTP') {
+          await reopenPlanAfterNoTransfer(tx, record.savingsPlanId, record.balance, 'Active')
+          return
+        }
+        // Another request on this plan may already have closed it for a payout; don't reopen that.
+        await tx.savingsPlan.updateMany({
+          where: { id: record.savingsPlanId, status: { not: 'Redeemed' } },
           data: { status: 'Active' },
         })
       })
@@ -109,7 +132,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       action: 'early_redemption_rejected',
       entity: 'EarlyRedemption',
       entityId: id,
-      details: `Admin rejected ${record.ref} — customer ${customerName} balance ₦${planBalance.toLocaleString()} restored to Active | agent wallet ₦${(agentForBal?.walletBalance ?? 0).toLocaleString()}`,
+      details: `Admin rejected ${record.ref} — customer ${customerName} ${record.status === 'AwaitingOTP' ? `₦${record.balance.toLocaleString()} put back on the plan, on top of ₦${planBalance.toLocaleString()}, now Active` : `balance ₦${planBalance.toLocaleString()} left on the plan`} | agent wallet ₦${(agentForBal?.walletBalance ?? 0).toLocaleString()}`,
       actorType: 'admin',
       actorId: (session.user as any).id,
       actorName: decidedBy,
@@ -128,20 +151,48 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   }
 
   if (action === 'approve') {
-    // Mutual exclusion with the agent redemption path: never pay out a plan that
-    // has already been redeemed (defence alongside loadOwnedRedeemablePlan).
+    // A request with a code has to be confirmed with it first; only an admin's own request (no code) can skip that.
+    if (record.status === 'Pending' && record.tokenExpiry) {
+      return conflict('The customer hasn’t confirmed this request with their code yet, so it can’t be approved. You can reject it.')
+    }
+    // An agent's payout in another name goes ahead only if the admin has seen both names and says so, with their PIN.
+    const nameOverride = heldForNameCheck(record, record.savingsPlan.customer)
+    if (nameOverride && body.overrideNameMismatch !== true) {
+      return conflict(`This account is in the name ${record.accountName}, not ${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName}. Compare the names before approving.`)
+    }
+    // Never pay out a plan that has already been redeemed.
     if (record.savingsPlan.status === 'Redeemed' || record.savingsPlan.balance <= 0) {
       return NextResponse.json({ error: 'This plan has already been redeemed' }, { status: 409 })
     }
+    // Money arrived since the request: block, so the payout can't wipe it. The claims below re-check atomically.
+    if (!balanceUnchanged(record.savingsPlan.balance, record.balance)) return conflict(BALANCE_CHANGED)
     // Manual mode changes only the payout rail: no Paystack, same ledger. A throw here => 500 (fail closed).
     const agentId = record.savingsPlan.customer.agentId
     const customerId = record.savingsPlan.customer.id
     const isBankTransfer = record.payoutMethod === 'Bank Transfer' || record.payoutMethod === 'BankTransfer'
+    // Cash reaches the customer through the agent's wallet, so it can't go through an agent who isn't active.
+    if (!isBankTransfer) {
+      const agent = await prisma.agent.findUnique({ where: { id: agentId }, select: { status: true } })
+      if (agent?.status !== 'Active') return conflict(CASH_NEEDS_ACTIVE_AGENT)
+    }
     // Manual applies to bank transfers only; Cash never reads the mode. A throw here => 500 (fail closed).
     const manualBank = isBankTransfer && (await getPayoutMode()).customer === 'manual'
     const originalStatus = record.status
     const originalPlanStatus = record.savingsPlan.status
     const originalPlanBalance = record.savingsPlan.balance
+
+    // Recorded as the decision it is, before any money moves, because several paths end before the payout is booked.
+    if (nameOverride) {
+      await logAudit({
+        action: 'early_redemption_name_override',
+        entity: 'EarlyRedemption',
+        entityId: id,
+        details: `${decidedBy} authorised ${record.ref} with their PIN despite a name mismatch: customer ${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName}, account name ${record.accountName}, ${record.bankName} ending ${record.accountNumber?.slice(-4)}, payout ₦${record.netPayout.toLocaleString()}`,
+        actorType: 'admin',
+        actorId: (session.user as any).id,
+        actorName: decidedBy,
+      })
+    }
 
     let paystackRecipientCode: string | null = null
     let paystackTransferCode: string | null = null
@@ -158,14 +209,12 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
         await prisma.$transaction(async (tx) => {
           const claim = await tx.earlyRedemption.updateMany({
             where: { id, status: { in: OPEN_STATUSES } },
-            data: { status: 'Processing' },
+            // decidedAt marks when the transfer was started, so verify can tell a call still running from a dead one.
+            data: { status: 'Processing', decidedAt: new Date() },
           })
           if (claim.count === 0) throw new ConflictError()
-          const plan = await tx.savingsPlan.updateMany({
-            where: { id: record.savingsPlanId, status: { not: 'Redeemed' }, balance: { gt: 0 } },
-            data: { status: 'Redeemed', balance: 0 },
-          })
-          if (plan.count === 0) throw new ConflictError('This plan has already been redeemed')
+          const refused = await claimPlanForPayout(tx, record.savingsPlanId, record.balance)
+          if (refused) throw new ConflictError(refused)
         })
       } catch (err) {
         if (err instanceof ConflictError) return conflict(err.message || 'Already processed')
@@ -177,16 +226,12 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
         prisma.$transaction(async (tx) => {
           const rel = await tx.earlyRedemption.updateMany({
             where: { id, status: 'Processing', paystackTransferCode: null },
-            data: { status: originalStatus },
+            data: { status: originalStatus, decidedAt: null },
           })
-          if (rel.count === 1) {
-            await tx.savingsPlan.updateMany({
-              where: { id: record.savingsPlanId, status: 'Redeemed', balance: 0 },
-              data: { status: originalPlanStatus, balance: originalPlanBalance },
-            })
-          }
+          if (rel.count === 1) await reopenPlanAfterNoTransfer(tx, record.savingsPlanId, originalPlanBalance, originalPlanStatus)
         })
 
+      let transferRequested = false
       let transferStarted = false
       try {
         const customerName = `${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName}`
@@ -195,6 +240,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
           record.accountNumber,
           record.bankCode,
         )
+        transferRequested = true
         const transfer = await initiateTransfer(
           record.netPayout,
           paystackRecipientCode,
@@ -204,7 +250,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
         paystackTransferCode = transfer.transferCode
         bankTransferStatus = transfer.status
 
-        if (transfer.status === 'failed' || transfer.status === 'reversed') {
+        if (NO_MONEY_LEFT.includes(transfer.status)) {
           await releaseClaim()
           return NextResponse.json({ error: `Paystack transfer ${transfer.status}. Check your Paystack balance and try again.` }, { status: 502 })
         }
@@ -228,10 +274,25 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
             message: 'Paystack has sent an OTP to your transfer-approval phone. Enter it to complete the payout.',
           })
         }
-      } catch (err: any) {
-        // Once Paystack has accepted a transfer the claim is never released (would allow a 2nd transfer).
-        if (!transferStarted) await releaseClaim()
-        return NextResponse.json({ error: `Paystack transfer failed: ${err.message}` }, { status: 502 })
+
+        // Not a status we can book as paid. It stays here, with what Paystack said, for Check with Paystack.
+        if (!TRANSFER_ACCEPTED.includes(transfer.status)) {
+          await prisma.earlyRedemption.updateMany({
+            where: { id, status: 'Processing' },
+            data: { paystackRecipientCode, paystackTransferCode, bankTransferStatus },
+          })
+          return NextResponse.json({ ok: true, status: 'Processing', bankTransferStatus })
+        }
+      } catch (err) {
+        // Release only when no transfer can exist: Paystack was never asked, or definitely said no. A timeout
+        // may still have gone through, so releasing then would allow a second transfer. Check it with verify.
+        const noTransfer = !transferRequested || (!transferStarted && err instanceof PaystackRejected)
+        if (!noTransfer) {
+          console.error('early-redemption approve: transfer outcome unknown, left Processing', id, err instanceof Error ? err.name : 'unknown')
+          return NextResponse.json({ error: 'We couldn’t confirm this transfer with Paystack, and it may still go through. Don’t approve it again. Use Check with Paystack on this request.' }, { status: 502 })
+        }
+        await releaseClaim()
+        return NextResponse.json({ error: `Paystack transfer failed: ${err instanceof Error ? err.message : 'unknown error'}` }, { status: 502 })
       }
     }
 
@@ -240,9 +301,10 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       ? (agentForBalance?.walletBalance ?? 0)
       : (agentForBalance?.walletBalance ?? 0) + record.netPayout
 
+    let reviewNeeded = false
     try {
-      await prisma.$transaction((tx) =>
-        redemptionCompletionOps(tx, record, agentId, customerId, {
+      reviewNeeded = await prisma.$transaction(async (tx) => {
+        await redemptionCompletionOps(tx, record, agentId, customerId, {
           decidedBy,
           isBankTransfer,
           // Manual bank transfer: no Paystack pre-claim happened, so claim from OPEN and let the helper lock the plan.
@@ -255,8 +317,11 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
           adminNote: manualBank && typeof body.adminNote === 'string' && body.adminNote.trim()
             ? body.adminNote.trim().slice(0, 200)
             : undefined,
-        }),
-      )
+        })
+        // A transfer's plan was closed before Paystack was called, so money may have landed on it since. Cash and
+        // manual payouts close it in the claim above.
+        return isBankTransfer && !manualBank ? settlePlanAfterPayout(tx, record) : false
+      })
     } catch (err) {
       if (err instanceof ConflictError) return conflict(err.message || 'Already processed')
       throw err
@@ -274,7 +339,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     if (manualBank) {
       await notifyManualOutcome({ kind: 'paid' }, record, customerId, agentId)
     }
-    return NextResponse.json({ ok: true, status: 'Approved', bankTransferStatus: manualBank ? 'manual' : bankTransferStatus })
+    return NextResponse.json({ ok: true, status: 'Approved', bankTransferStatus: manualBank ? 'manual' : bankTransferStatus, reviewNeeded })
   }
 
   return NextResponse.json({ error: 'Invalid action' }, { status: 400 })

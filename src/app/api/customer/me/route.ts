@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
 import { accruedInterestForPlan, interestProjectionForPlan } from '@/lib/savings-interest-plan'
-import { IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
+import { excludeExpiredPending, IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
 
 // A redemption is "pending" for the customer home until it is actually paid: everything in flight
 // except Approved (handoff #30 — mid-payout AwaitingOTP/Finalizing must keep the tracker up and
@@ -91,7 +91,7 @@ export async function GET() {
       : Promise.resolve([]),
     planIds.length
       ? prisma.earlyRedemption.findMany({
-          where: { savingsPlanId: { in: planIds }, status: { in: PENDING_REDEMPTION_STATUSES } },
+          where: { savingsPlanId: { in: planIds }, status: { in: PENDING_REDEMPTION_STATUSES }, ...excludeExpiredPending() },
           select: { ref: true, status: true, savingsPlanId: true },
         })
       : Promise.resolve([]),

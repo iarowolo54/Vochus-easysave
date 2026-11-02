@@ -2,8 +2,9 @@ import { NextResponse } from 'next/server'
 import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { verifyApprovalPin } from '@/lib/approval-pin'
-import { createRecipient, initiateTransfer, resolveAccount } from '@/lib/paystack'
+import { createRecipient, initiateTransfer, PaystackRejected, resolveAccount } from '@/lib/paystack'
 import { logAudit } from '@/lib/audit'
+import { AGENT_NOT_ACTIVE, NO_MONEY_LEFT } from '@/lib/redemption-balance'
 import { getPayoutMode } from '@/lib/payout-mode'
 import { notifyAgentPayoutPaid, notifyAgentPayoutDeclined } from '@/lib/payout-notify'
 
@@ -70,6 +71,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   }
 
   if (action === 'approve') {
+    if (agent.status !== 'Active') return NextResponse.json({ error: AGENT_NOT_ACTIVE }, { status: 409 })
     // Fail closed: a mode-read error surfaces as a 500 rather than silently picking a rail.
     const manual = (await getPayoutMode()).agent === 'manual'
     if (manual) {
@@ -138,6 +140,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     let paystackRecipientCode: string | null = null
     let paystackTransferCode: string | null = null
     let bankTransferStatus: string | null = null
+    let transferRequested = false
     let transferStarted = false
 
     try {
@@ -146,6 +149,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
         record.accountNumber,
         record.bankCode,
       )
+      transferRequested = true
       const transfer = await initiateTransfer(
         record.amount,
         paystackRecipientCode,
@@ -154,7 +158,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       )
       paystackTransferCode = transfer.transferCode
       bankTransferStatus = transfer.status
-      transferStarted = transfer.status !== 'failed' && transfer.status !== 'reversed'
+      transferStarted = !NO_MONEY_LEFT.includes(transfer.status)
 
       if (transfer.status === 'otp') {
         await prisma.agentWithdrawal.updateMany({
@@ -174,17 +178,22 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
         })
       }
 
-      if (transfer.status === 'failed' || transfer.status === 'reversed') {
+      if (!transferStarted) {
         await releaseClaim()
         return NextResponse.json({
           error: `Paystack transfer ${transfer.status}. Reason: ${(transfer as any).raw?.gateway_response ?? 'unknown'}. Check your Paystack balance and try again.`,
         }, { status: 502 })
       }
-    } catch (err: any) {
-      // Once Paystack has accepted the transfer never hand the record back to Pending
-      // (that would allow a second transfer); it stays Processing for manual verification.
-      if (!transferStarted) await releaseClaim()
-      return NextResponse.json({ error: `Paystack transfer failed: ${err.message}` }, { status: 502 })
+    } catch (err) {
+      // Release only when no transfer can exist: Paystack was never asked, or definitely said no. A timeout may still
+      // have gone through, so releasing then would allow a second transfer. It stays Processing for Check status.
+      const noTransfer = !transferRequested || (!transferStarted && err instanceof PaystackRejected)
+      if (!noTransfer) {
+        console.error('agent-withdrawal approve: transfer outcome unknown, left Processing', id, err instanceof Error ? err.name : 'unknown')
+        return NextResponse.json({ error: 'We couldn’t confirm this transfer with Paystack, and it may still go through. Don’t approve it again. Use Check status with Paystack.' }, { status: 502 })
+      }
+      await releaseClaim()
+      return NextResponse.json({ error: `Paystack transfer failed: ${err instanceof Error ? err.message : 'unknown error'}` }, { status: 502 })
     }
 
     // 'success' = money moved; 'pending' = queued on Paystack side, verify later

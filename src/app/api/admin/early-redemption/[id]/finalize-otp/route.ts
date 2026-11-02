@@ -2,10 +2,10 @@ import { NextResponse } from 'next/server'
 import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { finalizeTransfer, PaystackRejected } from '@/lib/paystack'
-import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
 import { interestPayoutOps } from '@/lib/redemption-interest-ops'
+import { BALANCE_CHANGED_AWAITING_OTP, NO_MONEY_LEFT, readyToFinalize, reopenPlanAfterNoTransfer, settlePlanAfterPayout } from '@/lib/redemption-balance'
 
 export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
   const guard = await requireSuperAdmin()
@@ -28,8 +28,10 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
   if (record.status !== 'AwaitingOTP') return NextResponse.json({ error: 'Already processed' }, { status: 409 })
   if (!record.paystackTransferCode) return NextResponse.json({ error: 'Missing Paystack transfer code on record' }, { status: 400 })
 
-  // Read-only inputs for the credit, computed before the claim.
-  const hasCashDeposit = await planHasCashDeposit(prisma, record.savingsPlanId)
+  // Last point before money moves: refuse if a deposit landed after the pre-claim, while waiting for the code.
+  if (!readyToFinalize(record.savingsPlan, record.balance)) {
+    return NextResponse.json({ error: BALANCE_CHANGED_AWAITING_OTP }, { status: 409 })
+  }
 
   // Claim BEFORE Paystack: AwaitingOTP -> Finalizing. A concurrent submit claims nothing and never finalizes.
   const claim = await prisma.earlyRedemption.updateMany({
@@ -54,7 +56,42 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     }
     // Timeout / network / unknown: Paystack may have accepted the finalize. Do NOT release the claim.
     console.error('early-redemption finalize-otp: outcome unknown, left Finalizing', id, err instanceof Error ? err.name : 'unknown')
-    return NextResponse.json({ error: 'Could not confirm the Paystack finalisation. It is being verified; do not retry. Contact support.' }, { status: 502 })
+    return NextResponse.json({ error: 'Could not confirm the Paystack finalisation. Don’t retry. Use Check with Paystack on this request.' }, { status: 502 })
+  }
+
+  // Only an explicit success is booked as paid, here and in verify; see TRANSFER_ACCEPTED for why approve still books pending.
+  const finalizedBy = (session.user as { name?: string }).name ?? 'Super Admin'
+  if (NO_MONEY_LEFT.includes(finalStatus)) {
+    await prisma.$transaction(async (tx) => {
+      const rel = await tx.earlyRedemption.updateMany({
+        where: { id, status: 'Finalizing' },
+        data: { status: 'AgentApproved', bankTransferStatus: finalStatus, decidedAt: null, paystackTransferCode: null },
+      })
+      if (rel.count === 1) await reopenPlanAfterNoTransfer(tx, record.savingsPlanId, record.balance, 'Active')
+    })
+    logAudit({
+      action: 'early_redemption_otp_no_money',
+      entity: 'EarlyRedemption',
+      entityId: id,
+      details: `${finalizedBy} entered the OTP for ${record.ref}: Paystack ${finalStatus}. Nothing paid; ₦${record.balance.toLocaleString()} put back on the plan.`,
+      actorType: 'admin',
+      actorId: (session.user as { id?: string }).id,
+      actorName: finalizedBy,
+    })
+    return NextResponse.json({ error: `Paystack says this transfer ${finalStatus === 'reversed' ? 'was reversed' : 'failed'}. Nothing was paid, and the money is back on the plan.` }, { status: 502 })
+  }
+  if (finalStatus !== 'success') {
+    await prisma.earlyRedemption.updateMany({ where: { id, status: 'Finalizing' }, data: { bankTransferStatus: finalStatus } })
+    logAudit({
+      action: 'early_redemption_otp_unclear',
+      entity: 'EarlyRedemption',
+      entityId: id,
+      details: `${finalizedBy} entered the OTP for ${record.ref}: Paystack said "${finalStatus}". Not booked as paid; left Finalizing for Check with Paystack.`,
+      actorType: 'admin',
+      actorId: (session.user as { id?: string }).id,
+      actorName: finalizedBy,
+    })
+    return NextResponse.json({ ok: true, status: 'Finalizing', bankTransferStatus: finalStatus })
   }
 
   const adminUser = session.user as { name?: string }
@@ -62,10 +99,10 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
   const agentId = record.savingsPlan.customer.agentId
   const customerId = record.savingsPlan.customer.id
 
-  const rates = redemptionDeduction({ balance: record.balance, dailyAmount: record.savingsPlan.dailyAmount, cadence: record.savingsPlan.cadence, hasCashDeposit, source: (record.savingsPlan as any).source })
-  const platformFee = money(rates.platform)
-  const agentComm = money(rates.agent)
-  const revenueCredit = money(platformFee)
+  // The split stored on the request, same as redemptionCompletionOps; working it out again here can disagree.
+  const agentComm = money(record.penalty * (3 / 5))
+  const revenueCredit = money(record.penalty * (2 / 5))
+  let reviewNeeded = false
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -74,10 +111,8 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
         data: { status: 'Approved', decidedAt: new Date(), decidedBy, bankTransferStatus: finalStatus },
       })
       if (fin.count === 0) throw new Error('Finalizing claim lost')
-      await tx.savingsPlan.update({
-        where: { id: record.savingsPlanId },
-        data: { status: 'Redeemed', balance: 0 },
-      })
+      // The customer has been paid, so the ledger is written whatever happened.
+      reviewNeeded = await settlePlanAfterPayout(tx, record)
       await tx.platformWallet.upsert({
         where: { type: 'Revenue' },
         update: { balance: { increment: revenueCredit } },
@@ -117,5 +152,5 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     actorName: decidedBy,
   })
 
-  return NextResponse.json({ ok: true, status: 'Approved', bankTransferStatus: finalStatus })
+  return NextResponse.json({ ok: true, status: 'Approved', bankTransferStatus: finalStatus, reviewNeeded })
 }

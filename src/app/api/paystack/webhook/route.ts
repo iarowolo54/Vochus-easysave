@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { notifySuperAdminsPayoutReview } from '@/lib/redemption-notify'
 
 export async function POST(req: NextRequest) {
   const body = await req.text()
@@ -35,8 +36,25 @@ export async function POST(req: NextRequest) {
       'transfer.failed': 'failed',
       'transfer.reversed': 'reversed',
     }
+    // Released records have no code any more, so they are matched on the reference too.
+    const reference = typeof data.reference === 'string' ? data.reference : undefined
+    const match = { OR: [{ paystackTransferCode: transferCode }, ...(reference ? [{ ref: reference }] : [])] }
+
+    // Paid after we'd given the money back: the customer can have it twice, and only a person can sort that out.
+    if (type === 'transfer.success') {
+      const released = await prisma.earlyRedemption.findMany({
+        where: { ...match, status: { in: ['Rejected', 'AgentApproved'] } },
+        select: { id: true, ref: true, status: true, netPayout: true },
+      })
+      for (const r of released) {
+        const message = `MANUAL REVIEW: Paystack paid ${r.ref} after it was marked ${r.status}, so the money may have gone out twice. Paystack said: transfer.success, code ${transferCode}, reference ${reference ?? 'none'}, amount ${data.amount ?? 'none'} ${data.currency ?? ''}.`
+        await logAudit({ action: 'early_redemption_paid_after_release', entity: 'EarlyRedemption', entityId: r.id, details: message, actorType: 'system', actorName: 'Paystack Webhook' })
+        await notifySuperAdminsPayoutReview(prisma, { ref: r.ref, message })
+      }
+    }
+
     await prisma.earlyRedemption.updateMany({
-      where: { paystackTransferCode: transferCode },
+      where: match,
       data: { bankTransferStatus: statusMap[type] },
     })
     logAudit({

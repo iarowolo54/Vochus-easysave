@@ -12,7 +12,7 @@ import { displayName, formatDate, formatNaira } from '@/lib/format'
 
 interface Plan {
   id: string; goal: string; status: string; balance: number; dailyAmount: number
-  periodDays: number; cadence?: string; maturityDate: string
+  periodDays: number; cadence?: string; maturityDate: string; source?: string
 }
 
 interface Customer {
@@ -61,6 +61,7 @@ export default function RedeemPage() {
   const [selected, setSelected] = useState<Customer | null>(null)
   const [selectedPlanId, setSelectedPlanId] = useState('')
   const [payoutMethod, setPayoutMethod] = useState('Cash')
+  const [nameCheckNote, setNameCheckNote] = useState('')
 
   // Bank transfer fields
   const [banks, setBanks] = useState<Bank[]>([])
@@ -117,7 +118,7 @@ export default function RedeemPage() {
         const plans: MaturePlan[] = []
         for (const c of (data.customers ?? []) as Customer[]) {
           for (const p of c.savingsPlans ?? []) {
-            if (p.status === 'Active' && p.balance > 0 && new Date(p.maturityDate) <= new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)) {
+            if (p.status === 'Active' && p.source !== 'self' && p.balance > 0 && new Date(p.maturityDate) <= new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)) {
               plans.push({ ...p, customer: c })
             }
           }
@@ -193,7 +194,9 @@ export default function RedeemPage() {
     }
   }, [accountNumber, selectedBank])
 
-  const eligiblePlans = selected?.savingsPlans?.filter(p => p.status !== 'Redeemed' && p.balance > 0) ?? []
+  const withMoney = selected?.savingsPlans?.filter(p => p.status !== 'Redeemed' && p.balance > 0) ?? []
+  // Online customers collect in their own app, so those plans aren't offered here.
+  const eligiblePlans = withMoney.filter(p => p.source !== 'self')
   const selectedPlan = eligiblePlans.find(p => p.id === selectedPlanId) ?? eligiblePlans[0] ?? null
   const preview = selectedPlan ? payoutFor(selectedPlan) : null
   const planMatured = selectedPlan ? (selectedPlan.status === 'Matured' || new Date(selectedPlan.maturityDate) <= new Date()) : false
@@ -223,7 +226,7 @@ export default function RedeemPage() {
     if (!bankTransferReady) { setError('Confirm the bank account before continuing.'); return }
     setLoading(true); setError('')
     let res: Response
-    let data: { error?: string; ref?: string; netPayout?: number; tokenExpiry?: string; customerName?: string; sentTo?: { phone?: string; email?: string } }
+    let data: { error?: string; ref?: string; nameCheckNote?: string; netPayout?: number; tokenExpiry?: string; customerName?: string; sentTo?: { phone?: string; email?: string } }
     try {
       res = await fetch('/api/transactions/redemption/request', {
         method: 'POST',
@@ -251,6 +254,7 @@ export default function RedeemPage() {
       setLoading(false); return
     }
     setIssuedRef(data.ref ?? '')
+    setNameCheckNote(data.nameCheckNote ?? '')
     setIssuedNetPayout(data.netPayout ?? 0)
     setTokenExpiry(data.tokenExpiry ?? '')
     setIssuedCustomerName(data.customerName ?? '')
@@ -428,7 +432,7 @@ export default function RedeemPage() {
                   </div>
 
                   {eligiblePlans.length === 0 ? (
-                    <EmptyState icon="plan" title="Nothing to collect" text="This customer has no savings plan with money in it." />
+                    <EmptyState icon="plan" title="Nothing to collect here" text={withMoney.length > 0 ? 'This customer’s plans are online, so they collect in their Vochus app.' : 'This customer has no savings plan with money in it.'} />
                   ) : (
                     <>
                       <h2 className="ag-q ag-q--amount">
@@ -529,6 +533,7 @@ export default function RedeemPage() {
                   <span className="ag-big-icon" aria-hidden="true"><Icons.send size={26} /></span>
                   <h2 className="ag-q">We sent {displayName(issuedCustomerName)} a code</h2>
                   <p className="ag-q-lead">Ask them to check their messages and read the 6-digit code back to you.</p>
+                  {nameCheckNote && <div className="ui-banner ui-banner--warn" role="status"><Icons.error size={18} aria-hidden="true" /><div>{nameCheckNote}</div></div>}
                   <dl className="ag-breakdown">
                     {sentToPhone && <div><dt>Text message</dt><dd>{formattedPhone}</dd></div>}
                     {sentToEmail && <div><dt>Email</dt><dd>{sentToEmail}</dd></div>}

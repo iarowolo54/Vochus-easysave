@@ -7,6 +7,7 @@ import { insufficientResponse, InsufficientFundsError, money } from '@/lib/walle
 import { debitAgentBalance } from '@/lib/wallet-debit'
 import { creditRegistrationReward } from '@/lib/reward'
 import { selectActivePlan } from '@/lib/saving-plan'
+import { creditOpenPlan, hasOpenRedemption, PLAN_CLOSED, PlanClosedError, SAVING_BLOCKED } from '@/lib/redemption-balance'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -34,6 +35,7 @@ export async function POST(req: NextRequest) {
   }
   const plan = await prisma.savingsPlan.findUnique({ where: { id: selected.plan.id } })
   if (!plan) return NextResponse.json({ error: 'No active savings plan' }, { status: 400 })
+  if (await hasOpenRedemption(prisma, plan.id)) return NextResponse.json({ error: SAVING_BLOCKED }, { status: 409 })
 
   const numDays = rawDates.length
   const dailyAmt = money(plan.dailyAmount)
@@ -71,11 +73,12 @@ export async function POST(req: NextRequest) {
           },
         }))
       }
-      await tx.savingsPlan.update({ where: { id: plan.id }, data: { balance: { increment: totalAmt } } })
+      await creditOpenPlan(tx, plan.id, totalAmt)
       return txns
     })
   } catch (e) {
     if (e instanceof InsufficientFundsError) return insufficientResponse(e)
+    if (e instanceof PlanClosedError) return NextResponse.json({ error: PLAN_CLOSED }, { status: 409 })
     throw e
   }
 
