@@ -76,6 +76,9 @@ export function payoutOutcome(
   return status === 'failed' || status === 'reversed' ? status : 'processing'
 }
 
+/** A payout known to have failed or been reversed gets no receipt sent. */
+export const canSendReceipt = (payout: PayoutOutcome | null) => payout !== 'failed' && payout !== 'reversed'
+
 /** The status a receipt shows. For a payout, the outcome overrides the row's own Done. */
 export function receiptStatus(t: { status: string; payout?: PayoutOutcome | null }): string {
   if (t.payout === 'processing') return 'Processing'

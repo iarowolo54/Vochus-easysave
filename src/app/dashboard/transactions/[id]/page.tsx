@@ -11,12 +11,13 @@ import { Icons, type IconName } from '@/components/ui/icons'
 import { txStatus } from '@/components/customer/DepositReceipt'
 import { displayName, formatDate, formatNaira, formatTime } from '@/lib/format'
 import { saveReceiptImage } from '@/lib/receipt-image'
-import { createReceiptSender, SEND_IDLE } from '@/lib/receipt-send'
+import { createReceiptSender, printerMethod, SEND_IDLE } from '@/lib/receipt-send'
 import { waLink } from '@/lib/whatsapp'
 
 interface Txn {
   id: string; ref: string; type: string; amount: number
-  method: string | null; status: string; note: string | null; createdAt: string
+  method: string | null; status: string; receiptStatus: string; canSendReceipt: boolean
+  note: string | null; createdAt: string
   agent: { name: string; agentId: string }
   customer: { name: string; customerId: string; phone: string } | null
   plan: { goal: string; durationDays: number } | null
@@ -79,7 +80,7 @@ export default function TransactionDetailPage() {
       customerId: txn.customer?.customerId ?? '',
       phone: maskPhone(txn.customer?.phone ?? ''),
       amount: txn.type === 'enrolment' ? 'N/A' : txn.amount.toLocaleString(),
-      method: txn.method ?? '',
+      method: printerMethod(txn.method, txn.receiptStatus),
       agent: txn.agent.name,
       goal: txn.plan?.goal ?? '',
       inviteUrl,
@@ -110,7 +111,10 @@ export default function TransactionDetailPage() {
   }
 
   const m = meta(txn.type)
-  const status = txStatus(txn.status)
+  // From the server, because a payout row says Done even when the transfer hasn't gone through.
+  // txStatus would read Processing as Pending.
+  const baseStatus = txStatus(txn.receiptStatus)
+  const status = txn.receiptStatus === 'Processing' ? { ...baseStatus, label: 'Processing' } : baseStatus
   const StatusIcon = Icons[status.icon]
   const showAmt = txn.type !== 'enrolment'
   const amount = `${m.sign}${formatNaira(txn.amount)}`
@@ -186,7 +190,7 @@ export default function TransactionDetailPage() {
           <div className="no-print"><SendReceiptNotices send={send} /></div>
 
           <div className="ag-receipt-actions no-print">
-            {txn.customer && <SendReceiptButton send={send} onSend={() => sender.send([txn.id])} />}
+            {txn.customer && txn.canSendReceipt && <SendReceiptButton send={send} onSend={() => sender.send([txn.id])} />}
             {txn.customer?.phone && (
               <a className={`ui-btn ${send.state === 'sent' && !send.canOpenChat ? 'ui-btn--primary' : 'ui-btn--secondary'}`} style={{ gridColumn: '1 / -1' }} href={waLink(txn.customer.phone, shareText)} target="_blank" rel="noopener noreferrer">
                 <Icons.share size={18} aria-hidden="true" /> Send on WhatsApp
@@ -195,8 +199,9 @@ export default function TransactionDetailPage() {
             <button type="button" className="ui-btn ui-btn--secondary" onClick={saveImage} disabled={saving}>
               {saving ? <span className="ui-spinner ui-spinner--sm ag-spin-dark" aria-hidden="true" /> : <Icons.image size={18} aria-hidden="true" />} Save image
             </button>
+            {/* The printed slip can't say a payout failed, so a failed one isn't offered. */}
             {canPrint
-              ? <button type="button" className="ui-btn ui-btn--secondary" onClick={printReceipt}><Icons.print size={18} aria-hidden="true" /> Print</button>
+              ? txn.canSendReceipt && <button type="button" className="ui-btn ui-btn--secondary" onClick={printReceipt}><Icons.print size={18} aria-hidden="true" /> Print</button>
               : <button type="button" className="ui-btn ui-btn--secondary" onClick={() => window.print()}><Icons.download size={18} aria-hidden="true" /> Print or PDF</button>}
           </div>
         </article>

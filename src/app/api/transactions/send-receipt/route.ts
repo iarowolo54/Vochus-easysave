@@ -3,7 +3,8 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
-import { buildReceiptMessage, earliestFirst, payoutOutcome, payoutRef } from '@/lib/receipt-message'
+import { buildReceiptMessage, canSendReceipt, earliestFirst } from '@/lib/receipt-message'
+import { loadPayoutOutcome } from '@/lib/receipt-payout'
 
 const MAX_IDS = 90
 
@@ -49,11 +50,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'These transactions are not one savings payment' }, { status: 400 })
   }
 
-  const redemptionRef = payoutRef(first)
-  const payout = redemptionRef
-    ? payoutOutcome(first, await prisma.earlyRedemption.findUnique({ where: { ref: redemptionRef }, select: { payoutMethod: true, bankTransferStatus: true } }))
-    : null
-  if (payout === 'failed' || payout === 'reversed') {
+  const payout = await loadPayoutOutcome(first)
+  if (!canSendReceipt(payout)) {
     return NextResponse.json({ error: `This bank payout ${payout === 'failed' ? 'failed' : 'was reversed'}, so the receipt can’t be sent.` }, { status: 409 })
   }
 

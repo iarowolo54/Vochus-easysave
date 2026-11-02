@@ -1,7 +1,7 @@
 // Unit tests for the client send flow behind "Send to customer".
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { createReceiptSender, postReceipt, SEND_IDLE, type SendStatus } from '../src/lib/receipt-send'
+import { createReceiptSender, postReceipt, printerMethod, SEND_IDLE, type SendStatus } from '../src/lib/receipt-send'
 
 const SENT: SendStatus = { state: 'sent', error: '', canOpenChat: true }
 
@@ -66,4 +66,12 @@ test('postReceipt returns to idle with an error on a lost connection or an unrea
   const bad = await postReceipt(['a'])
   assert.equal(bad.state, 'idle')
   assert.match(bad.error, /could not be sent/)
+})
+
+test('printerMethod only changes a payout still processing', () => {
+  assert.equal(printerMethod('BankTransfer', 'Processing'), 'BankTransfer (Processing)')
+  assert.equal(printerMethod(null, 'Processing'), 'Processing')
+  assert.equal(printerMethod('Cash', 'Completed'), 'Cash')
+  assert.equal(printerMethod('Cash', 'Pending'), 'Cash')
+  assert.equal(printerMethod(null, 'Completed'), '')
 })

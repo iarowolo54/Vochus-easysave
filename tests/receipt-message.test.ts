@@ -1,7 +1,7 @@
 // Unit tests for the receipt text agents send to a customer's in-app chat.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildReceiptMessage, earliestFirst, payoutOutcome, payoutRef, receiptStatus, type ReceiptTxn } from '../src/lib/receipt-message'
+import { buildReceiptMessage, canSendReceipt, earliestFirst, payoutOutcome, payoutRef, receiptStatus, type ReceiptTxn } from '../src/lib/receipt-message'
 
 const who = { customerName: 'ada obi', agentName: 'Bola Agent' }
 const txn = (over: Partial<ReceiptTxn> = {}): ReceiptTxn => ({
@@ -173,4 +173,9 @@ test('same-date bulk breaks ties by ref, numerically', () => {
   const rows = [txn({ ref: 'TXN-10000', createdAt: at }), txn({ ref: 'TXN-9999', createdAt: at })]
   assert.deepEqual(earliestFirst(rows).map(t => t.ref), ['TXN-9999', 'TXN-10000'])
   assert.deepEqual(rows.map(t => t.ref), ['TXN-10000', 'TXN-9999'], 'input is not reordered')
+})
+
+test('canSendReceipt refuses only failed and reversed payouts', () => {
+  for (const payout of ['paid', 'processing', null] as const) assert.equal(canSendReceipt(payout), true)
+  for (const payout of ['failed', 'reversed'] as const) assert.equal(canSendReceipt(payout), false)
 })

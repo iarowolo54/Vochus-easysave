@@ -16,6 +16,8 @@ M._load = function (req: string, ...rest: unknown[]) {
 }
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { POST } = require('../src/app/api/transactions/send-receipt/route') as typeof import('../src/app/api/transactions/send-receipt/route')
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { GET } = require('../src/app/api/transactions/[id]/route') as typeof import('../src/app/api/transactions/[id]/route')
 
 const RUN = Math.random().toString(36).slice(2, 10)
 const ids = { agent: '', other: '', custA: '', custB: '', moved: '', hasLogin: '', plan: '', planB: '' }
@@ -24,6 +26,7 @@ const redemptions: string[] = []
 const HASH = `$2a$10$hash-${RUN}`
 
 const call = (body: unknown) => POST({ json: async () => body } as never)
+const getReceipt = (id: string) => GET({} as never, { params: Promise.resolve({ id }) })
 const actAs = (agentId: string | null) => { stub.getServerSession = async () => (agentId ? { user: { agentId } } : null) }
 const asOwner = () => actAs(`SR-${RUN}`)
 const messages = (customerId: string) => prisma.customerChatMessage.findMany({ where: { customerId } })
@@ -264,4 +267,49 @@ test('a refused send is not audited', async () => {
   await call({ ids: [tx.payFailed] })
   const log = await prisma.auditLog.findFirst({ where: { action: 'receipt_sent_to_chat', entityId: tx.payFailed } })
   assert.equal(log, null)
+})
+
+test('receipt page status: payout row and its interest row follow the transfer', async () => {
+  const cases: [string, string, boolean][] = [
+    ['paySuccess', 'Completed', true], ['payManual', 'Completed', true], ['payCash', 'Completed', true],
+    ['payPending', 'Processing', true], ['payOtp', 'Processing', true], ['payNull', 'Processing', true],
+    ['payFailed', 'Failed', false], ['payReversed', 'Reversed', false],
+  ]
+  for (const [key, receiptStatus, canSendReceipt] of cases) {
+    for (const id of [tx[key], tx[`${key}Int`]]) {
+      const body = await (await getReceipt(id)).json()
+      assert.equal(body.receiptStatus, receiptStatus, key)
+      assert.equal(body.canSendReceipt, canSendReceipt, key)
+      assert.equal(body.status, 'Done', 'the raw row is still returned')
+    }
+  }
+})
+
+test('receipt page status: payouts with no redemption record', async () => {
+  assert.equal((await (await getReceipt(tx.directCash)).json()).receiptStatus, 'Completed')
+  assert.equal((await (await getReceipt(tx.directBank)).json()).receiptStatus, 'Processing')
+})
+
+test('receipt page status: non-payout rows keep their own status', async () => {
+  const saved = await (await getReceipt(tx.one)).json()
+  assert.equal(saved.receiptStatus, 'Completed')
+  assert.equal(saved.canSendReceipt, true)
+  assert.equal((await (await getReceipt(tx.pending)).json()).receiptStatus, 'Pending')
+  assert.equal((await (await getReceipt(tx.enrol)).json()).canSendReceipt, true)
+})
+
+test('the receipt page and the chat message agree', async () => {
+  for (const key of ['payPending', 'paySuccess', 'one']) {
+    await prisma.customerChatMessage.deleteMany({ where: { customerId: ids.custA } })
+    const { receiptStatus } = await (await getReceipt(tx[key])).json()
+    await call({ ids: [tx[key]] })
+    const [m] = await messages(ids.custA)
+    assert.match(m.message, new RegExp(`^Status: ${receiptStatus}$`, 'm'), key)
+  }
+})
+
+test('the receipt route still refuses another agent\'s transaction and returns no password', async () => {
+  assert.equal((await getReceipt(tx.foreign)).status, 404)
+  const raw = JSON.stringify(await (await getReceipt(tx.login)).json())
+  assert.ok(!raw.includes(HASH))
 })

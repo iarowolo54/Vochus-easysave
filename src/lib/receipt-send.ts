@@ -33,3 +33,9 @@ export function createReceiptSender(onChange: (status: SendStatus) => void, post
     },
   }
 }
+
+/** The printed slip has no status line, so a payout still processing says so in its Method row. */
+export function printerMethod(method: string | null, receiptStatus: string): string {
+  if (receiptStatus !== 'Processing') return method ?? ''
+  return method ? `${method} (Processing)` : 'Processing'
+}
