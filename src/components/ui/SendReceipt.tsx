@@ -14,7 +14,7 @@ export function SendReceiptNotices({ send }: { send: SendStatus }) {
           : (
             <div className="ui-banner ui-banner--warn">
               <Icons.error size={18} aria-hidden="true" />
-              <div>Saved in chat. This customer can’t sign in yet, so send it on WhatsApp too.</div>
+              <div>{send.hasPhone ? 'Saved in chat. This customer can’t sign in right now, so send it on WhatsApp too.' : 'Saved in chat. This customer can’t sign in right now and has no phone number on file, so give them the receipt in person.'}</div>
             </div>
           ))}
       </div>

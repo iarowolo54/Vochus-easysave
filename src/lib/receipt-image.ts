@@ -15,6 +15,14 @@ const MUTED = '#5e6b64'
 const LINE = '#e6e6eb'
 const BRAND_INK = '#146c34'
 
+/** Only a completed payment is proof of anything; the pill colour has to say so too. */
+export const showsProofOfPayment = (status: string) => status === 'Completed'
+export function statusPillColors(status: string): { background: string; ink: string } {
+  if (status === 'Completed') return { background: '#e7f3ea', ink: BRAND_INK }
+  if (status === 'Pending' || status === 'Processing') return { background: '#fdf1dc', ink: '#8a5a00' }
+  return { background: '#fbe6e4', ink: '#a8281c' }
+}
+
 function loadImage(src: string): Promise<HTMLImageElement | null> {
   return new Promise(resolve => {
     const img = new Image()
@@ -76,11 +84,12 @@ export async function saveReceiptImage(data: ReceiptData) {
   ctx.fillText(data.amount.replace(/^([+−])/, '$1\u200A'), W / 2, 146)
   ctx.font = font(600, 12)
   const pillW = ctx.measureText(data.status).width + 28
-  ctx.fillStyle = '#e7f3ea'
+  const pill = statusPillColors(data.status)
+  ctx.fillStyle = pill.background
   ctx.beginPath()
   ctx.roundRect(W / 2 - pillW / 2, 162, pillW, 26, 13)
   ctx.fill()
-  ctx.fillStyle = BRAND_INK
+  ctx.fillStyle = pill.ink
   ctx.fillText(data.status, W / 2, 179)
 
   // Dashed divider
@@ -111,7 +120,7 @@ export async function saveReceiptImage(data: ReceiptData) {
   ctx.textAlign = 'center'
   ctx.fillStyle = MUTED
   ctx.font = font(500, 11)
-  ctx.fillText('Keep this receipt as proof of payment.', W / 2, H - 52)
+  if (showsProofOfPayment(data.status)) ctx.fillText('Keep this receipt as proof of payment.', W / 2, H - 52)
   ctx.fillText(`${window.location.host} · Generated ${formatDate(now)}, ${formatTime(now)}`, W / 2, H - 34)
 
   const dataUrl = canvas.toDataURL('image/png')

@@ -1,9 +1,9 @@
 // Unit tests for the client send flow behind "Send to customer".
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
-import { createReceiptSender, postReceipt, printerMethod, SEND_IDLE, type SendStatus } from '../src/lib/receipt-send'
+import { createReceiptSender, postReceipt, SEND_IDLE, type SendStatus } from '../src/lib/receipt-send'
 
-const SENT: SendStatus = { state: 'sent', error: '', canOpenChat: true }
+const SENT: SendStatus = { state: 'sent', error: '', canOpenChat: true, hasPhone: true }
 
 function deferred() {
   let resolve!: (s: SendStatus) => void
@@ -48,10 +48,12 @@ test('a slow result is ignored once a newer send has started', async () => {
 })
 
 test('postReceipt passes canOpenChat through, defaulting to true', async () => {
-  respond(200, { sent: true, canOpenChat: false })
-  assert.deepEqual(await postReceipt(['a']), { state: 'sent', error: '', canOpenChat: false })
+  respond(200, { sent: true, canOpenChat: false, hasPhone: false })
+  assert.deepEqual(await postReceipt(['a']), { state: 'sent', error: '', canOpenChat: false, hasPhone: false })
   respond(200, { sent: true })
-  assert.equal((await postReceipt(['a'])).canOpenChat, true)
+  const plain = await postReceipt(['a'])
+  assert.equal(plain.canOpenChat, true)
+  assert.equal(plain.hasPhone, true)
 })
 
 test('postReceipt shows the server error, such as a refused payout', async () => {
@@ -68,10 +70,13 @@ test('postReceipt returns to idle with an error on a lost connection or an unrea
   assert.match(bad.error, /could not be sent/)
 })
 
-test('printerMethod only changes a payout still processing', () => {
-  assert.equal(printerMethod('BankTransfer', 'Processing'), 'BankTransfer (Processing)')
-  assert.equal(printerMethod(null, 'Processing'), 'Processing')
-  assert.equal(printerMethod('Cash', 'Completed'), 'Cash')
-  assert.equal(printerMethod('Cash', 'Pending'), 'Cash')
-  assert.equal(printerMethod(null, 'Completed'), '')
+test('postReceipt gives up after a timeout rather than spinning forever', async () => {
+  let signal: AbortSignal | null | undefined
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => { signal = init?.signal; return new Response('{}') }) as typeof fetch
+  await postReceipt(['a'])
+  assert.ok(signal instanceof AbortSignal)
+  globalThis.fetch = (async () => { throw new DOMException('timed out', 'TimeoutError') }) as typeof fetch
+  const late = await postReceipt(['a'])
+  assert.equal(late.state, 'idle')
+  assert.ok(late.error)
 })

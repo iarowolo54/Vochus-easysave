@@ -367,7 +367,7 @@ function SavingsContent() {
     const isBulk = bulkMode && !recordDate
     const endpoint = isBulk ? '/api/transactions/saving/bulk' : '/api/transactions/saving'
     const body = isBulk
-      ? { customerId: selected.id, dates: selectedDates, method, planId: plan?.id }
+      ? { customerId: selected.id, dates: [...selectedDates].sort(), method, planId: plan?.id }
       : { customerId: selected.id, amount, method, planId: plan?.id, ...(recordDate ? { date: recordDate } : {}) }
 
     let res: Response
@@ -432,8 +432,13 @@ function SavingsContent() {
   const canSend = lastTxIds.length > 0
   const sentNoChat = send.state === 'sent' && !send.canOpenChat
   const whatsAppFirst = sentNoChat && !!lastPhone
+  const whatsAppRef = useRef<HTMLAnchorElement>(null)
+  // It's now the main action and can land under the bottom nav, so bring it into view.
+  useEffect(() => {
+    if (whatsAppFirst) whatsAppRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [whatsAppFirst])
   const whatsAppButton = lastReceipt && lastPhone && (
-    <a className={`ui-btn ui-btn--block ${whatsAppFirst ? 'ui-btn--primary' : 'ui-btn--secondary'}`} href={whatsAppLink(lastPhone, lastReceipt, lastDays)} target="_blank" rel="noopener noreferrer">
+    <a ref={whatsAppRef} className={`ui-btn ui-btn--block ${whatsAppFirst ? 'ui-btn--primary' : 'ui-btn--secondary'}`} href={whatsAppLink(lastPhone, lastReceipt, lastDays)} target="_blank" rel="noopener noreferrer">
       <Icons.share size={18} aria-hidden="true" /> Send receipt on WhatsApp
     </a>
   )

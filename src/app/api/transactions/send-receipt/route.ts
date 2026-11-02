@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { logAudit } from '@/lib/audit'
-import { buildReceiptMessage, canSendReceipt, earliestFirst } from '@/lib/receipt-message'
+import { buildReceiptMessage, canSendReceipt, customerCanSignIn, earliestFirst, receiptStatus } from '@/lib/receipt-message'
 import { loadPayoutOutcome } from '@/lib/receipt-payout'
 
 const MAX_IDS = 90
@@ -30,7 +29,7 @@ export async function POST(req: NextRequest) {
     where: { id: { in: ids }, agentId: agent.id },
     select: {
       id: true, ref: true, type: true, amount: true, method: true, status: true, createdAt: true, customerId: true, planId: true,
-      customer: { select: { firstName: true, lastName: true, agentId: true, password: true } },
+      customer: { select: { firstName: true, lastName: true, agentId: true, password: true, status: true, phone: true } },
       plan: { select: { goal: true } },
     },
   })
@@ -60,19 +59,24 @@ export async function POST(req: NextRequest) {
     { customerName: `${customer.firstName} ${customer.lastName}`, agentName: agent.name },
   )
 
-  await prisma.customerChatMessage.create({
-    data: { customerId, sender: 'agent', senderId: agent.id, senderName: agent.name, message },
+  // Together, so a receipt the customer can see always has its audit row.
+  await prisma.$transaction(async (tx) => {
+    const sent = await tx.customerChatMessage.create({
+      data: { customerId, sender: 'agent', senderId: agent.id, senderName: agent.name, message },
+      select: { id: true },
+    })
+    await tx.auditLog.create({
+      data: {
+        action: 'receipt_sent_to_chat',
+        entity: 'Transaction',
+        entityId: first.id,
+        details: `status: ${receiptStatus({ status: first.status, payout })} | message: ${sent.id} | ids: ${txns.map(t => t.id).join(', ')} | refs: ${txns.map(t => t.ref).join(', ')}`,
+        actorType: 'agent',
+        actorId: agent.id,
+        actorName: agent.name,
+      },
+    })
   })
 
-  await logAudit({
-    action: 'receipt_sent_to_chat',
-    entity: 'Transaction',
-    entityId: first.id,
-    details: `ids: ${txns.map(t => t.id).join(', ')} | refs: ${txns.map(t => t.ref).join(', ')}`,
-    actorId: agent.id,
-    actorName: agent.name,
-  })
-
-  // A customer with no password has no way into the chat until they set one.
-  return NextResponse.json({ sent: true, canOpenChat: !!customer.password })
+  return NextResponse.json({ sent: true, canOpenChat: customerCanSignIn(customer), hasPhone: !!customer.phone })
 }

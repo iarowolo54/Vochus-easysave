@@ -1,16 +1,16 @@
 // Client side of "Send to customer". No React here so the stale-result rule can be unit tested.
 
-export type SendStatus = { state: 'idle' | 'sending' | 'sent'; error: string; canOpenChat: boolean }
+export type SendStatus = { state: 'idle' | 'sending' | 'sent'; error: string; canOpenChat: boolean; hasPhone: boolean }
 
-export const SEND_IDLE: SendStatus = { state: 'idle', error: '', canOpenChat: true }
+export const SEND_IDLE: SendStatus = { state: 'idle', error: '', canOpenChat: true, hasPhone: true }
 
 type Post = (ids: string[]) => Promise<SendStatus>
 
 export async function postReceipt(ids: string[]): Promise<SendStatus> {
   try {
-    const res = await fetch('/api/transactions/send-receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) })
-    const data: { error?: string; canOpenChat?: boolean } = await res.json().catch(() => ({}))
-    if (res.ok) return { state: 'sent', error: '', canOpenChat: data.canOpenChat !== false }
+    const res = await fetch('/api/transactions/send-receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }), signal: AbortSignal.timeout(15000) })
+    const data: { error?: string; canOpenChat?: boolean; hasPhone?: boolean } = await res.json().catch(() => ({}))
+    if (res.ok) return { state: 'sent', error: '', canOpenChat: data.canOpenChat !== false, hasPhone: data.hasPhone !== false }
     return { ...SEND_IDLE, error: data.error ?? 'The receipt could not be sent. Please try again.' }
   } catch {
     return { ...SEND_IDLE, error: 'No connection. Check your internet and try again.' }
@@ -32,10 +32,4 @@ export function createReceiptSender(onChange: (status: SendStatus) => void, post
       onChange(SEND_IDLE)
     },
   }
-}
-
-/** The printed slip has no status line, so a payout still processing says so in its Method row. */
-export function printerMethod(method: string | null, receiptStatus: string): string {
-  if (receiptStatus !== 'Processing') return method ?? ''
-  return method ? `${method} (Processing)` : 'Processing'
 }

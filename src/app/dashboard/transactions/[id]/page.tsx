@@ -11,7 +11,7 @@ import { Icons, type IconName } from '@/components/ui/icons'
 import { txStatus } from '@/components/customer/DepositReceipt'
 import { displayName, formatDate, formatNaira, formatTime } from '@/lib/format'
 import { saveReceiptImage } from '@/lib/receipt-image'
-import { createReceiptSender, printerMethod, SEND_IDLE } from '@/lib/receipt-send'
+import { createReceiptSender, SEND_IDLE } from '@/lib/receipt-send'
 import { waLink } from '@/lib/whatsapp'
 
 interface Txn {
@@ -80,7 +80,7 @@ export default function TransactionDetailPage() {
       customerId: txn.customer?.customerId ?? '',
       phone: maskPhone(txn.customer?.phone ?? ''),
       amount: txn.type === 'enrolment' ? 'N/A' : txn.amount.toLocaleString(),
-      method: printerMethod(txn.method, txn.receiptStatus),
+      method: txn.method ?? '',
       agent: txn.agent.name,
       goal: txn.plan?.goal ?? '',
       inviteUrl,
@@ -149,6 +149,14 @@ export default function TransactionDetailPage() {
     } finally { setSaving(false) }
   }
 
+  // A failed payout saves nothing that could pass as proof of payment. The app's slip is headed "Savings Receipt"
+  // whatever it prints, so it's only offered for savings until the app can print a title it's given.
+  const showSave = txn.canSendReceipt
+  const showBluetoothPrint = canPrint && txn.type === 'saving'
+  const showBrowserPrint = !canPrint
+  // A lone button in the two-column row takes the whole row rather than leaving a gap.
+  const soloAction = showSave !== (showBluetoothPrint || showBrowserPrint) ? { gridColumn: '1 / -1' } : undefined
+
   return (
     <div className="ag-page">
       <div className="ag-receipt-wrap">
@@ -185,7 +193,8 @@ export default function TransactionDetailPage() {
             </div>
           </dl>
 
-          <p className="ag-receipt-foot">Official receipt from Vochus Easy Save. Keep it for your records.</p>
+          {txn.receiptStatus === 'Completed' && <p className="ag-receipt-foot">Official receipt from Vochus Easy Save. Keep it for your records.</p>}
+          {!txn.canSendReceipt && <p className="ag-receipt-foot">This payout {txn.receiptStatus === 'Reversed' ? 'was reversed' : 'failed'}, so the receipt can’t be sent.</p>}
 
           <div className="no-print"><SendReceiptNotices send={send} /></div>
 
@@ -196,13 +205,13 @@ export default function TransactionDetailPage() {
                 <Icons.share size={18} aria-hidden="true" /> Send on WhatsApp
               </a>
             )}
-            <button type="button" className="ui-btn ui-btn--secondary" onClick={saveImage} disabled={saving}>
-              {saving ? <span className="ui-spinner ui-spinner--sm ag-spin-dark" aria-hidden="true" /> : <Icons.image size={18} aria-hidden="true" />} Save image
-            </button>
-            {/* The printed slip can't say a payout failed, so a failed one isn't offered. */}
-            {canPrint
-              ? txn.canSendReceipt && <button type="button" className="ui-btn ui-btn--secondary" onClick={printReceipt}><Icons.print size={18} aria-hidden="true" /> Print</button>
-              : <button type="button" className="ui-btn ui-btn--secondary" onClick={() => window.print()}><Icons.download size={18} aria-hidden="true" /> Print or PDF</button>}
+            {showSave && (
+              <button type="button" className="ui-btn ui-btn--secondary" style={soloAction} onClick={saveImage} disabled={saving}>
+                {saving ? <span className="ui-spinner ui-spinner--sm ag-spin-dark" aria-hidden="true" /> : <Icons.image size={18} aria-hidden="true" />} Save image
+              </button>
+            )}
+            {showBluetoothPrint && <button type="button" className="ui-btn ui-btn--secondary" style={soloAction} onClick={printReceipt}><Icons.print size={18} aria-hidden="true" /> Print</button>}
+            {showBrowserPrint && <button type="button" className="ui-btn ui-btn--secondary" style={soloAction} onClick={() => window.print()}><Icons.download size={18} aria-hidden="true" /> Print or PDF</button>}
           </div>
         </article>
       </div>

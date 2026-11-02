@@ -1,7 +1,7 @@
 // Unit tests for the receipt text agents send to a customer's in-app chat.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildReceiptMessage, canSendReceipt, earliestFirst, payoutOutcome, payoutRef, receiptStatus, type ReceiptTxn } from '../src/lib/receipt-message'
+import { buildReceiptMessage, canSendReceipt, customerCanSignIn, earliestFirst, payoutOutcome, payoutRef, receiptStatus, type ReceiptTxn } from '../src/lib/receipt-message'
 
 const who = { customerName: 'ada obi', agentName: 'Bola Agent' }
 const txn = (over: Partial<ReceiptTxn> = {}): ReceiptTxn => ({
@@ -178,4 +178,21 @@ test('same-date bulk breaks ties by ref, numerically', () => {
 test('canSendReceipt refuses only failed and reversed payouts', () => {
   for (const payout of ['paid', 'processing', null] as const) assert.equal(canSendReceipt(payout), true)
   for (const payout of ['failed', 'reversed'] as const) assert.equal(canSendReceipt(payout), false)
+})
+
+test('invisible and blank-looking characters collapse, so they cannot pad or hide a value', () => {
+  const hidden = 'Rent\u200B\u200D\u202E\u3164\u2800\uFFA0\u115F\u1160\u00A0\u2028Fees'
+  const text = buildReceiptMessage([txn({ planGoal: hidden })], { customerName: 'ada\u3164\u3164obi', agentName: 'Bola\u2800\u2800Agent' })
+  assert.match(text, /^Plan: Rent Fees$/m)
+  assert.match(text, /^Customer: Ada Obi$/m)
+  assert.match(text, /^Recorded by: Bola Agent$/m)
+  assert.doesNotMatch(buildReceiptMessage([txn({ planGoal: '\u3164\u2800' })], who), /Plan:/)
+})
+
+test('customerCanSignIn matches what login refuses', () => {
+  assert.equal(customerCanSignIn({ password: 'hash', status: 'Active' }), true)
+  assert.equal(customerCanSignIn({ password: 'hash', status: 'active' }), true)
+  assert.equal(customerCanSignIn({ password: 'hash', status: null }), true)
+  assert.equal(customerCanSignIn({ password: 'hash', status: 'Suspended' }), false)
+  assert.equal(customerCanSignIn({ password: null, status: 'Active' }), false)
 })

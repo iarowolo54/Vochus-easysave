@@ -18,7 +18,8 @@ export type ReceiptTxn = {
 export type PayoutOutcome = 'paid' | 'processing' | 'failed' | 'reversed'
 
 // Goal and names are free text. Without this, a line break in one could fake a receipt line.
-const oneLine = (s: string) => s.replace(/\s+/g, ' ').trim().slice(0, 60)
+// Includes invisible and blank-looking characters, which could otherwise pad a value or hide its end.
+const oneLine = (s: string) => s.replace(/[\p{C}\p{Z}\u115F\u1160\u3164\uFFA0\u2800]+/gu, ' ').trim().slice(0, 60)
 
 // The customer reads this, so types are named from their side ("Loan received", not "Loan paid out").
 const LABELS: Record<string, string> = {
@@ -75,6 +76,10 @@ export function payoutOutcome(
   if (status === 'success' || status === 'manual') return 'paid'
   return status === 'failed' || status === 'reversed' ? status : 'processing'
 }
+
+/** Same test as customer login: no password, or an account it would refuse, means the chat can't be opened. */
+export const customerCanSignIn = (c: { password: string | null; status: string | null }) =>
+  !!c.password && (!c.status || c.status.toLowerCase() === 'active')
 
 /** A payout known to have failed or been reversed gets no receipt sent. */
 export const canSendReceipt = (payout: PayoutOutcome | null) => payout !== 'failed' && payout !== 'reversed'

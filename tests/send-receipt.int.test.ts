@@ -17,6 +17,8 @@ M._load = function (req: string, ...rest: unknown[]) {
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { POST } = require('../src/app/api/transactions/send-receipt/route') as typeof import('../src/app/api/transactions/send-receipt/route')
 // eslint-disable-next-line @typescript-eslint/no-require-imports
+const bulkSaving = require('../src/app/api/transactions/saving/bulk/route') as typeof import('../src/app/api/transactions/saving/bulk/route')
+// eslint-disable-next-line @typescript-eslint/no-require-imports
 const { GET } = require('../src/app/api/transactions/[id]/route') as typeof import('../src/app/api/transactions/[id]/route')
 
 const RUN = Math.random().toString(36).slice(2, 10)
@@ -242,13 +244,13 @@ test('a later status update corrects the receipt with no other change', async ()
 test('canOpenChat is false with no password, but the message is still posted', async () => {
   const res = await call({ ids: [tx.one] })
   assert.equal(res.status, 200)
-  assert.deepEqual(await res.json(), { sent: true, canOpenChat: false })
+  assert.deepEqual(await res.json(), { sent: true, canOpenChat: false, hasPhone: true })
   assert.equal((await messages(ids.custA)).length, 1)
 })
 
 test('canOpenChat is true with a password, and the hash is never returned', async () => {
   const res = await call({ ids: [tx.login] })
-  assert.deepEqual(await res.json(), { sent: true, canOpenChat: true })
+  assert.deepEqual(await res.json(), { sent: true, canOpenChat: true, hasPhone: true })
   const [m] = await messages(ids.hasLogin)
   assert.doesNotMatch(m.message, new RegExp(RUN + '.*hash|hash-'))
 })
@@ -261,6 +263,58 @@ test('each send is audited with every id and ref, and not the message body', asy
   for (const id of send) assert.ok(log.details?.includes(id))
   for (const key of ['d1', 'd2']) assert.ok(log.details?.includes(`SR-${key}-${RUN}`))
   assert.doesNotMatch(log.details ?? '', /Total|Customer|School fees|₦/)
+  assert.match(log.details ?? '', /status: Completed/)
+  const [m] = await messages(ids.custA)
+  assert.ok(log.details?.includes(`message: ${m.id}`))
+})
+
+test('the message and its audit row are written together', async () => {
+  const before = await messages(ids.custA)
+  const realTx = prisma.$transaction.bind(prisma)
+  const failingTx = (async (fn: (tx: unknown) => Promise<unknown>) => realTx(async (tx: unknown) => {
+    await fn(new Proxy(tx as object, { get: (t, k) => (k === 'auditLog' ? { create: async () => { throw new Error('audit down') } } : Reflect.get(t, k)) }))
+  })) as typeof prisma.$transaction
+  prisma.$transaction = failingTx
+  try {
+    await assert.rejects(call({ ids: [tx.one] }))
+  } finally { prisma.$transaction = realTx as typeof prisma.$transaction }
+  assert.equal((await messages(ids.custA)).length, before.length, 'no message without its audit row')
+})
+
+test('canOpenChat is false for a locked customer, even with a password', async () => {
+  await prisma.customer.update({ where: { id: ids.hasLogin }, data: { status: 'Suspended' } })
+  try {
+    assert.deepEqual(await (await call({ ids: [tx.login] })).json(), { sent: true, canOpenChat: false, hasPhone: true })
+  } finally { await prisma.customer.update({ where: { id: ids.hasLogin }, data: { status: 'Active' } }) }
+})
+
+test('hasPhone is false for a customer with no phone', async () => {
+  const original = await prisma.customer.findUniqueOrThrow({ where: { id: ids.custA }, select: { phone: true } })
+  await prisma.customer.update({ where: { id: ids.custA }, data: { phone: '' } })
+  try {
+    assert.deepEqual(await (await call({ ids: [tx.one] })).json(), { sent: true, canOpenChat: false, hasPhone: false })
+  } finally { await prisma.customer.update({ where: { id: ids.custA }, data: original }) }
+})
+
+test('dates posted sorted make the screen, the slip and the chat quote the same reference', async () => {
+  const before = await prisma.agent.findUniqueOrThrow({ where: { id: ids.agent }, select: { walletBalance: true } })
+  const planBefore = await prisma.savingsPlan.findUniqueOrThrow({ where: { id: ids.plan }, select: { balance: true } })
+  await prisma.savingsPlan.update({ where: { id: ids.planB }, data: { status: 'Completed' } })
+  const tapped = ['2026-11-03', '2026-11-01', '2026-11-02']
+  const res = await bulkSaving.POST({ json: async () => ({ customerId: ids.custA, dates: [...tapped].sort(), method: 'Cash', planId: ids.plan }) } as never)
+  assert.equal(res.status, 200, JSON.stringify(await res.clone().json()))
+  const { transactions } = await res.json() as { transactions: { id: string; ref: string }[] }
+  const made = transactions.map(t => t.id)
+  try {
+    assert.equal((await call({ ids: [made[2], made[0], made[1]] })).status, 200)
+    const [m] = await messages(ids.custA)
+    assert.match(m.message, new RegExp(`Reference: ${transactions[0].ref} \\+2 more`))
+  } finally {
+    await prisma.transaction.deleteMany({ where: { id: { in: made } } })
+    await prisma.agent.update({ where: { id: ids.agent }, data: before })
+    await prisma.savingsPlan.update({ where: { id: ids.plan }, data: planBefore })
+    await prisma.savingsPlan.update({ where: { id: ids.planB }, data: { status: 'Active' } })
+  }
 })
 
 test('a refused send is not audited', async () => {
