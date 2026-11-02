@@ -7,7 +7,7 @@ import bcrypt from 'bcryptjs'
 import { NextRequest } from 'next/server'
 import { prisma } from '../src/lib/prisma'
 import { adminAuthOptions } from '../src/lib/auth-admin'
-import { ADMIN_ACCOUNT_FAIL_LIMIT, ADMIN_IP_FAIL_LIMIT } from '../src/lib/admin-login-guard'
+import { ADMIN_ACCOUNT_FAIL_LIMIT, ADMIN_IP_FAIL_LIMIT, adminIpFromForwarded } from '../src/lib/admin-login-guard'
 import { POST } from '../src/app/api/admin-auth/login/route'
 
 const rid = Math.random().toString(36).slice(2, 8)
@@ -147,4 +147,61 @@ test('a non-string email or password is refused, not a 500', async () => {
   const bad = (body: unknown) => POST(new NextRequest('http://localhost/x', { method: 'POST', body: JSON.stringify(body) }))
   assert.equal((await bad({ email: 42, password: 'x' })).status, 400)
   assert.equal((await bad({ email: 'a@b.c', password: { x: 1 } })).status, 400)
+})
+
+test('a parallel burst of guesses cannot get past the limit: only 5 ever reach the password check', async () => {
+  const email = await mkAdmin()
+  const results = await Promise.all(Array.from({ length: 30 }, () => login(email, 'wrong')))
+  const statuses = results.map(r => r.status)
+  assert.equal(statuses.filter(x => x === 401).length, ADMIN_ACCOUNT_FAIL_LIMIT)
+  assert.equal(statuses.filter(x => x === 429).length, 30 - ADMIN_ACCOUNT_FAIL_LIMIT)
+  // The burst must end in a real, short lock, not a count stuck past the limit that shuts the owner out for good.
+  const row = await prisma.loginAttempt.findUniqueOrThrow({ where: { key: `admin:${email}` } })
+  assert.equal(row.failCount, ADMIN_ACCOUNT_FAIL_LIMIT)
+  assert.ok(row.lockedUntil && row.lockedUntil.getTime() > Date.now())
+  await prisma.loginAttempt.update({ where: { key: `admin:${email}` }, data: { lockedUntil: new Date(Date.now() - 1000) } })
+  assert.equal((await login(email, PASSWORD)).status, 200, 'and the owner gets in once it ends')
+})
+
+test('a correct password inside a burst past the limit does not get in', async () => {
+  const email = await mkAdmin()
+  const results = await Promise.all([
+    ...Array.from({ length: 20 }, () => login(email, 'wrong')),
+    login(email, PASSWORD),
+  ])
+  assert.equal(results[20].status, 429)
+})
+
+test('signing in does not count against the address', async () => {
+  const ip = freshIp()
+  const email = await mkAdmin()
+  for (let i = 0; i < ADMIN_IP_FAIL_LIMIT + 2; i++) assert.equal((await login(email, PASSWORD, ip)).status, 200)
+})
+
+test('after a lock ends the count starts again, so one typo does not re-lock', async () => {
+  const email = await mkAdmin()
+  await failUntilLocked(email)
+  await prisma.loginAttempt.update({ where: { key: `admin:${email}` }, data: { lockedUntil: new Date(Date.now() - 1000) } })
+  assert.equal((await login(email, 'typo')).status, 401)
+  assert.equal((await login(email, PASSWORD)).status, 200)
+})
+
+test('if the limit cannot be recorded, sign-in is refused rather than left uncounted', async () => {
+  const email = await mkAdmin()
+  const delegate = prisma.loginAttempt as unknown as { updateMany: (a: unknown) => Promise<unknown> }
+  const real = delegate.updateMany
+  delegate.updateMany = () => Promise.reject(new Error('database is locked'))
+  try {
+    assert.equal((await login(email, PASSWORD)).status, 429)
+  } finally {
+    delegate.updateMany = real
+  }
+  assert.equal((await login(email, PASSWORD)).status, 200, 'and recovers once the database does')
+})
+
+test('a malformed forwarded address is not used as a key', () => {
+  assert.equal(adminIpFromForwarded('1.2.3.4, 5.6.7.8'), '5.6.7.8')
+  assert.equal(adminIpFromForwarded('::1'), '::1')
+  assert.equal(adminIpFromForwarded('1.2.3.4, not-an-ip'), null)
+  assert.equal(adminIpFromForwarded(null), null)
 })

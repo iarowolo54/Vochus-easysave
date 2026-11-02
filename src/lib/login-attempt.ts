@@ -108,30 +108,46 @@ async function ipBump(key: string, now: number): Promise<void> {
     .catch(() => {})
 }
 
-// -------- Time locks for other keys (admin sign-in) --------
+// -------- Reserved attempts with a time lock (admin sign-in) --------
 
-export async function isTimeLocked(key: string, now: number = Date.now()): Promise<boolean> {
-  return checkThrottle(await loadState(key), now).blocked
+/**
+ * Count an attempt BEFORE checking the password, so a parallel burst can't all pass a lock check that no failure has
+ * reached yet: at most `limit` attempts ever get to the password check per window. A lock that has ended, or a quiet
+ * window, starts the count again. Refund the attempt if it turns out to be a success.
+ */
+export async function reserveAttempt(
+  key: string, limit: number, lockMs: number, now: number = Date.now(),
+): Promise<{ allowed: boolean; startedLock: boolean }> {
+  const nowDate = toDate(now)!
+  await prisma.loginAttempt.upsert({ where: { key }, create: { key, failCount: 0 }, update: {} }).catch((e: unknown) => {
+    // Two first attempts at once: the other one created the row.
+    if ((e as { code?: unknown } | null)?.code !== 'P2002') throw e
+  })
+  await prisma.loginAttempt.updateMany({
+    where: { key, OR: [{ lockedUntil: { lte: nowDate } }, { lockedUntil: null, lastFailAt: { lt: toDate(now - THROTTLE.resetAfterMs)! } }] },
+    data: { failCount: 0, lockedUntil: null },
+  })
+  // One statement, so it holds across PM2 instances: each attempt gets its own count, and the limit-th sets the lock in
+  // the same write. Separate steps let a burst count past the limit before any of them read it, so none ran and no lock
+  // was ever set. Dates are epoch ms, which is how Prisma stores DateTime in this SQLite file.
+  const rows = await prisma.$queryRaw<{ failCount: number | bigint }[]>`
+    UPDATE "LoginAttempt"
+    SET "failCount" = "failCount" + 1,
+        "lastFailAt" = ${now},
+        "updatedAt" = ${now},
+        "lockedUntil" = CASE WHEN "failCount" + 1 >= ${limit} THEN ${now + lockMs} ELSE "lockedUntil" END
+    WHERE "key" = ${key} AND "lockedUntil" IS NULL
+    RETURNING "failCount"`
+  if (rows.length === 0) return { allowed: false, startedLock: false }
+  return { allowed: true, startedLock: Number(rows[0].failCount) === limit }
 }
 
-/** Count a failure against a time-locked key. True if this failure is the one that started a lock. */
-export async function bumpTimedLock(key: string, schedule: (failCount: number) => number, now: number = Date.now()): Promise<boolean> {
-  const prior = await prisma.loginAttempt.findUnique({ where: { key } })
-  const windowExpired =
-    prior?.lastFailAt != null && now - prior.lastFailAt.getTime() > THROTTLE.resetAfterMs
-  if (!prior || prior.failCount === 0 || windowExpired) {
-    const first = schedule(1)
-    await startWindow(key, now, first > 0 ? now + first : null)
-    return first > 0
-  }
-  const row = await prisma.loginAttempt.update({
-    where: { key },
-    data: { failCount: { increment: 1 }, lastFailAt: toDate(now) },
+/** Give back a reserved attempt, and any lock it started. */
+export async function refundAttempt(key: string, startedLock: boolean): Promise<void> {
+  await prisma.loginAttempt.updateMany({
+    where: { key, failCount: { gt: 0 } },
+    data: { failCount: { decrement: 1 }, ...(startedLock ? { lockedUntil: null } : {}) },
   })
-  const dur = schedule(row.failCount)
-  if (dur <= 0) return false
-  await prisma.loginAttempt.update({ where: { key }, data: { lockedUntil: toDate(now + dur) } })
-  return true
 }
 
 // -------- Public API --------
