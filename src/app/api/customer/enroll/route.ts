@@ -5,6 +5,7 @@ import { signCustomerToken, customerCookieOptions } from '@/lib/customer-auth'
 import { sendMail } from '@/lib/mail'
 import { logAudit } from '@/lib/audit'
 import { resolveBvn } from '@/lib/paystack'
+import { refuseBvnLookup } from '@/lib/bvn-lookup'
 import { normalizeEmail } from '@/lib/email'
 import { normalizePhone } from '@/lib/phone'
 import { findIdentityConflict } from '@/lib/identity'
@@ -70,24 +71,8 @@ export async function POST(req: NextRequest) {
     if (!isFinite(pd) || pd <= 0) return NextResponse.json({ error: 'Period days must be a positive number' }, { status: 400 })
   }
 
-  // If BVN was supplied, verify it matches the name with Paystack Identity.
-  // Optional — empty BVN is allowed and silently skipped.
-  if (bvn) {
-    if (!/^\d{11}$/.test(String(bvn))) {
-      return NextResponse.json({ error: 'BVN must be 11 digits' }, { status: 400 })
-    }
-    try {
-      const r = await resolveBvn(String(bvn))
-      const bvnFirst = (r.firstName ?? '').trim().toLowerCase()
-      const bvnLast  = (r.lastName  ?? '').trim().toLowerCase()
-      const formFirst = String(firstName).trim().toLowerCase()
-      const formLast  = String(lastName).trim().toLowerCase()
-      if (bvnFirst !== formFirst || bvnLast !== formLast) {
-        return NextResponse.json({ error: `BVN belongs to ${r.firstName} ${r.lastName}. Your form name does not match — update or remove the BVN.` }, { status: 400 })
-      }
-    } catch (e: any) {
-      return NextResponse.json({ error: e?.message ?? 'BVN could not be verified — try again or leave it blank' }, { status: 400 })
-    }
+  if (bvn && !/^\d{11}$/.test(String(bvn))) {
+    return NextResponse.json({ error: 'BVN must be 11 digits' }, { status: 400 })
   }
 
   const invite = ref ? await prisma.customerInvite.findUnique({ where: { token: ref } }) : null
@@ -120,6 +105,26 @@ export async function POST(req: NextRequest) {
   // One identity, one account: the phone/email must not belong to any account.
   const conflict = await findIdentityConflict(prisma, { phone: String(phone), email: String(email) })
   if (conflict) return identityConflictResponse(conflict)
+
+  // If BVN was supplied, verify it matches the name with Paystack Identity. Optional: empty is skipped.
+  // After the email gate and on the same budget as /api/identity/bvn, because the mismatch error names
+  // the BVN's owner, so this would otherwise be an open way to look anyone up.
+  if (bvn) {
+    const refused = await refuseBvnLookup(normEmail, clientIp(req))
+    if (refused) return NextResponse.json({ error: refused.error }, { status: refused.status })
+    try {
+      const r = await resolveBvn(String(bvn))
+      const bvnFirst = (r.firstName ?? '').trim().toLowerCase()
+      const bvnLast  = (r.lastName  ?? '').trim().toLowerCase()
+      const formFirst = String(firstName).trim().toLowerCase()
+      const formLast  = String(lastName).trim().toLowerCase()
+      if (bvnFirst !== formFirst || bvnLast !== formLast) {
+        return NextResponse.json({ error: `BVN belongs to ${r.firstName} ${r.lastName}. Your form name does not match — update or remove the BVN.` }, { status: 400 })
+      }
+    } catch (e) {
+      return NextResponse.json({ error: e instanceof Error && e.message ? e.message : 'BVN could not be verified — try again or leave it blank' }, { status: 400 })
+    }
+  }
 
   const hashed = await bcrypt.hash(password, 10)
 

@@ -84,7 +84,7 @@ function EnrollContent() {
   const [state, setState] = useState('')
   const [lga, setLga] = useState('')
   const [bvn, setBvn] = useState('')
-  const [bvnResult, setBvnResult] = useState<null | { ok: boolean; firstName?: string; lastName?: string; dob?: string | null; error?: string }>(null)
+  const [bvnResult, setBvnResult] = useState<null | { ok: boolean; firstName?: string; lastName?: string; error?: string }>(null)
   const [bvnChecking, setBvnChecking] = useState(false)
   const [nokName, setNokName] = useState('')
   const [nokRelation, setNokRelation] = useState('Spouse')
@@ -137,7 +137,8 @@ function EnrollContent() {
 
   useEffect(() => {
     setBvnResult(null)
-    if (bvn.length !== 11) return
+    // The server only looks up a BVN for a confirmed email, which the contact screen has already done.
+    if (bvn.length !== 11 || !emailVerified) return
     const ctrl = new AbortController()
     setBvnChecking(true)
     const t = setTimeout(async () => {
@@ -145,11 +146,11 @@ function EnrollContent() {
         const r = await fetch('/api/identity/bvn', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bvn }),
+          body: JSON.stringify({ bvn, email }),
           signal: ctrl.signal,
         })
         const d = await r.json()
-        setBvnResult(d.ok ? { ok: true, firstName: d.firstName, lastName: d.lastName, dob: d.dob } : { ok: false, error: d.error ?? 'We couldn’t check this BVN.' })
+        setBvnResult(d.ok ? { ok: true, firstName: d.firstName, lastName: d.lastName } : { ok: false, error: d.error ?? 'We couldn’t check this BVN.' })
       } catch (e) {
         if ((e as { name?: string })?.name !== 'AbortError') setBvnResult({ ok: false, error: 'No connection. We couldn’t check your BVN.' })
       } finally {
@@ -157,7 +158,7 @@ function EnrollContent() {
       }
     }, 500)
     return () => { ctrl.abort(); clearTimeout(t) }
-  }, [bvn])
+  }, [bvn, email, emailVerified])
 
   useEffect(() => () => { streamRef.current?.getTracks().forEach(t => t.stop()) }, [])
 
