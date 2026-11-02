@@ -104,6 +104,12 @@ export function currentSlot(slots: Slot[], today: string, weekly: boolean): Slot
   return slots.find(s => s.key <= today && today <= slotEndKey(s, weekly))
 }
 
+/** The slot key for a date on a calendar: the day itself, or the first day of the week holding it. Null if outside the plan. */
+export function slotKeyForDate(slots: Pick<Slot, 'key'>[], date: string, weekly: boolean): string | null {
+  const slot = slots.find(s => s.key <= date && date <= (weekly ? keyPlusDays(s.key, 6) : s.key))
+  return slot?.key ?? null
+}
+
 /** Monday–Sunday of the calendar week containing `now`, as dates. */
 export function currentWeekDays(now = new Date()): Date[] {
   const monday = addDays(now, -((now.getDay() + 6) % 7))

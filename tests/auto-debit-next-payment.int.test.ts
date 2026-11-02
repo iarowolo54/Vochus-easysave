@@ -51,6 +51,7 @@ before(async () => {
 })
 
 after(async () => {
+  await prisma.transaction.deleteMany({ where: { planId: { in: planIds } } })
   await prisma.planDayCoverage.deleteMany({ where: { savingsPlanId: { in: planIds } } })
   await prisma.autoDebitMandate.deleteMany({ where: { savingsPlanId: { in: planIds } } })
   await prisma.savingsPlan.deleteMany({ where: { id: { in: planIds } } })
@@ -73,6 +74,12 @@ test('next payment is null when every remaining day is covered', async () => {
     await prisma.planDayCoverage.create({ data: { savingsPlanId: plan.id, coversKey: watKey(new Date(Date.now() + i * DAY)), ref: `r-${rid}-a${i}` } })
   }
   assert.equal((await get(plan.id)).body.nextPaymentAt, null)
+})
+
+test('next payment skips a day already funded by plain deposits', async () => {
+  const { plan, run } = await seed(30)
+  await prisma.transaction.create({ data: { ref: `dep-${rid}-1`, agentId, customerId: customer.id, planId: plan.id, type: 'saving', amount: 100, status: 'Done', createdAt: new Date(run.getTime() + 60_000) } })
+  assert.equal((await get(plan.id)).body.nextPaymentAt, new Date(run.getTime() + DAY).toISOString())
 })
 
 test('a cancelled mandate has no next payment', async () => {

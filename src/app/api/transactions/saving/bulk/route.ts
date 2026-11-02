@@ -7,6 +7,37 @@ import { insufficientResponse, InsufficientFundsError, money } from '@/lib/walle
 import { debitAgentBalance } from '@/lib/wallet-debit'
 import { creditRegistrationReward } from '@/lib/reward'
 import { selectActivePlan } from '@/lib/saving-plan'
+import { checkBulkSelection, liveSlots } from '@/lib/bulk-savings'
+import { isEligiblePlan, perSlotAmount } from '@/lib/catchup'
+
+class DaysTakenError extends Error {}
+
+/** The calendar an agent picks from on an online plan. Offline plans use paid-dates, as they always have. */
+export async function GET(req: NextRequest) {
+  const session = await getServerSession(authOptions)
+  if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const agent = await prisma.agent.findFirst({ where: { agentId: (session.user as { agentId?: string }).agentId }, select: { id: true } })
+  if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
+
+  const planId = req.nextUrl.searchParams.get('planId')
+  if (!planId) return NextResponse.json({ error: 'planId required' }, { status: 400 })
+
+  // Own-the-data: only a plan belonging to one of this agent's customers.
+  const plan = await prisma.savingsPlan.findFirst({ where: { id: planId, customer: { agentId: agent.id } } })
+  if (!plan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 })
+  if (plan.source !== 'self') return NextResponse.json({ online: false })
+
+  const now = new Date()
+  const slots = await liveSlots(prisma, plan, now)
+  return NextResponse.json({
+    online: true,
+    eligible: isEligiblePlan(plan) && plan.maturityDate.getTime() > now.getTime(),
+    weekly: plan.cadence === 'weekly',
+    perSlot: money(perSlotAmount(plan)),
+    slots: slots.map(s => ({ key: s.key, state: s.state })),
+  })
+}
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -35,8 +66,17 @@ export async function POST(req: NextRequest) {
   const plan = await prisma.savingsPlan.findUnique({ where: { id: selected.plan.id } })
   if (!plan) return NextResponse.json({ error: 'No active savings plan' }, { status: 400 })
 
+  // Online plans follow the same rules as the customer's own Bulk Savings: WAT slot keys, a week costs 7 days,
+  // and the days bought are recorded so auto-debit skips them. Offline plans stay per date, stamped with that date.
+  const online = plan.source === 'self'
+  if (online) {
+    const keys = rawDates.filter((k: unknown): k is string => typeof k === 'string')
+    const check = await checkBulkSelection(prisma, plan, keys.length === rawDates.length ? keys : [], new Date())
+    if (!check.ok) return NextResponse.json({ error: check.error }, { status: check.status })
+  }
+
   const numDays = rawDates.length
-  const dailyAmt = money(plan.dailyAmount)
+  const dailyAmt = online ? money(perSlotAmount(plan)) : money(plan.dailyAmount)
   const totalAmt = money(dailyAmt * numDays)
 
   const priorSavings = await prisma.transaction.count({ where: { customerId: customer.id, type: 'saving' } })
@@ -55,7 +95,7 @@ export async function POST(req: NextRequest) {
       const txns: Awaited<ReturnType<typeof prisma.transaction.create>>[] = []
       for (let i = 0; i < dates.length; i++) {
         const walletAfter = money(agent.walletBalance - dailyAmt * (i + 1))
-        txns.push(await tx.transaction.create({
+        const created = await tx.transaction.create({
           data: {
             ref: `TXN-${String(9000 + txnCount + i + 1)}`,
             agentId: agent.id,
@@ -67,15 +107,27 @@ export async function POST(req: NextRequest) {
             status: 'Done',
             walletAfter,
             // SR-3: online (self) plans ignore client dates; createdAt defaults to now.
-            ...(plan.source === 'self' ? {} : { createdAt: dates[i] }),
+            ...(online ? {} : { createdAt: dates[i] }),
           },
-        }))
+        })
+        txns.push(created)
+        if (online) {
+          const coversKey = rawDates[i] as string
+          const row = await tx.planDayCoverage.upsert({
+            where: { savingsPlanId_coversKey: { savingsPlanId: plan.id, coversKey } },
+            create: { savingsPlanId: plan.id, coversKey, ref: created.ref },
+            update: {},
+          })
+          // Paid for since the check above. Nothing has left the wallet yet, so refuse rather than overlap.
+          if (row.ref !== created.ref) throw new DaysTakenError()
+        }
       }
       await tx.savingsPlan.update({ where: { id: plan.id }, data: { balance: { increment: totalAmt } } })
       return txns
     })
   } catch (e) {
     if (e instanceof InsufficientFundsError) return insufficientResponse(e)
+    if (e instanceof DaysTakenError) return NextResponse.json({ error: 'One of these days has just been paid for. Check the calendar and try again' }, { status: 409 })
     throw e
   }
 

@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildSlots, currentSlot, dayDeposits } from '../src/lib/savings-card'
+import { buildSlots, currentSlot, dayDeposits, slotKeyForDate } from '../src/lib/savings-card'
 
 // Local noon, serialised to ISO, so the local-time day key is stable in any timezone.
 const at = (y: number, m: number, day: number) => new Date(y, m - 1, day, 12).toISOString()
@@ -133,4 +133,19 @@ test('currentSlot: finds the slot holding today, for days and weeks', () => {
   assert.equal(currentSlot(buildSlots(daily, [], [], now), '2026-11-05', false)?.key, '2026-11-05')
   assert.equal(currentSlot(buildSlots(weekly, [], [], now), '2026-11-05', true)?.key, '2026-11-01')
   assert.equal(currentSlot(buildSlots(daily, [], [], now), '2027-01-01', false), undefined)
+})
+
+test('slotKeyForDate: a daily plan maps a date to itself, only inside the plan', () => {
+  const slots = buildSlots(daily, [], [], now)
+  assert.equal(slotKeyForDate(slots, '2026-11-03', false), '2026-11-03')
+  assert.equal(slotKeyForDate(slots, '2026-12-25', false), null)
+})
+
+test('slotKeyForDate: a weekly plan maps any day to the week holding it', () => {
+  const slots = buildSlots(weekly, [], [], now)
+  assert.equal(slotKeyForDate(slots, '2026-11-01', true), '2026-11-01')
+  assert.equal(slotKeyForDate(slots, '2026-11-07', true), '2026-11-01')
+  assert.equal(slotKeyForDate(slots, '2026-11-08', true), '2026-11-08')
+  assert.equal(slotKeyForDate(slots, '2026-10-31', true), null)
+  assert.equal(slotKeyForDate(slots, '2026-11-22', true), null)
 })

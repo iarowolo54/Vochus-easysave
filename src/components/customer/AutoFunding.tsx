@@ -122,12 +122,10 @@ export default function AutoFunding({ plan, hideAmounts }: { plan: AutoFundingPl
             <dt className="ui-row-main ui-row-sub ui-summary-key">We save</dt>
             <dd className="ui-row-value">{amount(mandate.amountPerCycle)} {perCycle(plan.cadence)}</dd>
           </div>
-          {mandate.nextPaymentAt && (
-            <div className="ui-row">
-              <dt className="ui-row-main ui-row-sub ui-summary-key">Next payment</dt>
-              <dd className="ui-row-value">{formatDate(mandate.nextPaymentAt)}</dd>
-            </div>
-          )}
+          <div className="ui-row">
+            <dt className="ui-row-main ui-row-sub ui-summary-key">Next payment</dt>
+            <dd className="ui-row-value">{mandate.nextPaymentAt ? formatDate(mandate.nextPaymentAt) : 'Nothing left to charge'}</dd>
+          </div>
           {card && (
             <div className="ui-row">
               <dt className="ui-row-main ui-row-sub ui-summary-key">Card</dt>

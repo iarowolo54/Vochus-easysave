@@ -290,7 +290,7 @@ export default function CustomerDashboard() {
                 </p>
               </>
             )}
-            {plan && !ended && !pending && <TodayStatus weekly={weekly} deposits={recentForStatus} covered={currentSlot(slots, today, weekly)?.coveredOnly} />}
+            {plan && !ended && !pending && <TodayStatus weekly={weekly} deposits={recentForStatus} covered={currentSlot(slots, today, weekly)?.coveredOnly} paidAhead={slots.filter(s => s.key > today && s.coveredOnly).length} />}
           </section>
         )}
 

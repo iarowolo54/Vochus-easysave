@@ -246,7 +246,7 @@ function MonthCalendar({ slots, ended, plan, onPick, picker }: { slots: Slot[]; 
           <span className="ui-cal-title">{label}</span>
           <span className="ui-cal-sub">
             {months.length > 1 && `Month ${idx + 1} of ${months.length} · `}
-            {shortDate(new Date(plan.startDate))} – {shortDate(new Date(plan.maturityDate))}
+            {shortDate(slots[0].date)} – {shortDate(slots[slots.length - 1].date)}
           </span>
         </div>
         <button type="button" className="ui-icon-btn ui-icon-btn--soft" onClick={() => setIdx(i => i + 1)} disabled={idx === months.length - 1} aria-label="Next month">

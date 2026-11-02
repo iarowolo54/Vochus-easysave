@@ -10,10 +10,12 @@ type Props = {
   deposits: Deposit[]
   /** The current day (or week) is paid for through Bulk Savings, so it has coverage but no deposit of its own. */
   covered?: boolean
+  /** Days (or weeks) after this one already paid for. */
+  paidAhead?: number
 }
 
 /** Answers "did my money get recorded?" — the first thing a cash saver wants to know. */
-export default function TodayStatus({ weekly, deposits, covered }: Props) {
+export default function TodayStatus({ weekly, deposits, covered, paidAhead = 0 }: Props) {
   const period = weekly ? 'this week' : 'today'
   if (deposits.length === 0 && covered) {
     return (
@@ -26,6 +28,7 @@ export default function TodayStatus({ weekly, deposits, covered }: Props) {
     return (
       <p className="ui-today">
         <Icons.pending size={16} aria-hidden="true" /> Nothing saved yet {period}
+        {paidAhead > 0 && `. ${paidAhead} ${weekly ? 'week' : 'day'}${paidAhead === 1 ? '' : 's'} paid ahead.`}
       </p>
     )
   }

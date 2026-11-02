@@ -4,9 +4,7 @@ import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { createPaymentIntent } from '@/lib/payment-intent'
-import { buildSlotsWat, dayDeposits } from '@/lib/savings-card'
-import { isEligiblePlan, validateSelection } from '@/lib/catchup'
-import { inFlightKeys } from '@/lib/pay-ahead'
+import { checkBulkSelection } from '@/lib/bulk-savings'
 
 // Bulk Savings: a customer pays for missed, today's or upcoming days on their own
 // self-service plan. The server validates the selected day-keys against the
@@ -29,32 +27,9 @@ export async function POST(req: NextRequest) {
   const plan = await prisma.savingsPlan.findFirst({ where: { id: planId, customerId: customer.id } })
   if (!plan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 })
 
-  if (!isEligiblePlan(plan)) return NextResponse.json({ error: 'Plan is not eligible for catch-up' }, { status: 400 })
-
-  // Build the plan's live slots from its actual deposits + existing coverage.
-  const [deposits, coverage] = await Promise.all([
-    prisma.transaction.findMany({ where: { planId: plan.id, type: 'saving', status: 'Done' }, select: { createdAt: true, ref: true } }),
-    prisma.planDayCoverage.findMany({ where: { savingsPlanId: plan.id }, select: { coversKey: true, ref: true } }),
-  ])
-  const slots = buildSlotsWat(
-    { startDate: plan.startDate.toISOString(), maturityDate: plan.maturityDate.toISOString(), periodDays: plan.periodDays, cadence: plan.cadence },
-    dayDeposits(deposits, coverage.map(c => c.ref)).map(d => d.createdAt.toISOString()),
-    coverage.map(c => c.coversKey),
-  )
-
-  const result = validateSelection(plan, slots, keys)
-  if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 })
-  const amount = result.total
-
-  // A day auto-debit is charging right now would otherwise be paid for twice.
-  const processing = await prisma.autoDebitAttempt.findMany({
-    where: { savingsPlanId: plan.id, status: 'processing' },
-    select: { cycleDate: true },
-  })
-  const charging = new Set(inFlightKeys(plan, processing))
-  if (keys.some(k => charging.has(k))) {
-    return NextResponse.json({ error: 'Your card is being charged for one of these days. Remove it, or try again shortly.' }, { status: 409 })
-  }
+  const check = await checkBulkSelection(prisma, plan, keys, new Date())
+  if (!check.ok) return NextResponse.json({ error: check.error }, { status: check.status })
+  const amount = check.total
 
   const email = customer.email ?? `${customer.customerId.toLowerCase()}@vochus.ng`
   const rand = randomBytes(9).toString('base64url').toUpperCase()

@@ -8,6 +8,7 @@ import { blockMinus, nonNegativeString } from '@/lib/numeric'
 import { avatarTint } from '@/lib/avatar'
 import { waLink } from '@/lib/whatsapp'
 import { displayName, formatDate, formatNaira, formatTime } from '@/lib/format'
+import { slotKeyForDate } from '@/lib/savings-card'
 import { addDays, isoDate, parseDateInput, today } from '@/lib/plan-dates'
 import BottomSheet from '@/components/ui/BottomSheet'
 import EmptyState from '@/components/ui/EmptyState'
@@ -113,6 +114,8 @@ function SavingsContent() {
   const [bulkMode, setBulkMode] = useState(false)
   const [selectedDates, setSelectedDates] = useState<string[]>([])
   const [paidDates, setPaidDates] = useState<string[]>([])
+  // Online plans price and pick by slot, from the server's calendar. Null for offline plans.
+  const [onlineCal, setOnlineCal] = useState<OnlineCalendar | null>(null)
   const [planStartDate, setPlanStartDate] = useState<string | null>(null)
   const [paidDatesLoading, setPaidDatesLoading] = useState(false)
   const [calendarView, setCalendarView] = useState<{ year: number; month: number }>(() => {
@@ -134,17 +137,26 @@ function SavingsContent() {
   }, [refreshKey])
 
   useEffect(() => {
-    if (!planId) { setPlanStartDate(null); setPaidDates([]); setSelectedDates([]) }
+    if (!planId) { setPlanStartDate(null); setPaidDates([]); setSelectedDates([]); setOnlineCal(null) }
     if (!bulkMode || !planId) return
     setPaidDatesLoading(true)
     const n = new Date()
     setCalendarView({ year: n.getFullYear(), month: n.getMonth() })
-    fetch(`/api/transactions/saving/paid-dates?planId=${planId}`)
+    fetch(`/api/transactions/saving/bulk?planId=${planId}`)
       .then(r => r.json())
-      .then(d => {
+      .then(async (cal: { online?: boolean } & Partial<OnlineCalendar>) => {
+        setSelectedDates([])
+        if (cal.online) {
+          const online = cal as OnlineCalendar
+          setOnlineCal(online)
+          setPaidDates(online.slots.filter(s => s.state === 'saved').map(s => s.key))
+          setPlanStartDate(online.slots[0]?.key ?? null)
+          return
+        }
+        setOnlineCal(null)
+        const d = await fetch(`/api/transactions/saving/paid-dates?planId=${planId}`).then(r => r.json())
         setPaidDates(d.paidDates ?? [])
         setPlanStartDate(d.planStartDate ?? null)
-        setSelectedDates([])
       })
       .catch(() => setPlanStartDate(null))
       .finally(() => setPaidDatesLoading(false))
@@ -418,7 +430,8 @@ function SavingsContent() {
   }
 
   const redeemed = selected?.planStatus === 'Redeemed'
-  const bulkTotal = (plan?.dailyAmount ?? 0) * selectedDates.length
+  const bulkTotal = (onlineCal?.perSlot ?? plan?.dailyAmount ?? 0) * selectedDates.length
+  const bulkUnit = onlineCal?.weekly ? 'week' : 'day'
   const payAmount = bulkMode ? bulkTotal : parseFloat(amount || '0')
   const short = walletBalance !== null && payAmount > 0 && payAmount > walletBalance
   const alreadyPaid = !bulkMode && !recordDate && paidToday && paidToday.length > 0 ? paidToday : null
@@ -451,7 +464,7 @@ function SavingsContent() {
               <p className="ui-row-sub">for <strong className="ag-done-name">{displayName(lastReceipt.customer)}</strong></p>
 
               <dl className="ag-done-rows">
-                {lastDays > 1 && <div><dt>Days paid</dt><dd>{lastDays}</dd></div>}
+                {lastDays > 1 && <div><dt>{onlineCal?.weekly ? 'Weeks paid' : 'Days paid'}</dt><dd>{lastDays}</dd></div>}
                 <div><dt>New balance</dt><dd>{formatNaira(lastReceipt.balance)}</dd></div>
                 <div><dt>Paid in</dt><dd>{lastReceipt.method}</dd></div>
                 {lastReceipt.goal && <div><dt>Plan</dt><dd>{lastReceipt.goal}</dd></div>}
@@ -582,6 +595,7 @@ function SavingsContent() {
                       view={calendarView}
                       setView={setCalendarView}
                       dailyAmount={plan?.dailyAmount ?? null}
+                      online={onlineCal}
                     />
                   ) : (
                     <div className="ag-pay-amount">
@@ -688,7 +702,7 @@ function SavingsContent() {
       <BottomSheet open={pinModal} onClose={() => setPinModal(false)} title="Confirm with your PIN">
         <p className="ag-sheet-text">
           Record <strong>{formatNaira(payAmount, { minor: false })}</strong>
-          {bulkMode ? ` (${selectedDates.length} day${selectedDates.length === 1 ? '' : 's'})` : ''} for{' '}
+          {bulkMode ? ` (${selectedDates.length} ${bulkUnit}${selectedDates.length === 1 ? '' : 's'})` : ''} for{' '}
           <strong>{displayName(`${selected?.firstName ?? ''} ${selected?.lastName ?? ''}`)}</strong>
         </p>
         {alreadyPaid && <p className="ag-sheet-warn"><Icons.error size={16} aria-hidden="true" /> They already paid today. Make sure this is new cash.</p>}
@@ -715,7 +729,9 @@ function toDS(y: number, m: number, d: number) {
   return `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`
 }
 
-function DayPicker({ loading, planStartDate, paidDates, selectedDates, setSelectedDates, view, setView, dailyAmount }: {
+type OnlineCalendar = { eligible: boolean; weekly: boolean; perSlot: number; slots: { key: string; state: string }[] }
+
+function DayPicker({ loading, planStartDate, paidDates, selectedDates, setSelectedDates, view, setView, dailyAmount, online }: {
   loading: boolean
   planStartDate: string | null
   paidDates: string[]
@@ -724,9 +740,16 @@ function DayPicker({ loading, planStartDate, paidDates, selectedDates, setSelect
   view: { year: number; month: number }
   setView: (fn: (v: { year: number; month: number }) => { year: number; month: number }) => void
   dailyAmount: number | null
+  online: OnlineCalendar | null
 }) {
   if (loading) return <div className="ag-cal-state"><span className="ui-spinner" aria-label="Loading the plan’s days" /></div>
   if (!planStartDate) return <p className="ui-note ui-note--center">This customer has no active plan.</p>
+  if (online && !online.eligible) return <p className="ui-note ui-note--center">Bulk Savings isn’t available on this online plan. Record a single saving instead.</p>
+
+  // On an online plan a date stands for its slot: a tap on any day of a week picks that whole week.
+  const unit = online?.weekly ? 'week' : 'day'
+  const slotOf = (ds: string) => (online ? slotKeyForDate(online.slots, ds, online.weekly) : ds)
+  const slotPrice = online?.perSlot ?? dailyAmount
 
   const { year, month } = view
   const today = new Date()
@@ -753,7 +776,7 @@ function DayPicker({ loading, planStartDate, paidDates, selectedDates, setSelect
   return (
     <div className="ag-cal">
       <p className="ui-row-sub ag-cal-hint">
-        Tap each day they are paying for{dailyAmount ? ` (${formatNaira(dailyAmount, { minor: false })} a day)` : ''}.
+        {online?.weekly ? 'Tap any day in each week they are paying for' : 'Tap each day they are paying for'}{slotPrice ? ` (${formatNaira(slotPrice, { minor: false })} a ${unit})` : ''}.
       </p>
       <div className="ui-cal-head">
         <button type="button" className="ui-icon-btn ui-icon-btn--soft" onClick={() => nav(-1)} disabled={!canGoPrev} aria-label="Previous month">
@@ -771,9 +794,10 @@ function DayPicker({ loading, planStartDate, paidDates, selectedDates, setSelect
         {cells.map((day, idx) => {
           if (!day) return <li key={idx} aria-hidden="true" />
           const ds = toDS(year, month, day)
-          const beforeStart = new Date(year, month, day) < planStart
-          const isPaid = paidSet.has(ds)
-          const isSel = selectedSet.has(ds)
+          const slot = slotOf(ds)
+          const beforeStart = new Date(year, month, day) < planStart || slot === null
+          const isPaid = slot !== null && paidSet.has(slot)
+          const isSel = slot !== null && selectedSet.has(slot)
           const isToday = ds === todayStr
           const label = new Date(year, month, day).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
           const cls = ['ui-cal-day', 'ag-cal-day',
@@ -788,7 +812,7 @@ function DayPicker({ loading, planStartDate, paidDates, selectedDates, setSelect
                 disabled={beforeStart || isPaid}
                 aria-pressed={isPaid ? undefined : isSel}
                 aria-label={`${label}${isPaid ? ', already paid' : beforeStart ? ', before the plan started' : ''}${isToday ? ', today' : ''}`}
-                onClick={() => setSelectedDates(prev => prev.includes(ds) ? prev.filter(x => x !== ds) : [...prev, ds])}
+                onClick={() => { if (slot) setSelectedDates(prev => prev.includes(slot) ? prev.filter(x => x !== slot) : [...prev, slot]) }}
               >
                 {day}
               </button>
@@ -803,7 +827,7 @@ function DayPicker({ loading, planStartDate, paidDates, selectedDates, setSelect
       <div className="ag-cal-total">
         <div>
           <span className="ui-row-sub ui-block">
-            {sorted.length === 0 ? 'No days chosen yet' : `${sorted.length} day${sorted.length === 1 ? '' : 's'}`}
+            {sorted.length === 0 ? `No ${unit}s chosen yet` : `${sorted.length} ${unit}${sorted.length === 1 ? '' : 's'}`}
           </span>
           {sorted.length > 0 && (
             <span className="ag-cal-dates">
@@ -811,8 +835,8 @@ function DayPicker({ loading, planStartDate, paidDates, selectedDates, setSelect
             </span>
           )}
         </div>
-        {dailyAmount && sorted.length > 0 && (
-          <span className="ui-amount ag-cal-sum">{formatNaira(dailyAmount * sorted.length, { minor: false })}</span>
+        {slotPrice && sorted.length > 0 && (
+          <span className="ui-amount ag-cal-sum">{formatNaira(slotPrice * sorted.length, { minor: false })}</span>
         )}
       </div>
     </div>

@@ -69,3 +69,13 @@ test('validateSelection: the 90-slot cap counts upcoming slots too', () => {
   assert.equal(validateSelection({ dailyAmount: 100 }, slots, slots.slice(0, 90).map(s => s.key)).ok, true)
   assert.equal(validateSelection({ dailyAmount: 100 }, slots, slots.slice(0, 91).map(s => s.key)).ok, false)
 })
+
+test('validateSelection: errors use readable dates and Bulk Savings wording', () => {
+  const slots = [slot('2026-01-01', 'saved')]
+  const r = validateSelection({ cadence: 'daily', dailyAmount: 100 }, slots, ['2026-01-01'])
+  assert.equal(r.ok, false)
+  if (!r.ok) {
+    assert.match(r.error, /1 Jan/)
+    assert.doesNotMatch(r.error, /2026-01-01|catch/i)
+  }
+})

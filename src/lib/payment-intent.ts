@@ -11,6 +11,10 @@ import { prisma } from './prisma'
 
 export const INTENT_PENDING = 'Pending'
 export const INTENT_DONE = 'Done'
+/** Money arrived that can't be credited as it stands (wrong currency, closed plan). Staff resolve it from the audit log. */
+export const INTENT_REVIEW = 'Review'
+/** Audit action for money that arrived but wasn't credited. Staff work from these rows. */
+export const REVIEW_ACTION = 'payment_needs_manual_review'
 
 export interface IntentInput {
   ref: string

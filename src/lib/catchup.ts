@@ -5,7 +5,7 @@
 // from today; the chosen day-keys are recorded as coverage, which interest never reads
 // and auto-debit uses to skip days already paid. All amounts are computed server-side
 // from the plan rate — never trusted from the client.
-import type { Slot } from './savings-card'
+import { keyPlusDays, type Slot } from './savings-card'
 
 // Kept local (same maths as `money` in wallet-guard) so this module stays client-safe:
 // wallet-guard imports next/server, which must not be pulled into the customer UI bundle.
@@ -42,16 +42,22 @@ export type SelectionResult = { ok: true; total: number } | { ok: false; error: 
  * the server-computed total (perSlotAmount * count, rounded) or a reason for rejection.
  */
 export function validateSelection(plan: RatePlan, slots: Slot[], keys: string[]): SelectionResult {
-  if (!Array.isArray(keys) || keys.length === 0) return { ok: false, error: 'No days selected' }
-  if (keys.length > MAX_KEYS) return { ok: false, error: `At most ${MAX_KEYS} days` }
-  if (new Set(keys).size !== keys.length) return { ok: false, error: 'Duplicate day selected' }
+  if (!Array.isArray(keys) || keys.length === 0) return { ok: false, error: 'Pick at least one day' }
+  if (keys.length > MAX_KEYS) return { ok: false, error: `You can pay for up to ${MAX_KEYS} at a time` }
+  if (new Set(keys).size !== keys.length) return { ok: false, error: 'The same day was picked twice' }
 
   const open = new Set(selectableKeys(slots))
   for (const key of keys) {
-    if (!open.has(key)) return { ok: false, error: `Day ${key} can't be paid for: it's already saved or isn't part of this plan` }
+    if (!open.has(key)) return { ok: false, error: `${readableKey(key)} can’t be paid for: it’s already paid or isn’t part of this plan` }
   }
 
   return { ok: true, total: money(perSlotAmount(plan) * keys.length) }
+}
+
+/** A slot key as a date a customer can read: "3 Nov". */
+export function readableKey(key: string): string {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(key)) return 'That day'
+  return new Date(`${key}T12:00:00Z`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', timeZone: 'UTC' })
 }
 
 /** Keys of the slots a customer may pick: anything not yet saved or covered. */
@@ -63,21 +69,41 @@ export function missedKeys(slots: Slot[]): string[] {
   return slots.filter(s => s.state === 'missed').map(s => s.key)
 }
 
-/** True once "select all missed" has nothing left to add: all are picked, or the cap is reached. */
+/** True once "select all missed" has nothing left to add: all are picked, or the cap stopped it partway. */
 export function allMissedChosen(selected: Set<string>, missed: string[], max: number): boolean {
-  if (selected.size === 0) return false
-  return selected.size >= max || missed.every(k => selected.has(k))
+  if (missed.length === 0) return false
+  if (missed.every(k => selected.has(k))) return true
+  return selected.size >= max && missed.some(k => selected.has(k))
 }
 
-/** "Select all missed": adds missed slots to the picks, or clears once they're all in. Never adds a future slot. */
+/** "Select all missed": adds missed slots to the picks, or takes them back out. Future picks are never touched. */
 export function toggleAllMissed(selected: Set<string>, missed: string[], max: number): Set<string> {
-  if (allMissedChosen(selected, missed, max)) return new Set()
   const next = new Set(selected)
+  if (allMissedChosen(selected, missed, max)) {
+    for (const key of missed) next.delete(key)
+    return next
+  }
   for (const key of missed) {
     if (next.size >= max) break
     next.add(key)
   }
   return next
+}
+
+/** What a weekly selection actually buys, above the pay button: "Weeks 2–4 · 9 Nov – 29 Nov". Empty for daily plans. */
+export function slotSummary(slots: Slot[], selected: Set<string>, weekly: boolean): string {
+  if (!weekly) return ''
+  const picked = slots.filter(s => selected.has(s.key))
+  if (picked.length === 0) return ''
+  const runs: Slot[][] = []
+  for (const slot of picked) {
+    const run = runs[runs.length - 1]
+    if (run && run[run.length - 1].index === slot.index - 1) run.push(slot)
+    else runs.push([slot])
+  }
+  const numbers = runs.map(r => (r.length === 1 ? `${r[0].index}` : `${r[0].index}–${r[r.length - 1].index}`)).join(', ')
+  const dates = runs.map(r => `${readableKey(r[0].key)} – ${readableKey(keyPlusDays(r[r.length - 1].key, 6))}`).join(', ')
+  return `${picked.length === 1 ? 'Week' : 'Weeks'} ${numbers} · ${dates}`
 }
 
 /** Total for `count` chosen slots, using the same rate the server charges. */

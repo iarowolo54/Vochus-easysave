@@ -711,6 +711,8 @@ html[data-text-size="large"] {
 .ui-cal-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--ui-s2); }
 .ui-cal-title { font-family: var(--ui-font-display); font-size: var(--ui-fs-md); font-weight: 700; }
 .ui-cal-grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 6px; list-style: none; padding: 0; margin: 0 0 6px; }
+/* Weeks have no weekday columns, so wrap to keep each tile a full 44px at 360px. */
+.ui-cal-grid--weeks { grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); }
 .ui-cal-dow { text-align: center; font-size: var(--ui-fs-xs); font-weight: 600; color: var(--ui-ink-2); }
 .ui-cal-day {
   position: relative; width: 100%; max-width: 44px; aspect-ratio: 1; margin: 0 auto; border-radius: 50%;

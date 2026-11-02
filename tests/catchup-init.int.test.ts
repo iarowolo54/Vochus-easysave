@@ -15,6 +15,7 @@ const customerIds: string[] = []
 const planIds: string[] = []
 const refs: string[] = []
 const mandateIds: string[] = []
+const redemptionIds: string[] = []
 
 let currentToken = ''
 const require_ = createRequire(import.meta.url)
@@ -79,6 +80,7 @@ before(async () => {
 })
 
 after(async () => {
+  await prisma.earlyRedemption.deleteMany({ where: { id: { in: redemptionIds } } })
   await prisma.autoDebitAttempt.deleteMany({ where: { savingsPlanId: { in: planIds } } })
   await prisma.autoDebitMandate.deleteMany({ where: { id: { in: mandateIds } } })
   await prisma.transaction.deleteMany({ where: { planId: { in: planIds } } })
@@ -236,4 +238,50 @@ test('a plan started 00:30 WAT: keys are WAT days whatever the server timezone',
   const dayBefore = new Date(start.getTime() - 3_600_000).toISOString().slice(0, 10)
   assert.notEqual(dayBefore, first)
   assert.equal((await call(c, plan.id, [dayBefore])).status, 400)
+})
+
+test('an open redemption: 409, and no intent', async () => {
+  const { c, plan } = await mk(17)
+  const r = await prisma.earlyRedemption.create({ data: { ref: `CUI-er-${rid}`, savingsPlanId: plan.id, balance: 0, status: 'AwaitingOTP', reason: 'x', netPayout: 0 } })
+  redemptionIds.push(r.id)
+  const [key] = await slotsByState(plan.id, 'upcoming')
+  assert.equal((await call(c, plan.id, [key])).status, 409)
+  assert.equal(await prisma.paymentIntent.count({ where: { planId: plan.id } }), 0)
+})
+
+test('a past-maturity plan: 400, even with slots left to pay', async () => {
+  const { c, plan } = await mk(18)
+  const [key] = await missedKeys(plan.id)
+  await prisma.savingsPlan.update({ where: { id: plan.id }, data: { maturityDate: new Date(Date.now() - 1000) } })
+  assert.equal((await call(c, plan.id, [key])).status, 400)
+})
+
+test('a checkout still open on a day: 409 with a readable date; other days work', async () => {
+  const { c, plan } = await mk(19)
+  const [a, b] = await slotsByState(plan.id, 'upcoming')
+  assert.equal((await call(c, plan.id, [a])).status, 200)
+  const r = await call(c, plan.id, [a, b])
+  assert.equal(r.status, 409)
+  assert.doesNotMatch(r.body.error, /\d{4}-\d{2}-\d{2}|catch/i)
+  assert.equal((await call(c, plan.id, [b])).status, 200)
+})
+
+test('a checkout gone stale no longer holds its days', async () => {
+  const { c, plan } = await mk(20)
+  const [a] = await slotsByState(plan.id, 'upcoming')
+  await prisma.paymentIntent.create({ data: { ref: `CUI-stale-${rid}`, actorType: 'customer', customerId: c.id, planId: plan.id, amount: 100, coversKeys: JSON.stringify([a]), createdAt: new Date(Date.now() - 61 * 60 * 1000) } })
+  assert.equal((await call(c, plan.id, [a])).status, 200)
+})
+
+test('a plain save intent holds nothing', async () => {
+  const { c, plan } = await mk(21)
+  const [a] = await slotsByState(plan.id, 'upcoming')
+  await prisma.paymentIntent.create({ data: { ref: `CUI-plain-${rid}`, actorType: 'customer', customerId: c.id, planId: plan.id, amount: 100 } })
+  assert.equal((await call(c, plan.id, [a])).status, 200)
+})
+
+test('errors name Bulk Savings, not catch-up', async () => {
+  const { c, plan } = await mk(22, 'self', 'monthly')
+  const r = await call(c, plan.id, ['2030-01-01'])
+  assert.match(r.body.error, /Bulk Savings/)
 })

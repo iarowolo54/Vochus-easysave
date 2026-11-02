@@ -11,6 +11,7 @@ import { NextRequest } from 'next/server'
 import { prisma } from '../src/lib/prisma'
 import { POST as webhook } from '../src/app/api/webhooks/paystack/route'
 import { runDueAutoDebits } from '../src/lib/auto-debit-run'
+import { settleIntentPayment } from '../src/lib/customer-settle'
 import { buildSlots, buildSlotsWat, dayDeposits, watKey } from '../src/lib/savings-card'
 
 const rid = Math.random().toString(36).slice(2, 8)
@@ -29,6 +30,8 @@ require_.cache[headersPath] = {
 } as unknown as NodeJS.Module
 
 const koboByRef = new Map<string, number>()
+const currencyByRef = new Map<string, string>()
+const duringVerify = new Map<string, () => Promise<void>>()
 const realFetch = globalThis.fetch
 globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
   const u = typeof url === 'string' ? url : url.toString()
@@ -38,8 +41,10 @@ globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
   }
   const m = u.match(/\/transaction\/verify\/([^/?]+)/)
   if (m) {
-    const amount = koboByRef.get(decodeURIComponent(m[1])) ?? 0
-    return new Response(JSON.stringify({ status: true, data: { status: 'success', amount, currency: 'NGN', channel: 'card' } }), { status: 200 })
+    const ref = decodeURIComponent(m[1])
+    await duringVerify.get(ref)?.()
+    const amount = koboByRef.get(ref) ?? 0
+    return new Response(JSON.stringify({ status: true, data: { status: 'success', amount, currency: currencyByRef.get(ref) ?? 'NGN', channel: 'card' } }), { status: 200 })
   }
   return realFetch(url as never, init)
 }) as typeof fetch
@@ -195,39 +200,247 @@ test('a plain save intent (no keys) credits, consumes, and writes no coverage', 
   assert.equal((await prisma.paymentIntent.findUniqueOrThrow({ where: { ref } })).status, 'Done')
 })
 
-test("another customer's intent is ignored: no coverage, and it stays pending", async () => {
+const auditFor = (action: string, ref: string) => prisma.auditLog.findFirst({ where: { action, details: { contains: ref } } })
+const balanceOf = async (planId: string) => (await prisma.savingsPlan.findUniqueOrThrow({ where: { id: planId } })).balance
+
+test("the intent's customer and plan win over Paystack metadata", async () => {
   const { c, plan } = await mk()
   const { c: other, plan: otherPlan } = await mk()
-  const ref = await mkIntent(other, otherPlan.id, tomorrowKeys(), 200)
-  await sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 20000 })
-  assert.equal(await prisma.planDayCoverage.count({ where: { savingsPlanId: { in: [plan.id, otherPlan.id] } } }), 0)
-  assert.equal((await prisma.paymentIntent.findUniqueOrThrow({ where: { ref } })).status, 'Pending')
+  const keys = tomorrowKeys()
+  const ref = await mkIntent(c, plan.id, keys, 200)
+  await sendWebhook(ref, { customerId: other.id, planId: otherPlan.id, kobo: 20000 })
+  await assertCreditedOnce(plan.id, ref, 200, keys)
+  assert.equal(await balanceOf(otherPlan.id), 0)
 })
 
-test('an amount that does not match the intent credits what was paid but buys no days', async () => {
+test('verify also credits the plan on the intent', async () => {
   const { c, plan } = await mk()
-  const ref = await mkIntent(c, plan.id, tomorrowKeys(), 200)
-  await sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 10000 })
-  assert.equal((await prisma.savingsPlan.findUniqueOrThrow({ where: { id: plan.id } })).balance, 100)
-  assert.equal(await prisma.planDayCoverage.count({ where: { savingsPlanId: plan.id } }), 0)
+  const keys = tomorrowKeys()
+  const ref = await mkIntent(c, plan.id, keys, 200)
+  assert.equal((await sendVerify(c, ref)).status, 200)
+  await assertCreditedOnce(plan.id, ref, 200, keys)
 })
 
-test('a wrong currency buys no days', async () => {
-  const { c, plan } = await mk()
-  const ref = await mkIntent(c, plan.id, tomorrowKeys(), 200)
-  await sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 20000, currency: 'USD' })
-  assert.equal(await prisma.planDayCoverage.count({ where: { savingsPlanId: plan.id } }), 0)
-})
-
-test('an intent for a different plan writes no coverage on the credited plan', async () => {
-  const { c, plan } = await mk()
-  const second = await prisma.savingsPlan.create({
-    data: { customerId: c.id, dailyAmount: 100, periodDays: 90, cadence: 'daily', goal: 'y', startDate: new Date(), maturityDate: new Date(Date.now() + 90 * DAY), balance: 0, status: 'Active', source: 'self' },
+for (const [route, pay] of [
+  ['webhook', (c: { id: string; customerId: string }, planId: string, ref: string, kobo: number, currency?: string) => sendWebhook(ref, { customerId: c.id, planId, kobo, currency })],
+  ['verify', (c: { id: string; customerId: string }, _planId: string, ref: string, kobo: number, currency?: string) => {
+    koboByRef.set(ref, kobo)
+    if (currency) currencyByRef.set(ref, currency)
+    return sendVerify(c, ref)
+  }],
+] as const) {
+  test(`${route}: a wrong amount credits what arrived, buys no days, and is audited`, async () => {
+    const { c, plan } = await mk()
+    const ref = await mkIntent(c, plan.id, tomorrowKeys(), 200)
+    await pay(c, plan.id, ref, 15000)
+    assert.equal(await balanceOf(plan.id), 150)
+    assert.equal(await prisma.planDayCoverage.count({ where: { savingsPlanId: plan.id } }), 0)
+    assert.ok(await auditFor('payment_amount_mismatch', ref))
+    assert.equal((await prisma.paymentIntent.findUniqueOrThrow({ where: { ref } })).status, 'Done')
   })
-  planIds.push(second.id)
-  const ref = await mkIntent(c, second.id, tomorrowKeys(), 200)
+
+  test(`${route}: a wrong currency is never credited and goes to manual review`, async () => {
+    const { c, plan } = await mk()
+    const ref = await mkIntent(c, plan.id, tomorrowKeys(), 200)
+    await pay(c, plan.id, ref, 20000, 'USD')
+    assert.equal(await balanceOf(plan.id), 0)
+    assert.equal(await prisma.transaction.count({ where: { ref } }), 0)
+    assert.equal(await prisma.planDayCoverage.count({ where: { savingsPlanId: plan.id } }), 0)
+    assert.ok(await auditFor('payment_needs_manual_review', ref))
+    assert.equal((await prisma.paymentIntent.findUniqueOrThrow({ where: { ref } })).status, 'Review')
+  })
+
+  test(`${route}: money for a closed plan is not credited and goes to manual review`, async () => {
+    const { c, plan } = await mk()
+    const ref = await mkIntent(c, plan.id, tomorrowKeys(), 200)
+    await prisma.savingsPlan.update({ where: { id: plan.id }, data: { status: 'Redeemed' } })
+    await pay(c, plan.id, ref, 20000)
+    assert.equal(await balanceOf(plan.id), 0)
+    assert.equal(await prisma.transaction.count({ where: { ref } }), 0)
+    assert.ok(await auditFor('payment_needs_manual_review', ref))
+  })
+}
+
+for (const [label, kobo] of [['zero', 0], ['missing', undefined]] as const) {
+  test(`verify: a ${label} amount from Paystack credits nothing and goes to review, not ₦0`, async () => {
+    const { c, plan } = await mk()
+    const ref = await mkIntent(c, plan.id, tomorrowKeys(), 200)
+    koboByRef.set(ref, kobo as number)
+    const v = await sendVerify(c, ref)
+    assert.equal(v.body.review, true)
+    assert.equal(await prisma.transaction.count({ where: { ref } }), 0)
+    assert.equal((await prisma.paymentIntent.findUniqueOrThrow({ where: { ref } })).status, 'Review')
+  })
+}
+
+test('the customer sees a wrong amount bought no days, from verify and after the webhook', async () => {
+  const direct = await mk()
+  const keys = tomorrowKeys()
+  const r1 = await mkIntent(direct.c, direct.plan.id, keys, 200)
+  koboByRef.set(r1, 15000)
+  const v1 = await sendVerify(direct.c, r1)
+  assert.equal(v1.status, 200)
+  assert.equal(v1.body.amount, 150)
+  assert.deepEqual(v1.body.notBought, { count: 2, weekly: false })
+
+  const hook = await mk()
+  const r2 = await mkIntent(hook.c, hook.plan.id, keys, 200)
+  await sendWebhook(r2, { customerId: hook.c.id, planId: hook.plan.id, kobo: 15000 })
+  const v2 = await sendVerify(hook.c, r2)
+  assert.equal(v2.body.alreadyProcessed, true)
+  assert.deepEqual(v2.body.notBought, { count: 2, weekly: false })
+})
+
+test('verify tells the customer a payment is under review, whichever route found it', async () => {
+  const { c, plan } = await mk()
+  const ref = await mkIntent(c, plan.id, tomorrowKeys(), 200)
+  await prisma.savingsPlan.update({ where: { id: plan.id }, data: { status: 'Redeemed' } })
   await sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 20000 })
-  assert.equal(await prisma.planDayCoverage.count({ where: { savingsPlanId: { in: [plan.id, second.id] } } }), 0)
+  const v = await sendVerify(c, ref)
+  assert.equal(v.status, 200)
+  assert.equal(v.body.review, true)
+  assert.equal(await prisma.auditLog.count({ where: { action: 'payment_needs_manual_review', details: { contains: ref } } }), 1, 'flagged once')
+})
+
+test('a webhook with no intent and no active plan is audited, not dropped silently', async () => {
+  const { c, plan } = await mk()
+  await prisma.savingsPlan.update({ where: { id: plan.id }, data: { status: 'Redeemed' } })
+  const ref = `VCHS-CST-${rid}-closed-${++n}`
+  assert.equal((await sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 20000 })).status, 200)
+  assert.equal(await prisma.transaction.count({ where: { ref } }), 0)
+  assert.ok(await auditFor('payment_needs_manual_review', ref))
+})
+
+test('a webhook with no intent in another currency is not credited', async () => {
+  const { c, plan } = await mk()
+  const ref = `VCHS-CST-${rid}-usd-${++n}`
+  await sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 20000, currency: 'USD' })
+  assert.equal(await prisma.transaction.count({ where: { ref } }), 0)
+  assert.ok(await auditFor('payment_needs_manual_review', ref))
+})
+
+test('two deliveries of a webhook with no intent at once credit once', async () => {
+  const { c, plan } = await mk()
+  const ref = `VCHS-CST-${rid}-race-${++n}`
+  const results = await Promise.all([
+    sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 20000 }),
+    sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 20000 }),
+  ])
+  for (const r of results) assert.equal(r.status, 200)
+  assert.equal(await prisma.transaction.count({ where: { ref } }), 1)
+  assert.equal(await balanceOf(plan.id), 200)
+})
+
+test('a webhook whose credit collides with a ref that has no transaction rethrows, so Paystack retries', async () => {
+  const { c, plan } = await mk()
+  const ref = `VCHS-CST-${rid}-collide-${++n}`
+  await prisma.customerPayment.create({ data: { ref: `PAY-${ref}`, customerId: c.id, planId: plan.id, amount: 1, status: 'Done', channel: 'card' } })
+  await assert.rejects(() => sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 20000 }))
+  assert.equal(await balanceOf(plan.id), 0)
+  assert.equal(await prisma.transaction.count({ where: { ref } }), 0)
+})
+
+test('a webhook that loses the race to the same ref returns early, with no second audit or balance change', async () => {
+  const { c, plan } = await mk()
+  const ref = `VCHS-CST-${rid}-lost-${++n}`
+  await sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 20000 })
+  // Past the first check the row looks absent, as it does for the delivery that loses a real race.
+  const delegate = prisma.transaction as unknown as { findUnique: (a: unknown) => Promise<unknown> }
+  const real = delegate.findUnique
+  let calls = 0
+  delegate.findUnique = (a: unknown) => (++calls === 1 ? Promise.resolve(null) : real.call(delegate, a))
+  try {
+    assert.equal((await sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 20000 })).status, 200)
+  } finally {
+    delegate.findUnique = real
+  }
+  assert.equal(calls, 2, 'took the collision path')
+  assert.equal(await balanceOf(plan.id), 200)
+  assert.equal(await prisma.auditLog.count({ where: { action: 'customer_paystack_payment', details: { contains: ref } } }), 1)
+})
+
+test('a plan redeemed between the read and the credit takes no money: nothing partial, flagged for review', async () => {
+  const { c, plan } = await mk()
+  const ref = await mkIntent(c, plan.id, tomorrowKeys(), 200)
+  const intent = await prisma.paymentIntent.findUniqueOrThrow({ where: { ref } })
+  // settleIntentPayment reads the plan, then attempts, then credits: redeem it in between.
+  const racing = new Proxy(prisma, {
+    get(target, key) {
+      if (key !== 'autoDebitAttempt') return Reflect.get(target, key)
+      return { findMany: async () => { await prisma.savingsPlan.update({ where: { id: plan.id }, data: { status: 'Redeemed' } }); return [] } }
+    },
+  })
+  const r = await settleIntentPayment(racing, { intent, reference: ref, amountNaira: 200, currency: 'NGN', via: 'Paystack webhook' })
+  assert.deepEqual(r, { kind: 'review' })
+  assert.equal(await balanceOf(plan.id), 0)
+  assert.equal(await prisma.transaction.count({ where: { ref } }), 0)
+  assert.equal(await prisma.customerPayment.count({ where: { ref: `PAY-${ref}` } }), 0)
+  assert.equal(await prisma.planDayCoverage.count({ where: { savingsPlanId: plan.id } }), 0)
+  assert.equal((await prisma.paymentIntent.findUniqueOrThrow({ where: { ref } })).status, 'Review')
+  assert.ok(await auditFor('payment_needs_manual_review', ref))
+})
+
+test('the closed rule is Redeemed: any other non-Active plan is still credited', async () => {
+  const { c, plan } = await mk()
+  const ref = await mkIntent(c, plan.id, null, 200)
+  await prisma.savingsPlan.update({ where: { id: plan.id }, data: { status: 'Completed' } })
+  assert.equal((await sendVerify(c, ref)).status, 200)
+  assert.equal(await balanceOf(plan.id), 200)
+})
+
+test('verify: if the webhook wins during the Paystack fetch, it reports already processed', async () => {
+  const { c, plan } = await mk()
+  const keys = tomorrowKeys()
+  const ref = await mkIntent(c, plan.id, keys, 200)
+  duringVerify.set(ref, async () => { await sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 20000 }) })
+  const v = await sendVerify(c, ref)
+  assert.equal(v.status, 200)
+  assert.equal(v.body.alreadyProcessed, true)
+  await assertCreditedOnce(plan.id, ref, 200, keys)
+})
+
+test('overlap: a second payment writes only the free days and audits the rest', async () => {
+  const { c, plan } = await mk()
+  const [day1, day2] = tomorrowKeys()
+  const first = await mkIntent(c, plan.id, [day1], 100)
+  const second = await mkIntent(c, plan.id, [day1, day2], 200)
+  await sendVerify(c, first)
+  const v = await sendVerify(c, second)
+  assert.deepEqual(v.body.notBought, { count: 1, weekly: false })
+  const cov = await prisma.planDayCoverage.findMany({ where: { savingsPlanId: plan.id } })
+  assert.deepEqual(Object.fromEntries(cov.map(x => [x.coversKey, x.ref])), { [day1]: first, [day2]: second })
+  const audit = await auditFor('payment_days_overlap', second)
+  assert.ok(audit?.details?.includes(day1))
+  assert.equal(await balanceOf(plan.id), 300, 'all the money is still saved')
+})
+
+test('overlap: a payment that bought no days does not count as saved today', async () => {
+  const { c, plan } = await mk()
+  const key = tomorrowKey()
+  await sendVerify(c, await mkIntent(c, plan.id, [key], 100))
+  const second = await mkIntent(c, plan.id, [key], 100)
+  const v = await sendVerify(c, second)
+  assert.deepEqual(v.body.notBought, { count: 1, weekly: false })
+  assert.equal(await prisma.planDayCoverage.count({ where: { ref: second } }), 0)
+  const { phone, server } = await slotsBothWays(c, plan.id)
+  for (const slots of [phone, server]) assert.equal(slots.find(s => s.key === todayKey())?.state, 'today')
+  const m = await mandateFor(c, plan.id)
+  assert.deepEqual(await runDueAutoDebits(prisma, new Date(), { mandateIds: [m.id] }), { charged: 1, skipped: 0, failed: 0, pending: 0 })
+})
+
+test('overlap: a day the card has since been charged for is not free', async () => {
+  const { c, plan } = await mk()
+  const m = await mandateFor(c, plan.id)
+  await prisma.autoDebitMandate.update({ where: { id: m.id }, data: { nextRunAt: new Date(Date.now() + DAY) } })
+  const key = todayKey()
+  await prisma.autoDebitAttempt.create({
+    data: { mandateId: m.id, savingsPlanId: plan.id, reference: `autodebit-${plan.id}-charged`, cycleDate: new Date(), creditAmount: 100, grossCharged: 102, feeEstimate: 2, status: 'success' },
+  })
+  const ref = await mkIntent(c, plan.id, [key], 100)
+  const v = await sendVerify(c, ref)
+  assert.deepEqual(v.body.notBought, { count: 1, weekly: false })
+  assert.equal(await prisma.planDayCoverage.count({ where: { savingsPlanId: plan.id } }), 0)
+  assert.ok(await auditFor('payment_days_overlap', ref))
 })
 
 async function sendInit(c: { id: string; customerId: string }, planId: string, keys: string[]) {
@@ -276,6 +489,8 @@ for (const [order, pay] of [
       assert.equal(slots.find(s => s.key === tomorrowKey())?.state, 'saved')
     }
     assert.equal(await sendInit(c, plan.id, [todayKey()]), 200)
+    // That checkout would hold today; this test is about the cron with no checkout open.
+    await prisma.paymentIntent.deleteMany({ where: { planId: plan.id, status: 'Pending' } })
 
     const m = await mandateFor(c, plan.id)
     const r = await runDueAutoDebits(prisma, new Date(), { mandateIds: [m.id] })
@@ -303,15 +518,22 @@ for (const [order, pay] of [
   })
 }
 
-test('a mismatched webhook payment wrote no coverage, so it still counts for the day it was stamped', async () => {
+test('a payment meant for days that bought none, on a wrong amount, does not count for the day it was stamped', async () => {
   const { c, plan } = await mk()
   const ref = await mkIntent(c, plan.id, [tomorrowKey()], 100)
   await sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 5000 })
   const { phone, server } = await slotsBothWays(c, plan.id)
   for (const slots of [phone, server]) {
-    assert.equal(slots.find(s => s.key === todayKey())?.state, 'saved')
+    assert.equal(slots.find(s => s.key === todayKey())?.state, 'today')
     assert.equal(slots.find(s => s.key === tomorrowKey())?.state, 'upcoming')
   }
+})
+
+test('a plain deposit with no days named still counts for the day it was stamped', async () => {
+  const { c, plan } = await mk()
+  await sendVerify(c, await mkIntent(c, plan.id, null, 100))
+  const { phone, server } = await slotsBothWays(c, plan.id)
+  for (const slots of [phone, server]) assert.equal(slots.find(s => s.key === todayKey())?.state, 'saved')
 })
 
 test('weekly, next week only: this week stays selectable', async () => {

@@ -2,15 +2,15 @@
 // TZ=UTC and TZ=Africa/Lagos: every expectation here is in WAT regardless of the process timezone.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { inFlightKeys, isCycleCovered, nextPaymentDate } from '../src/lib/pay-ahead'
+import { PENDING_HOLD_MS, inFlightKeys, isCycleCovered, isCycleInPlan, isSlotFunded, nextPaymentDate, ordinaryDeposits } from '../src/lib/pay-ahead'
 import { buildSlotsWat, watKey } from '../src/lib/savings-card'
 import { nextRunAt } from '../src/lib/auto-debit-schedule'
 
 const at = (iso: string) => new Date(iso)
 
 // Starts 00:30 WAT on Nov 2, which is still Nov 1 in UTC.
-const dailyPlan = { cadence: 'daily', dailyAmount: 100, status: 'Active', startDate: at('2026-11-01T23:30:00Z'), maturityDate: at('2026-11-11T23:30:00Z') }
-const weeklyPlan = { cadence: 'weekly', dailyAmount: 100, status: 'Active', startDate: at('2026-11-01T23:30:00Z'), maturityDate: at('2026-12-13T23:30:00Z') }
+const dailyPlan = { cadence: 'daily', dailyAmount: 100, status: 'Active', periodDays: 10, startDate: at('2026-11-01T23:30:00Z'), maturityDate: at('2026-11-11T23:30:00Z') }
+const weeklyPlan = { cadence: 'weekly', dailyAmount: 100, status: 'Active', periodDays: 42, startDate: at('2026-11-01T23:30:00Z'), maturityDate: at('2026-12-13T23:30:00Z') }
 
 test('watKey: the WAT day flips at 23:00 UTC', () => {
   assert.equal(watKey(at('2026-11-02T22:59:59Z')), '2026-11-02')
@@ -152,4 +152,88 @@ test('the walk agrees with what the cron would do, every day to maturity', () =>
     nextPaymentDate({ plan: dailyPlan, nextRunAt: at('2026-11-04T08:00:00Z'), coveredKeys: covered, now: at('2026-11-03T09:00:00Z') })?.toISOString(),
     charged[1],
   )
+})
+
+test('the pending hold is about an hour', () => {
+  assert.equal(PENDING_HOLD_MS, 60 * 60 * 1000)
+})
+
+test('isCycleInPlan daily: first and last slot in, the day before and the maturity day out', () => {
+  assert.equal(isCycleInPlan(dailyPlan, at('2026-11-01T22:00:00Z')), false) // 23:00 WAT Nov 1, before the start
+  assert.equal(isCycleInPlan(dailyPlan, at('2026-11-02T08:00:00Z')), true)
+  assert.equal(isCycleInPlan(dailyPlan, at('2026-11-11T08:00:00Z')), true) // last slot
+  assert.equal(isCycleInPlan(dailyPlan, at('2026-11-12T08:00:00Z')), false) // maturity day
+})
+
+test('isCycleInPlan weekly: runs to the end of the last week slot', () => {
+  assert.equal(isCycleInPlan(weeklyPlan, at('2026-10-30T08:00:00Z')), false)
+  assert.equal(isCycleInPlan(weeklyPlan, at('2026-12-13T08:00:00Z')), true) // day 42, last of week 6
+  assert.equal(isCycleInPlan(weeklyPlan, at('2026-12-14T08:00:00Z')), false)
+})
+
+const dep = (iso: string, amount: number) => ({ createdAt: at(iso), amount })
+
+test('isSlotFunded daily: exact amount funds it, one naira under does not', () => {
+  const cycle = at('2026-11-04T12:00:00Z')
+  assert.equal(isSlotFunded(dailyPlan, [dep('2026-11-04T09:00:00Z', 100)], cycle), true)
+  assert.equal(isSlotFunded(dailyPlan, [dep('2026-11-04T09:00:00Z', 99)], cycle), false)
+})
+
+test('isSlotFunded daily: several small deposits add up', () => {
+  const cycle = at('2026-11-04T12:00:00Z')
+  assert.equal(isSlotFunded(dailyPlan, [dep('2026-11-04T07:00:00Z', 40), dep('2026-11-04T09:00:00Z', 60)], cycle), true)
+  // Decimal money must not fall short through float addition.
+  assert.equal(isSlotFunded({ ...dailyPlan, dailyAmount: 0.3 }, [dep('2026-11-04T07:00:00Z', 0.1), dep('2026-11-04T09:00:00Z', 0.2)], cycle), true)
+})
+
+test('isSlotFunded daily: only the same WAT day counts', () => {
+  const cycle = at('2026-11-04T12:00:00Z')
+  assert.equal(isSlotFunded(dailyPlan, [dep('2026-11-03T22:59:00Z', 100)], cycle), false) // 23:59 WAT Nov 3
+  assert.equal(isSlotFunded(dailyPlan, [dep('2026-11-03T23:00:00Z', 100)], cycle), true) // 00:00 WAT Nov 4
+})
+
+test('isSlotFunded weekly: needs a full week across the slot, not just the cycle day', () => {
+  const cycle = at('2026-11-12T08:00:00Z') // week 2, Nov 9-15 in WAT
+  assert.equal(isSlotFunded(weeklyPlan, [dep('2026-11-09T08:00:00Z', 300), dep('2026-11-14T08:00:00Z', 400)], cycle), true)
+  assert.equal(isSlotFunded(weeklyPlan, [dep('2026-11-09T08:00:00Z', 300), dep('2026-11-14T08:00:00Z', 399)], cycle), false)
+  assert.equal(isSlotFunded(weeklyPlan, [dep('2026-11-08T08:00:00Z', 700)], cycle), false) // last week's money
+})
+
+test('isSlotFunded: a monthly plan has no slot to fund', () => {
+  assert.equal(isSlotFunded({ ...dailyPlan, cadence: 'monthly' }, [dep('2026-11-04T09:00:00Z', 9999)], at('2026-11-04T12:00:00Z')), false)
+})
+
+test('ordinaryDeposits: drops coverage payments and earlier auto-debit credits', () => {
+  const rows = [
+    { ref: 'PLAIN', amount: 1, createdAt: at('2026-11-04T09:00:00Z') },
+    { ref: 'BULK', amount: 2, createdAt: at('2026-11-04T09:00:00Z') },
+    { ref: 'autodebit-p-20261104', amount: 3, createdAt: at('2026-11-04T09:00:00Z') },
+    { ref: 'addenroll-p-x', amount: 50, createdAt: at('2026-11-04T09:00:00Z') },
+  ]
+  assert.deepEqual(ordinaryDeposits(rows, ['BULK']).map(r => r.ref), ['PLAIN', 'addenroll-p-x'])
+})
+
+test('nextPaymentDate: walks past a day funded by plain deposits', () => {
+  const next = nextPaymentDate({
+    plan: dailyPlan, nextRunAt: at('2026-11-04T08:00:00Z'), coveredKeys: [], plainDeposits: [dep('2026-11-04T07:00:00Z', 100)], now: at('2026-11-04T07:30:00Z'),
+  })
+  assert.equal(next?.toISOString(), '2026-11-05T08:00:00.000Z')
+})
+
+test('nextPaymentDate: a part-funded day is still charged', () => {
+  const next = nextPaymentDate({
+    plan: dailyPlan, nextRunAt: at('2026-11-04T08:00:00Z'), coveredKeys: [], plainDeposits: [dep('2026-11-04T07:00:00Z', 99)], now: at('2026-11-04T07:30:00Z'),
+  })
+  assert.equal(next?.toISOString(), '2026-11-04T08:00:00.000Z')
+})
+
+test('nextPaymentDate: a future-start plan first charges inside the plan', () => {
+  const next = nextPaymentDate({ plan: dailyPlan, nextRunAt: at('2026-10-30T08:00:00Z'), coveredKeys: [], now: at('2026-10-29T08:00:00Z') })
+  assert.equal(next?.toISOString(), '2026-11-02T08:00:00.000Z')
+})
+
+test('nextPaymentDate: the maturity day is not a charge, even before the maturity instant', () => {
+  // The last slot is Nov 11. A run on Nov 12 at 08:00 UTC is still before the maturity instant, but outside the plan.
+  const later = { ...dailyPlan, maturityDate: at('2026-11-12T10:00:00Z') }
+  assert.equal(nextPaymentDate({ plan: later, nextRunAt: at('2026-11-12T08:00:00Z'), coveredKeys: [], now: at('2026-11-11T08:00:00Z') }), null)
 })
