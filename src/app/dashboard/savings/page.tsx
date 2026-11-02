@@ -104,6 +104,10 @@ function SavingsContent() {
   const [lastReceipt, setLastReceipt] = useState<Receipt | null>(null)
   const [lastDays, setLastDays] = useState(1)
   const [lastPhone, setLastPhone] = useState('')
+  // Kept apart from lastReceipt, which is posted as-is to the app's receipt printer.
+  const [lastTxIds, setLastTxIds] = useState<string[]>([])
+  const [sendState, setSendState] = useState<'idle' | 'sending' | 'sent'>('idle')
+  const [sendError, setSendError] = useState('')
   const [walletBalance, setWalletBalance] = useState<number | null>(null)
   const [recent, setRecent] = useState<RecentCustomer[]>([])
   const [paidToday, setPaidToday] = useState<PaidToday[] | null>(null)
@@ -365,7 +369,7 @@ function SavingsContent() {
       : { customerId: selected.id, amount, method, planId: plan?.id, ...(recordDate ? { date: recordDate } : {}) }
 
     let res: Response
-    let data: { error?: string; total?: number; transaction?: { ref?: string }; transactions?: { ref?: string }[] }
+    let data: { error?: string; total?: number; transaction?: { id?: string; ref?: string }; transactions?: { id?: string; ref?: string }[] }
     try {
       res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       data = await res.json()
@@ -405,8 +409,27 @@ function SavingsContent() {
     })
     setLastDays(isBulk ? selectedDates.length : 1)
     setLastPhone(selected.phone ?? '')
+    setLastTxIds((isBulk ? data.transactions ?? [] : data.transaction ? [data.transaction] : []).flatMap(t => t.id ? [t.id] : []))
     reset()
     setRefreshKey(k => k + 1)
+  }
+
+  async function sendToChat() {
+    setSendState('sending'); setSendError('')
+    try {
+      const res = await fetch('/api/transactions/send-receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: lastTxIds }) })
+      if (res.ok) { setSendState('sent'); return }
+      const data: { error?: string } = await res.json().catch(() => ({}))
+      setSendError(data.error ?? 'The receipt could not be sent. Please try again.')
+    } catch {
+      setSendError('No connection. Check your internet and try again.')
+    }
+    setSendState('idle')
+  }
+
+  function recordAnother() {
+    setLastReceipt(null); setLastTxIds([]); setSendState('idle'); setSendError('')
+    requestAnimationFrame(() => searchRef.current?.focus())
   }
 
   const canPrint = typeof window !== 'undefined'
@@ -459,7 +482,17 @@ function SavingsContent() {
               </dl>
 
               <div className="ag-done-actions">
-                <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => { setLastReceipt(null); requestAnimationFrame(() => searchRef.current?.focus()) }}>
+                <FormError message={sendError} />
+                {lastTxIds.length > 0 && (
+                  <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={sendToChat} disabled={sendState !== 'idle'}>
+                    {sendState === 'sending'
+                      ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Sending…</>
+                      : sendState === 'sent'
+                        ? <><Icons.check size={18} aria-hidden="true" /> Sent to chat</>
+                        : <><Icons.chat size={18} aria-hidden="true" /> {sendError ? 'Try again' : 'Send to customer'}</>}
+                  </button>
+                )}
+                <button type="button" className={`ui-btn ui-btn--block ${lastTxIds.length > 0 && sendState !== 'sent' ? 'ui-btn--secondary' : 'ui-btn--primary'}`} onClick={recordAnother}>
                   <Icons.add size={18} aria-hidden="true" /> Record another
                 </button>
                 {lastPhone && (
