@@ -16,11 +16,13 @@ M._load = function (req: string, ...rest: unknown[]) {
   return mod
 }
 let lookups = 0
+let paystackFails = false
 const realFetch = globalThis.fetch
 globalThis.fetch = (async (url: string | URL | Request) => {
   const u = typeof url === 'string' ? url : url.toString()
   if (!u.includes('/bank/resolve_bvn/')) throw new Error(`unexpected network call: ${u}`)
   lookups++
+  if (paystackFails) return new Response(JSON.stringify({ status: false, message: 'Stranger failed' }), { status: 400 })
   return new Response(JSON.stringify({ status: true, data: {
     bvn: '22222222222', first_name: 'Stranger', last_name: 'Person', middle_name: 'Secret', formatted_dob: '1980-02-03', mobile: '08000000000', gender: 'Female',
   } }), { status: 200 })
@@ -35,6 +37,8 @@ const { BVN_LOOKUPS_PER_EMAIL, BVN_LOOKUPS_PER_IP_PER_HOUR, spendIpLookup } = re
 
 const RUN = Math.random().toString(36).slice(2, 8)
 const BVN = '22222222222'
+const MATCHING = { firstName: 'Stranger', lastName: 'Person' }
+const IDENTITY = /Stranger|Person|Secret|1980|08000000000|Female/
 let agentId = ''
 let agentCode = ''
 const emails: string[] = []
@@ -103,34 +107,70 @@ test('wallet GET still returns the balance', async () => {
 test('no verified email: refused, and Paystack is never called', async () => {
   const unverified = await verifiedEmail({ verified: false })
   const stale = await verifiedEmail({ createdAt: new Date(Date.now() - 31 * 60_000) })
-  for (const body of [{ bvn: BVN }, { bvn: BVN, email: 'nobody@test.local' }, { bvn: BVN, email: unverified }, { bvn: BVN, email: stale }, { bvn: BVN, email: 123 }]) {
+  for (const body of [{ bvn: BVN, ...MATCHING }, { bvn: BVN, email: 'nobody@test.local', ...MATCHING }, { bvn: BVN, email: unverified, ...MATCHING }, { bvn: BVN, email: stale, ...MATCHING }, { bvn: BVN, email: 123, ...MATCHING }]) {
     const res = await lookup(body)
     assert.equal(res.status, 403, JSON.stringify(body))
     const data = await res.json()
     assert.equal(data.ok, false)
-    assert.doesNotMatch(JSON.stringify(data), /Stranger|Person/)
+    assert.ok(!IDENTITY.test(JSON.stringify(data)))
   }
   assert.equal(lookups, 0)
 })
 
-test('a verified email gets the name only: no phone, gender, middle name or date of birth', async () => {
-  const res = await lookup({ bvn: BVN, email: (await verifiedEmail()).toUpperCase() })
-  assert.equal(res.status, 200)
-  assert.deepEqual(await res.json(), { ok: true, firstName: 'Stranger', lastName: 'Person' })
-  assert.equal(lookups, 1)
+test('a verified email only learns whether the typed name matches', async () => {
+  const email = await verifiedEmail()
+  const yes = await lookup({ bvn: BVN, email: email.toUpperCase(), ...MATCHING })
+  assert.equal(yes.status, 200)
+  assert.deepEqual(await yes.json(), { ok: true, match: true })
+  const no = await lookup({ bvn: BVN, email, firstName: 'Ada', lastName: 'Obi' })
+  assert.equal(no.status, 200)
+  assert.deepEqual(await no.json(), { ok: true, match: false })
+  assert.equal(lookups, 2)
+})
+
+test('the name comparison ignores case and outer spaces, and nothing else', async () => {
+  const email = await verifiedEmail()
+  const check = async (firstName: string, lastName: string) => (await (await lookup({ bvn: BVN, email, firstName, lastName })).json()).match
+  assert.equal(await check('  sTRANGER ', 'person  '), true)
+  assert.equal(await check('Stranger Secret', 'Person'), false, 'middle name in the first name box')
+  assert.equal(await check('Person', 'Stranger'), false, 'swapped')
+})
+
+test('no response carries an identity field, including when Paystack fails', async () => {
+  const email = await verifiedEmail()
+  const ok = JSON.stringify(await (await lookup({ bvn: BVN, email, firstName: 'Ada', lastName: 'Obi' })).json())
+  assert.ok(!IDENTITY.test(ok), ok)
+  paystackFails = true
+  try {
+    const res = await lookup({ bvn: BVN, email, ...MATCHING })
+    assert.equal(res.status, 400)
+    const body = await res.json()
+    assert.equal(body.ok, false)
+    assert.ok(!IDENTITY.test(JSON.stringify(body)), JSON.stringify(body))
+    assert.doesNotMatch(body.error, /Stranger failed/)
+  } finally { paystackFails = false }
+})
+
+test('a name is required, before anything is spent', async () => {
+  const email = await verifiedEmail()
+  for (const names of [{}, { firstName: 'Ada' }, { firstName: ' ', lastName: 'Obi' }, { firstName: 1, lastName: 2 }]) {
+    assert.equal((await lookup({ bvn: BVN, email, ...names })).status, 400)
+  }
+  assert.equal((await prisma.emailOTP.findFirstOrThrow({ where: { email } })).attempts, 1)
+  assert.equal(lookups, 0)
 })
 
 test('bad BVN format is refused without spending anything', async () => {
   const email = await verifiedEmail()
-  assert.equal((await lookup({ bvn: '123', email })).status, 400)
+  assert.equal((await lookup({ bvn: '123', email, ...MATCHING })).status, 400)
   assert.equal((await prisma.emailOTP.findFirstOrThrow({ where: { email } })).attempts, 1)
   assert.equal(lookups, 0)
 })
 
 test('one verified email has a capped number of lookups, even after using every code attempt', async () => {
   const email = await verifiedEmail({ attempts: 5 })
-  for (let i = 0; i < BVN_LOOKUPS_PER_EMAIL; i++) assert.equal((await lookup({ bvn: BVN, email })).status, 200, `lookup ${i}`)
-  const res = await lookup({ bvn: BVN, email })
+  for (let i = 0; i < BVN_LOOKUPS_PER_EMAIL; i++) assert.equal((await lookup({ bvn: BVN, email, ...MATCHING })).status, 200, `lookup ${i}`)
+  const res = await lookup({ bvn: BVN, email, ...MATCHING })
   assert.equal(res.status, 429)
   assert.equal((await res.json()).ok, false)
   assert.equal(lookups, BVN_LOOKUPS_PER_EMAIL)
@@ -141,7 +181,7 @@ test('one IP is capped across many verified emails', async () => {
   const email = await verifiedEmail()
   // Spend the rest of the hour's budget directly, then the route must refuse before Paystack.
   for (let i = 0; i < BVN_LOOKUPS_PER_IP_PER_HOUR; i++) assert.equal(await spendIpLookup(ip), true)
-  const res = await lookup({ bvn: BVN, email }, ip)
+  const res = await lookup({ bvn: BVN, email, ...MATCHING }, ip)
   assert.equal(res.status, 429)
   assert.equal(lookups, 0)
 })
@@ -179,9 +219,22 @@ test('enrol with a verified email still checks the BVN name, and spends the same
   const email = await verifiedEmail()
   const res = await enrolPost(enrolBody(email, { firstName: 'Wrong', lastName: 'Name' }))
   assert.equal(res.status, 400)
-  assert.match((await res.json()).error, /BVN belongs to Stranger Person/)
+  const { error } = await res.json()
+  assert.match(error, /doesn’t match the name you entered/)
+  assert.ok(!IDENTITY.test(error), error)
   assert.equal(lookups, 1)
   assert.equal((await prisma.emailOTP.findFirstOrThrow({ where: { email } })).attempts, 2)
+})
+
+test('enrol does not pass on Paystack\'s error text', async () => {
+  const email = await verifiedEmail()
+  paystackFails = true
+  try {
+    const res = await enrolPost(enrolBody(email))
+    assert.equal(res.status, 400)
+    const { error } = await res.json()
+    assert.ok(!IDENTITY.test(error), error)
+  } finally { paystackFails = false }
 })
 
 test('enrol with no BVN needs no lookup and spends nothing', async () => {
@@ -193,11 +246,12 @@ test('enrol with no BVN needs no lookup and spends nothing', async () => {
 
 test('enrol with a matching BVN completes', async () => {
   const email = await verifiedEmail()
-  const res = await enrolPost(enrolBody(email, { firstName: 'Stranger', lastName: 'Person' }))
+  const res = await enrolPost(enrolBody(email, { firstName: ' stranger ', lastName: 'PERSON' }))
   assert.equal(res.status, 200, JSON.stringify(await res.clone().json()))
   assert.equal(lookups, 1)
 })
 
-test('BVNs are never logged', () => {
-  assert.ok(!consoleLines.some(l => l.includes(BVN)), consoleLines.find(l => l.includes(BVN)))
+test('neither the BVN nor the resolved name is ever logged', () => {
+  const leaked = consoleLines.find(l => l.includes(BVN) || IDENTITY.test(l))
+  assert.equal(leaked, undefined, leaked)
 })

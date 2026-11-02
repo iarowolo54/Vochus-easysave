@@ -1,5 +1,5 @@
-// A BVN lookup returns someone's legal name and is charged to Vochus's Paystack account, so it has to
-// be earned. The enrol page confirms the email before it asks for a BVN, so that is what's required,
+// A BVN lookup reads someone's legal name and is charged to Vochus's Paystack account, so it has to
+// be earned, and callers only ever learn whether a typed name matches, never the name itself. The enrol page confirms the email before it asks for a BVN, so that is what's required,
 // with caps kept in the database because production runs two instances.
 import { prisma } from '@/lib/prisma'
 import { normalizeEmail } from '@/lib/email'
@@ -30,6 +30,12 @@ export async function spendIpLookup(ip: string, now = new Date()): Promise<boole
     data: { failCount: { increment: 1 } },
   })
   return spent.count === 1
+}
+
+/** The one name comparison for enrolment: ignores case and spaces around each name, nothing else. */
+export function bvnNameMatches(resolved: { firstName?: string | null; lastName?: string | null }, typed: { firstName: string; lastName: string }): boolean {
+  const same = (a: string | null | undefined, b: string) => (a ?? '').trim().toLowerCase() === b.trim().toLowerCase()
+  return same(resolved.firstName, typed.firstName) && same(resolved.lastName, typed.lastName)
 }
 
 export type BvnLookupRefusal = { status: 403 | 429; error: string }
