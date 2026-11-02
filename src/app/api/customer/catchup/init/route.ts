@@ -4,7 +4,7 @@ import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { createPaymentIntent } from '@/lib/payment-intent'
-import { buildSlotsWat } from '@/lib/savings-card'
+import { buildSlotsWat, dayDeposits } from '@/lib/savings-card'
 import { isEligiblePlan, validateSelection } from '@/lib/catchup'
 import { inFlightKeys } from '@/lib/pay-ahead'
 
@@ -33,12 +33,12 @@ export async function POST(req: NextRequest) {
 
   // Build the plan's live slots from its actual deposits + existing coverage.
   const [deposits, coverage] = await Promise.all([
-    prisma.transaction.findMany({ where: { planId: plan.id, type: 'saving', status: 'Done' }, select: { createdAt: true } }),
-    prisma.planDayCoverage.findMany({ where: { savingsPlanId: plan.id }, select: { coversKey: true } }),
+    prisma.transaction.findMany({ where: { planId: plan.id, type: 'saving', status: 'Done' }, select: { createdAt: true, ref: true } }),
+    prisma.planDayCoverage.findMany({ where: { savingsPlanId: plan.id }, select: { coversKey: true, ref: true } }),
   ])
   const slots = buildSlotsWat(
     { startDate: plan.startDate.toISOString(), maturityDate: plan.maturityDate.toISOString(), periodDays: plan.periodDays, cadence: plan.cadence },
-    deposits.map(d => d.createdAt.toISOString()),
+    dayDeposits(deposits, coverage.map(c => c.ref)).map(d => d.createdAt.toISOString()),
     coverage.map(c => c.coversKey),
   )
 

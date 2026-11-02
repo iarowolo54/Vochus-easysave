@@ -5,13 +5,13 @@ import { formatDate, formatNaira, formatTime } from '@/lib/format'
 import { depositIcon, depositMethod } from './DepositReceipt'
 import { BULK_SAVINGS_LABEL } from '@/lib/catchup'
 import {
-  buildSlots, currentWeekDays, dateKey, depositsByDay, hasEnded, isWeekly, slotEndKey,
+  buildSlots, currentWeekDays, dateKey, dayDeposits, depositsByDay, hasEnded, isWeekly, slotEndKey,
   type Slot, type SlotState,
 } from '@/lib/savings-card'
 
-type Plan = { startDate: string; maturityDate: string; periodDays: number; cadence?: string; balance: number; dailyAmount: number; coveredKeys?: string[] }
+type Plan = { startDate: string; maturityDate: string; periodDays: number; cadence?: string; balance: number; dailyAmount: number; coveredKeys?: string[]; coveredRefs?: string[] }
 
-export type Deposit = { id: string; amount: number; createdAt: string; method: string | null; recordedBy: string }
+export type Deposit = { id: string; ref?: string; amount: number; createdAt: string; method: string | null; recordedBy: string }
 
 /** What the day-details sheet shows for a tapped day (or week). */
 export type DaySelection = { title: string; state: SlotState; deposits: Deposit[]; ended: boolean; coveredOnly: boolean }
@@ -29,8 +29,9 @@ function shortDate(d: Date) {
 function useCardData(plan: Plan, deposits: Deposit[]) {
   const weekly = isWeekly(plan)
   const ended = hasEnded(plan)
-  const slots = useMemo(() => buildSlots(plan, deposits.map(d => d.createdAt), plan.coveredKeys ?? []), [plan, deposits])
-  const byDay = useMemo(() => depositsByDay(deposits), [deposits])
+  const counted = useMemo(() => dayDeposits(deposits, plan.coveredRefs), [deposits, plan.coveredRefs])
+  const slots = useMemo(() => buildSlots(plan, counted.map(d => d.createdAt), plan.coveredKeys ?? []), [plan, counted])
+  const byDay = useMemo(() => depositsByDay(counted), [counted])
 
   function select(slot: Slot): DaySelection {
     const end = slotEndKey(slot, weekly)

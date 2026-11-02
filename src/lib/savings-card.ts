@@ -99,10 +99,24 @@ export function slotEndKey(slot: Slot, weekly: boolean): string {
   return dateKey(addDays(slot.date, 6))
 }
 
+/** The slot holding `today`, for a day or a week. */
+export function currentSlot(slots: Slot[], today: string, weekly: boolean): Slot | undefined {
+  return slots.find(s => s.key <= today && today <= slotEndKey(s, weekly))
+}
+
 /** Monday–Sunday of the calendar week containing `now`, as dates. */
 export function currentWeekDays(now = new Date()): Date[] {
   const monday = addDays(now, -((now.getDay() + 6) % 7))
   return Array.from({ length: 7 }, (_, i) => addDays(monday, i))
+}
+
+/**
+ * The deposits that count for the day they're stamped with. A Bulk Savings deposit is stamped when it's
+ * paid but counts for the days its coverage rows name, so paying for tomorrow doesn't make today look paid.
+ */
+export function dayDeposits<T extends { ref?: string }>(deposits: T[], coveredRefs: string[] = []): T[] {
+  const covering = new Set(coveredRefs)
+  return deposits.filter(d => !d.ref || !covering.has(d.ref))
 }
 
 /** Deposits grouped by the day they're stamped with. */

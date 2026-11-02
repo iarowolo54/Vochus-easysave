@@ -11,7 +11,7 @@ import { NextRequest } from 'next/server'
 import { prisma } from '../src/lib/prisma'
 import { POST as webhook } from '../src/app/api/webhooks/paystack/route'
 import { runDueAutoDebits } from '../src/lib/auto-debit-run'
-import { watKey } from '../src/lib/savings-card'
+import { buildSlots, buildSlotsWat, dayDeposits, watKey } from '../src/lib/savings-card'
 
 const rid = Math.random().toString(36).slice(2, 8)
 const DAY = 864e5
@@ -32,6 +32,10 @@ const koboByRef = new Map<string, number>()
 const realFetch = globalThis.fetch
 globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
   const u = typeof url === 'string' ? url : url.toString()
+  if (u.includes('/transaction/initialize')) {
+    const sent = JSON.parse(String(init?.body ?? '{}'))
+    return new Response(JSON.stringify({ status: true, data: { reference: sent.reference, authorization_url: 'https://checkout.paystack.test/x' } }), { status: 200 })
+  }
   const m = u.match(/\/transaction\/verify\/([^/?]+)/)
   if (m) {
     const amount = koboByRef.get(decodeURIComponent(m[1])) ?? 0
@@ -224,4 +228,103 @@ test('an intent for a different plan writes no coverage on the credited plan', a
   const ref = await mkIntent(c, second.id, tomorrowKeys(), 200)
   await sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 20000 })
   assert.equal(await prisma.planDayCoverage.count({ where: { savingsPlanId: { in: [plan.id, second.id] } } }), 0)
+})
+
+async function sendInit(c: { id: string; customerId: string }, planId: string, keys: string[]) {
+  const { signCustomerToken } = await import('../src/lib/customer-auth')
+  currentToken = await signCustomerToken({ id: c.id, customerId: c.customerId, name: 'C X', agentId })
+  const { POST } = await import('../src/app/api/customer/catchup/init/route')
+  const res = await POST(new NextRequest('http://localhost/api/customer/catchup/init', { method: 'POST', body: JSON.stringify({ planId, keys }) }))
+  return res.status
+}
+
+type MePlan = { id: string; startDate: string; maturityDate: string; periodDays: number; cadence: string; coveredKeys: string[]; coveredRefs: string[] }
+type MeTx = { ref: string; createdAt: string; planId: string }
+
+/** The slots both sides build: the phone from /api/customer/me, and the server as init does. */
+async function slotsBothWays(c: { id: string; customerId: string }, planId: string) {
+  const { signCustomerToken } = await import('../src/lib/customer-auth')
+  currentToken = await signCustomerToken({ id: c.id, customerId: c.customerId, name: 'C X', agentId })
+  const { GET } = await import('../src/app/api/customer/me/route')
+  const me = await (await GET()).json() as { plans: MePlan[]; transactions: MeTx[] }
+  const plan = me.plans.find(p => p.id === planId)!
+  const dates = dayDeposits(me.transactions.filter(t => t.planId === planId), plan.coveredRefs).map(t => t.createdAt)
+  return { plan, phone: buildSlots(plan, dates, plan.coveredKeys), server: buildSlotsWat(plan, dates, plan.coveredKeys) }
+}
+
+async function mandateFor(c: { id: string }, planId: string) {
+  return prisma.autoDebitMandate.create({
+    data: { customerId: c.id, savingsPlanId: planId, authorizationCode: `AUTH_${rid}`, authSignature: 'sig', authEmail: 'a@b.c', status: 'active', amountPerCycle: 100, nextRunAt: new Date(Date.now() - 1000) },
+  })
+}
+
+const todayKey = () => watKey(new Date())
+const tomorrowKey = () => watKey(new Date(Date.now() + DAY))
+
+for (const [order, pay] of [
+  ['verify', (c: { id: string; customerId: string }, _planId: string, ref: string) => sendVerify(c, ref)],
+  ['webhook', (c: { id: string; customerId: string }, planId: string, ref: string) => sendWebhook(ref, { customerId: c.id, planId, kobo: Number(koboByRef.get(ref)) })],
+] as const) {
+  test(`paid via ${order}, tomorrow only: today stays selectable and the cron charges today`, async () => {
+    const { c, plan } = await mk()
+    const ref = await mkIntent(c, plan.id, [tomorrowKey()], 100)
+    await pay(c, plan.id, ref)
+
+    const { phone, server } = await slotsBothWays(c, plan.id)
+    for (const slots of [phone, server]) {
+      assert.equal(slots.find(s => s.key === todayKey())?.state, 'today')
+      assert.equal(slots.find(s => s.key === tomorrowKey())?.state, 'saved')
+    }
+    assert.equal(await sendInit(c, plan.id, [todayKey()]), 200)
+
+    const m = await mandateFor(c, plan.id)
+    const r = await runDueAutoDebits(prisma, new Date(), { mandateIds: [m.id] })
+    assert.deepEqual(r, { charged: 1, skipped: 0, failed: 0, pending: 0 })
+    assert.equal(await prisma.autoDebitAttempt.count({ where: { savingsPlanId: plan.id } }), 1)
+  })
+
+  test(`paid via ${order}, today and tomorrow: both saved, neither charged`, async () => {
+    const { c, plan } = await mk()
+    const keys = [todayKey(), tomorrowKey()]
+    const ref = await mkIntent(c, plan.id, keys, 200)
+    await pay(c, plan.id, ref)
+
+    const { phone, server } = await slotsBothWays(c, plan.id)
+    for (const slots of [phone, server]) {
+      for (const key of keys) assert.equal(slots.find(s => s.key === key)?.state, 'saved')
+    }
+    assert.equal(await sendInit(c, plan.id, [todayKey()]), 400)
+
+    const m = await mandateFor(c, plan.id)
+    const scope = { mandateIds: [m.id] }
+    assert.deepEqual(await runDueAutoDebits(prisma, new Date(), scope), { charged: 0, skipped: 1, failed: 0, pending: 0 })
+    assert.deepEqual(await runDueAutoDebits(prisma, new Date(Date.now() + DAY), scope), { charged: 0, skipped: 1, failed: 0, pending: 0 })
+    assert.equal(await prisma.autoDebitAttempt.count({ where: { savingsPlanId: plan.id } }), 0)
+  })
+}
+
+test('a mismatched webhook payment wrote no coverage, so it still counts for the day it was stamped', async () => {
+  const { c, plan } = await mk()
+  const ref = await mkIntent(c, plan.id, [tomorrowKey()], 100)
+  await sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 5000 })
+  const { phone, server } = await slotsBothWays(c, plan.id)
+  for (const slots of [phone, server]) {
+    assert.equal(slots.find(s => s.key === todayKey())?.state, 'saved')
+    assert.equal(slots.find(s => s.key === tomorrowKey())?.state, 'upcoming')
+  }
+})
+
+test('weekly, next week only: this week stays selectable', async () => {
+  const { c, plan } = await mk()
+  await prisma.savingsPlan.update({ where: { id: plan.id }, data: { cadence: 'weekly' } })
+  const nextWeek = watKey(new Date(plan.startDate.getTime() + 7 * DAY))
+  const thisWeek = watKey(plan.startDate)
+  const ref = await mkIntent(c, plan.id, [nextWeek], 700)
+  await sendVerify(c, ref)
+  const { server, phone } = await slotsBothWays(c, plan.id)
+  for (const slots of [phone, server]) {
+    assert.equal(slots.find(s => s.key === thisWeek)?.state, 'today')
+    assert.equal(slots.find(s => s.key === nextWeek)?.state, 'saved')
+  }
+  assert.equal(await sendInit(c, plan.id, [thisWeek]), 200)
 })

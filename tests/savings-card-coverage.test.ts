@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { buildSlots } from '../src/lib/savings-card'
+import { buildSlots, currentSlot, dayDeposits } from '../src/lib/savings-card'
 
 // Local noon, serialised to ISO, so the local-time day key is stable in any timezone.
 const at = (y: number, m: number, day: number) => new Date(y, m - 1, day, 12).toISOString()
@@ -72,4 +72,65 @@ test('weekly: real deposit in a week -> saved and not coveredOnly', () => {
   const w2 = slots.find(x => x.index === 2)!
   assert.equal(w2.state, 'saved')
   assert.equal(w2.coveredOnly, false)
+})
+
+// Deposits are stamped when paid. `now` is Nov 5: a Bulk Savings deposit made today has ref BULK.
+const bulk = { ref: 'BULK', createdAt: at(2026, 11, 5) }
+const plain = { ref: 'PLAIN', createdAt: at(2026, 11, 5) }
+const daysFor = (deposits: { ref: string; createdAt: string }[], coveredRefs: string[]) =>
+  dayDeposits(deposits, coveredRefs).map(d => d.createdAt)
+
+test('dayDeposits: drops only deposits with coverage rows', () => {
+  assert.deepEqual(dayDeposits([bulk, plain], ['BULK']), [plain])
+  assert.deepEqual(dayDeposits([bulk, plain], []), [bulk, plain])
+  assert.deepEqual(dayDeposits([bulk, plain], undefined), [bulk, plain])
+})
+
+test('dayDeposits: a deposit with no ref is never treated as covered', () => {
+  const noRef: { ref?: string; createdAt: string } = { createdAt: at(2026, 11, 5) }
+  assert.deepEqual(dayDeposits([noRef], ['BULK']), [noRef])
+})
+
+test('daily: paying only for tomorrow leaves today unpaid and tomorrow saved', () => {
+  const slots = buildSlots(daily, daysFor([bulk], ['BULK']), ['2026-11-06'], now)
+  assert.equal(slots.find(x => x.key === '2026-11-05')?.state, 'today')
+  assert.equal(slots.find(x => x.key === '2026-11-06')?.state, 'saved')
+})
+
+test('daily: paying for today and tomorrow saves both, by coverage', () => {
+  const slots = buildSlots(daily, daysFor([bulk], ['BULK']), ['2026-11-05', '2026-11-06'], now)
+  const today = slots.find(x => x.key === '2026-11-05')!
+  assert.equal(today.state, 'saved')
+  assert.equal(today.coveredOnly, true)
+  assert.equal(slots.find(x => x.key === '2026-11-06')?.state, 'saved')
+})
+
+test('daily: a catch-up for past days does not mark the day it was paid', () => {
+  const slots = buildSlots(daily, daysFor([bulk], ['BULK']), ['2026-11-02'], now)
+  assert.equal(slots.find(x => x.key === '2026-11-02')?.state, 'saved')
+  assert.equal(slots.find(x => x.key === '2026-11-05')?.state, 'today')
+})
+
+test('daily: a plain deposit still marks its day, beside a bulk one', () => {
+  const slots = buildSlots(daily, daysFor([bulk, plain], ['BULK']), ['2026-11-06'], now)
+  const today = slots.find(x => x.key === '2026-11-05')!
+  assert.equal(today.state, 'saved')
+  assert.equal(today.coveredOnly, false)
+})
+
+test('daily: a deposit with no coverage rows behaves as before, like a webhook mismatch', () => {
+  const slots = buildSlots(daily, daysFor([bulk], []), [], now)
+  assert.equal(slots.find(x => x.key === '2026-11-05')?.state, 'saved')
+})
+
+test('weekly: paying for next week only leaves this week unpaid', () => {
+  const slots = buildSlots(weekly, daysFor([bulk], ['BULK']), ['2026-11-08'], now)
+  assert.equal(slots.find(x => x.key === '2026-11-01')?.state, 'today')
+  assert.equal(slots.find(x => x.key === '2026-11-08')?.state, 'saved')
+})
+
+test('currentSlot: finds the slot holding today, for days and weeks', () => {
+  assert.equal(currentSlot(buildSlots(daily, [], [], now), '2026-11-05', false)?.key, '2026-11-05')
+  assert.equal(currentSlot(buildSlots(weekly, [], [], now), '2026-11-05', true)?.key, '2026-11-01')
+  assert.equal(currentSlot(buildSlots(daily, [], [], now), '2027-01-01', false), undefined)
 })

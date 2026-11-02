@@ -11,14 +11,14 @@ import { BULK_SAVINGS_LABEL, MAX_CATCHUP_KEYS, allMissedChosen, isEligiblePlan, 
 import { formatNaira } from '@/lib/format'
 import { describeFailure, postJson } from '@/lib/http'
 import { getHideBalance } from '@/lib/preferences'
-import { buildSlots, hasEnded, isWeekly } from '@/lib/savings-card'
+import { buildSlots, dayDeposits, hasEnded, isWeekly } from '@/lib/savings-card'
 
 type Plan = {
   id: string; dailyAmount: number; periodDays: number; cadence?: string; goal: string
   startDate: string; maturityDate: string; balance: number; status: string; source?: string
-  coveredKeys?: string[]
+  coveredKeys?: string[]; coveredRefs?: string[]
 }
-type Tx = { id: string; amount: number; createdAt: string; method: string | null; planId: string | null; recordedBy: string }
+type Tx = { id: string; amount: number; ref: string; createdAt: string; method: string | null; planId: string | null; recordedBy: string }
 type Me = { plan: Plan | null; plans?: Plan[]; transactions: Tx[] }
 
 function CatchupScreen() {
@@ -35,7 +35,7 @@ function CatchupScreen() {
   const plan = plans.find(p => p.id === planId) ?? null
   const deposits = useMemo(() => (data && plan ? data.transactions.filter(t => t.planId === plan.id) : []), [data, plan])
   const slots = useMemo(
-    () => (plan ? buildSlots(plan, deposits.map(d => d.createdAt), plan.coveredKeys ?? []) : []),
+    () => (plan ? buildSlots(plan, dayDeposits(deposits, plan.coveredRefs).map(d => d.createdAt), plan.coveredKeys ?? []) : []),
     [plan, deposits],
   )
   const selectable = useMemo(() => new Set(selectableKeys(slots)), [slots])

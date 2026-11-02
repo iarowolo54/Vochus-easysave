@@ -61,18 +61,18 @@ export async function GET() {
   )
   const planIds = plansBase.map(p => p.id)
 
-  // Days covered by catch-up payments, per plan (scoped to this customer's plan ids).
+  // Days covered by Bulk Savings payments and the deposits that paid for them, per plan (scoped to this customer's plan ids).
   const coverageRows = planIds.length
     ? await prisma.planDayCoverage.findMany({
         where: { savingsPlanId: { in: planIds } },
-        select: { savingsPlanId: true, coversKey: true },
+        select: { savingsPlanId: true, coversKey: true, ref: true },
         orderBy: { coversKey: 'asc' },
       })
     : []
-  const plans = plansBase.map(p => ({
-    ...p,
-    coveredKeys: coverageRows.filter(r => r.savingsPlanId === p.id).map(r => r.coversKey),
-  }))
+  const plans = plansBase.map(p => {
+    const rows = coverageRows.filter(r => r.savingsPlanId === p.id)
+    return { ...p, coveredKeys: rows.map(r => r.coversKey), coveredRefs: [...new Set(rows.map(r => r.ref))] }
+  })
   const plan = plans[0] ?? null
 
   // Every deposit on the customer's active plans, so the home screen can show per-plan history and
