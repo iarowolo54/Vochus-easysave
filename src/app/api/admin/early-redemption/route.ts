@@ -4,7 +4,7 @@ import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
-import { IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
+import { excludeExpiredPending, IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
 
 // Awaiting admin action = in flight but not yet Approved (incl. AwaitingOTP / Finalizing).
 const AWAITING_ACTION_STATUSES = IN_FLIGHT_REDEMPTION_STATUSES.filter(s => s !== 'Approved')
@@ -119,6 +119,12 @@ export async function POST(req: Request) {
 
   const plan = await prisma.savingsPlan.findUnique({ where: { id: savingsPlanId } })
   if (!plan) return NextResponse.json({ error: 'Savings plan not found' }, { status: 404 })
+
+  const existing = await prisma.earlyRedemption.findFirst({
+    where: { savingsPlanId, status: { in: IN_FLIGHT_REDEMPTION_STATUSES }, ...excludeExpiredPending() },
+    select: { id: true },
+  })
+  if (existing) return NextResponse.json({ error: 'This plan already has a request in progress' }, { status: 409 })
 
   const isEarly = type === 'early' || plan.status === 'Active'
   const gross = money(plan.balance)

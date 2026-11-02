@@ -130,8 +130,11 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   }
 
   if (action === 'approve') {
-    // Mutual exclusion with the agent redemption path: never pay out a plan that
-    // has already been redeemed (defence alongside loadOwnedRedeemablePlan).
+    // A request with a code has to be confirmed with it first; only an admin's own request (no code) can skip that.
+    if (record.status === 'Pending' && record.tokenExpiry) {
+      return conflict('The customer hasn’t confirmed this request with their code yet, so it can’t be approved. You can reject it.')
+    }
+    // Never pay out a plan that has already been redeemed.
     if (record.savingsPlan.status === 'Redeemed' || record.savingsPlan.balance <= 0) {
       return NextResponse.json({ error: 'This plan has already been redeemed' }, { status: 409 })
     }

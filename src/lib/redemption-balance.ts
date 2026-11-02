@@ -2,7 +2,7 @@
 // has changed, then zeroing the plan, wipes whatever arrived in between. So every path that closes a
 // plan for a redemption goes through here, and a changed balance blocks it (no recalculation).
 import type { Prisma, PrismaClient } from '@prisma/client'
-import { IN_FLIGHT_REDEMPTION_STATUSES } from './redemption-statuses'
+import { excludeExpiredPending, IN_FLIGHT_REDEMPTION_STATUSES } from './redemption-statuses'
 
 type Client = Pick<PrismaClient, 'savingsPlan' | 'earlyRedemption'> | Prisma.TransactionClient
 
@@ -40,7 +40,8 @@ export async function claimPlanForPayout(client: Client, planId: string, request
 export const readyToFinalize = (plan: { status: string; balance: number }, requested: number) =>
   balanceUnchanged(plan.balance, plan.status === 'Redeemed' ? 0 : requested)
 
-/** Paystack has already accepted the transfer by now. False means a deposit landed; it must not be zeroed. */
+/** Paystack has already accepted the transfer by now. False means a deposit landed: it must not be zeroed, and
+ *  the payout still has to be recorded, so the caller leaves it on the plan and flags it for review. */
 export async function closePlanAfterFinalize(client: Client, planId: string, requestedBalance: number): Promise<boolean> {
   const closed = await client.savingsPlan.updateMany({
     where: {
@@ -81,21 +82,11 @@ export async function creditOpenPlan(client: Client, planId: string, amount: num
 
 const OPEN_STATUSES = IN_FLIGHT_REDEMPTION_STATUSES.filter(s => s !== 'Approved')
 
-/**
- * Whether new money should be refused because a redemption is in progress. Nothing ever expires a
- * Pending request, so one whose code ran out unused doesn't count: it would stop this customer saving
- * until an admin noticed. If an admin approves it anyway, the balance check above still blocks it.
- */
+/** Whether new money should be refused because a redemption is in progress. If an abandoned request is
+ *  approved anyway after money arrives, the balance check above still blocks it. */
 export async function hasOpenRedemption(client: Client, planId: string, now = new Date()): Promise<boolean> {
   const open = await client.earlyRedemption.findFirst({
-    where: {
-      savingsPlanId: planId,
-      OR: [
-        { status: { in: OPEN_STATUSES.filter(s => s !== 'Pending') } },
-        { status: 'Pending', tokenExpiry: null },
-        { status: 'Pending', tokenExpiry: { gte: now } },
-      ],
-    },
+    where: { savingsPlanId: planId, status: { in: OPEN_STATUSES }, ...excludeExpiredPending(now) },
     select: { id: true },
   })
   return open !== null

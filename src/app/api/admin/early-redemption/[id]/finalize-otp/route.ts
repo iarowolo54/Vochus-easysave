@@ -2,7 +2,6 @@ import { NextResponse } from 'next/server'
 import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { finalizeTransfer, PaystackRejected } from '@/lib/paystack'
-import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
 import { interestPayoutOps } from '@/lib/redemption-interest-ops'
@@ -33,9 +32,6 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
   if (!readyToFinalize(record.savingsPlan, record.balance)) {
     return NextResponse.json({ error: BALANCE_CHANGED_AWAITING_OTP }, { status: 409 })
   }
-
-  // Read-only inputs for the credit, computed before the claim.
-  const hasCashDeposit = await planHasCashDeposit(prisma, record.savingsPlanId)
 
   // Claim BEFORE Paystack: AwaitingOTP -> Finalizing. A concurrent submit claims nothing and never finalizes.
   const claim = await prisma.earlyRedemption.updateMany({
@@ -68,10 +64,10 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
   const agentId = record.savingsPlan.customer.agentId
   const customerId = record.savingsPlan.customer.id
 
-  const rates = redemptionDeduction({ balance: record.balance, dailyAmount: record.savingsPlan.dailyAmount, cadence: record.savingsPlan.cadence, hasCashDeposit, source: (record.savingsPlan as any).source })
-  const platformFee = money(rates.platform)
-  const agentComm = money(rates.agent)
-  const revenueCredit = money(platformFee)
+  // The split stored on the request, same as redemptionCompletionOps; working it out again here can disagree.
+  const agentComm = money(record.penalty * (3 / 5))
+  const revenueCredit = money(record.penalty * (2 / 5))
+  let reviewNeeded = false
 
   try {
     await prisma.$transaction(async (tx) => {
@@ -80,7 +76,22 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
         data: { status: 'Approved', decidedAt: new Date(), decidedBy, bankTransferStatus: finalStatus },
       })
       if (fin.count === 0) throw new Error('Finalizing claim lost')
-      if (!(await closePlanAfterFinalize(tx, record.savingsPlanId, record.balance))) throw new Error('Plan balance changed during finalize')
+      // The customer has been paid, so the ledger is written whatever happened. A deposit that landed in
+      // this gap stays on the plan, in the same transaction as a flag for someone to sort it out.
+      if (!(await closePlanAfterFinalize(tx, record.savingsPlanId, record.balance))) {
+        reviewNeeded = true
+        const plan = await tx.savingsPlan.update({ where: { id: record.savingsPlanId }, data: { status: 'Redeemed' }, select: { balance: true } })
+        await tx.auditLog.create({
+          data: {
+            action: 'early_redemption_review_needed',
+            entity: 'EarlyRedemption',
+            entityId: id,
+            details: `MANUAL REVIEW: ${record.ref} was paid by Paystack, but plan ${record.savingsPlanId} now holds ₦${plan.balance.toLocaleString()} that arrived during the payout. It was left on the closed plan.`,
+            actorType: 'system',
+            actorName: 'Finalize OTP',
+          },
+        })
+      }
       await tx.platformWallet.upsert({
         where: { type: 'Revenue' },
         update: { balance: { increment: revenueCredit } },
@@ -120,5 +131,5 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     actorName: decidedBy,
   })
 
-  return NextResponse.json({ ok: true, status: 'Approved', bankTransferStatus: finalStatus })
+  return NextResponse.json({ ok: true, status: 'Approved', bankTransferStatus: finalStatus, reviewNeeded })
 }

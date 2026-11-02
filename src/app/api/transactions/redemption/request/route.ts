@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
+import { excludeExpiredPending, IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
 import { sendSMS } from '@/lib/kudisms'
 import { sendMail } from '@/lib/mail'
 import { createRedemptionWithUniqueCode } from '@/lib/redemption-create'
@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     if (plan.balance <= 0) return NextResponse.json({ error: 'No balance to redeem' }, { status: 400 })
 
     const existing = await prisma.earlyRedemption.findFirst({
-      where: { savingsPlanId: planId, status: { in: IN_FLIGHT_REDEMPTION_STATUSES } },
+      where: { savingsPlanId: planId, status: { in: IN_FLIGHT_REDEMPTION_STATUSES }, ...excludeExpiredPending() },
     })
     if (existing) return NextResponse.json({ error: 'A pending redemption request already exists for this customer' }, { status: 409 })
 

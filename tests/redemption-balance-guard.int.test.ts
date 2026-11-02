@@ -6,6 +6,7 @@ process.env.NEXTAUTH_SECRET ??= 'test-secret'
 import { test, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import Module, { createRequire } from 'node:module'
+import { existsSync } from 'node:fs'
 import bcrypt from 'bcryptjs'
 
 const stub = { getServerSession: async (..._a: unknown[]): Promise<unknown> => null }
@@ -50,7 +51,10 @@ const saving = require('../src/app/api/transactions/saving/route') as typeof imp
 const bulk = require('../src/app/api/transactions/saving/bulk/route') as typeof import('../src/app/api/transactions/saving/bulk/route')
 const autoDebitInit = require('../src/app/api/customer/auto-debit/init/route') as typeof import('../src/app/api/customer/auto-debit/init/route')
 const init = require('../src/app/api/customer/paystack/init/route') as typeof import('../src/app/api/customer/paystack/init/route')
-const direct = require('../src/app/api/transactions/redemption/route') as typeof import('../src/app/api/transactions/redemption/route')
+const redeemRoute = require('../src/app/api/customer/redeem/route') as typeof import('../src/app/api/customer/redeem/route')
+const meRoute = require('../src/app/api/customer/me/route') as typeof import('../src/app/api/customer/me/route')
+const requestRoute = require('../src/app/api/transactions/redemption/request/route') as typeof import('../src/app/api/transactions/redemption/request/route')
+const adminList = require('../src/app/api/admin/early-redemption/route') as typeof import('../src/app/api/admin/early-redemption/route')
 /* eslint-enable @typescript-eslint/no-require-imports */
 
 const RUN = Math.random().toString(36).slice(2, 8)
@@ -139,7 +143,7 @@ before(async () => {
   revenueBefore = (await prisma.platformWallet.findUnique({ where: { type: 'Revenue' } }))?.balance ?? null
   modeBefore = (await prisma.platformSetting.findUnique({ where: { key: 'payoutMode' } }))?.value ?? null
   await prisma.platformWallet.upsert({ where: { type: 'Revenue' }, update: {}, create: { type: 'Revenue', balance: 100000 } })
-  currentToken = await signCustomerToken({ id: customerId, name: 'C X', customerId: `RG-${RUN}` } as never)
+  currentToken = await signCustomerToken({ id: customerId, name: 'C X', phone: `08${RUN}3`, customerId: `RG-${RUN}` } as never)
 })
 
 beforeEach(async () => {
@@ -310,6 +314,53 @@ test('finalize: an open plan with a different balance is refused', async () => {
   }
 })
 
+test('finalize: money landing while Paystack answers still writes the ledger, keeps the deposit and flags it', async () => {
+  const planId = await mkPlan(0, 'Redeemed')
+  const r = await mkRedemption({ planId, method: 'BankTransfer', status: 'AwaitingOTP', transferCode: `TRF_${RUN}_g` })
+  const m0 = await money()
+  const res = await withLivePaystack(async () => {
+    await prisma.savingsPlan.update({ where: { id: planId }, data: { balance: { increment: 45000 } } })
+    return { status: true, data: { status: 'success' } }
+  }, () => finalize(r.id))
+  assert.equal(res.status, 200)
+  assert.equal((await res.json()).reviewNeeded, true)
+  assert.equal((await erRow(r.id)).status, 'Approved')
+  assert.equal(await prisma.transaction.count({ where: { ref: r.ref } }), 1)
+  const plan = await planRow(planId)
+  assert.equal(plan.balance, 45000, 'the deposit survives')
+  assert.equal(plan.status, 'Redeemed')
+  const m1 = await money()
+  assert.equal(m1.commission, m0.commission + 300)
+  assert.equal(m1.revenue, m0.revenue + 200)
+  const flag = await prisma.auditLog.findFirstOrThrow({ where: { action: 'early_redemption_review_needed', entityId: r.id } })
+  assert.match(flag.details ?? '', /MANUAL REVIEW/)
+  assert.match(flag.details ?? '', /45,000/)
+})
+
+test('finalize: a clean payout is not flagged', async () => {
+  const planId = await mkPlan(0, 'Redeemed')
+  const r = await mkRedemption({ planId, method: 'BankTransfer', status: 'AwaitingOTP', transferCode: `TRF_${RUN}_h` })
+  assert.equal((await (await finalize(r.id)).json()).reviewNeeded, false)
+  assert.equal(await prisma.auditLog.count({ where: { action: 'early_redemption_review_needed', entityId: r.id } }), 0)
+})
+
+test('finalize credits exactly what approve credits, from the stored penalty, with cash deposits on the plan', async () => {
+  const credit = async (run: (id: string) => Promise<Response>, status: string, method: string, balance: number, planStatus: string) => {
+    const planId = await mkPlan(balance, planStatus)
+    // A cash deposit changes what a recalculated fee would come to.
+    await prisma.transaction.create({ data: { ref: `RGC-${RUN}-${seq.n++}`, agentId, customerId, planId, type: 'saving', amount: 10000, method: 'Cash' } })
+    const r = await mkRedemption({ planId, method, status, transferCode: status === 'AwaitingOTP' ? `TRF_${RUN}_${seq.n}` : undefined })
+    const m0 = await money()
+    assert.equal((await run(r.id)).status, 200)
+    const m1 = await money()
+    return { commission: m1.commission - m0.commission, revenue: m1.revenue - m0.revenue }
+  }
+  const viaOtp = await credit(finalize, 'AwaitingOTP', 'BankTransfer', 0, 'Redeemed')
+  const viaApprove = await credit(approve, 'AgentApproved', 'BankTransfer', 10000, 'Active')
+  assert.deepEqual(viaOtp, { commission: 300, revenue: 200 })
+  assert.deepEqual(viaApprove, viaOtp)
+})
+
 test('closePlanAfterFinalize zeroes a settled plan but never a deposit', async () => {
   const preClaimed = await mkPlan(0, 'Redeemed')
   assert.equal(await closePlanAfterFinalize(prisma, preClaimed, 10000), true)
@@ -464,14 +515,32 @@ test('rejecting one request does not reopen a plan another request closed', asyn
   assert.equal((await planRow(planId)).status, 'Redeemed')
 })
 
-// ---------- the agent's direct path already guards on the balance it read ----------
-test('agent direct redemption is refused while a request is open', async () => {
+// ---------- removed and gated paths ----------
+test('the direct agent redemption route is gone', () => {
+  assert.equal(existsSync('src/app/api/transactions/redemption/route.ts'), false)
+  assert.equal(existsSync('src/app/api/transactions/redemption/request/route.ts'), true)
+})
+
+test('a request with a code cannot be approved until it is confirmed', async () => {
+  for (const tokenExpiry of [new Date(Date.now() + 60_000), new Date(Date.now() - 60_000)]) {
+    const planId = await mkPlan(10000)
+    const r = await mkRedemption({ planId, status: 'Pending', tokenExpiry })
+    const m0 = await money()
+    const res = await approve(r.id)
+    assert.equal(res.status, 409)
+    assert.match((await res.json()).error, /hasn’t confirmed this request with their code/)
+    assert.equal((await erRow(r.id)).status, 'Pending')
+    assert.equal((await planRow(planId)).balance, 10000)
+    assert.deepEqual(await money(), m0)
+    assert.equal((await reject(r.id)).status, 200, 'it can still be rejected')
+  }
+})
+
+test('an admin-created request (no code) can still be approved from Pending', async () => {
   const planId = await mkPlan(10000)
-  await mkRedemption({ planId, status: 'Pending' })
-  asAgent()
-  const res = await direct.POST({ json: async () => ({ customerId, planId, method: 'Cash' }) } as never)
-  assert.equal(res.status, 404)
-  assert.equal((await planRow(planId)).balance, 10000)
+  const r = await mkRedemption({ planId, status: 'Pending', tokenExpiry: null })
+  assert.equal((await approve(r.id)).status, 200)
+  assert.equal((await planRow(planId)).balance, 0)
 })
 
 // ---------- saving routes ----------
@@ -610,16 +679,79 @@ test('hasOpenRedemption: an abandoned code does not block saving, an unexpired o
   }
 })
 
-test('a deposit after an abandoned code is still caught by the approval guard', async () => {
+test('a deposit after an abandoned code cannot be paid out: no approval, and the money stays', async () => {
   const planId = await mkPlan(10000)
   const r = await mkRedemption({ planId, status: 'Pending', tokenExpiry: new Date(Date.now() - 60_000) })
   asAgent()
   assert.equal((await save(planId)).status, 200)
   asAdmin()
-  const res = await approve(r.id)
-  assert.equal(res.status, 409)
-  assert.equal((await res.json()).error, BALANCE_CHANGED)
+  assert.equal((await approve(r.id)).status, 409)
   assert.equal((await planRow(planId)).balance, 10100)
+})
+
+// ---------- expired Pending, one definition everywhere ----------
+const asCustomerRequest = (body: unknown) => ({ json: async () => body, headers: new Headers() }) as never
+
+test('an online customer with an expired code is not stuck: new request, save and home all clear', async () => {
+  const planId = await mkPlan(10000)
+  await prisma.savingsPlan.update({ where: { id: planId }, data: { startDate: new Date(Date.now() + 864e5) } }) // the newest plan, which redeem reads
+  const r = await mkRedemption({ planId, status: 'Pending', tokenExpiry: new Date(Date.now() - 60_000) })
+
+  const me = await (await meRoute.GET()).json()
+  assert.ok(!me.pendingRedemptions.some((p: { savingsPlanId: string }) => p.savingsPlanId === planId), 'save page reads this')
+
+  const listed = await (await redeemRoute.GET()).json()
+  const row = listed.redemptions.find((x: { id: string }) => x.id === r.id)
+  assert.equal(row.expired, true)
+  assert.equal(row.status, 'Pending', 'status stays honest')
+  assert.equal(row.token, undefined)
+  assert.equal(row.tokenExpiry, undefined)
+
+  const res = await redeemRoute.POST(asCustomerRequest({ reason: 'x' }))
+  assert.equal(res.status, 200, JSON.stringify(await res.clone().json()))
+  const { ref } = await res.json()
+  refs.push(ref)
+  const fresh = await prisma.earlyRedemption.findUniqueOrThrow({ where: { ref } })
+  erIds.push(fresh.id)
+  assert.equal((await erRow(r.id)).status, 'Pending', 'the old row is not rewritten')
+  await prisma.earlyRedemption.update({ where: { id: fresh.id }, data: { status: 'Rejected' } })
+  await prisma.savingsPlan.update({ where: { id: planId }, data: { status: 'Completed' } })
+})
+
+test('a live code still holds everything', async () => {
+  const planId = await mkPlan(10000)
+  await prisma.savingsPlan.update({ where: { id: planId }, data: { startDate: new Date(Date.now() + 2 * 864e5) } })
+  await mkRedemption({ planId, status: 'Pending', tokenExpiry: new Date(Date.now() + 60_000) })
+  const me = await (await meRoute.GET()).json()
+  assert.ok(me.pendingRedemptions.some((p: { savingsPlanId: string }) => p.savingsPlanId === planId))
+  assert.equal((await redeemRoute.POST(asCustomerRequest({ reason: 'x' }))).status, 409)
+  await prisma.savingsPlan.update({ where: { id: planId }, data: { status: 'Completed' } })
+})
+
+test('the agent request route allows a new one after a code expires, not before', async () => {
+  const planId = await mkPlan(10000)
+  await mkRedemption({ planId, status: 'Pending', tokenExpiry: new Date(Date.now() + 60_000) })
+  asAgent()
+  const body = { customerId, planId, payoutMethod: 'Cash' }
+  assert.equal((await requestRoute.POST({ json: async () => body } as never)).status, 409)
+  await prisma.earlyRedemption.updateMany({ where: { savingsPlanId: planId }, data: { tokenExpiry: new Date(Date.now() - 60_000) } })
+  const res = await requestRoute.POST({ json: async () => body } as never)
+  assert.equal(res.status, 200, JSON.stringify(await res.clone().json()))
+  const { ref } = await res.json()
+  refs.push(ref)
+  erIds.push((await prisma.earlyRedemption.findUniqueOrThrow({ where: { ref } })).id)
+})
+
+test('admin create: refused while a request is in progress, allowed after an abandoned code', async () => {
+  const planId = await mkPlan(10000)
+  const r = await mkRedemption({ planId, status: 'TokenValidated' })
+  const create = () => adminList.POST({ json: async () => ({ savingsPlanId: planId, reason: 'x' }) } as never)
+  assert.equal((await create()).status, 409)
+  await prisma.earlyRedemption.update({ where: { id: r.id }, data: { status: 'Pending', tokenExpiry: new Date(Date.now() - 60_000) } })
+  const res = await create()
+  assert.equal(res.status, 200)
+  const made = await res.json()
+  refs.push(made.ref); erIds.push(made.id)
 })
 
 test('the refusal message is not mistaken for a PIN error on the admin screen', () => {
