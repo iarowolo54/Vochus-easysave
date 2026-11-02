@@ -149,7 +149,7 @@ export default function TransactionDetailPage() {
     } finally { setSaving(false) }
   }
 
-  // A failed payout saves nothing that could pass as proof of payment. The app's slip is headed "Savings Receipt"
+  // A failed payout offers nothing that could pass as proof of payment, including WhatsApp. The app's slip is headed "Savings Receipt"
   // whatever it prints, so it's only offered for savings until the app can print a title it's given.
   const showSave = txn.canSendReceipt
   const showBluetoothPrint = canPrint && txn.type === 'saving'
@@ -194,13 +194,13 @@ export default function TransactionDetailPage() {
           </dl>
 
           {txn.receiptStatus === 'Completed' && <p className="ag-receipt-foot">Official receipt from Vochus Easy Save. Keep it for your records.</p>}
-          {!txn.canSendReceipt && <p className="ag-receipt-foot">This payout {txn.receiptStatus === 'Reversed' ? 'was reversed' : 'failed'}, so the receipt can’t be sent.</p>}
+          {!txn.canSendReceipt && <p className="ag-receipt-foot">This payout {txn.receiptStatus === 'Reversed' ? 'was reversed' : 'failed'}, so the receipt can’t be sent.{!showBrowserPrint && ' Contact the customer directly.'}</p>}
 
           <div className="no-print"><SendReceiptNotices send={send} /></div>
 
           <div className="ag-receipt-actions no-print">
             {txn.customer && txn.canSendReceipt && <SendReceiptButton send={send} onSend={() => sender.send([txn.id])} />}
-            {txn.customer?.phone && (
+            {txn.customer?.phone && txn.canSendReceipt && (
               <a className={`ui-btn ${send.state === 'sent' && !send.canOpenChat ? 'ui-btn--primary' : 'ui-btn--secondary'}`} style={{ gridColumn: '1 / -1' }} href={waLink(txn.customer.phone, shareText)} target="_blank" rel="noopener noreferrer">
                 <Icons.share size={18} aria-hidden="true" /> Send on WhatsApp
               </a>

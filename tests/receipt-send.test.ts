@@ -70,13 +70,21 @@ test('postReceipt returns to idle with an error on a lost connection or an unrea
   assert.match(bad.error, /could not be sent/)
 })
 
-test('postReceipt gives up after a timeout rather than spinning forever', async () => {
-  let signal: AbortSignal | null | undefined
-  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => { signal = init?.signal; return new Response('{}') }) as typeof fetch
-  await postReceipt(['a'])
-  assert.ok(signal instanceof AbortSignal)
-  globalThis.fetch = (async () => { throw new DOMException('timed out', 'TimeoutError') }) as typeof fetch
-  const late = await postReceipt(['a'])
-  assert.equal(late.state, 'idle')
-  assert.ok(late.error)
+test('postReceipt gives up after a timeout, and says it may have been sent', async () => {
+  const realTimeout = AbortSignal.timeout
+  // Older WebViews don't have it, so the send must not need it.
+  AbortSignal.timeout = (() => { throw new TypeError('not supported') }) as typeof AbortSignal.timeout
+  globalThis.fetch = ((_url: unknown, init?: RequestInit) => new Promise((_resolve, reject) => {
+    init?.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+  })) as typeof fetch
+  try {
+    const late = await postReceipt(['a'], 5)
+    assert.equal(late.state, 'idle')
+    assert.equal(late.error, 'This is taking long. It may have been sent, so check the chat before trying again.')
+  } finally { AbortSignal.timeout = realTimeout }
+})
+
+test('a lost connection is not reported as a timeout', async () => {
+  globalThis.fetch = (async () => { throw new TypeError('offline') }) as typeof fetch
+  assert.match((await postReceipt(['a'])).error, /No connection/)
 })

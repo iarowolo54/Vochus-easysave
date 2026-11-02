@@ -6,14 +6,22 @@ export const SEND_IDLE: SendStatus = { state: 'idle', error: '', canOpenChat: tr
 
 type Post = (ids: string[]) => Promise<SendStatus>
 
-export async function postReceipt(ids: string[]): Promise<SendStatus> {
+const SEND_TIMEOUT_MS = 15000
+
+export async function postReceipt(ids: string[], timeoutMs = SEND_TIMEOUT_MS): Promise<SendStatus> {
+  // Not AbortSignal.timeout, which throws on older WebViews.
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   try {
-    const res = await fetch('/api/transactions/send-receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }), signal: AbortSignal.timeout(15000) })
+    const res = await fetch('/api/transactions/send-receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }), signal: ctrl.signal })
     const data: { error?: string; canOpenChat?: boolean; hasPhone?: boolean } = await res.json().catch(() => ({}))
     if (res.ok) return { state: 'sent', error: '', canOpenChat: data.canOpenChat !== false, hasPhone: data.hasPhone !== false }
     return { ...SEND_IDLE, error: data.error ?? 'The receipt could not be sent. Please try again.' }
   } catch {
-    return { ...SEND_IDLE, error: 'No connection. Check your internet and try again.' }
+    // A request we gave up on may still have reached the server.
+    return { ...SEND_IDLE, error: ctrl.signal.aborted ? 'This is taking long. It may have been sent, so check the chat before trying again.' : 'No connection. Check your internet and try again.' }
+  } finally {
+    clearTimeout(timer)
   }
 }
 
