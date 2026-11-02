@@ -11,7 +11,7 @@ import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
 import { escapeHtml } from '@/lib/escape-html'
 import { listBanks, PaystackRejected, resolveAccount } from '@/lib/paystack'
-import { accountNameMatches, AGENT_REQUEST_PREFIX, payoutDestination } from '@/lib/payout-account'
+import { accountNameMatches, AGENT_REQUEST_PREFIX, otherNameWarning, payoutDestination } from '@/lib/payout-account'
 
 const MISMATCHED_ACCOUNT = 'Paystack resolved a different account'
 
@@ -105,7 +105,9 @@ export async function POST(req: NextRequest) {
     }))
 
     const expiryStr = tokenExpiry.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-    const destination = isBank && resolvedBankName ? payoutDestination(resolvedBankName, String(accountNumber)) : ''
+    const destination = isBank && resolvedBankName
+      ? `${payoutDestination(resolvedBankName, String(accountNumber))}${nameCheckHeld && resolvedAccountName ? ` ${otherNameWarning(resolvedAccountName)}` : ''}`
+      : ''
     const smsBody = `Vochus Easy Save: Your redemption token is ${token}. Present this to your agent to collect N${netPayout.toLocaleString()}. Expires ${expiryStr}.${destination ? ` ${destination}` : ''}`
 
     // The plaintext token is delivered only out-of-band (SMS/email) — never

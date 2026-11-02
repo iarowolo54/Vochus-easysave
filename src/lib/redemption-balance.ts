@@ -5,6 +5,7 @@ import type { Prisma, PrismaClient } from '@prisma/client'
 import { logAudit } from './audit'
 import { prisma } from './prisma'
 import { notifySuperAdminsRedemptionPending } from './redemption-notify'
+import { heldForNameCheck } from './payout-account'
 import { money } from './wallet-guard'
 import { excludeExpiredPending, IN_FLIGHT_REDEMPTION_STATUSES } from './redemption-statuses'
 
@@ -105,7 +106,7 @@ export async function creditOpenPlan(client: Client, planId: string, amount: num
  * False if it had already moved on or the code ran out in the meantime.
  */
 export async function confirmRequestWithCode(
-  record: { id: string; ref: string; netPayout: number; savingsPlan: { goal: string; customer: { firstName: string; lastName: string } } },
+  record: { id: string; ref: string; netPayout: number; payoutMethod: string | null; accountName: string | null; savingsPlan: { goal: string; customer: { firstName: string; lastName: string } } },
   agent: { id: string; agentId: string; name: string },
   now = new Date(),
 ): Promise<boolean> {
@@ -125,7 +126,8 @@ export async function confirmRequestWithCode(
     actorName: agent.name,
   })
   // Fire-and-forget; never throws.
-  notifySuperAdminsRedemptionPending(prisma, { customerName, amountNaira: record.netPayout, planGoal: record.savingsPlan.goal, ref: record.ref }).catch(() => {})
+  const warning = heldForNameCheck(record, record.savingsPlan.customer) ? `Held: the payout account is in the name ${record.accountName}, not ${customerName}. Compare the names before approving.` : undefined
+  notifySuperAdminsRedemptionPending(prisma, { customerName, amountNaira: record.netPayout, planGoal: record.savingsPlan.goal, ref: record.ref, warning }).catch(() => {})
   return true
 }
 

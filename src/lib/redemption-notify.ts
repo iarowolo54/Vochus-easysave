@@ -13,7 +13,7 @@ type Client = Pick<PrismaClient, 'superAdmin'>
  */
 export async function notifySuperAdminsRedemptionPending(
   client: Client,
-  input: { customerName: string; amountNaira: number; planGoal?: string; ref: string },
+  input: { customerName: string; amountNaira: number; planGoal?: string; ref: string; warning?: string },
 ): Promise<void> {
   try {
     if (process.env.NODE_ENV !== 'production') return
@@ -27,6 +27,7 @@ export async function notifySuperAdminsRedemptionPending(
       `Amount: <strong>${escapeHtml(formatNaira(input.amountNaira))}</strong><br/>` +
       (input.planGoal ? `Plan: ${escapeHtml(input.planGoal)}<br/>` : '') +
       `Reference: <code>${escapeHtml(input.ref)}</code></p>` +
+      (input.warning ? `<p><strong>${escapeHtml(input.warning)}</strong></p>` : '') +
       `<p>Open the admin dashboard to review and approve it.</p>`
     for (const a of admins) {
       if (!a.email) continue

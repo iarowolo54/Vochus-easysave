@@ -181,6 +181,19 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     const originalPlanStatus = record.savingsPlan.status
     const originalPlanBalance = record.savingsPlan.balance
 
+    // Recorded as the decision it is, before any money moves, because several paths end before the payout is booked.
+    if (nameOverride) {
+      await logAudit({
+        action: 'early_redemption_name_override',
+        entity: 'EarlyRedemption',
+        entityId: id,
+        details: `${decidedBy} authorised ${record.ref} with their PIN despite a name mismatch: customer ${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName}, account name ${record.accountName}, ${record.bankName} ending ${record.accountNumber?.slice(-4)}, payout ₦${record.netPayout.toLocaleString()}`,
+        actorType: 'admin',
+        actorId: (session.user as any).id,
+        actorName: decidedBy,
+      })
+    }
+
     let paystackRecipientCode: string | null = null
     let paystackTransferCode: string | null = null
     let bankTransferStatus: string | null = null
@@ -323,17 +336,6 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       actorId: (session.user as any).id,
       actorName: decidedBy,
     })
-    if (nameOverride) {
-      logAudit({
-        action: 'early_redemption_name_override',
-        entity: 'EarlyRedemption',
-        entityId: id,
-        details: `${decidedBy} approved ${record.ref} with their PIN despite a name mismatch: customer ${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName}, account name ${record.accountName}, ${record.bankName} ending ${record.accountNumber?.slice(-4)}, payout ₦${record.netPayout.toLocaleString()}`,
-        actorType: 'admin',
-        actorId: (session.user as any).id,
-        actorName: decidedBy,
-      })
-    }
     if (manualBank) {
       await notifyManualOutcome({ kind: 'paid' }, record, customerId, agentId)
     }

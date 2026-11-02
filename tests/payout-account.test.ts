@@ -1,7 +1,7 @@
 // Whether a bank account is the customer's own, and what the customer is told about it.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { accountNameMatches, heldForNameCheck, payoutDestination } from '../src/lib/payout-account'
+import { accountNameMatches, heldForNameCheck, otherNameWarning, payoutDestination } from '../src/lib/payout-account'
 
 const ada = { firstName: 'Ada', lastName: 'Obi' }
 
@@ -47,4 +47,8 @@ test('only an agent\'s bank payout in another name is held', () => {
   assert.equal(heldForNameCheck(record('RDM-1', 'Bank Transfer', 'OBI ADA'), ada), false)
   assert.equal(heldForNameCheck(record('RDM-1', 'Cash', null), ada), false)
   assert.equal(heldForNameCheck(record('RED-1', 'BankTransfer', 'SOME OTHER'), ada), false, 'a customer chooses their own account')
+})
+
+test('the warning names the account and tells the customer not to share the code', () => {
+  assert.equal(otherNameWarning('SOME AGENT'), "This account is in the name SOME AGENT, not yours. Don't share this code unless you agreed to this.")
 })

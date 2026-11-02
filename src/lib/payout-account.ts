@@ -38,3 +38,6 @@ export function heldForNameCheck(
 }
 
 export const payoutDestination = (bankName: string, accountNumber: string) => `Payout goes to ${bankName} account ending ${accountNumber.slice(-4)}.`
+
+/** For the customer about to give out their code: an agent has asked to pay this to an account in another name. */
+export const otherNameWarning = (accountName: string) => `This account is in the name ${accountName}, not yours. Don't share this code unless you agreed to this.`

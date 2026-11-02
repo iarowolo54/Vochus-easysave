@@ -12,6 +12,8 @@ import crypto from 'node:crypto'
 import bcrypt from 'bcryptjs'
 
 let adminNotices = 0
+let lastAdminWarning: string | undefined
+const smsSent: string[] = []
 let reviewAlerts = 0
 const stub = { getServerSession: async (..._a: unknown[]): Promise<unknown> => null }
 const M = Module as unknown as { _load: (req: string, ...rest: unknown[]) => unknown }
@@ -19,7 +21,8 @@ const realLoad = M._load
 M._load = function (req: string, ...rest: unknown[]) {
   const mod = realLoad.call(this, req, ...rest) as Record<string, unknown>
   if (req === 'next-auth') return new Proxy(mod, { get: (t, k) => (k === 'getServerSession' ? stub.getServerSession : t[k as string]) })
-  if (req.endsWith('redemption-notify')) return { ...mod, notifySuperAdminsRedemptionPending: async () => { adminNotices++ }, notifySuperAdminsPayoutReview: async () => { reviewAlerts++ } }
+  if (req.endsWith('kudisms')) return { ...mod, sendSMS: async (_to: string, text: string) => { smsSent.push(text); return { ok: true } } }
+  if (req.endsWith('redemption-notify')) return { ...mod, notifySuperAdminsRedemptionPending: async (_c: unknown, input: { warning?: string }) => { adminNotices++; lastAdminWarning = input.warning }, notifySuperAdminsPayoutReview: async () => { reviewAlerts++ } }
   return mod
 }
 let currentToken = ''
@@ -888,8 +891,52 @@ test('name mismatch: override needs the right PIN, pays, and audits both names',
   assert.equal((await planRow(planId)).balance, 0)
   await new Promise(done => setTimeout(done, 100)) // logAudit is fire-and-forget
   const log = await prisma.auditLog.findFirstOrThrow({ where: { action: 'early_redemption_name_override', entityId: row.id } })
-  assert.match(log.details ?? '', /customer C X, account name SOME AGENT, GTBank ending 6789/)
+  assert.match(log.details ?? '', /authorised .* customer C X, account name SOME AGENT, GTBank ending 6789/)
   assert.equal(log.actorId, adminId)
+})
+
+test('name mismatch: the customer is warned before giving their code, and a matching account is not', async () => {
+  const before = smsSent.length
+  await heldRequest()
+  const held = smsSent[before]
+  assert.match(held, /Payout goes to GTBank account ending 6789/)
+  assert.match(held, /in the name SOME AGENT, not yours\. Don't share this code/)
+  const fine = smsSent.length
+  await heldRequest('X C')
+  assert.match(smsSent[fine], /ending 6789/)
+  assert.doesNotMatch(smsSent[fine], /not yours/)
+})
+
+test('name mismatch: super admins are told when the agent confirms the code', async () => {
+  const planId = await mkPlan(10000)
+  asAgent()
+  const res = await requestBank(bankBody(planId), 'SOME AGENT')
+  const { ref } = await res.json()
+  refs.push(ref)
+  const row = await prisma.earlyRedemption.findUniqueOrThrow({ where: { ref } })
+  erIds.push(row.id)
+  const code = uniqueCode()
+  await prisma.earlyRedemption.update({ where: { id: row.id }, data: { token: hashRedemptionToken(code) } })
+  assert.equal((await (await checkWithRef(ref, code)).json()).valid, true)
+  assert.match(lastAdminWarning ?? '', /in the name SOME AGENT, not C X/)
+})
+
+test('name mismatch: the override is on record even when the payout stops at a code or an unclear answer', async () => {
+  for (const status of ['otp', 'received']) {
+    const { row } = await heldRequest()
+    const res = await withLivePaystack(recipientThen(() => ({ status: true, data: { transfer_code: `TRF_ov_${status}`, status } })), () => approveOverride(row.id))
+    assert.equal(res.status, 200, status)
+    assert.notEqual((await erRow(row.id)).status, 'Approved', status)
+    assert.equal(await prisma.auditLog.count({ where: { action: 'early_redemption_name_override', entityId: row.id } }), 1, status)
+  }
+})
+
+test('name mismatch: a wrong PIN or a refused override leaves no override on record', async () => {
+  const { row } = await heldRequest()
+  await approveOverride(row.id, '000000')
+  await prisma.approvalPinAttempt.deleteMany({ where: { adminId } })
+  await er.PATCH({ json: async () => ({ action: 'approve', pin: PIN }) } as never, ctx(row.id))
+  assert.equal(await prisma.auditLog.count({ where: { action: 'early_redemption_name_override', entityId: row.id } }), 0)
 })
 
 test('name mismatch: a non-admin cannot override, and an override on a matching name records nothing', async () => {
