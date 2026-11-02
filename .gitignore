@@ -57,3 +57,6 @@ next-env.d.ts
 
 # downloaded prod DB backups (real customer data)
 /backups/
+
+# git worktrees for agents
+/.worktrees/

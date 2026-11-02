@@ -1,7 +1,24 @@
+import { lstatSync } from 'node:fs';
+import path from 'node:path';
 import { block, readInput } from './lib.mjs';
 
-const cmd = String(readInput().tool_input?.command ?? '');
+const input = readInput();
+const cmd = String(input.tool_input?.command ?? '');
 const isCommit = /\bgit\b[^|;&]*\bcommit\b/.test(cmd);
+
+// A worktree's symlinked node_modules shares the Prisma client with the main repo, so generating
+// there silently moves every server using it onto that worktree's dev.db. See agents-and-resources.md.
+const generate = cmd.search(/\bprisma\s+generate\b/);
+if (generate !== -1) {
+  const cds = [...cmd.slice(0, generate).matchAll(/\bcd\s+("[^"]+"|'[^']+'|[^\s;&|]+)/g)];
+  const target = cds.length ? cds[cds.length - 1][1].replace(/^["']|["']$/g, '') : '.';
+  const dir = path.resolve(String(input.cwd ?? process.cwd()), target);
+  let symlinked = false;
+  try { symlinked = lstatSync(path.join(dir, 'node_modules')).isSymbolicLink(); } catch {}
+  if (symlinked) {
+    block('Blocked: node_modules here is a symlink, so `prisma generate` would repoint the shared Prisma client at this worktree\'s dev.db. Clone it first: rm node_modules && cp -cR ../../node_modules ./node_modules');
+  }
+}
 
 const rules = [
   [
