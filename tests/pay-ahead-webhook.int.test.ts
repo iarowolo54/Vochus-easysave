@@ -380,12 +380,29 @@ test('a plan redeemed between the read and the credit takes no money: nothing pa
   assert.ok(await auditFor('payment_needs_manual_review', ref))
 })
 
-test('the closed rule is Redeemed: any other non-Active plan is still credited', async () => {
+test('a Matured plan can still be collected from, so it is credited', async () => {
   const { c, plan } = await mk()
   const ref = await mkIntent(c, plan.id, null, 200)
-  await prisma.savingsPlan.update({ where: { id: plan.id }, data: { status: 'Completed' } })
+  await prisma.savingsPlan.update({ where: { id: plan.id }, data: { status: 'Matured' } })
   assert.equal((await sendVerify(c, ref)).status, 200)
   assert.equal(await balanceOf(plan.id), 200)
+})
+
+test('any other status goes to review, not where nobody can collect it', async () => {
+  for (const status of ['Completed', 'SomethingNew']) {
+    const viaVerify = await mk()
+    const r1 = await mkIntent(viaVerify.c, viaVerify.plan.id, null, 200)
+    await prisma.savingsPlan.update({ where: { id: viaVerify.plan.id }, data: { status } })
+    assert.equal((await sendVerify(viaVerify.c, r1)).body.review, true)
+    assert.equal(await balanceOf(viaVerify.plan.id), 0)
+
+    const noIntent = await mk()
+    const r2 = `VCHS-CST-${rid}-status-${++n}`
+    await prisma.savingsPlan.update({ where: { id: noIntent.plan.id }, data: { status } })
+    await sendWebhook(r2, { customerId: noIntent.c.id, planId: noIntent.plan.id, kobo: 20000 })
+    assert.equal(await balanceOf(noIntent.plan.id), 0)
+    assert.ok(await auditFor('payment_needs_manual_review', r2))
+  }
 })
 
 test('verify: if the webhook wins during the Paystack fetch, it reports already processed', async () => {

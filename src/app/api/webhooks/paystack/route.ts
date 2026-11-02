@@ -8,7 +8,7 @@ import { verifyTransaction } from '@/lib/paystack'
 import { creditAutoDebitAttempt } from '@/lib/auto-debit-credit'
 import { settleIntentPayment } from '@/lib/customer-settle'
 import { REVIEW_ACTION } from '@/lib/payment-intent'
-import { PlanClosedError, creditPlanBalance } from '@/lib/plan-credit'
+import { CREDITABLE_PLAN_STATUSES, PlanClosedError, creditPlanBalance } from '@/lib/plan-credit'
 
 export async function POST(req: NextRequest) {
   const body = await req.text()
@@ -120,7 +120,7 @@ export async function POST(req: NextRequest) {
     // transaction, so credit the newest but flag it (initiation should pin a plan).
     const planId = meta.planId as string | undefined
     let plan = planId
-      ? await prisma.savingsPlan.findFirst({ where: { id: planId, customerId, status: { not: 'Redeemed' } } })
+      ? await prisma.savingsPlan.findFirst({ where: { id: planId, customerId, status: { in: CREDITABLE_PLAN_STATUSES } } })
       : null
     if (!plan && !planId) {
       const active = await prisma.savingsPlan.findMany({ where: { customerId, status: 'Active' }, orderBy: { startDate: 'desc' }, take: 2 })
