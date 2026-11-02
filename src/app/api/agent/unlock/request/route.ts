@@ -20,7 +20,7 @@ export async function POST(req: Request) {
     },
   })
 
-  const issued = agent?.lockedAt ? await issueResetCode('agent', agent.id) : null
+  const issued = agent?.lockedAt ? await issueResetCode('agent', agent.id, Date.now(), 'unlock') : null
 
   if (agent && issued) {
     deliverInBackground(issued.id, async () => {

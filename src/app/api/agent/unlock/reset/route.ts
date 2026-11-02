@@ -15,8 +15,8 @@ export async function POST(req: Request) {
   if (!id || !token || !newPin) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 })
   }
-  if (newPin.length < 4) {
-    return NextResponse.json({ error: 'PIN must be at least 4 characters' }, { status: 400 })
+  if (newPin.length < 6) {
+    return NextResponse.json({ error: 'PIN must be at least 6 characters' }, { status: 400 })
   }
 
   const agent = await prisma.agent.findFirst({
@@ -28,7 +28,7 @@ export async function POST(req: Request) {
       ],
     },
   })
-  if (!agent || !(await verifyResetCode('agent', agent.id, token))) {
+  if (!agent?.lockedAt || !(await verifyResetCode('agent', agent.id, token, Date.now(), 'unlock'))) {
     return NextResponse.json({ error: INVALID_CODE_MESSAGE }, { status: 400 })
   }
 

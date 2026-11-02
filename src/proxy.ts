@@ -21,7 +21,7 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { decode, encode } from 'next-auth/jwt'
 import { requireEnv } from '@/lib/env'
-import { verifyCustomerToken, signCustomerToken, type CustomerSession } from '@/lib/customer-auth'
+import { verifyCustomerToken, signCustomerToken, type CustomerSession } from '@/lib/customer-token'
 import { IDLE_SECONDS, type Actor } from '@/lib/session-policy'
 import {
   decideForRequest,

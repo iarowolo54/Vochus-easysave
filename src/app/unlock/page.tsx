@@ -37,7 +37,7 @@ export default function UnlockPage() {
 
   async function resetPin() {
     if (newPin !== confirmPin) { setError('PINs do not match'); return }
-    if (newPin.length < 4) { setError('PIN must be at least 4 characters'); return }
+    if (newPin.length < 6) { setError('PIN must be at least 6 characters'); return }
     setLoading(true)
     setError('')
     const res = await fetch('/api/agent/unlock/reset', {

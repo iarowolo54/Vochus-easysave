@@ -151,17 +151,33 @@ test('a customer code can’t be used by a different account', async () => {
   assert.equal(await verifyResetCode('agent', a.id, code), false)
 })
 
-test('a failed send gives back the cooldown', async () => {
+test('a failed send cancels the code but still counts toward the limits', async () => {
   const c = await mkCustomer()
-  const { id } = (await issueResetCode('customer', c.id))!
+  const { id, code } = (await issueResetCode('customer', c.id))!
   const original = console.error
   console.error = () => {}
   try {
     deliverInBackground(id, async () => false)
     await new Promise(r => setTimeout(r, 200))
   } finally { console.error = original }
-  assert.equal(await prisma.passwordResetOtp.count({ where: { id } }), 0)
-  assert.ok(await issueResetCode('customer', c.id))
+  assert.equal(await verifyResetCode('customer', c.id, code), false, 'the undelivered code is dead')
+  assert.equal(await issueResetCode('customer', c.id), null, 'cooldown still applies')
+})
+
+test('concurrent requests can only create one code', async () => {
+  const c = await mkCustomer()
+  const results = await Promise.all(Array.from({ length: 10 }, () => issueResetCode('customer', c.id)))
+  assert.equal(results.filter(Boolean).length, 1)
+  assert.equal(await prisma.passwordResetOtp.count({ where: { actorId: c.id } }), 1)
+})
+
+test('dates written by the atomic insert read back correctly through Prisma', async () => {
+  const c = await mkCustomer()
+  const t0 = Date.now()
+  const { id } = (await issueResetCode('customer', c.id, t0))!
+  const row = await prisma.passwordResetOtp.findUniqueOrThrow({ where: { id } })
+  assert.equal(row.createdAt.getTime(), t0)
+  assert.equal(row.expiresAt.getTime(), t0 + OTP_TTL_MS)
 })
 
 // ── Customer routes ─────────────────────────────────────────────────────────
@@ -339,15 +355,16 @@ test('agent unlock reset: limited guesses, ignores the old token column, ends se
   const { POST } = await import('../src/app/api/agent/unlock/reset/route')
   const a = await mkAgent({ lockedAt: new Date(), unlockToken: '333333', unlockTokenExpiry: new Date(Date.now() + OTP_TTL_MS) })
   const bio = await prisma.biometricToken.create({ data: { agentId: a.id, deviceId: 'd3', tokenHash: 'h3' } })
-  assert.equal((await POST(req({ identifier: a.agentId, token: '333333', newPin: '1234' }))).status, 400)
+  assert.equal((await POST(req({ identifier: a.agentId, token: '333333', newPin: '123456' }))).status, 400)
 
-  const { code } = (await issueResetCode('agent', a.id))!
+  const { code } = (await issueResetCode('agent', a.id, Date.now(), 'unlock'))!
   for (let i = 0; i < MAX_VERIFY_ATTEMPTS; i++) {
-    assert.equal((await POST(req({ identifier: a.agentId, token: wrong(code), newPin: '1234' }))).status, 400)
+    assert.equal((await POST(req({ identifier: a.agentId, token: wrong(code), newPin: '123456' }))).status, 400)
   }
-  assert.equal((await POST(req({ identifier: a.agentId, token: code, newPin: '1234' }))).status, 400, 'cancelled after the limit')
+  assert.equal((await POST(req({ identifier: a.agentId, token: code, newPin: '123456' }))).status, 400, 'cancelled after the limit')
 
-  const fresh = (await issueResetCode('agent', a.id, Date.now() + RESEND_COOLDOWN_MS))!
+  const fresh = (await issueResetCode('agent', a.id, Date.now() + RESEND_COOLDOWN_MS, 'unlock'))!
+  assert.equal((await POST(req({ identifier: a.agentId, token: fresh.code, newPin: '12345' }))).status, 400, 'too short')
   const ok = await verifyAndReset(POST, a.agentId, fresh.code)
   assert.equal(ok, true)
   const after_ = await prisma.agent.findUniqueOrThrow({ where: { id: a.id } })
@@ -357,7 +374,7 @@ test('agent unlock reset: limited guesses, ignores the old token column, ends se
 })
 
 async function verifyAndReset(POST: (r: never) => Promise<Response>, identifier: string, token: string) {
-  return (await POST(req({ identifier, token, newPin: '1234' }))).status === 200
+  return (await POST(req({ identifier, token, newPin: '123456' }))).status === 200
 }
 
 // ── Paid dates ──────────────────────────────────────────────────────────────
@@ -389,4 +406,131 @@ test('paid-dates: 404 for another agent’s plan, 200 for the owner', async () =
 
   stubbedAgentId = null
   assert.equal((await call()).status, 401)
+})
+
+// ── Non-string values (Prisma filter objects) ───────────────────────────────
+
+const BAD_VALUES: unknown[] = [{ not: '' }, { contains: '' }, ['123456'], 123456, null, true]
+
+test('customer reset refuses non-string codes and passwords', async () => {
+  const { POST } = await import('../src/app/api/customer/forgot-password/reset/route')
+  const c = await mkCustomer()
+  const { id } = (await issueResetCode('customer', c.id))!
+  for (const code of BAD_VALUES) assert.equal((await POST(req({ phone: c.phone, code, newPassword: 'hacked123' }))).status, 400)
+  for (const phone of BAD_VALUES) assert.equal((await POST(req({ phone, code: '123456', newPassword: 'hacked123' }))).status, 400)
+  for (const newPassword of [{ a: 1 }, ['hacked123'], 12345678]) assert.equal((await POST(req({ phone: c.phone, code: '123456', newPassword }))).status, 400)
+  const after_ = await prisma.customer.findUniqueOrThrow({ where: { id: c.id } })
+  assert.ok(await bcrypt.compare('oldpass', after_.password!))
+  assert.equal(after_.tokenVersion, 0)
+  assert.equal((await prisma.passwordResetOtp.findUniqueOrThrow({ where: { id } })).attempts, 0, 'malformed input uses no attempts')
+})
+
+test('agent reset and agent unlock refuse non-string codes and passwords', async () => {
+  const reset = (await import('../src/app/api/agent/forgot-password/reset/route')).POST
+  const unlock = (await import('../src/app/api/agent/unlock/reset/route')).POST
+  const a = await mkAgent({ lockedAt: new Date() })
+  await issueResetCode('agent', a.id)
+  for (const code of BAD_VALUES) {
+    assert.equal((await reset(req({ identifier: a.agentId, code, newPassword: 'hacked123' }))).status, 400)
+    assert.equal((await unlock(req({ identifier: a.agentId, token: code, newPin: '9999' }))).status, 400)
+  }
+  for (const identifier of BAD_VALUES) {
+    assert.equal((await reset(req({ identifier, code: '123456', newPassword: 'hacked123' }))).status, 400)
+    assert.equal((await unlock(req({ identifier, token: '123456', newPin: '9999' }))).status, 400)
+  }
+  for (const value of [{ a: 1 }, ['hacked123'], 12345678]) {
+    assert.equal((await reset(req({ identifier: a.agentId, code: '123456', newPassword: value }))).status, 400)
+    assert.equal((await unlock(req({ identifier: a.agentId, token: '123456', newPin: value }))).status, 400)
+  }
+  const after_ = await prisma.agent.findUniqueOrThrow({ where: { id: a.id } })
+  assert.ok(await bcrypt.compare('oldpass', after_.password))
+  assert.equal(after_.tokenVersion, 0)
+  assert.ok(after_.lockedAt)
+})
+
+test('otp/verify refuses non-strings, checks the format, and accepts the right code', async () => {
+  const { POST } = await import('../src/app/api/otp/verify/route')
+  const phone = `081${rid}1`
+  const row = await prisma.phoneOTP.create({ data: { phone, code: '654321', expiresAt: new Date(Date.now() + OTP_TTL_MS) } })
+  for (const code of BAD_VALUES) assert.equal((await POST(req({ phone, code }))).status, 400)
+  for (const p of BAD_VALUES) assert.equal((await POST(req({ phone: p, code: '654321' }))).status, 400)
+  assert.equal((await POST(req({ phone, code: 'abcdef' }))).status, 400)
+  assert.equal((await prisma.phoneOTP.findUniqueOrThrow({ where: { id: row.id } })).verified, false)
+  assert.equal((await POST(req({ phone, code: '111111' }))).status, 400)
+  assert.equal((await POST(req({ phone, code: '654321' }))).status, 200)
+  assert.equal((await prisma.phoneOTP.findUniqueOrThrow({ where: { id: row.id } })).verified, true)
+})
+
+test('otp/verify limits guesses per phone', async () => {
+  const { POST } = await import('../src/app/api/otp/verify/route')
+  const phone = `081${rid}2`
+  await prisma.phoneOTP.create({ data: { phone, code: '654321', expiresAt: new Date(Date.now() + OTP_TTL_MS) } })
+  for (let i = 0; i < 10; i++) assert.equal((await POST(req({ phone, code: '111111' }))).status, 400)
+  assert.equal((await POST(req({ phone, code: '654321' }))).status, 429)
+})
+
+test('onboarding verify refuses non-strings and cancels after 5 wrong codes', async () => {
+  const { POST } = await import('../src/app/api/agent/onboard/[token]/verify-otp/route')
+  const email = `invite-${rid}@example.com`
+  const token = `tok-${rid}`
+  await prisma.agentInvite.create({ data: { email, token, expiresAt: new Date(Date.now() + 86400000) } })
+  const call = (code: unknown) => POST(req({ code }) as never, { params: Promise.resolve({ token }) })
+  const row = await prisma.emailOTP.create({ data: { email, code: '654321', expiresAt: new Date(Date.now() + OTP_TTL_MS) } })
+  for (const code of BAD_VALUES) assert.equal((await call(code)).status, 400)
+  assert.equal((await prisma.emailOTP.findUniqueOrThrow({ where: { id: row.id } })).verified, false)
+  assert.equal((await call('654321')).status, 200, 'right code works')
+  await prisma.emailOTP.updateMany({ where: { email }, data: { verified: false } })
+  await prisma.emailOTP.update({ where: { id: row.id }, data: { attempts: 0 } })
+  for (let i = 0; i < 5; i++) assert.equal((await call('111111')).status, 400)
+  assert.equal((await call('654321')).status, 400, 'cancelled after the limit')
+  assert.equal((await prisma.emailOTP.findUniqueOrThrow({ where: { id: row.id } })).verified, false)
+})
+
+test('customer login ignores non-string device and fingerprint values', async () => {
+  const { POST } = await import('../src/app/api/customer/auth/login/route')
+  const c = await mkCustomer()
+  await prisma.biometricToken.create({ data: { customerId: c.id, deviceId: 'real-device', tokenHash: 'h' } })
+  const res = await POST(req({ phone: c.phone, biometricToken: { not: '' }, deviceId: { not: '' } }))
+  assert.equal(res.status, 400)
+})
+
+test('customer login puts the current token version in the session', async () => {
+  const { POST } = await import('../src/app/api/customer/auth/login/route')
+  const c = await mkCustomer({ tokenVersion: 4 })
+  const res = await POST(req({ phone: c.phone, password: 'oldpass' }))
+  assert.equal(res.status, 200)
+  assert.equal(decodeJwt(res.cookies.get('customer_token')!.value).tokenVersion, 4)
+})
+
+test('reset and unlock codes only work on their own route, and unlock needs a locked account', async () => {
+  const unlock = (await import('../src/app/api/agent/unlock/reset/route')).POST
+  const reset = (await import('../src/app/api/agent/forgot-password/reset/route')).POST
+  const a = await mkAgent({ lockedAt: new Date() })
+  const t0 = Date.now()
+  const r = (await issueResetCode('agent', a.id, t0, 'reset'))!
+  assert.equal((await unlock(req({ identifier: a.agentId, token: r.code, newPin: '123456' }))).status, 400)
+  const u = (await issueResetCode('agent', a.id, t0 + RESEND_COOLDOWN_MS, 'unlock'))!
+  assert.equal((await reset(req({ identifier: a.agentId, code: u.code, newPassword: 'newpass1' }))).status, 400)
+
+  const open = await mkAgent()
+  const c = (await issueResetCode('agent', open.id, t0, 'unlock'))!
+  assert.equal((await unlock(req({ identifier: open.agentId, token: c.code, newPin: '123456' }))).status, 400)
+  assert.ok(await bcrypt.compare('oldpass', (await prisma.agent.findUniqueOrThrow({ where: { id: open.id } })).password))
+})
+
+test('hitting the daily cap writes one audit entry', async () => {
+  const c = await mkCustomer()
+  const t0 = Date.now()
+  for (let i = 0; i < MAX_SENDS_PER_DAY; i++) assert.ok(await issueResetCode('customer', c.id, t0 + i * RESEND_COOLDOWN_MS))
+  const later = t0 + MAX_SENDS_PER_DAY * RESEND_COOLDOWN_MS
+  assert.equal(await issueResetCode('customer', c.id, later), null)
+  assert.equal(await issueResetCode('customer', c.id, later + RESEND_COOLDOWN_MS), null)
+  assert.equal(await prisma.auditLog.count({ where: { action: 'password_reset_daily_cap', entityId: c.id } }), 1)
+})
+
+test('the proxy’s token module doesn’t load Prisma', async () => {
+  const { readFileSync } = await import('node:fs')
+  assert.doesNotMatch(readFileSync('src/lib/customer-token.ts', 'utf8'), /from ['"].*prisma/)
+  assert.match(readFileSync('src/proxy.ts', 'utf8'), /from '@\/lib\/customer-token'/)
+  assert.doesNotMatch(readFileSync('src/proxy.ts', 'utf8'), /customer-auth'/)
 })

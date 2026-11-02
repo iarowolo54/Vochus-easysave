@@ -8,7 +8,7 @@
 //
 // Limits are generous because market customers may share a phone or a mobile network. Wrong guesses
 // never block the account for long: a new code is available after the cooldown.
-import { timingSafeEqual } from 'node:crypto'
+import { randomUUID, timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { prisma } from './prisma'
 import { logAudit } from './audit'
@@ -27,6 +27,7 @@ const HOUR_MS = 60 * 60_000
 const FIFTEEN_MIN_MS = 15 * 60_000
 
 export type ResetActor = 'customer' | 'agent'
+export type ResetPurpose = 'reset' | 'unlock'
 
 // Per process, so a caller spread across both PM2 instances gets up to twice this. That's fine for
 // a soft network-level cap; the exact limits are the per-account ones above, held in the database.
@@ -59,28 +60,57 @@ export async function issueResetCode(
   actorType: ResetActor,
   actorId: string,
   now: number = Date.now(),
+  purpose: ResetPurpose = 'reset',
 ): Promise<{ id: string; code: string } | null> {
-  const where = { actorType, actorId }
-  const last = await prisma.passwordResetOtp.findFirst({ where, orderBy: { createdAt: 'desc' }, select: { createdAt: true } })
-  if (last && now - last.createdAt.getTime() < RESEND_COOLDOWN_MS) return null
-
-  const sentToday = await prisma.passwordResetOtp.count({ where: { ...where, createdAt: { gt: new Date(now - DAY_MS) } } })
-  if (sentToday >= MAX_SENDS_PER_DAY) return null
-
   const code = generateCode()
-  const [, row] = await prisma.$transaction([
-    prisma.passwordResetOtp.updateMany({ where: { ...where, consumedAt: null }, data: { consumedAt: new Date(now) } }),
-    prisma.passwordResetOtp.create({
-      data: { ...where, codeHash: hashCode(code), expiresAt: new Date(now + OTP_TTL_MS), createdAt: new Date(now) },
-      select: { id: true },
-    }),
-  ])
-  return { id: row.id, code }
+  const id = randomUUID()
+  // One statement, so concurrent requests can't both pass the cooldown and daily cap.
+  const inserted = await prisma.$executeRaw`
+    INSERT INTO "PasswordResetOtp" ("id", "actorType", "actorId", "purpose", "codeHash", "expiresAt", "attempts", "createdAt")
+    SELECT ${id}, ${actorType}, ${actorId}, ${purpose}, ${hashCode(code)}, ${now + OTP_TTL_MS}, 0, ${now}
+    WHERE NOT EXISTS (
+      SELECT 1 FROM "PasswordResetOtp"
+      WHERE "actorType" = ${actorType} AND "actorId" = ${actorId} AND "createdAt" > ${now - RESEND_COOLDOWN_MS}
+    )
+    AND (
+      SELECT COUNT(*) FROM "PasswordResetOtp"
+      WHERE "actorType" = ${actorType} AND "actorId" = ${actorId} AND "createdAt" > ${now - DAY_MS}
+    ) < ${MAX_SENDS_PER_DAY}`
+  if (inserted !== 1) {
+    await auditDailyCap(actorType, actorId, now)
+    return null
+  }
+
+  await prisma.passwordResetOtp.updateMany({
+    where: { actorType, actorId, consumedAt: null, id: { not: id } },
+    data: { consumedAt: new Date(now) },
+  })
+  return { id, code }
+}
+
+/** Records that an account hit its daily cap, at most once a day, so an admin can see why someone isn't getting codes. */
+async function auditDailyCap(actorType: ResetActor, actorId: string, now: number) {
+  const since = new Date(now - DAY_MS)
+  const sent = await prisma.passwordResetOtp.count({ where: { actorType, actorId, createdAt: { gt: since } } })
+  if (sent < MAX_SENDS_PER_DAY) return
+  const logged = await prisma.auditLog.findFirst({
+    where: { action: 'password_reset_daily_cap', entityId: actorId, createdAt: { gt: since } },
+    select: { id: true },
+  })
+  if (logged) return
+  await logAudit({
+    action: 'password_reset_daily_cap',
+    entity: actorType === 'customer' ? 'Customer' : 'Agent',
+    entityId: actorId,
+    details: `Password reset codes stopped after ${MAX_SENDS_PER_DAY} sends in 24 hours`,
+    actorType,
+    actorId,
+  })
 }
 
 /**
  * Sends the code without making the caller wait, so a known account doesn't answer slower than an
- * unknown one. A failed send gives back the cooldown and daily slot.
+ * unknown one. A failed send cancels the code but keeps the row, so it still counts toward the limits.
  */
 export function deliverInBackground(rowId: string, send: () => Promise<boolean>) {
   void send()
@@ -88,7 +118,7 @@ export function deliverInBackground(rowId: string, send: () => Promise<boolean>)
     .then(async (ok) => {
       if (ok) return
       console.error('Password reset code could not be delivered')
-      await prisma.passwordResetOtp.deleteMany({ where: { id: rowId } })
+      await prisma.passwordResetOtp.updateMany({ where: { id: rowId, consumedAt: null }, data: { consumedAt: new Date() } })
     })
     .catch(() => {})
 }
@@ -99,16 +129,24 @@ function matches(storedHash: string, code: string) {
   return a.length === b.length && timingSafeEqual(a, b)
 }
 
+/** Constant-time compare for the older tables that store a code as plain text. */
+export function sameCode(stored: string, code: string) {
+  return matches(hashCode(stored), code)
+}
+
+export const SIX_DIGITS = /^\d{6}$/
+
 /** Checks a code against the account's live code, consuming it on success. All failures look the same to the caller. */
 export async function verifyResetCode(
   actorType: ResetActor,
   actorId: string,
   code: string,
   now: number = Date.now(),
+  purpose: ResetPurpose = 'reset',
 ): Promise<boolean> {
   const at = new Date(now)
   const otp = await prisma.passwordResetOtp.findFirst({
-    where: { actorType, actorId, consumedAt: null, expiresAt: { gt: at } },
+    where: { actorType, actorId, purpose, consumedAt: null, expiresAt: { gt: at } },
     orderBy: { createdAt: 'desc' },
   })
   if (!otp) return false

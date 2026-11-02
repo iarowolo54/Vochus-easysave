@@ -563,21 +563,6 @@ model LoginAttempt {
 // One-time codes for unlocking a hard-locked customer account. The code itself
 // is never stored or returned — only a SHA-256 hash. Sent on the customer's
 // registration channel: email (link-registered) or SMS (agent-registered).
-// Password-reset and agent-unlock codes. Only the hash is stored, and rows are
-// consumed rather than deleted so the send cooldown and daily cap keep counting.
-model PasswordResetOtp {
-  id         String    @id @default(cuid())
-  actorType  String // 'customer' | 'agent'
-  actorId    String
-  codeHash   String
-  expiresAt  DateTime
-  attempts   Int       @default(0)
-  consumedAt DateTime?
-  createdAt  DateTime  @default(now())
-
-  @@index([actorType, actorId, createdAt])
-}
-
 model AccountUnlockOtp {
   id         String    @id @default(cuid())
   customerId String
@@ -589,6 +574,22 @@ model AccountUnlockOtp {
   createdAt  DateTime  @default(now())
 
   @@index([customerId])
+}
+
+// Password-reset and agent-unlock codes. Only the hash is stored, and rows are
+// consumed rather than deleted so the send cooldown and daily cap keep counting.
+model PasswordResetOtp {
+  id         String    @id @default(cuid())
+  actorType  String // 'customer' | 'agent'
+  actorId    String
+  purpose    String    @default("reset") // 'reset' | 'unlock'
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([actorType, actorId, createdAt])
 }
 
 // Server-side payment intent created at Paystack init, consumed at verify. Binds

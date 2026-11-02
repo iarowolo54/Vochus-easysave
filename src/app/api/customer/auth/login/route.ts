@@ -59,7 +59,10 @@ function lockedResponse() {
 }
 
 export async function POST(req: NextRequest) {
-  const { phone, password, app, deviceId, biometricToken, device } = await req.json()
+  const { phone, password, app, deviceId: rawDeviceId, biometricToken: rawBiometricToken, device } = await req.json()
+  // Strings only: these reach a Prisma where and the token hash.
+  const deviceId = typeof rawDeviceId === 'string' ? rawDeviceId : ''
+  const biometricToken = typeof rawBiometricToken === 'string' ? rawBiometricToken : ''
   if (!phone || typeof phone !== 'string') {
     return NextResponse.json({ error: 'Missing credentials' }, { status: 400 })
   }
