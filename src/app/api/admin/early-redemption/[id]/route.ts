@@ -89,11 +89,12 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       let stillUnsent = false
       try {
         const { status, raw } = await verifyTransfer(record.ref)
-        stillUnsent = raw?.reference === record.ref && (status === 'otp' || NO_MONEY_LEFT.includes(status))
+        // Not otp: a transfer still waiting for its code can yet be finished, so this waits until it expires.
+        stillUnsent = raw?.reference === record.ref && NO_MONEY_LEFT.includes(status)
       } catch {
         /* treated as no clear answer */
       }
-      if (!stillUnsent) return conflict('We couldn’t confirm with Paystack that this transfer hasn’t gone out, so it can’t be rejected yet. Use Check with Paystack.')
+      if (!stillUnsent) return conflict('Paystack hasn’t confirmed this transfer is dead, so it can’t be rejected yet. A code expires about 30 minutes after it’s sent. Use Check with Paystack then.')
     }
     const customerName = `${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName}`
     const planBalance = record.savingsPlan.balance

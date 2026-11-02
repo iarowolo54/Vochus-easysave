@@ -23,7 +23,9 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json()
     const { planId, customerId, payoutMethod, accountNumber, bankCode } = body
-    if (!planId || !customerId) return NextResponse.json({ error: 'Missing fields: planId and customerId required' }, { status: 400 })
+    if (typeof planId !== 'string' || !planId || typeof customerId !== 'string' || !customerId) {
+      return NextResponse.json({ error: 'Missing fields: planId and customerId required' }, { status: 400 })
+    }
 
     const isBank = payoutMethod === 'Bank Transfer' || payoutMethod === 'BankTransfer'
     if (isBank && (!accountNumber || !bankCode)) {
@@ -34,13 +36,13 @@ export async function POST(req: NextRequest) {
     }
 
     const plan = await prisma.savingsPlan.findFirst({
-      where: { id: planId },
+      where: { id: planId, customerId, customer: { agentId: agent.id } },
       include: { customer: { select: { id: true, firstName: true, lastName: true, agentId: true, phone: true, email: true } } },
     })
 
     if (!plan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 })
-    if (plan.customer.id !== customerId) return NextResponse.json({ error: 'Plan does not belong to this customer' }, { status: 400 })
-    if (plan.customer.agentId !== agent.id) return NextResponse.json({ error: 'Customer does not belong to this agent' }, { status: 403 })
+    // Online customers collect through their own app, where the request and its code are theirs.
+    if (plan.source === 'self') return NextResponse.json({ error: 'This is an online plan. Ask the customer to collect from it in their Vochus app.' }, { status: 400 })
     if (!['Active', 'Matured'].includes(plan.status)) return NextResponse.json({ error: `Plan status is "${plan.status}" — must be Active or Matured` }, { status: 400 })
     if (plan.balance <= 0) return NextResponse.json({ error: 'No balance to redeem' }, { status: 400 })
 

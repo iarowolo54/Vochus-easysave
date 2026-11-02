@@ -70,6 +70,8 @@ const PIN = '482913'
 let adminId = ''
 let agentId = ''
 let agentCode = ''
+let otherAgentId = ''
+const otherAgentCode = `RGO-${RUN}`
 let customerId = ''
 const planIds: string[] = []
 const erIds: string[] = []
@@ -147,6 +149,7 @@ before(async () => {
   adminId = (await prisma.superAdmin.create({ data: { email: `rg-${RUN}@test.local`, password: 'x', name: 'Guard Admin', approvalPin: await bcrypt.hash(PIN, 4) } })).id
   agentCode = `RG-${RUN}`
   agentId = (await prisma.agent.create({ data: { agentId: agentCode, phone: `0796${RUN}`, name: 'A', location: 'x', password: 'x', walletBalance: 1000000 } })).id
+  otherAgentId = (await prisma.agent.create({ data: { agentId: otherAgentCode, phone: `0793${RUN}`, name: 'B', location: 'x', password: 'x' } })).id
   customerId = (await prisma.customer.create({
     data: { customerId: `RG-${RUN}`, agentId, firstName: 'C', lastName: 'X', phone: `08${RUN}3`.padEnd(11, '0').slice(0, 11), address: 'x', nokName: 'n', nokRelation: 'r', nokPhone: '0800' },
   })).id
@@ -170,7 +173,7 @@ after(async () => {
   await prisma.earlyRedemption.deleteMany({ where: { id: { in: erIds } } })
   await prisma.savingsPlan.deleteMany({ where: { id: { in: planIds } } })
   await prisma.customer.deleteMany({ where: { id: customerId } })
-  await prisma.agent.deleteMany({ where: { id: agentId } })
+  await prisma.agent.deleteMany({ where: { id: { in: [agentId, otherAgentId] } } })
   await prisma.loginAttempt.deleteMany({ where: { key: `redeem-lookup:agent:${agentId}` } })
   await prisma.approvalPinAttempt.deleteMany({ where: { adminId } })
   await prisma.superAdmin.deleteMany({ where: { id: adminId } })
@@ -701,7 +704,7 @@ test('finalize: a wrong code goes back for a retry; a 5xx or 429 is not taken as
 
 // ---------- the way out of AwaitingOTP ----------
 test('reject from AwaitingOTP: restores the balance on top of a deposit, and the code can no longer be used', async () => {
-  for (const status of ['otp', 'abandoned', 'failed', 'reversed']) {
+  for (const status of ['abandoned', 'failed', 'reversed']) {
     const planId = await mkPlan(45000, 'Redeemed')
     const r = await mkRedemption({ planId, method: 'BankTransfer', status: 'AwaitingOTP', transferCode: `TRF_${RUN}_rj${status}` })
     const m0 = await money()
@@ -719,6 +722,7 @@ test('reject from AwaitingOTP: restores the balance on top of a deposit, and the
 
 test('reject from AwaitingOTP is refused unless Paystack clearly says the money has not gone', async () => {
   const answers: [string, (r: { ref: string }) => unknown][] = [
+    ['code still live', r => statusAnswer(r, 'otp')],
     ['already paid', r => paidAnswer(r)],
     ['pending', r => statusAnswer(r, 'pending')],
     ['blocked', r => statusAnswer(r, 'blocked')],
@@ -823,6 +827,28 @@ test('agent bank payout: an account in someone else\'s name is refused, however 
     assert.match((await res.json()).error, /isn’t in C X’s name/)
     assert.equal(await prisma.earlyRedemption.count({ where: { savingsPlanId: planId } }), 0)
   }
+})
+
+test('agent request: online plans are refused with a pointer to the customer\'s app', async () => {
+  const planId = await mkPlan(10000)
+  await prisma.savingsPlan.update({ where: { id: planId }, data: { source: 'self' } })
+  asAgent()
+  const res = await requestRoute.POST({ json: async () => ({ customerId, planId, payoutMethod: 'Cash' }) } as never)
+  assert.equal(res.status, 400)
+  assert.match((await res.json()).error, /online plan.*their Vochus app/)
+  assert.equal(await prisma.earlyRedemption.count({ where: { savingsPlanId: planId } }), 0)
+})
+
+test('agent request: ids must be strings, and the plan must be this agent\'s customer\'s', async () => {
+  const planId = await mkPlan(10000)
+  asAgent()
+  const post = (body: unknown) => requestRoute.POST({ json: async () => body } as never)
+  assert.equal((await post({ customerId, planId: { not: '' } })).status, 400)
+  assert.equal((await post({ customerId: { not: '' }, planId })).status, 400)
+  assert.equal((await post({ customerId: 'someone-else', planId, payoutMethod: 'Cash' })).status, 404)
+  stub.getServerSession = async () => ({ user: { agentId: otherAgentCode } })
+  assert.equal((await post({ customerId, planId, payoutMethod: 'Cash' })).status, 404, 'another agent')
+  assert.equal(await prisma.earlyRedemption.count({ where: { savingsPlanId: planId } }), 0)
 })
 
 test('agent bank payout: the account number must be 10 digits, and be the one Paystack resolved', async () => {

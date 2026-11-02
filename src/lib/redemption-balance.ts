@@ -13,7 +13,7 @@ type Client = Pick<PrismaClient, 'savingsPlan' | 'earlyRedemption'> | Prisma.Tra
 export const SAVING_BLOCKED = 'This customer has asked to collect from this plan, so new savings can’t be recorded yet. Wait for the office to decide, or ask an admin to reject the request.'
 export const PLAN_CLOSED = 'This plan has been closed, so nothing was recorded and your wallet wasn’t charged.'
 export const BALANCE_CHANGED = 'This customer’s balance has changed since they asked to collect. Reject this request and ask them to request again.'
-export const BALANCE_CHANGED_AWAITING_OTP = 'This customer’s balance has changed while this payout was waiting for its code. Nothing has been paid. Don’t enter the code. Reject this request and ask them to request again.'
+export const BALANCE_CHANGED_AWAITING_OTP = 'This customer’s balance has changed while this payout was waiting for its code. Nothing has been paid. Don’t enter the code. Once it expires, about 30 minutes after it was sent, use Check with Paystack and ask them to request again.'
 
 // Some requests store money(plan.balance), which can differ from the stored float by half a kobo.
 // The smallest real deposit is a whole kobo, so this can't hide one.

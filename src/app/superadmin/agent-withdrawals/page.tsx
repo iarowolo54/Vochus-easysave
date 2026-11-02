@@ -220,7 +220,20 @@ export default function AgentWithdrawalsPage() {
         body: JSON.stringify({ otp: otpValue.trim() }),
       })
       const d = await readJson(res)
+      if (res.status === 502) {
+        // Not a wrong code: the outcome is settled or unknown, so there's nothing to retry here.
+        toast(d.error ?? 'We couldn’t confirm this with Paystack.', 'error')
+        setOtpModal(null); setOtpValue('')
+        load()
+        return
+      }
       if (!res.ok) { setOtpError(d.error ?? 'Paystack didn’t accept the code. Check it and try again.'); return }
+      if (d.status === 'Finalizing') {
+        toast(`Paystack says “${d.bankTransferStatus ?? 'unknown'}”, so this isn’t recorded as paid yet. Use Check status with Paystack.`, 'error')
+        setOtpModal(null); setOtpValue('')
+        load()
+        return
+      }
       setResult({
         heading: 'Withdrawal paid', title: `${naira(otpModal.amount)} sent`,
         text: <>Paystack accepted the code and paid {otpModal.agentName}.</>,

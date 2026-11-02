@@ -3,6 +3,7 @@ import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { finalizeTransfer, PaystackRejected } from '@/lib/paystack'
 import { logAudit } from '@/lib/audit'
+import { NO_MONEY_LEFT } from '@/lib/redemption-balance'
 
 export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
   const guard = await requireSuperAdmin()
@@ -41,11 +42,40 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     }
     // Timeout / network / unknown: Paystack may have accepted the finalize. Do NOT release the claim.
     console.error('agent-withdrawal finalize-otp: outcome unknown, left Finalizing', id, err instanceof Error ? err.name : 'unknown')
-    return NextResponse.json({ error: 'Could not confirm the Paystack finalisation. It is being verified; do not retry. Contact support.' }, { status: 502 })
+    return NextResponse.json({ error: 'Could not confirm the Paystack finalisation. Don’t retry. Use Check status with Paystack on this request.' }, { status: 502 })
   }
 
   const adminUser = session.user as { name?: string }
   const decidedBy = adminUser.name ?? 'Super Admin'
+
+  // Only an explicit success is booked as paid. Commission was debited at request time, so no money leaving means
+  // it goes back, the same way the verify route does it: only the call that wins this claim refunds.
+  if (NO_MONEY_LEFT.includes(finalStatus)) {
+    const refunded = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.agentWithdrawal.updateMany({
+        where: { id, status: 'Finalizing' },
+        data: { status: 'Rejected', bankTransferStatus: finalStatus, decidedAt: new Date(), decidedBy, adminNote: `Auto-refund: Paystack ${finalStatus}` },
+      })
+      if (claimed.count === 0) return false
+      await tx.agent.update({ where: { id: record.agentId }, data: { commissionBalance: { increment: record.amount } } })
+      return true
+    })
+    if (refunded) {
+      logAudit({
+        action: 'agent_withdrawal_finalize_refund',
+        entity: 'AgentWithdrawal',
+        entityId: record.id,
+        details: `${decidedBy} entered the OTP for ${record.ref} (₦${record.amount}): Paystack ${finalStatus}, commission refunded`,
+        actorType: 'superadmin',
+        actorName: decidedBy,
+      })
+    }
+    return NextResponse.json({ error: `Paystack says this transfer ${finalStatus === 'reversed' ? 'was reversed' : 'failed'}. Nothing was paid, and the commission has gone back to the agent.` }, { status: 502 })
+  }
+  if (finalStatus !== 'success') {
+    await prisma.agentWithdrawal.updateMany({ where: { id, status: 'Finalizing' }, data: { bankTransferStatus: finalStatus } })
+    return NextResponse.json({ ok: true, status: 'Finalizing', bankTransferStatus: finalStatus })
+  }
 
   try {
     const fin = await prisma.agentWithdrawal.updateMany({

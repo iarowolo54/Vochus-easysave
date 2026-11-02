@@ -952,7 +952,7 @@ export default function RedemptionsPage() {
             <button type="button" className="btn btn-green" disabled={checking} onClick={() => checkWithPaystack(detail)}>{checking ? 'Checking…' : 'Check with Paystack'}</button>
           </> : <button type="button" className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>}>
           {detail.balanceChanged && (detail.status === 'AwaitingOTP'
-            ? <p className="a-alert a-alert-r cm-gap" role="alert">This plan now holds {nairaKobo(detail.currentBalance)}, which arrived while this payout was waiting for its code. Nothing has been paid. Don’t enter the code; this request needs a manual fix.</p>
+            ? <p className="a-alert a-alert-r cm-gap" role="alert">This plan now holds {nairaKobo(detail.currentBalance)}, which arrived while this payout was waiting for its code. Nothing has been paid. Don’t enter the code. Once it expires, about 30 minutes after it was sent, use Check with Paystack and ask them to request again.</p>
             : <p className="a-alert a-alert-r cm-gap" role="alert">The balance has changed. They asked to collect from {nairaKobo(detail.balance)}, and the plan now holds {nairaKobo(detail.currentBalance)}. Reject this request and ask them to request again.</p>)}
           {needsCode(detail) && <p className="a-alert a-alert-a cm-gap" role="status">The customer hasn’t confirmed this request with their code, so it can’t be approved yet. You can reject it.</p>}
           {(detail.status === 'Processing' || detail.status === 'Finalizing') && (UNCLEAR_FINAL.includes(detail.bankTransferStatus ?? '')

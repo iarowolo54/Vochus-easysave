@@ -177,6 +177,48 @@ test('withdrawal: transport error leaves Finalizing (502), no retry possible, no
   assert.equal((await wdFinalize(w.id)).status, 409)
 })
 
+const finalizeAnswer = (answer: unknown) => () => Promise.resolve(new Response(JSON.stringify(answer), { status: 200 }))
+
+test('withdrawal: failed, reversed or abandoned refunds the commission once and is not booked as paid', async () => {
+  for (const status of ['failed', 'reversed', 'abandoned']) {
+    const w = await mkWithdrawal()
+    const before = (await agentRow()).commissionBalance
+    paystackReplies(finalizeAnswer({ status: true, data: { status } }))
+    try {
+      assert.equal((await wdFinalize(w.id)).status, 502, status)
+      assert.equal((await wdFinalize(w.id)).status, 409, status)
+    } finally { restorePaystack() }
+    const row = await prisma.agentWithdrawal.findUniqueOrThrow({ where: { id: w.id } })
+    assert.equal(row.status, 'Rejected', status)
+    assert.equal(row.bankTransferStatus, status)
+    assert.equal((await agentRow()).commissionBalance, before + 500, status)
+    assert.equal(await auditCount(w.id), 1, status)
+  }
+})
+
+test('withdrawal: anything but an explicit success stays Finalizing, with no refund', async () => {
+  for (const answer of [{ status: true, data: { status: 'pending' } }, { status: true, data: {} }, { status: true }, { status: true, data: { status: 'something_new' } }]) {
+    const w = await mkWithdrawal()
+    const before = (await agentRow()).commissionBalance
+    paystackReplies(finalizeAnswer(answer))
+    let res: Response
+    try { res = await wdFinalize(w.id) } finally { restorePaystack() }
+    assert.equal(res.status, 200)
+    assert.equal((await res.json()).status, 'Finalizing')
+    assert.equal((await prisma.agentWithdrawal.findUniqueOrThrow({ where: { id: w.id } })).status, 'Finalizing')
+    assert.equal((await agentRow()).commissionBalance, before)
+  }
+})
+
+test('withdrawal: an explicit success is booked as paid, with no refund', async () => {
+  const w = await mkWithdrawal()
+  const before = (await agentRow()).commissionBalance
+  paystackReplies(finalizeAnswer({ status: true, data: { status: 'success' } }))
+  try { assert.equal((await wdFinalize(w.id)).status, 200) } finally { restorePaystack() }
+  assert.equal((await prisma.agentWithdrawal.findUniqueOrThrow({ where: { id: w.id } })).status, 'Approved')
+  assert.equal((await agentRow()).commissionBalance, before)
+})
+
 test('redemption: definite rejection releases claim, nothing paid, retry pays once', async () => {
   const r = await mkRedemption()
   const rev0 = await revenue()
