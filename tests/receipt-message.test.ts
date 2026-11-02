@@ -1,7 +1,7 @@
 // Unit tests for the receipt text agents send to a customer's in-app chat.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { buildReceiptMessage, type ReceiptTxn } from '../src/lib/receipt-message'
+import { buildReceiptMessage, payoutBlock, payoutRef, type ReceiptTxn } from '../src/lib/receipt-message'
 
 const who = { customerName: 'ada obi', agentName: 'Bola Agent' }
 const txn = (over: Partial<ReceiptTxn> = {}): ReceiptTxn => ({
@@ -108,4 +108,38 @@ test("a customer's own Paystack deposit has no Recorded by line", () => {
 test('other rows keep Recorded by, including a non-saving Paystack row', () => {
   assert.match(buildReceiptMessage([txn({ method: null })], who), /Recorded by: Bola Agent/)
   assert.match(buildReceiptMessage([txn({ type: 'repayment', method: 'Paystack' })], who), /Recorded by: Bola Agent/)
+})
+
+test('payoutRef finds the redemption behind payout rows only', () => {
+  assert.equal(payoutRef({ type: 'redemption', ref: 'ER-1' }), 'ER-1')
+  assert.equal(payoutRef({ type: 'interest', ref: 'ER-1-INT' }), 'ER-1')
+  assert.equal(payoutRef({ type: 'interest', ref: 'INT-5' }), null)
+  assert.equal(payoutRef({ type: 'saving', ref: 'ER-1-INT' }), null)
+})
+
+test('payoutBlock: bank payouts need a confirmed transfer', () => {
+  const row = { type: 'redemption', method: 'Bank Transfer' }
+  const bank = (bankTransferStatus: string | null, payoutMethod = 'BankTransfer') => payoutBlock(row, { payoutMethod, bankTransferStatus })
+  assert.equal(bank('success'), null)
+  assert.equal(bank('manual', 'Bank Transfer'), null)
+  assert.match(bank('failed')!, /failed/)
+  assert.match(bank('reversed')!, /reversed/)
+  assert.match(bank('pending')!, /isn’t confirmed/)
+  assert.match(bank('otp')!, /isn’t confirmed/)
+  assert.match(bank(null)!, /isn’t confirmed/)
+})
+
+test('payoutBlock: an interest row follows its redemption, not its own Cash method', () => {
+  const row = { type: 'interest', method: 'Cash' }
+  assert.match(payoutBlock(row, { payoutMethod: 'BankTransfer', bankTransferStatus: 'failed' })!, /failed/)
+  assert.equal(payoutBlock(row, { payoutMethod: 'BankTransfer', bankTransferStatus: 'success' }), null)
+  assert.equal(payoutBlock(row, { payoutMethod: 'Cash', bankTransferStatus: null }), null)
+  assert.match(payoutBlock(row, null)!, /isn’t confirmed/)
+})
+
+test('payoutBlock: cash needs no transfer; no record and not cash is refused', () => {
+  assert.equal(payoutBlock({ type: 'redemption', method: 'Cash' }, { payoutMethod: 'Cash', bankTransferStatus: null }), null)
+  assert.equal(payoutBlock({ type: 'redemption', method: 'Cash' }, null), null)
+  assert.match(payoutBlock({ type: 'redemption', method: 'Bank Transfer' }, null)!, /isn’t confirmed/)
+  assert.match(payoutBlock({ type: 'redemption', method: null }, null)!, /isn’t confirmed/)
 })

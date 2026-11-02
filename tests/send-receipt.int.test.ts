@@ -18,14 +18,17 @@ M._load = function (req: string, ...rest: unknown[]) {
 const { POST } = require('../src/app/api/transactions/send-receipt/route') as typeof import('../src/app/api/transactions/send-receipt/route')
 
 const RUN = Math.random().toString(36).slice(2, 10)
-const ids = { agent: '', other: '', custA: '', custB: '', moved: '', plan: '', planB: '' }
+const ids = { agent: '', other: '', custA: '', custB: '', moved: '', hasLogin: '', plan: '', planB: '' }
 const tx: Record<string, string> = {}
+const redemptions: string[] = []
+const HASH = `$2a$10$hash-${RUN}`
 
 const call = (body: unknown) => POST({ json: async () => body } as never)
 const actAs = (agentId: string | null) => { stub.getServerSession = async () => (agentId ? { user: { agentId } } : null) }
 const asOwner = () => actAs(`SR-${RUN}`)
 const messages = (customerId: string) => prisma.customerChatMessage.findMany({ where: { customerId } })
-const mkCustomer = (sfx: string, agentId: string) => prisma.customer.create({ data: {
+const mkCustomer = (sfx: string, agentId: string, password?: string) => prisma.customer.create({ data: {
+  password,
   customerId: `SR${sfx}-${RUN}`, agentId, firstName: 'ada', lastName: `obi${sfx}`, phone: `08${sfx}${RUN}`,
   address: 'x', nokName: 'n', nokRelation: 'r', nokPhone: '0800',
 } })
@@ -37,12 +40,13 @@ before(async () => {
   ids.custA = (await mkCustomer('1', agent.id)).id
   ids.custB = (await mkCustomer('2', agent.id)).id
   ids.moved = (await mkCustomer('3', other.id)).id
+  ids.hasLogin = (await mkCustomer('4', agent.id, HASH)).id
   const mkPlan = async (customerId: string, goal: string) => (await prisma.savingsPlan.create({ data: {
     customerId, dailyAmount: 100, periodDays: 30, goal, startDate: new Date(), maturityDate: new Date(), balance: 555,
   } })).id
   ids.plan = await mkPlan(ids.custA, 'School fees')
   ids.planB = await mkPlan(ids.custA, 'Rent')
-  const mk = async (key: string, data: { agentId?: string; customerId?: string | null; planId?: string; type?: string; amount?: number; status?: string; createdAt?: Date }) => {
+  const mk = async (key: string, data: { ref?: string; agentId?: string; customerId?: string | null; planId?: string; type?: string; amount?: number; method?: string; status?: string; createdAt?: Date }) => {
     const t = await prisma.transaction.create({ data: {
       ref: `SR-${key}-${RUN}`, agentId: ids.agent, customerId: ids.custA, planId: ids.plan, type: 'saving', amount: 100, ...data,
     } })
@@ -59,18 +63,39 @@ before(async () => {
   await mk('noCustomer', { customerId: null, type: 'wallet_funding' })
   await mk('foreign', { agentId: ids.other })
   await mk('moved', { customerId: ids.moved })
+  await mk('otherAmount', { amount: 200 })
+  await mk('otherMethod', { method: 'Paystack' })
+  await mk('login', { customerId: ids.hasLogin, planId: undefined })
+  // Payouts: the row says Done whatever happened to the transfer, as redemption-complete.ts writes it.
+  const payout = async (key: string, payoutMethod: string, bankTransferStatus: string | null) => {
+    const ref = `ER-${key}-${RUN}`
+    const r = await prisma.earlyRedemption.create({ data: { ref, savingsPlanId: ids.plan, reason: 'x', balance: 100, netPayout: 100, payoutMethod, bankTransferStatus } })
+    redemptions.push(r.id)
+    await mk(key, { ref, type: 'redemption', method: payoutMethod })
+    await mk(`${key}Int`, { ref: `${ref}-INT`, type: 'interest', method: 'Cash' })
+  }
+  await payout('paySuccess', 'BankTransfer', 'success')
+  await payout('payManual', 'Bank Transfer', 'manual')
+  await payout('payFailed', 'BankTransfer', 'failed')
+  await payout('payReversed', 'BankTransfer', 'reversed')
+  await payout('payPending', 'BankTransfer', 'pending')
+  await payout('payNull', 'BankTransfer', null)
+  await payout('payCash', 'Cash', null)
+  await mk('directCash', { type: 'redemption', method: 'Cash' })
+  await mk('directBank', { type: 'redemption', method: 'Bank Transfer' })
 })
 
 beforeEach(async () => {
   asOwner()
-  await prisma.customerChatMessage.deleteMany({ where: { customerId: { in: [ids.custA, ids.custB, ids.moved] } } })
+  await prisma.customerChatMessage.deleteMany({ where: { customerId: { in: [ids.custA, ids.custB, ids.moved, ids.hasLogin] } } })
 })
 
 after(async () => {
-  await prisma.customerChatMessage.deleteMany({ where: { customerId: { in: [ids.custA, ids.custB, ids.moved] } } })
+  await prisma.customerChatMessage.deleteMany({ where: { customerId: { in: [ids.custA, ids.custB, ids.moved, ids.hasLogin] } } })
   await prisma.transaction.deleteMany({ where: { id: { in: Object.values(tx) } } })
+  await prisma.earlyRedemption.deleteMany({ where: { id: { in: redemptions } } })
   await prisma.savingsPlan.deleteMany({ where: { id: { in: [ids.plan, ids.planB] } } })
-  await prisma.customer.deleteMany({ where: { id: { in: [ids.custA, ids.custB, ids.moved] } } })
+  await prisma.customer.deleteMany({ where: { id: { in: [ids.custA, ids.custB, ids.moved, ids.hasLogin] } } })
   await prisma.agent.deleteMany({ where: { id: { in: [ids.agent, ids.other] } } })
   await prisma.$disconnect()
 })
@@ -147,7 +172,7 @@ test('400 for mixed customers or no customer', async () => {
 })
 
 test('400 when several ids are not one savings payment', async () => {
-  for (const other of [tx.enrol, tx.pending, tx.otherPlan]) {
+  for (const other of [tx.enrol, tx.pending, tx.otherPlan, tx.otherAmount, tx.otherMethod]) {
     assert.equal((await call({ ids: [tx.d1, other] })).status, 400)
   }
   assert.equal((await messages(ids.custA)).length, 0)
@@ -159,4 +184,58 @@ test('sending changes no balances', async () => {
   const plan = await prisma.savingsPlan.findUniqueOrThrow({ where: { id: ids.plan } })
   assert.equal(agent.walletBalance, 777)
   assert.equal(plan.balance, 555)
+})
+
+test('409 and nothing sent for a bank payout that is not confirmed, on the payout and its interest row', async () => {
+  for (const key of ['payFailed', 'payReversed', 'payPending', 'payNull']) {
+    for (const id of [tx[key], tx[`${key}Int`]]) {
+      const res = await call({ ids: [id] })
+      assert.equal(res.status, 409, key)
+      assert.match((await res.json()).error, /can’t be sent/)
+    }
+  }
+  assert.equal((await messages(ids.custA)).length, 0)
+})
+
+test('confirmed bank payouts, manual payouts and cash payouts can be sent', async () => {
+  for (const key of ['paySuccess', 'payManual', 'payCash']) {
+    assert.equal((await call({ ids: [tx[key]] })).status, 200, key)
+    assert.equal((await call({ ids: [tx[`${key}Int`]] })).status, 200, `${key} interest`)
+  }
+  assert.equal((await messages(ids.custA)).length, 6)
+})
+
+test('a direct payout with no redemption record needs to be cash', async () => {
+  assert.equal((await call({ ids: [tx.directCash] })).status, 200)
+  assert.equal((await call({ ids: [tx.directBank] })).status, 409)
+})
+
+test('canOpenChat is false with no password, but the message is still posted', async () => {
+  const res = await call({ ids: [tx.one] })
+  assert.equal(res.status, 200)
+  assert.deepEqual(await res.json(), { sent: true, canOpenChat: false })
+  assert.equal((await messages(ids.custA)).length, 1)
+})
+
+test('canOpenChat is true with a password, and the hash is never returned', async () => {
+  const res = await call({ ids: [tx.login] })
+  assert.deepEqual(await res.json(), { sent: true, canOpenChat: true })
+  const [m] = await messages(ids.hasLogin)
+  assert.doesNotMatch(m.message, new RegExp(RUN + '.*hash|hash-'))
+})
+
+test('each send is audited with every id and ref, and not the message body', async () => {
+  const send = [tx.d1, tx.d2]
+  assert.equal((await call({ ids: send })).status, 200)
+  const log = await prisma.auditLog.findFirstOrThrow({ where: { action: 'receipt_sent_to_chat', entityId: tx.d1 }, orderBy: { createdAt: 'desc' } })
+  assert.equal(log.actorId, ids.agent)
+  for (const id of send) assert.ok(log.details?.includes(id))
+  for (const key of ['d1', 'd2']) assert.ok(log.details?.includes(`SR-${key}-${RUN}`))
+  assert.doesNotMatch(log.details ?? '', /Total|Customer|School fees|₦/)
+})
+
+test('a refused send is not audited', async () => {
+  await call({ ids: [tx.payFailed] })
+  const log = await prisma.auditLog.findFirst({ where: { action: 'receipt_sent_to_chat', entityId: tx.payFailed } })
+  assert.equal(log, null)
 })

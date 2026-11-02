@@ -47,6 +47,33 @@ function paidFor(txns: ReceiptTxn[]): string {
   return first === last ? `${txns.length} days, recorded ${first}` : `${txns.length} days between ${first} and ${last}`
 }
 
+/** The EarlyRedemption ref a row pays out, or null for rows that aren't payouts. Interest rows are written as `<ref>-INT`. */
+export function payoutRef(t: { type: string; ref: string }): string | null {
+  if (t.type === 'redemption') return t.ref.replace(/-INT$/, '')
+  return t.type === 'interest' && t.ref.endsWith('-INT') ? t.ref.slice(0, -4) : null
+}
+
+/**
+ * Why a payout's receipt can't be sent yet, or null if it can. Payout rows are written as Done once
+ * Paystack accepts the transfer and aren't updated if it later fails, so the row's status can't be
+ * trusted. An interest row's method is always Cash, so only the redemption record says how it was paid.
+ */
+export function payoutBlock(
+  t: { type: string; method: string | null },
+  record: { payoutMethod: string | null; bankTransferStatus: string | null } | null,
+): string | null {
+  const notConfirmed = 'This bank payout isn’t confirmed yet, so the receipt can’t be sent.'
+  // No redemption record: an agent's direct payout, which only cash can vouch for.
+  if (!record) return t.type === 'redemption' && t.method?.toLowerCase() === 'cash' ? null : notConfirmed
+  // Same test as the admin approve route: anything else never goes through Paystack.
+  if (record.payoutMethod !== 'Bank Transfer' && record.payoutMethod !== 'BankTransfer') return null
+  const status = record.bankTransferStatus
+  if (status === 'success' || status === 'manual') return null
+  return status === 'failed' || status === 'reversed'
+    ? `This bank payout ${status === 'failed' ? 'failed' : 'was reversed'}, so the receipt can’t be sent.`
+    : notConfirmed
+}
+
 /** One transaction gives a normal receipt; several (a Bulk Savings payment) give one combined receipt. */
 export function buildReceiptMessage(txns: ReceiptTxn[], who: { customerName: string; agentName: string }): string {
   const [first] = txns

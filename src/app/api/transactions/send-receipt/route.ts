@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { buildReceiptMessage } from '@/lib/receipt-message'
+import { logAudit } from '@/lib/audit'
+import { buildReceiptMessage, payoutBlock, payoutRef } from '@/lib/receipt-message'
 
 const MAX_IDS = 90
 
@@ -28,7 +29,7 @@ export async function POST(req: NextRequest) {
     where: { id: { in: ids }, agentId: agent.id },
     select: {
       id: true, ref: true, type: true, amount: true, method: true, status: true, createdAt: true, customerId: true, planId: true,
-      customer: { select: { firstName: true, lastName: true, agentId: true } },
+      customer: { select: { firstName: true, lastName: true, agentId: true, password: true } },
       plan: { select: { goal: true } },
     },
   })
@@ -45,9 +46,16 @@ export async function POST(req: NextRequest) {
   // Same rule as the agent chat: only message your own customers.
   if (customer.agentId !== agent.id) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
 
-  // A combined total is only true for one savings payment.
-  if (txns.length > 1 && txns.some(t => t.type !== 'saving' || t.status !== first.status || t.planId !== first.planId)) {
+  // There's no batch id, so this can't prove one payment. It only stops a total that adds up unlike rows.
+  if (txns.length > 1 && txns.some(t => t.type !== 'saving' || t.status !== first.status || t.planId !== first.planId || t.amount !== first.amount || t.method !== first.method)) {
     return NextResponse.json({ error: 'These transactions are not one savings payment' }, { status: 400 })
+  }
+
+  const redemptionRef = payoutRef(first)
+  if (redemptionRef) {
+    const record = await prisma.earlyRedemption.findUnique({ where: { ref: redemptionRef }, select: { payoutMethod: true, bankTransferStatus: true } })
+    const blocked = payoutBlock(first, record)
+    if (blocked) return NextResponse.json({ error: blocked }, { status: 409 })
   }
 
   const message = buildReceiptMessage(
@@ -59,5 +67,15 @@ export async function POST(req: NextRequest) {
     data: { customerId, sender: 'agent', senderId: agent.id, senderName: agent.name, message },
   })
 
-  return NextResponse.json({ sent: true })
+  await logAudit({
+    action: 'receipt_sent_to_chat',
+    entity: 'Transaction',
+    entityId: first.id,
+    details: `ids: ${txns.map(t => t.id).join(', ')} | refs: ${txns.map(t => t.ref).join(', ')}`,
+    actorId: agent.id,
+    actorName: agent.name,
+  })
+
+  // A customer with no password has no way into the chat until they set one.
+  return NextResponse.json({ sent: true, canOpenChat: !!customer.password })
 }
