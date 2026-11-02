@@ -8,7 +8,7 @@ import PasswordInput from '@/components/auth/PasswordInput'
 import { FieldError, FormError } from '@/components/ui/FormErrors'
 import { Icons } from '@/components/ui/icons'
 import { describeFailure, NETWORK_MESSAGE, postJson } from '@/lib/http'
-import { FINGERPRINT_FAILED, loginFailure, type AgentCheck } from '@/lib/login-failure'
+import { FINGERPRINT_FAILED, canReachAuth, loginFailure, type AgentCheck } from '@/lib/login-failure'
 
 export default function LoginForm() {
   return (
@@ -58,6 +58,10 @@ function LoginPageInner() {
       setNotice('')
       setFieldErrors({ identifier: '', password: '' })
       try {
+        if (!await canReachAuth()) {
+          setError(NETWORK_MESSAGE)
+          return
+        }
         const device = (window as unknown as { __vochusDevice?: Record<string, string> }).__vochusDevice
         const r = await signIn('credentials', {
           identifier: creds.identifier,

@@ -1,7 +1,7 @@
 // Unit test: what the agent login screen says after a failed sign-in.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { loginFailure } from '../src/lib/login-failure'
+import { canReachAuth, loginFailure } from '../src/lib/login-failure'
 
 test('a suspended agent is told so, by password or fingerprint', () => {
   for (const via of ['password', 'fingerprint'] as const) {
@@ -57,4 +57,10 @@ test('too many attempts from this network is said plainly, by password or finger
     assert.match(r.message, /10 min/)
     assert.equal(r.field, undefined)
   }
+})
+
+test('canReachAuth: only a real answer counts, so next-auth never bounces an offline agent to its error page', async () => {
+  assert.equal(await canReachAuth(async () => new Response('{}', { status: 200 })), true)
+  assert.equal(await canReachAuth(async () => new Response('', { status: 500 })), false)
+  assert.equal(await canReachAuth(async () => { throw new TypeError('Failed to fetch') }), false)
 })

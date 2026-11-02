@@ -1,8 +1,7 @@
 import { NextAuthOptions } from 'next-auth'
 import { requireEnv } from '@/lib/env'
 import CredentialsProvider from 'next-auth/providers/credentials'
-import bcrypt from 'bcryptjs'
-import { prisma } from './prisma'
+import { adminIpFromForwarded, verifyAdminLogin } from './admin-login-guard'
 import { isPastAbsoluteCap, IDLE_SECONDS } from '@/lib/session-policy'
 
 export const adminAuthOptions: NextAuthOptions = {
@@ -14,17 +13,12 @@ export const adminAuthOptions: NextAuthOptions = {
         email: { label: 'Email', type: 'email' },
         password: { label: 'Password', type: 'password' },
       },
-      async authorize(credentials) {
+      async authorize(credentials, req) {
         if (!credentials?.email || !credentials?.password) return null
 
-        const admin = await prisma.superAdmin.findUnique({
-          where: { email: credentials.email.trim().toLowerCase() },
-        })
-
-        if (!admin) return null
-
-        const valid = await bcrypt.compare(credentials.password, admin.password)
-        if (!valid) return null
+        const result = await verifyAdminLogin(credentials.email, credentials.password, adminIpFromForwarded(req?.headers?.['x-forwarded-for']))
+        if (result.kind !== 'ok') return null
+        const { admin } = result
 
         return {
           id: admin.id,

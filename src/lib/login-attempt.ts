@@ -108,6 +108,32 @@ async function ipBump(key: string, now: number): Promise<void> {
     .catch(() => {})
 }
 
+// -------- Time locks for other keys (admin sign-in) --------
+
+export async function isTimeLocked(key: string, now: number = Date.now()): Promise<boolean> {
+  return checkThrottle(await loadState(key), now).blocked
+}
+
+/** Count a failure against a time-locked key. True if this failure is the one that started a lock. */
+export async function bumpTimedLock(key: string, schedule: (failCount: number) => number, now: number = Date.now()): Promise<boolean> {
+  const prior = await prisma.loginAttempt.findUnique({ where: { key } })
+  const windowExpired =
+    prior?.lastFailAt != null && now - prior.lastFailAt.getTime() > THROTTLE.resetAfterMs
+  if (!prior || prior.failCount === 0 || windowExpired) {
+    const first = schedule(1)
+    await startWindow(key, now, first > 0 ? now + first : null)
+    return first > 0
+  }
+  const row = await prisma.loginAttempt.update({
+    where: { key },
+    data: { failCount: { increment: 1 }, lastFailAt: toDate(now) },
+  })
+  const dur = schedule(row.failCount)
+  if (dur <= 0) return false
+  await prisma.loginAttempt.update({ where: { key }, data: { lockedUntil: toDate(now + dur) } })
+  return true
+}
+
 // -------- Public API --------
 
 /** Blocked if the account is hard-locked OR the IP is spray-locked. */
