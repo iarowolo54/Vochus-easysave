@@ -649,6 +649,7 @@ html[data-vochus-shell] .ui-browser-only { display: none; }
 .ui-btn--secondary { background: var(--ui-brand-tint); color: var(--ui-brand-ink); }
 .ui-btn--block { width: 100%; }
 .ui-btn:disabled { opacity: .5; cursor: not-allowed; }
+.ui-btn--done:disabled { background: var(--ui-brand-tint); color: var(--ui-brand-ink); opacity: 1; cursor: default; }
 .ui-btn-row { display: grid; grid-template-columns: 1fr 1fr; gap: var(--ui-s3); padding: 0 0 var(--ui-s4); }
 .ui-btn-row--single { grid-template-columns: 1fr; }
 .ui-btn--danger { background: var(--ui-danger-tint); color: var(--ui-danger); }
@@ -1996,7 +1997,7 @@ button.ui-bottom-nav-item { border: 0; background: none; cursor: pointer; font-f
 .ag-receipt-foot { margin: 0 0 var(--ui-s4); font-size: var(--ui-fs-sm); color: var(--ui-ink-2); text-align: center; }
 .ag-receipt-actions { display: grid; grid-template-columns: 1fr 1fr; gap: var(--ui-s2); }
 .ag-receipt-actions .ui-btn { min-height: 48px; text-decoration: none; }
-.ag-receipt-actions .ui-btn--primary { grid-column: 1 / -1; }
+.ag-receipt-actions .ui-btn--primary, .ag-receipt-actions .ui-btn--done { grid-column: 1 / -1; }
 @media print {
   .ag-content.content-area { padding: 0; }
   .ag-receipt { box-shadow: none; border: 1px solid #ddd; }

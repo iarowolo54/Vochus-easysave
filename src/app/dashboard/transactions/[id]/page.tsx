@@ -5,12 +5,13 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import Logo from '@/components/Logo'
 import EmptyState from '@/components/ui/EmptyState'
-import { FormError } from '@/components/ui/FormErrors'
+import { SendReceiptButton, SendReceiptNotices } from '@/components/ui/SendReceipt'
 import { Bone } from '@/components/ui/Skeleton'
 import { Icons, type IconName } from '@/components/ui/icons'
 import { txStatus } from '@/components/customer/DepositReceipt'
 import { displayName, formatDate, formatNaira, formatTime } from '@/lib/format'
 import { saveReceiptImage } from '@/lib/receipt-image'
+import { createReceiptSender, SEND_IDLE } from '@/lib/receipt-send'
 import { waLink } from '@/lib/whatsapp'
 
 interface Txn {
@@ -46,8 +47,8 @@ export default function TransactionDetailPage() {
   const [canPrint, setCanPrint] = useState(false)
   const [copied, setCopied] = useState(false)
   const [saving, setSaving] = useState(false)
-  const [sendState, setSendState] = useState<'idle' | 'sending' | 'sent'>('idle')
-  const [sendError, setSendError] = useState('')
+  const [send, setSend] = useState(SEND_IDLE)
+  const [sender] = useState(() => createReceiptSender(setSend))
 
   useEffect(() => {
     const check = () => setCanPrint(!!(window as unknown as { __vochusCanPrint?: boolean }).__vochusCanPrint)
@@ -144,19 +145,6 @@ export default function TransactionDetailPage() {
     } finally { setSaving(false) }
   }
 
-  async function sendToChat() {
-    setSendState('sending'); setSendError('')
-    try {
-      const res = await fetch('/api/transactions/send-receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [txn!.id] }) })
-      if (res.ok) { setSendState('sent'); return }
-      const data: { error?: string } = await res.json().catch(() => ({}))
-      setSendError(data.error ?? 'The receipt could not be sent. Please try again.')
-    } catch {
-      setSendError('No connection. Check your internet and try again.')
-    }
-    setSendState('idle')
-  }
-
   return (
     <div className="ag-page">
       <div className="ag-receipt-wrap">
@@ -195,20 +183,12 @@ export default function TransactionDetailPage() {
 
           <p className="ag-receipt-foot">Official receipt from Vochus Easy Save. Keep it for your records.</p>
 
-          <div className="no-print"><FormError message={sendError} /></div>
+          <div className="no-print"><SendReceiptNotices send={send} /></div>
 
           <div className="ag-receipt-actions no-print">
-            {txn.customer && (
-              <button type="button" className="ui-btn ui-btn--primary" onClick={sendToChat} disabled={sendState !== 'idle'} aria-live="polite">
-                {sendState === 'sending'
-                  ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Sending…</>
-                  : sendState === 'sent'
-                    ? <><Icons.check size={18} aria-hidden="true" /> Sent to chat</>
-                    : <><Icons.chat size={18} aria-hidden="true" /> {sendError ? 'Try again' : 'Send to customer'}</>}
-              </button>
-            )}
+            {txn.customer && <SendReceiptButton send={send} onSend={() => sender.send([txn.id])} />}
             {txn.customer?.phone && (
-              <a className="ui-btn ui-btn--secondary" style={{ gridColumn: '1 / -1' }} href={waLink(txn.customer.phone, shareText)} target="_blank" rel="noopener noreferrer">
+              <a className={`ui-btn ${send.state === 'sent' && !send.canOpenChat ? 'ui-btn--primary' : 'ui-btn--secondary'}`} style={{ gridColumn: '1 / -1' }} href={waLink(txn.customer.phone, shareText)} target="_blank" rel="noopener noreferrer">
                 <Icons.share size={18} aria-hidden="true" /> Send on WhatsApp
               </a>
             )}

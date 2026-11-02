@@ -9,11 +9,13 @@ import { avatarTint } from '@/lib/avatar'
 import { waLink } from '@/lib/whatsapp'
 import { displayName, formatDate, formatNaira, formatTime } from '@/lib/format'
 import { addDays, isoDate, parseDateInput, today } from '@/lib/plan-dates'
+import { createReceiptSender, SEND_IDLE } from '@/lib/receipt-send'
 import BottomSheet from '@/components/ui/BottomSheet'
 import EmptyState from '@/components/ui/EmptyState'
 import EndDateField, { endDateDays } from '@/components/ui/EndDateField'
 import { FormError } from '@/components/ui/FormErrors'
 import PinPad from '@/components/ui/PinPad'
+import { SendReceiptButton, SendReceiptNotices } from '@/components/ui/SendReceipt'
 import ListRow from '@/components/ui/ListRow'
 import Toast from '@/components/ui/Toast'
 import { Icons } from '@/components/ui/icons'
@@ -106,8 +108,8 @@ function SavingsContent() {
   const [lastPhone, setLastPhone] = useState('')
   // Kept apart from lastReceipt, which is posted as-is to the app's receipt printer.
   const [lastTxIds, setLastTxIds] = useState<string[]>([])
-  const [sendState, setSendState] = useState<'idle' | 'sending' | 'sent'>('idle')
-  const [sendError, setSendError] = useState('')
+  const [send, setSend] = useState(SEND_IDLE)
+  const [sender] = useState(() => createReceiptSender(setSend))
   const [walletBalance, setWalletBalance] = useState<number | null>(null)
   const [recent, setRecent] = useState<RecentCustomer[]>([])
   const [paidToday, setPaidToday] = useState<PaidToday[] | null>(null)
@@ -414,21 +416,8 @@ function SavingsContent() {
     setRefreshKey(k => k + 1)
   }
 
-  async function sendToChat() {
-    setSendState('sending'); setSendError('')
-    try {
-      const res = await fetch('/api/transactions/send-receipt', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: lastTxIds }) })
-      if (res.ok) { setSendState('sent'); return }
-      const data: { error?: string } = await res.json().catch(() => ({}))
-      setSendError(data.error ?? 'The receipt could not be sent. Please try again.')
-    } catch {
-      setSendError('No connection. Check your internet and try again.')
-    }
-    setSendState('idle')
-  }
-
   function recordAnother() {
-    setLastReceipt(null); setLastTxIds([]); setSendState('idle'); setSendError('')
+    setLastReceipt(null); setLastTxIds([]); sender.reset()
     requestAnimationFrame(() => searchRef.current?.focus())
   }
 
@@ -440,6 +429,14 @@ function SavingsContent() {
     w.VochusPrinter?.postMessage(JSON.stringify(lastReceipt))
   }
 
+  const canSend = lastTxIds.length > 0
+  const sentNoChat = send.state === 'sent' && !send.canOpenChat
+  const whatsAppFirst = sentNoChat && !!lastPhone
+  const whatsAppButton = lastReceipt && lastPhone && (
+    <a className={`ui-btn ui-btn--block ${whatsAppFirst ? 'ui-btn--primary' : 'ui-btn--secondary'}`} href={whatsAppLink(lastPhone, lastReceipt, lastDays)} target="_blank" rel="noopener noreferrer">
+      <Icons.share size={18} aria-hidden="true" /> Send receipt on WhatsApp
+    </a>
+  )
   const redeemed = selected?.planStatus === 'Redeemed'
   const bulkTotal = (plan?.dailyAmount ?? 0) * selectedDates.length
   const payAmount = bulkMode ? bulkTotal : parseFloat(amount || '0')
@@ -481,25 +478,17 @@ function SavingsContent() {
                 <div><dt>Reference</dt><dd className="ag-mono">{lastReceipt.ref}</dd></div>
               </dl>
 
+              <div style={{ width: '100%', textAlign: 'left', marginTop: send.error || sentNoChat ? 'var(--ui-s4)' : 0 }}>
+                <SendReceiptNotices send={send} />
+              </div>
+
               <div className="ag-done-actions">
-                <FormError message={sendError} />
-                {lastTxIds.length > 0 && (
-                  <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={sendToChat} disabled={sendState !== 'idle'}>
-                    {sendState === 'sending'
-                      ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Sending…</>
-                      : sendState === 'sent'
-                        ? <><Icons.check size={18} aria-hidden="true" /> Sent to chat</>
-                        : <><Icons.chat size={18} aria-hidden="true" /> {sendError ? 'Try again' : 'Send to customer'}</>}
-                  </button>
-                )}
-                <button type="button" className={`ui-btn ui-btn--block ${lastTxIds.length > 0 && sendState !== 'sent' ? 'ui-btn--secondary' : 'ui-btn--primary'}`} onClick={recordAnother}>
+                {canSend && <SendReceiptButton send={send} onSend={() => sender.send(lastTxIds)} block />}
+                {whatsAppFirst && whatsAppButton}
+                <button type="button" className={`ui-btn ui-btn--block ${canSend && (send.state !== 'sent' || whatsAppFirst) ? 'ui-btn--secondary' : 'ui-btn--primary'}`} onClick={recordAnother}>
                   <Icons.add size={18} aria-hidden="true" /> Record another
                 </button>
-                {lastPhone && (
-                  <a className="ui-btn ui-btn--secondary ui-btn--block" href={whatsAppLink(lastPhone, lastReceipt, lastDays)} target="_blank" rel="noopener noreferrer">
-                    <Icons.share size={18} aria-hidden="true" /> Send receipt on WhatsApp
-                  </a>
-                )}
+                {!whatsAppFirst && whatsAppButton}
                 {canPrint && (
                   <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={printReceipt}>
                     <Icons.print size={18} aria-hidden="true" /> Print receipt
