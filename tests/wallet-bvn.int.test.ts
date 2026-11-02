@@ -32,7 +32,7 @@ const { prisma } = require('../src/lib/prisma') as typeof import('../src/lib/pri
 const wallet = require('../src/app/api/wallet/route') as typeof import('../src/app/api/wallet/route')
 const bvnRoute = require('../src/app/api/identity/bvn/route') as typeof import('../src/app/api/identity/bvn/route')
 const enroll = require('../src/app/api/customer/enroll/route') as typeof import('../src/app/api/customer/enroll/route')
-const { BVN_LOOKUPS_PER_EMAIL_PER_HOUR, BVN_LOOKUPS_PER_IP_PER_HOUR, spendIpLookup } = require('../src/lib/bvn-lookup') as typeof import('../src/lib/bvn-lookup')
+const { BVN_LOOKUPS_PER_EMAIL_PER_HOUR, BVN_LOOKUPS_PER_IP_PER_HOUR, bvnNameMatches, spendIpLookup } = require('../src/lib/bvn-lookup') as typeof import('../src/lib/bvn-lookup')
 /* eslint-enable @typescript-eslint/no-require-imports */
 
 const RUN = Math.random().toString(36).slice(2, 8)
@@ -130,12 +130,28 @@ test('a verified email only learns whether the typed name matches', async () => 
   assert.equal(lookups, 2)
 })
 
-test('the name comparison ignores case and outer spaces, and nothing else', async () => {
+test('the name comparison ignores case and spaces, and nothing else', async () => {
   const email = await verifiedEmail()
   const check = async (firstName: string, lastName: string) => (await (await lookup({ bvn: BVN, email, firstName, lastName })).json()).match
   assert.equal(await check('  sTRANGER ', 'person  '), true)
   assert.equal(await check('Stranger Secret', 'Person'), false, 'middle name in the first name box')
   assert.equal(await check('Person', 'Stranger'), false, 'swapped')
+  assert.equal(await check('Stranger', '  Person '), true)
+})
+
+test('bvnNameMatches: inner spaces and a phone keyboard apostrophe still match', () => {
+  const resolved = { firstName: "Mary  Ann", lastName: "O'Neil" }
+  assert.equal(bvnNameMatches(resolved, { firstName: 'mary ann', lastName: 'O’Neil' }), true)
+  assert.equal(bvnNameMatches(resolved, { firstName: 'Mary', lastName: "O'Neil" }), false)
+  assert.equal(bvnNameMatches(resolved, { firstName: 'mary ann', lastName: 'ONeil' }), false)
+})
+
+test('a failed check logs only the error class and status, so a wrong key gets noticed', async () => {
+  const email = await verifiedEmail()
+  const before = consoleLines.length
+  paystackFails = true
+  try { await lookup({ bvn: BVN, email, ...MATCHING }) } finally { paystackFails = false }
+  assert.deepEqual(consoleLines.slice(before), ['[bvn] check failed BvnLookupFailed 400'])
 })
 
 test('no response carries an identity field, including when Paystack fails', async () => {
@@ -241,6 +257,39 @@ test('enrol does not pass on Paystack\'s error text', async () => {
     const { error } = await res.json()
     assert.ok(!IDENTITY.test(error), error)
   } finally { paystackFails = false }
+})
+
+test('out of BVN checks at the last step: a clear way out, no account with an unchecked BVN, and no BVN still works', async () => {
+  const email = await verifiedEmail()
+  for (let i = 0; i < BVN_LOOKUPS_PER_EMAIL_PER_HOUR; i++) assert.equal((await lookup({ bvn: BVN, email, ...MATCHING })).status, 200)
+  lookups = 0
+  const body = enrolBody(email, MATCHING)
+  const res = await enrolPost(body)
+  assert.equal(res.status, 429)
+  const refused = await res.json()
+  assert.equal(refused.code, 'bvn_budget')
+  assert.match(refused.error, /[Rr]emove the BVN/)
+  assert.equal(lookups, 0, 'no paid lookup')
+  assert.equal(await prisma.customer.count({ where: { email } }), 0, 'a BVN is never stored unchecked')
+  const without = await enrolPost({ ...body, bvn: '' })
+  assert.equal(without.status, 200, JSON.stringify(await without.clone().json()))
+  assert.equal((await prisma.customer.findFirstOrThrow({ where: { email } })).bvn, null)
+})
+
+test('the page can tell a BVN budget refusal from any other enrol limit', async () => {
+  const email = await verifiedEmail()
+  for (let i = 0; i < BVN_LOOKUPS_PER_EMAIL_PER_HOUR; i++) await lookup({ bvn: BVN, email, ...MATCHING })
+  const res = await lookup({ bvn: BVN, email, ...MATCHING })
+  assert.equal(res.status, 429)
+  assert.equal((await res.json()).code, 'bvn_budget')
+})
+
+test('an IP that is out of checks does not use up the email budget', async () => {
+  const ip = freshIp()
+  const email = await verifiedEmail()
+  for (let i = 0; i < BVN_LOOKUPS_PER_IP_PER_HOUR; i++) await spendIpLookup(ip)
+  assert.equal((await lookup({ bvn: BVN, email, ...MATCHING }, ip)).status, 429)
+  assert.equal(await emailSpent(email), 0)
 })
 
 test('enrol with no BVN needs no lookup and spends nothing', async () => {

@@ -5,7 +5,7 @@ import { signCustomerToken, customerCookieOptions } from '@/lib/customer-auth'
 import { sendMail } from '@/lib/mail'
 import { logAudit } from '@/lib/audit'
 import { resolveBvn } from '@/lib/paystack'
-import { bvnNameMatches, refuseBvnLookup } from '@/lib/bvn-lookup'
+import { bvnNameMatches, logBvnFailure, refuseBvnLookup } from '@/lib/bvn-lookup'
 import { normalizeEmail } from '@/lib/email'
 import { normalizePhone } from '@/lib/phone'
 import { findIdentityConflict } from '@/lib/identity'
@@ -110,13 +110,14 @@ export async function POST(req: NextRequest) {
   // After the email gate and on the same budget as /api/identity/bvn, and it never names the BVN's owner.
   if (bvn) {
     const refused = await refuseBvnLookup(normEmail, clientIp(req))
-    if (refused) return NextResponse.json({ error: refused.error }, { status: refused.status })
+    if (refused) return NextResponse.json({ error: refused.error, code: refused.code }, { status: refused.status })
     try {
       const r = await resolveBvn(String(bvn))
       if (!bvnNameMatches(r, { firstName: String(firstName), lastName: String(lastName) })) {
         return NextResponse.json({ error: 'This BVN doesn’t match the name you entered. Check your name, or remove the BVN to carry on without it.' }, { status: 400 })
       }
-    } catch {
+    } catch (e) {
+      logBvnFailure(e)
       return NextResponse.json({ error: 'BVN could not be verified — try again or leave it blank' }, { status: 400 })
     }
   }

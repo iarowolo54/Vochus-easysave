@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { resolveBvn } from '@/lib/paystack'
-import { bvnNameMatches, refuseBvnLookup } from '@/lib/bvn-lookup'
+import { bvnNameMatches, logBvnFailure, refuseBvnLookup } from '@/lib/bvn-lookup'
 import { enrolRateLimiter, clientIp } from '@/lib/rate-limit'
 
 // Public, so it needs a verified email (see bvn-lookup) and only answers whether the typed name matches.
@@ -20,12 +20,13 @@ export async function POST(req: NextRequest) {
   }
 
   const refused = await refuseBvnLookup(email, ip)
-  if (refused) return NextResponse.json({ ok: false, error: refused.error }, { status: refused.status })
+  if (refused) return NextResponse.json({ ok: false, error: refused.error, code: refused.code }, { status: refused.status })
 
   try {
     const r = await resolveBvn(String(bvn))
     return NextResponse.json({ ok: true, match: bvnNameMatches(r, { firstName, lastName }) })
-  } catch {
+  } catch (e) {
+    logBvnFailure(e)
     return NextResponse.json({ ok: false, error: 'We couldn’t check this BVN. Try again, or carry on without it.' }, { status: 400 })
   }
 }

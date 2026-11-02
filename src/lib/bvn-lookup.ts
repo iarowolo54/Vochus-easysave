@@ -3,6 +3,7 @@
 // with caps kept in the database because production runs two instances.
 import { prisma } from '@/lib/prisma'
 import { normalizeEmail } from '@/lib/email'
+import { BvnLookupFailed } from '@/lib/paystack'
 
 export const BVN_LOOKUPS_PER_EMAIL_PER_HOUR = 10
 export const BVN_LOOKUPS_PER_IP_PER_HOUR = 30
@@ -29,13 +30,18 @@ async function spendHourlyBudget(key: string, limit: number, now: Date): Promise
 export const spendIpLookup = (ip: string, now = new Date()) => spendHourlyBudget(`bvn-lookup:ip:${ip}`, BVN_LOOKUPS_PER_IP_PER_HOUR, now)
 export const spendEmailLookup = (email: string, now = new Date()) => spendHourlyBudget(`bvn-lookup:email:${email}`, BVN_LOOKUPS_PER_EMAIL_PER_HOUR, now)
 
-/** The one name comparison for enrolment: ignores case and spaces around each name, nothing else. */
+/** The one name comparison for enrolment: ignores case and extra spaces, and treats a phone keyboard's ’ as '. */
 export function bvnNameMatches(resolved: { firstName?: string | null; lastName?: string | null }, typed: { firstName: string; lastName: string }): boolean {
-  const same = (a: string | null | undefined, b: string) => (a ?? '').trim().toLowerCase() === b.trim().toLowerCase()
-  return same(resolved.firstName, typed.firstName) && same(resolved.lastName, typed.lastName)
+  const norm = (s: string | null | undefined) => (s ?? '').replace(/\s+/g, ' ').replace(/’/g, "'").trim().toLowerCase()
+  return norm(resolved.firstName) === norm(typed.firstName) && norm(resolved.lastName) === norm(typed.lastName)
 }
 
-export type BvnLookupRefusal = { status: 403 | 429; error: string }
+/** So a wrong Paystack key gets noticed. Error class and status only: the reply can name someone. */
+export function logBvnFailure(e: unknown): void {
+  console.error('[bvn] check failed', e instanceof Error ? e.name : 'unknown', e instanceof BvnLookupFailed ? e.httpStatus : '-')
+}
+
+export type BvnLookupRefusal = { status: 403 | 429; error: string; code?: 'bvn_budget' }
 
 /** Null when this lookup may go ahead (and has been counted), otherwise why not. */
 export async function refuseBvnLookup(rawEmail: unknown, ip: string, now = new Date()): Promise<BvnLookupRefusal | null> {
@@ -48,6 +54,7 @@ export async function refuseBvnLookup(rawEmail: unknown, ip: string, now = new D
     : null
   if (!email || !otp) return { status: 403, error: 'Confirm your email first' }
 
-  if ((await spendEmailLookup(email, now)) && (await spendIpLookup(ip, now))) return null
-  return { status: 429, error: 'Too many BVN checks. Try again later, or carry on without a BVN.' }
+  // IP first: a request already refused for its IP shouldn't use up this email's checks.
+  if ((await spendIpLookup(ip, now)) && (await spendEmailLookup(email, now))) return null
+  return { status: 429, code: 'bvn_budget', error: 'Too many BVN checks right now. Remove the BVN to carry on without it.' }
 }

@@ -18,14 +18,18 @@ export class PaystackRejected extends Error {
   }
 }
 
-async function call(method: string, path: string, body?: object) {
+async function request(method: string, path: string, body?: object) {
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers: headers(),
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(15000),
   })
-  return res.json()
+  return { httpStatus: res.status, data: await res.json() }
+}
+
+async function call(method: string, path: string, body?: object) {
+  return (await request(method, path, body)).data
 }
 
 export async function listBanks(): Promise<{ code: string; name: string }[]> {
@@ -70,13 +74,21 @@ export interface BvnResolution {
   gender?: string | null
 }
 
+/** Keeps the HTTP status, so a wrong key (401) can be told from an unknown BVN without logging anything from the reply. */
+export class BvnLookupFailed extends Error {
+  constructor(public httpStatus: number, message: string) {
+    super(message)
+    this.name = 'BvnLookupFailed'
+  }
+}
+
 export async function resolveBvn(bvn: string): Promise<BvnResolution> {
   if (isTestMode()) {
     // Paystack test mode doesn't validate real BVNs — return a deterministic dummy
     return { bvn, firstName: 'TEST', lastName: 'CUSTOMER', dob: '1990-01-01', phone: null, gender: 'M' }
   }
-  const data = await call('GET', `/bank/resolve_bvn/${bvn}`)
-  if (!data.status) throw new Error(data.message ?? 'Could not verify BVN')
+  const { httpStatus, data } = await request('GET', `/bank/resolve_bvn/${bvn}`)
+  if (!data.status) throw new BvnLookupFailed(httpStatus, data.message ?? 'Could not verify BVN')
   const d = data.data ?? {}
   return {
     bvn: d.bvn ?? bvn,
