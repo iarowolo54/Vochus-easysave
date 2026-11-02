@@ -10,6 +10,7 @@ import {
   verifyUnlockOtp,
   requestUnlockOtp,
   MAX_VERIFY_ATTEMPTS,
+  RESEND_COOLDOWN_MS,
   MAX_SENDS_PER_DAY,
 } from '../src/lib/unlock-otp'
 
@@ -75,18 +76,18 @@ test('attempt cap is not bypassable by a parallel burst', async () => {
   }
 })
 
-test('a failed delivery persists nothing and burns no quota', async () => {
+test('a failed delivery cancels that code but still counts toward the limits', async () => {
   const customer = { id: `${customerId}-faildel`, email: null, phone: '08022223333', firstName: 'Ada' }
   try {
     const failSend = async () => false // simulate SMS/email gateway failure
     const r = await requestUnlockOtp(customer, t0, failSend)
     assert.equal(r.sent, false)
-    const rows = await prisma.accountUnlockOtp.count({ where: { customerId: customer.id } })
-    assert.equal(rows, 0, 'no row should be stored when delivery fails')
+    const rows = await prisma.accountUnlockOtp.findMany({ where: { customerId: customer.id } })
+    assert.equal(rows.length, 1, 'the row is written before sending')
+    assert.ok(rows[0].consumedAt, 'the unsent code is cancelled')
 
-    // And the next attempt is NOT blocked by a cooldown (nothing was sent).
-    const ok = await requestUnlockOtp(customer, t0 + 1000) // default (SMS) sender succeeds
-    assert.equal(ok.sent, true)
+    assert.equal((await requestUnlockOtp(customer, t0 + 1000)).sent, false, 'cooldown still applies')
+    assert.equal((await requestUnlockOtp(customer, t0 + RESEND_COOLDOWN_MS + 1)).sent, true)
   } finally {
     await prisma.accountUnlockOtp.deleteMany({ where: { customerId: customer.id } })
   }
@@ -118,7 +119,6 @@ test('requestUnlockOtp sends, stores a hashed code, and rate-limits resends', as
   // Immediate resend is throttled.
   const second = await requestUnlockOtp(customer, t0 + 1000)
   assert.equal(second.sent, false)
-  assert.ok((second.retryAfterSeconds ?? 0) > 0)
 
   await prisma.accountUnlockOtp.deleteMany({ where: { customerId: customer.id } })
 })

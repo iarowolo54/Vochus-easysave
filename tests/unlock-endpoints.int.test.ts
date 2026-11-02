@@ -48,15 +48,14 @@ test('request on a NOT-locked account is neutral (no channel leaked)', async () 
   assert.equal(body.channel, undefined)
 })
 
-test('once locked, request sends on the SMS channel with a masked target', async () => {
+test('once locked, request sends a code and answers the same neutral way', async () => {
   for (let i = 0; i < 4; i++) await recordLoginFailure({ phone })
   assert.equal(await isPhoneLocked(phone), true)
 
   const res = await requestUnlock(req({ phone }))
   assert.equal(res.status, 200)
-  const body = (await res.json()) as { ok: boolean; channel?: string; sentTo?: string }
-  assert.equal(body.channel, 'sms')
-  assert.match(body.sentTo ?? '', /\*+\d{4}$/)
+  assert.deepEqual(await res.json(), { ok: true })
+  assert.equal(await prisma.accountUnlockOtp.count({ where: { customerId: custPk } }), 1)
 })
 
 test('verify: wrong code 400, correct code unlocks the account', async () => {

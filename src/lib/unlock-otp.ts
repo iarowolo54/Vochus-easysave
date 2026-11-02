@@ -7,7 +7,7 @@
 //  - Sends are rate-limited per customer to prevent email/SMS bombing.
 //  - The channel follows registration type: email (link-registered) or SMS
 //    (agent-registered, no smartphone).
-import { randomInt, createHash, timingSafeEqual } from 'crypto'
+import { randomInt, randomUUID, createHash, timingSafeEqual } from 'crypto'
 import { prisma } from './prisma'
 import { sendMail } from './mail'
 import { sendSMS } from './kudisms'
@@ -98,49 +98,38 @@ export interface RequestResult {
   sent: boolean
   channel?: Channel
   maskedTarget?: string
-  retryAfterSeconds?: number
 }
 
 /** Generate, store and send an unlock code for a locked account, rate-limiting
- *  resends. Never returns the code. */
+ *  resends. Never returns the code. Older codes stay valid, so a stranger's
+ *  request can't retire the owner's. */
 export async function requestUnlockOtp(
   customer: { id: string; email?: string | null; phone: string; firstName: string },
   now: number = Date.now(),
   send: typeof deliver = deliver, // injectable for tests
 ): Promise<RequestResult> {
-  // Only successfully-sent codes are ever persisted (see below), so both the
-  // cooldown and the daily cap count real sends — a failed delivery never burns
-  // the victim's recovery quota.
   const DAY_MS = 24 * 60 * 60_000
-  const last = await prisma.accountUnlockOtp.findFirst({
-    where: { customerId: customer.id },
-    orderBy: { createdAt: 'desc' },
-  })
-  if (last && now - last.createdAt.getTime() < RESEND_COOLDOWN_MS) {
-    return {
-      sent: false,
-      retryAfterSeconds: Math.ceil((RESEND_COOLDOWN_MS - (now - last.createdAt.getTime())) / 1000),
-    }
-  }
-
-  // Per-account daily cap — bounds SMS cost and OTP bombing of a single victim.
-  const inWindow = await prisma.accountUnlockOtp.findMany({
-    where: { customerId: customer.id, createdAt: { gt: new Date(now - DAY_MS) } },
-    orderBy: { createdAt: 'asc' },
-    select: { createdAt: true },
-  })
-  if (inWindow.length >= MAX_SENDS_PER_DAY) {
-    const oldest = inWindow[0].createdAt.getTime()
-    return { sent: false, retryAfterSeconds: Math.max(1, Math.ceil((oldest + DAY_MS - now) / 1000)) }
-  }
-
   const { channel, target } = pickChannel(customer)
   const code = generateCode()
-  // Deliver first; persist only on success so a failed send costs the victim
-  // neither a cooldown nor a daily-quota slot.
-  const ok = await send(channel, target, customer.firstName, code)
-  if (!ok) return { sent: false }
-  await createUnlockOtp(customer.id, channel, code, now)
+  const id = randomUUID()
+  // One statement, so concurrent requests can't both pass the cooldown and daily cap. The row is
+  // written before sending, so a send can't happen without counting; a failed send keeps the row.
+  const inserted = await prisma.$executeRaw`
+    INSERT INTO "AccountUnlockOtp" ("id", "customerId", "channel", "codeHash", "expiresAt", "attempts", "createdAt")
+    SELECT ${id}, ${customer.id}, ${channel}, ${hashCode(code)}, ${now + OTP_TTL_MS}, 0, ${now}
+    WHERE NOT EXISTS (
+      SELECT 1 FROM "AccountUnlockOtp" WHERE "customerId" = ${customer.id} AND "createdAt" > ${now - RESEND_COOLDOWN_MS}
+    )
+    AND (
+      SELECT COUNT(*) FROM "AccountUnlockOtp" WHERE "customerId" = ${customer.id} AND "createdAt" > ${now - DAY_MS}
+    ) < ${MAX_SENDS_PER_DAY}`
+  if (inserted !== 1) return { sent: false }
+
+  const ok = await send(channel, target, customer.firstName, code).catch(() => false)
+  if (!ok) {
+    await prisma.accountUnlockOtp.updateMany({ where: { id, consumedAt: null }, data: { consumedAt: new Date(now) } })
+    return { sent: false }
+  }
   return { sent: true, channel, maskedTarget: maskTarget(channel, target) }
 }
 

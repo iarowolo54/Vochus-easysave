@@ -7,6 +7,7 @@ import { Icons } from '@/components/ui/icons'
 import {
   Avatar, ConfirmModal, Empty, LoadError, Segmented, TableSkeleton, nairaKobo, shortDate, useToast,
 } from '../../_components/admin-ui'
+import { SendResetCodeModal } from '../../_components/send-reset-code'
 
 interface Tx {
   id: string; ref: string; type: string; amount: number; method: string | null
@@ -93,6 +94,7 @@ export default function AgentDetailPage() {
   const [toastNode, toast] = useToast()
 
   const [confirmReset, setConfirmReset] = useState(false)
+  const [sendCode, setSendCode] = useState(false)
   const [resetting, setResetting] = useState(false)
   const [resetError, setResetError] = useState('')
 
@@ -211,6 +213,9 @@ export default function AgentDetailPage() {
               <Icons.device size={16} aria-hidden="true" /> Reset device
             </button>
           )}
+          <button type="button" className="btn btn-outline btn-sm" onClick={() => setSendCode(true)}>
+            <Icons.locked size={16} aria-hidden="true" /> Send reset code
+          </button>
         </div>
       </header>
 
@@ -451,6 +456,10 @@ export default function AgentDetailPage() {
           busy={resetting} error={resetError}
           onConfirm={resetDevice} onClose={() => setConfirmReset(false)}
         />
+      )}
+      {sendCode && (
+        <SendResetCodeModal actorType="agent" id={agent.id} name={agent.name} onClose={() => setSendCode(false)}
+          onSent={msg => { setSendCode(false); toast(msg, 'success') }} />
       )}
 
       {toastNode}

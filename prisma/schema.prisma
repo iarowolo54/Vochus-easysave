@@ -582,7 +582,8 @@ model PasswordResetOtp {
   id         String    @id @default(cuid())
   actorType  String // 'customer' | 'agent'
   actorId    String
-  purpose    String    @default("reset") // 'reset' | 'unlock'
+  purpose    String    @default("reset") // 'reset' | 'unlock' | 'admin'
+  resetId    String? // given only to whoever requested this code; guesses must present it
   codeHash   String
   expiresAt  DateTime
   attempts   Int       @default(0)
@@ -590,6 +591,7 @@ model PasswordResetOtp {
   createdAt  DateTime  @default(now())
 
   @@index([actorType, actorId, createdAt])
+  @@index([resetId])
 }
 
 // Server-side payment intent created at Paystack init, consumed at verify. Binds

@@ -11,7 +11,7 @@ export async function POST(req: NextRequest) {
   const session = guard.session
 
   const { email } = await req.json()
-  if (!email) return NextResponse.json({ error: 'Email is required' }, { status: 400 })
+  if (!email || typeof email !== 'string') return NextResponse.json({ error: 'Email is required' }, { status: 400 })
 
   const existing = await prisma.agent.findFirst({ where: { email } })
   if (existing) return NextResponse.json({ error: 'An agent with this email already exists' }, { status: 409 })

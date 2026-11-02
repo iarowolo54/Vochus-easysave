@@ -4,6 +4,9 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { LOAN_REPAY_AGENT_COMMISSION } from '@/lib/wallet-rates'
+import { money } from '@/lib/wallet-guard'
+
+class RepayRefused extends Error {}
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
@@ -13,63 +16,58 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const agent = await prisma.agent.findFirst({ where: { agentId: session.user.agentId } })
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
 
-  const loan = await prisma.loan.findFirst({
-    where: { id, agentId: agent.id },
-    include: { repayments: true },
-  })
+  const loan = await prisma.loan.findFirst({ where: { id, agentId: agent.id } })
   if (!loan) return NextResponse.json({ error: 'Loan not found' }, { status: 404 })
-  if (!['Disbursed', 'Approved'].includes(loan.status)) {
+  if (loan.status !== 'Disbursed') {
     return NextResponse.json({ error: 'Loan not eligible for repayment' }, { status: 400 })
   }
 
-  const body = await req.json()
-  const { amount, method } = body
-  const amt = parseFloat(amount)
+  const body = await req.json().catch(() => ({}))
+  const method = typeof body?.method === 'string' && body.method ? body.method : 'Cash'
+  const amt = parseFloat(body?.amount)
   if (!isFinite(amt) || amt <= 0) return NextResponse.json({ error: 'Amount must be a positive number' }, { status: 400 })
 
-  const totalRepaid = loan.repayments.reduce((s, r) => s + r.amount, 0)
-  const outstanding = loan.totalAmount - totalRepaid
-  if (amt > outstanding) return NextResponse.json({ error: 'Amount exceeds outstanding balance' }, { status: 400 })
-
-  const txnCount = await prisma.transaction.count()
-  const ref = `RPY-${String(txnCount + 1).padStart(5, '0')}`
-
-  const newRepaid = totalRepaid + amt
-  const fullyRepaid = newRepaid >= loan.totalAmount
   const repayComm = amt * LOAN_REPAY_AGENT_COMMISSION
 
-  await prisma.$transaction([
-    prisma.loanRepayment.create({
-      data: { loanId: loan.id, amount: amt, method: method ?? 'Cash' },
-    }),
-    prisma.transaction.create({
-      data: {
-        ref,
-        agentId: agent.id,
-        customerId: loan.customerId,
-        type: 'repayment',
-        amount: amt,
-        method: method ?? 'Cash',
-        status: 'Done',
-      },
-    }),
-    prisma.agent.update({
-      where: { id: agent.id },
-      data: {
-        walletBalance: { increment: amt },
-        commissionBalance: { increment: repayComm },
-      },
-    }),
-    ...(fullyRepaid
-      ? [prisma.loan.update({ where: { id: loan.id }, data: { status: 'Repaid' } })]
-      : []),
-  ])
+  let ref = ''
+  let outstanding = 0
+  let fullyRepaid = false
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Checked inside the transaction, so concurrent repayments can't overpay the loan.
+      const current = await tx.loan.findFirst({
+        where: { id, agentId: agent.id, status: 'Disbursed' },
+        include: { repayments: { select: { amount: true } } },
+      })
+      if (!current) throw new RepayRefused('Loan not eligible for repayment')
+      const totalRepaid = current.repayments.reduce((s, r) => s + r.amount, 0)
+      outstanding = money(current.totalAmount - totalRepaid)
+      if (amt > outstanding) throw new RepayRefused('Amount exceeds outstanding balance')
+      fullyRepaid = totalRepaid + amt >= current.totalAmount
+
+      const txnCount = await tx.transaction.count()
+      ref = `RPY-${String(txnCount + 1).padStart(5, '0')}`
+
+      await tx.loanRepayment.create({ data: { loanId: current.id, amount: amt, method } })
+      await tx.transaction.create({
+        data: { ref, agentId: agent.id, customerId: current.customerId, type: 'repayment', amount: amt, method, status: 'Done' },
+      })
+      await tx.agent.update({
+        where: { id: agent.id },
+        data: { walletBalance: { increment: amt }, commissionBalance: { increment: repayComm } },
+      })
+      if (fullyRepaid) await tx.loan.update({ where: { id: current.id }, data: { status: 'Repaid' } })
+    })
+  } catch (e) {
+    if (e instanceof RepayRefused) return NextResponse.json({ error: e.message }, { status: 400 })
+    throw e
+  }
 
   logAudit({
     action: 'loan_repay',
     entity: 'Loan',
     entityId: loan.id,
-    details: `Repayment ₦${amt} on loan ${loan.ref} via ${method ?? 'Cash'} (txn ${ref})${fullyRepaid ? ' — fully repaid' : ''}`,
+    details: `Repayment ₦${amt} on loan ${loan.ref} via ${method} (txn ${ref})${fullyRepaid ? ' — fully repaid' : ''}`,
     actorId: agent.id,
     actorName: agent.name,
   })

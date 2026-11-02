@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
       ],
     },
   })
-  if (!agent || !(await verifyResetCode('agent', agent.id, code))) {
+  if (!agent || !(await verifyResetCode('agent', agent.id, text(body.resetId), code))) {
     return NextResponse.json({ error: INVALID_CODE_MESSAGE }, { status: 400 })
   }
 

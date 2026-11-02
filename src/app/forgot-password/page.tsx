@@ -1,5 +1,5 @@
 'use client'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Logo from '@/components/Logo'
 
@@ -15,8 +15,23 @@ export default function AgentForgotPasswordPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
+  // A resend inside the cooldown returns a throwaway id and sends nothing, so keep the id of the code already on its way.
+  const sent = useRef<{ id: string; at: number } | null>(null)
+  const fromLink = useRef(false)
+
+  useEffect(() => {
+    // An admin-sent code arrives with a link carrying its resetId.
+    const r = new URLSearchParams(window.location.search).get('r')
+    if (r) { sent.current = { id: r, at: 0 }; fromLink.current = true }
+  }, [])
+
+  function remember(id: unknown) {
+    if (typeof id === 'string' && (!sent.current || Date.now() - sent.current.at >= 60_000)) sent.current = { id, at: Date.now() }
+  }
+
   async function sendCode() {
     if (!identifier.trim()) { setError('Enter your Agent ID or phone number'); return }
+    if (fromLink.current) { fromLink.current = false; setError(''); setStage('reset'); return }
     setError(''); setLoading(true)
     try {
       const res = await fetch('/api/agent/forgot-password', {
@@ -26,6 +41,7 @@ export default function AgentForgotPasswordPage() {
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? 'Failed to send code'); return }
+      remember(data.resetId)
       setStage('reset')
     } finally { setLoading(false) }
   }
@@ -38,7 +54,7 @@ export default function AgentForgotPasswordPage() {
       const res = await fetch('/api/agent/forgot-password/reset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier: identifier.trim(), code, newPassword }),
+        body: JSON.stringify({ identifier: identifier.trim(), code, newPassword, resetId: sent.current?.id }),
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? 'Reset failed'); return }

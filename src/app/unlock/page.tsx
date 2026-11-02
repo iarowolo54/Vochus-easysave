@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Logo from '@/components/Logo'
 
@@ -17,6 +17,9 @@ export default function UnlockPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
 
+  // A resend inside the cooldown returns a throwaway id and sends nothing, so keep the id of the code already on its way.
+  const sent = useRef<{ id: string; at: number } | null>(null)
+
   async function requestUnlock() {
     if (!identifier.trim()) return
     setLoading(true)
@@ -29,6 +32,7 @@ export default function UnlockPage() {
     const data = await res.json().catch(() => ({}))
     setLoading(false)
     if (res.ok) {
+      if (typeof data.resetId === 'string' && (!sent.current || Date.now() - sent.current.at >= 60_000)) sent.current = { id: data.resetId, at: Date.now() }
       setStep('verify')
     } else {
       setError(data.error ?? 'Request failed')
@@ -36,14 +40,14 @@ export default function UnlockPage() {
   }
 
   async function resetPin() {
-    if (newPin !== confirmPin) { setError('PINs do not match'); return }
-    if (newPin.length < 6) { setError('PIN must be at least 6 characters'); return }
+    if (newPin !== confirmPin) { setError('Passwords do not match'); return }
+    if (newPin.length < 6) { setError('Password must be at least 6 characters'); return }
     setLoading(true)
     setError('')
     const res = await fetch('/api/agent/unlock/reset', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ identifier: identifier.trim(), token: token.trim(), newPin }),
+      body: JSON.stringify({ identifier: identifier.trim(), token: token.trim(), newPin, resetId: sent.current?.id }),
     })
     const data = await res.json().catch(() => ({}))
     setLoading(false)
@@ -144,17 +148,17 @@ export default function UnlockPage() {
         {step === 'reset' && (
           <div className="login-card">
             <div style={{ fontSize: 32, textAlign: 'center', marginBottom: 12 }}>🔑</div>
-            <h2 style={{ textAlign: 'center', marginBottom: 6 }}>Create New PIN</h2>
+            <h2 style={{ textAlign: 'center', marginBottom: 6 }}>Create New Password</h2>
             <p style={{ fontSize: 13, color: 'var(--text3)', textAlign: 'center', marginBottom: 20, lineHeight: 1.6 }}>
-              Choose a new PIN to secure your account.
+              Choose a new password of at least 6 characters.
             </p>
             {error && <div className="lerr">{error}</div>}
-            <label className="lbl">New PIN</label>
+            <label className="lbl">New password</label>
             <div className="linput-row">
               <input
                 className="linput"
                 type={showPin ? 'text' : 'password'}
-                placeholder="Enter new PIN"
+                placeholder="At least 6 characters"
                 style={{ paddingRight: 44 }}
                 value={newPin}
                 onChange={e => setNewPin(e.target.value)}
@@ -163,11 +167,11 @@ export default function UnlockPage() {
                 {showPin ? '🙈' : '👁'}
               </button>
             </div>
-            <label className="lbl" style={{ marginTop: 12 }}>Confirm PIN</label>
+            <label className="lbl" style={{ marginTop: 12 }}>Confirm password</label>
             <input
               className="linput"
               type={showPin ? 'text' : 'password'}
-              placeholder="Re-enter new PIN"
+              placeholder="Re-enter new password"
               value={confirmPin}
               onChange={e => setConfirmPin(e.target.value)}
             />
@@ -177,7 +181,7 @@ export default function UnlockPage() {
               onClick={resetPin}
               style={{ marginTop: 16 }}
             >
-              {loading ? 'Saving…' : 'Set New PIN →'}
+              {loading ? 'Saving…' : 'Set New Password →'}
             </button>
           </div>
         )}
@@ -187,8 +191,8 @@ export default function UnlockPage() {
             <div style={{ fontSize: 40, marginBottom: 12 }}>✅</div>
             <h2 style={{ marginBottom: 8 }}>Account Unlocked!</h2>
             <p style={{ color: 'var(--text3)', fontSize: 14, marginBottom: 24, lineHeight: 1.6 }}>
-              Your account has been unlocked and your PIN has been updated.<br />
-              You can now sign in with your new PIN.
+              Your account has been unlocked and your password has been updated.<br />
+              You can now sign in with your new password.
             </p>
             <button className="lbtn" onClick={() => router.push('/')}>
               Go to Login →

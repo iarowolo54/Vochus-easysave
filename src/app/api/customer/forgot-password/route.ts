@@ -3,7 +3,7 @@ import { prisma } from '@/lib/prisma'
 import { sendMail } from '@/lib/mail'
 import { emailLogo } from '@/lib/email-brand'
 import { sendSMS } from '@/lib/kudisms'
-import { deliverInBackground, issueResetCode, limitByIp, readBody, text } from '@/lib/password-reset'
+import { deliverInBackground, issueResetCode, limitByIp, newResetId, readBody, text } from '@/lib/password-reset'
 import { pickChannel } from '@/lib/unlock-otp'
 
 function resetEmailHtml(code: string) {
@@ -31,21 +31,26 @@ export async function POST(req: NextRequest) {
   const phone = text((await readBody(req)).phone)
   if (!phone) return NextResponse.json({ error: 'Phone number required' }, { status: 400 })
 
-  const customer = await prisma.customer.findFirst({ where: { phone } })
-  const issued = customer ? await issueResetCode('customer', customer.id) : null
-
-  if (customer && issued) {
-    const { channel, target } = pickChannel(customer)
-    deliverInBackground(issued.id, async () => {
-      if (channel === 'email') {
-        await sendMail({ to: target, subject: 'Vochus Easy Save — Password Reset Code', html: resetEmailHtml(issued.code) })
-        return true
-      }
-      const sms = await sendSMS(target, `Your Vochus Easy Save password reset code is ${issued.code}. Valid for 10 minutes. Do not share.`)
-      return sms.success
-    })
+  // Unknown accounts and accounts in their cooldown get a random resetId, so every answer looks the same.
+  let resetId = newResetId()
+  try {
+    const customer = await prisma.customer.findFirst({ where: { phone } })
+    const issued = customer ? await issueResetCode('customer', customer.id) : null
+    if (customer && issued) {
+      resetId = issued.resetId
+      const { channel, target } = pickChannel(customer)
+      deliverInBackground(issued.id, async () => {
+        if (channel === 'email') {
+          await sendMail({ to: target, subject: 'Vochus Easy Save — Password Reset Code', html: resetEmailHtml(issued.code) })
+          return true
+        }
+        const sms = await sendSMS(target, `Your Vochus Easy Save password reset code is ${issued.code}. Valid for 10 minutes. Do not share.`)
+        return sms.success
+      })
+    }
+  } catch {
+    console.error('Password reset request failed')
   }
 
-  // The same answer whether or not the account exists, or is in its cooldown.
-  return NextResponse.json({ sent: true })
+  return NextResponse.json({ sent: true, resetId })
 }

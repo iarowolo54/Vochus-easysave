@@ -17,7 +17,7 @@ export async function GET() {
     }
     cache = { data: banks, at: Date.now() }
     return NextResponse.json({ banks })
-  } catch (err: any) {
-    return NextResponse.json({ error: err.message ?? 'Failed to fetch banks' }, { status: 500 })
+  } catch {
+    return NextResponse.json({ error: 'Failed to fetch banks' }, { status: 500 })
   }
 }

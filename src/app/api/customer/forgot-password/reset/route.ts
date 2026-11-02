@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
   }
 
   const customer = await prisma.customer.findFirst({ where: { phone } })
-  if (!customer || !(await verifyResetCode('customer', customer.id, code))) {
+  if (!customer || !(await verifyResetCode('customer', customer.id, text(body.resetId), code))) {
     return NextResponse.json({ error: INVALID_CODE_MESSAGE }, { status: 400 })
   }
 

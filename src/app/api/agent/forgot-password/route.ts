@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { sendMail } from '@/lib/mail'
 import { emailLogo } from '@/lib/email-brand'
-import { deliverInBackground, issueResetCode, limitByIp, readBody, text } from '@/lib/password-reset'
+import { deliverInBackground, issueResetCode, limitByIp, newResetId, readBody, text } from '@/lib/password-reset'
 
 function resetEmailHtml(code: string) {
   return `
@@ -29,26 +29,30 @@ export async function POST(req: NextRequest) {
   const id = text((await readBody(req)).identifier)
   if (!id) return NextResponse.json({ error: 'Agent ID or phone required' }, { status: 400 })
 
-  const agent = await prisma.agent.findFirst({
-    where: {
-      OR: [
-        { agentId: id.toUpperCase() },
-        { agentId: id },
-        { phone: id },
-      ],
-    },
-  })
-
-  const email = agent?.email
-  const issued = agent && email ? await issueResetCode('agent', agent.id) : null
-
-  if (email && issued) {
-    deliverInBackground(issued.id, async () => {
-      await sendMail({ to: email, subject: 'Vochus Easy Save — Agent Password Reset Code', html: resetEmailHtml(issued.code) })
-      return true
+  // Unknown accounts, accounts with no email and accounts in their cooldown get a random resetId, so every answer looks the same.
+  let resetId = newResetId()
+  try {
+    const agent = await prisma.agent.findFirst({
+      where: {
+        OR: [
+          { agentId: id.toUpperCase() },
+          { agentId: id },
+          { phone: id },
+        ],
+      },
     })
+    const email = agent?.email
+    const issued = agent && email ? await issueResetCode('agent', agent.id) : null
+    if (email && issued) {
+      resetId = issued.resetId
+      deliverInBackground(issued.id, async () => {
+        await sendMail({ to: email, subject: 'Vochus Easy Save — Agent Password Reset Code', html: resetEmailHtml(issued.code) })
+        return true
+      })
+    }
+  } catch {
+    console.error('Password reset request failed')
   }
 
-  // The same answer whether or not the account exists, has an email, or is in its cooldown.
-  return NextResponse.json({ sent: true })
+  return NextResponse.json({ sent: true, resetId })
 }

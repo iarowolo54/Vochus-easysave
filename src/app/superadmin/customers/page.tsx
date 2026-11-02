@@ -5,6 +5,7 @@ import {
   Avatar, ConfirmModal, Empty, LoadError, Modal, PageHeader, Pager, SearchField, Segmented,
   TableSkeleton, naira, shortDate, useDebounced, useToast,
 } from '../_components/admin-ui'
+import { SendResetCodeModal } from '../_components/send-reset-code'
 
 interface Customer {
   id: string
@@ -96,6 +97,7 @@ export default function CustomersPage() {
 
   // Lock / unlock confirmation
   const [lockTarget, setLockTarget] = useState<Customer | null>(null)
+  const [sendCodeFor, setSendCodeFor] = useState<Customer | null>(null)
   const [lockBusy, setLockBusy] = useState(false)
   const [lockError, setLockError] = useState('')
 
@@ -254,6 +256,7 @@ export default function CustomersPage() {
         <Modal icon="customers" title={detail.name} sub={detail.customerId} onClose={() => setDetail(null)}
           footer={<>
             <button type="button" className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>
+            <button type="button" className="btn btn-outline" onClick={() => { setSendCodeFor(detail); setDetail(null) }}>Send reset code</button>
             {(detail.status === 'Active' || detail.status === 'Locked') && (
               <button type="button" className={`btn ${detail.status === 'Active' ? 'btn-danger' : 'btn-green'}`} onClick={() => { const c = detail; setDetail(null); askLock(c) }}>
                 {detail.status === 'Active' ? 'Lock account' : 'Unlock account'}
@@ -326,6 +329,10 @@ export default function CustomersPage() {
       )}
 
       {toastNode}
+      {sendCodeFor && (
+        <SendResetCodeModal actorType="customer" id={sendCodeFor.id} name={sendCodeFor.name} onClose={() => setSendCodeFor(null)}
+          onSent={msg => { setSendCodeFor(null); toast(msg, 'success') }} />
+      )}
     </>
   )
 }
