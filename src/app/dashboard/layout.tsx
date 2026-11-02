@@ -3,7 +3,7 @@
 import { useSession, signOut } from 'next-auth/react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import BottomNav from '@/components/BottomNav'
 import { AGENT_NAV } from '@/components/nav-items'
 import IdleTimeout from '@/components/IdleTimeout'
@@ -69,12 +69,25 @@ const pageTitles: Record<string, string> = {
 }
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { data: session } = useSession()
+  const { data: session, status: sessionStatus } = useSession()
   const pathname = usePathname()
   const router = useRouter()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [chatUnread, setChatUnread] = useState(0)
   const [canOpenAppSettings, setCanOpenAppSettings] = useState(false)
+  const leaving = useRef(false)
+
+  // The server ended this session (suspended, password changed, past the cap). Every API call now returns 401,
+  // so send the agent to login instead of leaving a dashboard that can't load anything.
+  const sessionEnded = useCallback(() => {
+    if (leaving.current) return
+    leaving.current = true
+    signOut({ callbackUrl: '/login?ended=1' })
+  }, [])
+
+  useEffect(() => {
+    if (sessionStatus === 'authenticated' && !session?.user) sessionEnded()
+  }, [sessionStatus, session, sessionEnded])
 
   // Only the agent app has a printer/fingerprint sheet; older installs don't announce it.
   useEffect(() => {
@@ -93,6 +106,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     async function pollChat() {
       try {
         const res = await fetch('/api/agent/customer-chat')
+        if (res.status === 401) { sessionEnded(); return }
         const data = await res.json()
         const total = (data.customers ?? []).reduce((s: number, c: any) => s + (c.unread ?? 0), 0)
         setChatUnread(total)
@@ -101,7 +115,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     pollChat()
     const iv = setInterval(pollChat, 10000)
     return () => clearInterval(iv)
-  }, [])
+  }, [sessionEnded])
 
   useEffect(() => {
     const agent = session?.user as any

@@ -18,7 +18,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const agent = await prisma.agent.update({
     where: { id },
-    data: { status },
+    // Bumping on suspension means reinstating doesn't revive old sessions: the agent has to log in again.
+    data: { status, ...(status === 'Suspended' ? { tokenVersion: { increment: 1 } } : {}) },
   })
 
   logAudit({

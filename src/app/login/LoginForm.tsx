@@ -29,6 +29,7 @@ function LoginPageInner() {
   useEffect(() => {
     const err = searchParams.get('error')
     if (err) setError('Sign in failed. Check your details — or your account may be locked.')
+    else if (searchParams.get('ended')) setError('You’ve been signed out. Sign in again to continue.')
   }, [searchParams])
 
   const [canBio, setCanBio] = useState(false)
@@ -125,6 +126,8 @@ function LoginPageInner() {
         setError('This account is linked to another phone. Ask your administrator to reset it.')
       } else if (c.unverifiedEmail) {
         setError('Your email isn’t verified yet. Check your inbox (and spam) for the link, or contact your administrator.')
+      } else if (c.exists && c.status === 'Suspended') {
+        setError('Your account has been suspended. Please contact your administrator.')
       } else if (c.exists && c.status !== 'Active') {
         setError('Your account is waiting to be activated. Please contact your administrator.')
       } else if (c.exists) {
