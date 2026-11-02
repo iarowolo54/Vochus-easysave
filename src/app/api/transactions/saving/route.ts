@@ -7,7 +7,7 @@ import { assertSufficient, insufficientResponse, InsufficientFundsError, money }
 import { debitAgentBalance } from '@/lib/wallet-debit'
 import { creditRegistrationReward } from '@/lib/reward'
 import { selectActivePlan, depositCreatedAt } from '@/lib/saving-plan'
-import { hasOpenRedemption } from '@/lib/redemption-balance'
+import { creditOpenPlan, hasOpenRedemption, PLAN_CLOSED, PlanClosedError, SAVING_BLOCKED } from '@/lib/redemption-balance'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -38,9 +38,7 @@ export async function POST(req: NextRequest) {
   }
   const plan = selected.plan
 
-  if (await hasOpenRedemption(prisma, plan.id)) {
-    return NextResponse.json({ error: 'This customer has asked to collect from this plan. New savings can’t be recorded until that request is finished.' }, { status: 409 })
-  }
+  if (await hasOpenRedemption(prisma, plan.id)) return NextResponse.json({ error: SAVING_BLOCKED }, { status: 409 })
 
   const rounded = money(amt)
   // SR-3: ignore a client backdate on online (self) plans.
@@ -82,11 +80,12 @@ export async function POST(req: NextRequest) {
           ...(createdAt ? { createdAt } : {}),
         },
       })
-      await tx.savingsPlan.update({ where: { id: plan.id }, data: { balance: { increment: rounded } } })
+      await creditOpenPlan(tx, plan.id, rounded)
       return created
     })
   } catch (e) {
     if (e instanceof InsufficientFundsError) return insufficientResponse(e)
+    if (e instanceof PlanClosedError) return NextResponse.json({ error: PLAN_CLOSED }, { status: 409 })
     throw e
   }
 

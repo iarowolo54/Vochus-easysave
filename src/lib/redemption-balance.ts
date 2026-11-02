@@ -6,6 +6,8 @@ import { IN_FLIGHT_REDEMPTION_STATUSES } from './redemption-statuses'
 
 type Client = Pick<PrismaClient, 'savingsPlan' | 'earlyRedemption'> | Prisma.TransactionClient
 
+export const SAVING_BLOCKED = 'This customer has asked to collect from this plan, so new savings can’t be recorded yet. Wait for the office to decide, or ask an admin to reject the request.'
+export const PLAN_CLOSED = 'This plan has been closed, so nothing was recorded and your wallet wasn’t charged.'
 export const BALANCE_CHANGED = 'This customer’s balance has changed since they asked to collect. Reject this request and ask them to request again.'
 export const BALANCE_CHANGED_AWAITING_OTP = 'This customer’s balance has changed while this payout was waiting for its code. Nothing has been paid. Don’t enter the code; this request needs a manual fix.'
 
@@ -51,6 +53,18 @@ export async function closePlanAfterFinalize(client: Client, planId: string, req
     data: { status: 'Redeemed', balance: 0 },
   })
   return closed.count === 1
+}
+
+/** Thrown inside a saving's transaction to undo its debit when the plan closed after it was loaded. */
+export class PlanClosedError extends Error {}
+
+/** Credit a saving only if the plan is still open. Run inside the transaction that debits the agent. */
+export async function creditOpenPlan(client: Client, planId: string, amount: number): Promise<void> {
+  const credited = await client.savingsPlan.updateMany({
+    where: { id: planId, status: { not: 'Redeemed' } },
+    data: { balance: { increment: amount } },
+  })
+  if (credited.count !== 1) throw new PlanClosedError()
 }
 
 const OPEN_STATUSES = IN_FLIGHT_REDEMPTION_STATUSES.filter(s => s !== 'Approved')

@@ -37,10 +37,12 @@ globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
 /* eslint-disable @typescript-eslint/no-require-imports */
 const { prisma } = require('../src/lib/prisma') as typeof import('../src/lib/prisma')
 const { signCustomerToken } = require('../src/lib/customer-auth') as typeof import('../src/lib/customer-auth')
-const { BALANCE_CHANGED, closePlanAfterFinalize, hasOpenRedemption } = require('../src/lib/redemption-balance') as typeof import('../src/lib/redemption-balance')
+const { BALANCE_CHANGED, closePlanAfterFinalize, creditOpenPlan, hasOpenRedemption, PlanClosedError } = require('../src/lib/redemption-balance') as typeof import('../src/lib/redemption-balance')
 const er = require('../src/app/api/admin/early-redemption/[id]/route') as typeof import('../src/app/api/admin/early-redemption/[id]/route')
 const fin = require('../src/app/api/admin/early-redemption/[id]/finalize-otp/route') as typeof import('../src/app/api/admin/early-redemption/[id]/finalize-otp/route')
 const saving = require('../src/app/api/transactions/saving/route') as typeof import('../src/app/api/transactions/saving/route')
+const bulk = require('../src/app/api/transactions/saving/bulk/route') as typeof import('../src/app/api/transactions/saving/bulk/route')
+const autoDebitInit = require('../src/app/api/customer/auto-debit/init/route') as typeof import('../src/app/api/customer/auto-debit/init/route')
 const init = require('../src/app/api/customer/paystack/init/route') as typeof import('../src/app/api/customer/paystack/init/route')
 const direct = require('../src/app/api/transactions/redemption/route') as typeof import('../src/app/api/transactions/redemption/route')
 /* eslint-enable @typescript-eslint/no-require-imports */
@@ -63,6 +65,7 @@ const approve = (id: string) => er.PATCH({ json: async () => ({ action: 'approve
 const reject = (id: string) => er.PATCH({ json: async () => ({ action: 'reject' }) } as never, ctx(id))
 const finalize = (id: string) => fin.POST({ json: async () => ({ otp: '123456' }) } as never, ctx(id))
 const save = (planId: string) => saving.POST({ json: async () => ({ customerId, amount: 100, method: 'Cash', planId }) } as never)
+const saveBulk = (planId: string, dates = ['2026-01-01', '2026-01-02']) => bulk.POST({ json: async () => ({ customerId, dates, method: 'Cash', planId }) } as never)
 const payInit = (planId: string) => init.POST({ json: async () => ({ planId, amount: 500 }) } as never)
 const revenue = async () => (await prisma.platformWallet.findUnique({ where: { type: 'Revenue' } }))?.balance ?? 0
 const planRow = (id: string) => prisma.savingsPlan.findUniqueOrThrow({ where: { id } })
@@ -330,6 +333,73 @@ test('agent saving: 409 during each open status, nothing debited', async () => {
     assert.equal((await planRow(planId)).balance, 10000)
     assert.deepEqual(await money(), m0)
   }
+})
+
+test('the agent\'s 409 says what to do next', async () => {
+  const planId = await mkPlan(10000)
+  await mkRedemption({ planId, status: 'Pending' })
+  asAgent()
+  const { error } = await (await save(planId)).json()
+  assert.match(error, /Wait for the office to decide, or ask an admin to reject/)
+})
+
+test('bulk saving: 409 during an open request, nothing debited, and it works once closed', async () => {
+  const planId = await mkPlan(10000)
+  const r = await mkRedemption({ planId, status: 'TokenValidated' })
+  asAgent()
+  const m0 = await money()
+  const res = await saveBulk(planId)
+  assert.equal(res.status, 409)
+  assert.match((await res.json()).error, /Wait for the office/)
+  assert.equal((await planRow(planId)).balance, 10000)
+  assert.deepEqual(await money(), m0)
+  asAdmin()
+  assert.equal((await reject(r.id)).status, 200)
+  asAgent()
+  assert.equal((await saveBulk(planId)).status, 200)
+  assert.equal((await planRow(planId)).balance, 10200)
+})
+
+test('auto-debit setup: 409 during an open request', async () => {
+  const planId = await mkPlan(10000)
+  await prisma.savingsPlan.update({ where: { id: planId }, data: { source: 'self' } })
+  await mkRedemption({ planId, status: 'Pending' })
+  const res = await autoDebitInit.POST({ json: async () => ({ planId }) } as never)
+  assert.equal(res.status, 409)
+  assert.match((await res.json()).error, /collect/i)
+  assert.equal(await prisma.paymentIntent.count({ where: { customerId, planId } }), 0)
+})
+
+test('a saving into a plan that closed after it was loaded undoes the debit', async () => {
+  for (const [label, send] of [['single', save], ['bulk', saveBulk]] as const) {
+    const planId = await mkPlan(10000)
+    asAgent()
+    const m0 = await money()
+    // The plan closes just after the last check, before the transaction runs.
+    const realFind = prisma.earlyRedemption.findFirst
+    prisma.earlyRedemption.findFirst = (async (...args: Parameters<typeof realFind>) => {
+      const row = await realFind.apply(prisma.earlyRedemption, args)
+      await prisma.savingsPlan.update({ where: { id: planId }, data: { status: 'Redeemed', balance: 0 } })
+      return row
+    }) as typeof prisma.earlyRedemption.findFirst
+    try {
+      const res = await send(planId)
+      assert.equal(res.status, 409, label)
+      assert.match((await res.json()).error, /closed/)
+    } finally { prisma.earlyRedemption.findFirst = realFind }
+    assert.equal((await planRow(planId)).balance, 0, label)
+    assert.deepEqual(await money(), m0, label)
+    assert.equal(await prisma.transaction.count({ where: { planId } }), 0, label)
+  }
+})
+
+test('creditOpenPlan refuses a Redeemed plan and credits an open one', async () => {
+  const open = await mkPlan(100)
+  await creditOpenPlan(prisma, open, 50)
+  assert.equal((await planRow(open)).balance, 150)
+  const closed = await mkPlan(0, 'Redeemed')
+  await assert.rejects(creditOpenPlan(prisma, closed, 50), PlanClosedError)
+  assert.equal((await planRow(closed)).balance, 0)
 })
 
 test('agent saving works once the request closes', async () => {
