@@ -43,7 +43,7 @@ export async function POST(req: NextRequest) {
   if (!redemptionTokenMatches(record.token, token)) return NextResponse.json({ valid: false, error: 'Invalid token' }, { status: 400 })
 
   // A correct code is the confirmation the admin's approval depends on, so it's recorded here.
-  if (!(await confirmRequestWithCode(prisma, record.id))) return NextResponse.json({ valid: false, error: 'Record is no longer pending' }, { status: 400 })
+  if (!(await confirmRequestWithCode(record, agent))) return NextResponse.json({ valid: false, error: 'Record is no longer pending' }, { status: 400 })
 
   const customerName = `${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName}`
 

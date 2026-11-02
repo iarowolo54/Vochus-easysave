@@ -2,6 +2,10 @@
 // has changed, then zeroing the plan, wipes whatever arrived in between. So every path that closes a
 // plan for a redemption goes through here, and a changed balance blocks it (no recalculation).
 import type { Prisma, PrismaClient } from '@prisma/client'
+import { logAudit } from './audit'
+import { prisma } from './prisma'
+import { notifySuperAdminsRedemptionPending } from './redemption-notify'
+import { money } from './wallet-guard'
 import { excludeExpiredPending, IN_FLIGHT_REDEMPTION_STATUSES } from './redemption-statuses'
 
 type Client = Pick<PrismaClient, 'savingsPlan' | 'earlyRedemption'> | Prisma.TransactionClient
@@ -9,12 +13,19 @@ type Client = Pick<PrismaClient, 'savingsPlan' | 'earlyRedemption'> | Prisma.Tra
 export const SAVING_BLOCKED = 'This customer has asked to collect from this plan, so new savings can’t be recorded yet. Wait for the office to decide, or ask an admin to reject the request.'
 export const PLAN_CLOSED = 'This plan has been closed, so nothing was recorded and your wallet wasn’t charged.'
 export const BALANCE_CHANGED = 'This customer’s balance has changed since they asked to collect. Reject this request and ask them to request again.'
-export const BALANCE_CHANGED_AWAITING_OTP = 'This customer’s balance has changed while this payout was waiting for its code. Nothing has been paid. Don’t enter the code; this request needs a manual fix.'
+export const BALANCE_CHANGED_AWAITING_OTP = 'This customer’s balance has changed while this payout was waiting for its code. Nothing has been paid. Don’t enter the code. Reject this request and ask them to request again.'
 
 // Some requests store money(plan.balance), which can differ from the stored float by half a kobo.
 // The smallest real deposit is a whole kobo, so this can't hide one.
 const TOLERANCE = 0.006
 const near = (amount: number) => ({ gte: amount - TOLERANCE, lte: amount + TOLERANCE })
+
+// From Paystack's "How Transfers Work": failed and reversed were not processed or were returned, and abandoned
+// (no OTP within 30 minutes) will not be processed. Blocked and rejected are final too, but the page doesn't
+// say whether money moved, so they are flagged for a person rather than released.
+export const NO_MONEY_LEFT = ['failed', 'reversed', 'abandoned']
+// What approve books straight away. Pending is kept because that's how live bank payouts come back today.
+export const TRANSFER_ACCEPTED = ['success', 'pending']
 
 export const balanceUnchanged = (current: number, requested: number) => Math.abs(current - requested) <= TOLERANCE
 
@@ -57,7 +68,7 @@ export async function closePlanAfterFinalize(client: Client, planId: string, req
 }
 
 /**
- * Reopen a plan after its pre-claim, when no transfer happened. Adds the balance back rather than setting
+ * Reopen a plan after its pre-claim, when no money left. Adds the balance back rather than setting
  * it, because a deposit may have landed on the closed plan. Approval then refuses, correctly, if one did.
  */
 export async function reopenPlanAfterNoTransfer(client: Client, planId: string, balance: number, status: string): Promise<void> {
@@ -65,7 +76,10 @@ export async function reopenPlanAfterNoTransfer(client: Client, planId: string, 
     where: { id: planId, status: 'Redeemed' },
     data: { status, balance: { increment: balance } },
   })
-  if (reopened.count !== 1) throw new Error('Plan was not closed by this redemption')
+  if (reopened.count === 1) return
+  // An older record that reached AwaitingOTP without a pre-claim: its plan was never closed, so there's nothing to add.
+  const plan = await client.savingsPlan.findUnique({ where: { id: planId }, select: { id: true } })
+  if (!plan) throw new Error('Plan not found')
 }
 
 /** Thrown inside a saving's transaction to undo its debit when the plan closed after it was loaded. */
@@ -81,15 +95,56 @@ export async function creditOpenPlan(client: Client, planId: string, amount: num
 }
 
 /**
- * An agent checked the customer's code in person, so the request has been confirmed and goes to the admin.
+ * An agent checked the customer's code in person, so the request has been confirmed and goes to the admin:
+ * recorded, audited and announced the same way as an agent approving a request the customer confirmed.
  * False if it had already moved on or the code ran out in the meantime.
  */
-export async function confirmRequestWithCode(client: Client, id: string, now = new Date()): Promise<boolean> {
-  const moved = await client.earlyRedemption.updateMany({
-    where: { id, status: 'Pending', tokenExpiry: { gte: now } },
-    data: { status: 'AgentApproved', agentApprovedAt: now },
+export async function confirmRequestWithCode(
+  record: { id: string; ref: string; netPayout: number; savingsPlan: { goal: string; customer: { firstName: string; lastName: string } } },
+  agent: { id: string; agentId: string; name: string },
+  now = new Date(),
+): Promise<boolean> {
+  const moved = await prisma.earlyRedemption.updateMany({
+    where: { id: record.id, status: 'Pending', tokenExpiry: { gte: now } },
+    data: { status: 'AgentApproved', agentApprovedAt: now, agentApprovedBy: agent.agentId },
   })
-  return moved.count === 1
+  if (moved.count !== 1) return false
+  const customerName = `${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName}`
+  logAudit({
+    action: 'agent_redemption_code_confirmed',
+    entity: 'EarlyRedemption',
+    entityId: record.id,
+    details: `Agent ${agent.name} (${agent.agentId}) confirmed the code for redemption ${record.ref} for ${customerName} — sent to admin`,
+    actorType: 'agent',
+    actorId: agent.id,
+    actorName: agent.name,
+  })
+  // Fire-and-forget; never throws.
+  notifySuperAdminsRedemptionPending(prisma, { customerName, amountNaira: record.netPayout, planGoal: record.savingsPlan.goal, ref: record.ref }).catch(() => {})
+  return true
+}
+
+/**
+ * Paystack has paid, so close the plan, in the same transaction as the ledger. A deposit that landed during the
+ * payout must not be zeroed: it stays on the plan and is flagged. True means someone needs to look at it.
+ */
+export async function settlePlanAfterPayout(tx: Prisma.TransactionClient, record: { id: string; ref: string; savingsPlanId: string; balance: number }): Promise<boolean> {
+  if (await closePlanAfterFinalize(tx, record.savingsPlanId, record.balance)) return false
+  // A closed plan's balance is all new money. An open plan (no pre-claim) still holds what was just paid.
+  const current = await tx.savingsPlan.findUniqueOrThrow({ where: { id: record.savingsPlanId }, select: { status: true, balance: true } })
+  const deposit = current.status === 'Redeemed' ? current.balance : Math.max(0, money(current.balance - record.balance))
+  await tx.savingsPlan.update({ where: { id: record.savingsPlanId }, data: { status: 'Redeemed', balance: deposit } })
+  await tx.auditLog.create({
+    data: {
+      action: 'early_redemption_review_needed',
+      entity: 'EarlyRedemption',
+      entityId: record.id,
+      details: `MANUAL REVIEW: ${record.ref} was paid by Paystack, but plan ${record.savingsPlanId} holds ₦${deposit.toLocaleString()} that arrived during the payout. It was left on the closed plan.`,
+      actorType: 'system',
+      actorName: 'Early redemption payout',
+    },
+  })
+  return true
 }
 
 const OPEN_STATUSES = IN_FLIGHT_REDEMPTION_STATUSES.filter(s => s !== 'Approved')

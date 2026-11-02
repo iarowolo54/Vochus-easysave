@@ -32,10 +32,10 @@ async function call(method: string, path: string, body?: object) {
   return (await request(method, path, body)).data
 }
 
-/** A status:false from a transfer call. Only a plain 4xx refusal proves nothing was sent. A 5xx, a rate limit or
+/** A status:false from a transfer call. Only a plain refusal proves nothing was sent. A 5xx, a rate limit or
  *  a timeout tells us nothing, and a duplicate reference means a transfer may already exist. */
 function transferRefusal(httpStatus: number, message: string): Error {
-  const refused = httpStatus >= 400 && httpStatus < 500 && httpStatus !== 408 && httpStatus !== 429 && !/duplicate|already/i.test(message)
+  const refused = httpStatus < 500 && httpStatus !== 408 && httpStatus !== 429 && !/duplicate|already/i.test(message)
   return refused ? new PaystackRejected(message) : new Error(message)
 }
 
@@ -128,12 +128,13 @@ export async function verifyTransfer(reference: string) {
 
 export async function finalizeTransfer(transferCode: string, otp: string) {
   if (isTestMode()) return { status: 'success' as string }
-  const data = await call('POST', '/transfer/finalize_transfer', {
+  const { httpStatus, data } = await request('POST', '/transfer/finalize_transfer', {
     transfer_code: transferCode,
     otp,
   })
-  if (!data.status) throw new PaystackRejected(data.message ?? 'OTP finalization failed')
-  return { status: (data.data?.status ?? 'success') as string }
+  if (!data.status) throw transferRefusal(httpStatus, data.message ?? 'OTP finalization failed')
+  // No status isn't a success: callers only book a payout on an explicit one.
+  return { status: (data.data?.status ?? 'unknown') as string }
 }
 
 export interface PaystackAuthorization {

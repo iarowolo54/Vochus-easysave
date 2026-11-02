@@ -22,6 +22,7 @@ interface RedemptionRecord {
   balance: number
   currentBalance: number
   balanceChanged: boolean
+  needsReview: boolean
   penalty: number
   netPayout: number
   token: string | null
@@ -105,6 +106,9 @@ const NO_CONNECTION = 'No connection. Check your internet and try again.'
 
 /** Sent a code that hasn't been confirmed yet. Only a request an admin made (no code) can be approved from Pending. */
 const needsCode = (r: { status: string; tokenExpiry: string | null }) => r.status === 'Pending' && !!r.tokenExpiry
+/** Paystack's final statuses that don't say whether money moved, so a person has to look. */
+const UNCLEAR_FINAL = ['blocked', 'rejected']
+const CHECKABLE = ['Processing', 'AwaitingOTP', 'Finalizing']
 const isBank = (method: string | null | undefined) => method === 'Bank Transfer' || method === 'BankTransfer'
 const last4 = (acct: string | null) => acct ? `••••${acct.slice(-4)}` : ''
 const typeLabel = (t: string) => t === 'early' ? 'Early exit' : 'After maturity'
@@ -338,6 +342,13 @@ export default function RedemptionsPage() {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'reject' }),
       })
+      if (res.status === 409) {
+        // It has moved on, so rejecting again can't work.
+        toast(await errorOf(res, 'This request has already been decided.'))
+        setRejectTarget(null)
+        load()
+        return
+      }
       if (!res.ok) { setRejectError(await errorOf(res, 'The request wasn’t rejected. Try again.')); return }
       toast(`${rejectTarget.ref} rejected. ${rejectTarget.customerName}’s plan is active again.`, 'success')
       setRejectTarget(null)
@@ -380,6 +391,11 @@ export default function RedemptionsPage() {
       const d = await res.json().catch(() => ({})) as { status?: string; bankTransferStatus?: string | null }
       const target = pinModal
       setPinModal(null); setPinValue('')
+      if (d.status === 'Processing') {
+        toast(`Paystack says “${d.bankTransferStatus ?? 'unknown'}”, so this isn’t recorded as paid. Use Check with Paystack on the request.`)
+        load()
+        return
+      }
       if (d.status === 'AwaitingOTP') {
         setOtpValue(''); setOtpError('')
         setOtpModal({ id: target.id, ref: target.ref, customerName: target.customerName, amount: target.amount })
@@ -438,9 +454,21 @@ export default function RedemptionsPage() {
         load()
         return
       }
+      if (res.status === 502) {
+        // Not a wrong code: the outcome is settled or unknown, so there's nothing to retry here.
+        toast(await errorOf(res, 'We couldn’t confirm this with Paystack.'))
+        setOtpModal(null); setOtpValue('')
+        load()
+        return
+      }
       if (!res.ok) { setOtpError(await errorOf(res, 'Paystack didn’t accept that code. Check it and try again.')); return }
-      const done = await res.json().catch(() => ({})) as { reviewNeeded?: boolean }
+      const done = await res.json().catch(() => ({})) as { reviewNeeded?: boolean; status?: string; bankTransferStatus?: string }
       setOtpModal(null); setOtpValue('')
+      if (done.status === 'Finalizing') {
+        toast(`Paystack says “${done.bankTransferStatus ?? 'unknown'}”, so this isn’t recorded as paid yet. Use Check with Paystack on the request.`)
+        load()
+        return
+      }
       setResult({
         heading: 'Payout sent', title: `${nairaKobo(otpModal.amount)} sent`,
         text: <>Paystack accepted the code and completed the transfer to {otpModal.customerName}.{done.reviewNeeded && <> Money arrived on this plan during the payout and was left on it. This needs a manual review; it’s flagged in the audit log.</>}</>,
@@ -460,7 +488,11 @@ export default function RedemptionsPage() {
       const res = await fetch(`/api/admin/early-redemption/${r.id}/verify`, { method: 'POST' })
       if (!res.ok) { toast(await errorOf(res, 'We couldn’t get an answer from Paystack. Nothing has changed. Try again shortly.')); return }
       const d = await res.json().catch(() => ({})) as { status?: string; bankTransferStatus?: string | null }
-      if (d.status === 'Processing') { toast(`${r.ref}: Paystack says “${d.bankTransferStatus ?? 'unknown'}”. It isn’t finished, so nothing has changed. Check again later.`); load(); return }
+      if (d.status && CHECKABLE.includes(d.status) && d.status !== 'AwaitingOTP') {
+        toast(`${r.ref}: Paystack says “${d.bankTransferStatus ?? 'unknown'}”. ${UNCLEAR_FINAL.includes(d.bankTransferStatus ?? '') ? 'That’s final, but it doesn’t say if money moved. Check the Paystack dashboard.' : 'It isn’t finished, so nothing has changed. Check again later.'}`)
+        load()
+        return
+      }
       toast(d.status === 'Approved' ? `${r.ref}: Paystack confirms the transfer, so the payout is recorded.`
         : d.status === 'AwaitingOTP' ? `${r.ref}: Paystack needs a code. Enter it from the list.`
         : `${r.ref}: no transfer went out. The money is back on the plan, so you can approve or reject it.`, 'success')
@@ -621,7 +653,7 @@ export default function RedemptionsPage() {
                           <td data-label="Requested" className="cm-nowrap cm-sub2">{dateTime(r.requestedAt)}</td>
                           <td className="td-pin-end">
                             <div className="cm-act">
-                              <StatusBadge status={r.status} />
+                              <StatusBadge status={r.status} />{r.needsReview && <> <span className="bdg bdg-r">Needs review</span></>}
                               <div className="a-row-actions">{viewButton(r)}</div>
                             </div>
                           </td>
@@ -742,7 +774,7 @@ export default function RedemptionsPage() {
                             <td className="num" data-label="Balance">{nairaKobo(r.balance)}</td>
                             <td className="num cm-sub2" data-label="Fee">{r.penalty > 0 ? nairaKobo(r.penalty) : '—'}</td>
                             <td className="num cm-strong" data-label="Net payout">{nairaKobo(r.netPayout)}</td>
-                            <td data-label="Decision"><StatusBadge status={r.status} /></td>
+                            <td data-label="Decision"><StatusBadge status={r.status} />{r.needsReview && <> <span className="bdg bdg-r">Needs review</span></>}</td>
                             <td data-label="Decided by" className="cm-sub2">{r.decidedBy ?? '—'}</td>
                             <td data-label="Date" className="cm-nowrap cm-sub2">{r.decidedAt ? dateTime(r.decidedAt) : '—'}</td>
                             <td className="td-pin-end"><div className="a-row-actions">{viewButton(r)}</div></td>
@@ -897,7 +929,7 @@ export default function RedemptionsPage() {
           title={`Reject ${rejectTarget.ref}?`}
           body={<>
             {rejectTarget.customerName} ({rejectTarget.customerId}) won’t receive the {nairaKobo(rejectTarget.netPayout)} payout.
-            Their plan goes back to active with its {nairaKobo(rejectTarget.currentBalance)} balance. No money moves.
+            Their plan goes back to active with its {nairaKobo(rejectTarget.status === 'AwaitingOTP' && rejectTarget.planStatus === 'Redeemed' ? rejectTarget.currentBalance + rejectTarget.balance : rejectTarget.currentBalance)} balance. No money moves.
           </>}
           confirmLabel="Reject request" danger
           busy={rejectBusy} error={rejectError}
@@ -912,9 +944,10 @@ export default function RedemptionsPage() {
             <button type="button" className="btn btn-outline" onClick={() => { const r = detail; setDetail(null); openReject(r) }}>Reject</button>
             {!needsCode(detail) && !detail.balanceChanged && <button type="button" className="btn btn-green" onClick={() => { const r = detail; setDetail(null); openApprove(r) }}>{manual && isBank(detail.payoutMethod) ? 'Mark as paid' : 'Approve'}</button>}
           </> : detail.status === 'AwaitingOTP' ? <>
-            <button type="button" className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>
+            <button type="button" className="btn btn-outline" onClick={() => { const r = detail; setDetail(null); openReject(r) }}>Reject</button>
+            <button type="button" className="btn btn-outline" disabled={checking} onClick={() => checkWithPaystack(detail)}>{checking ? 'Checking…' : 'Check with Paystack'}</button>
             {!detail.balanceChanged && <button type="button" className="btn btn-green" onClick={() => { const r = detail; setDetail(null); setOtpValue(''); setOtpError(''); setOtpModal({ id: r.id, ref: r.ref, customerName: r.customerName, amount: r.netPayout }) }}>Enter Paystack code</button>}
-          </> : detail.status === 'Processing' ? <>
+          </> : detail.status === 'Processing' || detail.status === 'Finalizing' ? <>
             <button type="button" className="btn btn-outline" disabled={checking} onClick={() => setDetail(null)}>Close</button>
             <button type="button" className="btn btn-green" disabled={checking} onClick={() => checkWithPaystack(detail)}>{checking ? 'Checking…' : 'Check with Paystack'}</button>
           </> : <button type="button" className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>}>
@@ -922,7 +955,10 @@ export default function RedemptionsPage() {
             ? <p className="a-alert a-alert-r cm-gap" role="alert">This plan now holds {nairaKobo(detail.currentBalance)}, which arrived while this payout was waiting for its code. Nothing has been paid. Don’t enter the code; this request needs a manual fix.</p>
             : <p className="a-alert a-alert-r cm-gap" role="alert">The balance has changed. They asked to collect from {nairaKobo(detail.balance)}, and the plan now holds {nairaKobo(detail.currentBalance)}. Reject this request and ask them to request again.</p>)}
           {needsCode(detail) && <p className="a-alert a-alert-a cm-gap" role="status">The customer hasn’t confirmed this request with their code, so it can’t be approved yet. You can reject it.</p>}
-          {detail.status === 'Processing' && <p className="a-alert a-alert-a cm-gap" role="status">We lost contact with Paystack during this transfer, so it may or may not have gone out. Check before doing anything else.</p>}
+          {(detail.status === 'Processing' || detail.status === 'Finalizing') && (UNCLEAR_FINAL.includes(detail.bankTransferStatus ?? '')
+            ? <p className="a-alert a-alert-r cm-gap" role="alert">Paystack says “{detail.bankTransferStatus}”. That’s final, but it doesn’t say whether money moved, so this hasn’t been recorded or released. Check the Paystack dashboard.</p>
+            : <p className="a-alert a-alert-a cm-gap" role="status">{detail.bankTransferStatus ? `Paystack last said “${detail.bankTransferStatus}”. ` : 'We lost contact with Paystack during this transfer. '}It may or may not have gone out, so check before doing anything else.</p>)}
+          {detail.needsReview && <p className="a-alert a-alert-r cm-gap" role="alert">Needs review. This was paid, but the closed plan still holds {nairaKobo(detail.currentBalance)} that arrived during the payout.</p>}
           <div className="dlg-hero">
             <div className="dlg-hero-lbl">Amount to collect</div>
             <div className="dlg-hero-amt">{nairaKobo(detail.netPayout)}</div>

@@ -88,6 +88,8 @@ export async function GET() {
       balance: r.balance,
       currentBalance: r.savingsPlan.balance,
       balanceChanged: balanceChanged(r),
+      // Paid, but money that arrived during the payout is still on the closed plan.
+      needsReview: r.status === 'Approved' && r.savingsPlan.status === 'Redeemed' && r.savingsPlan.balance > 0.005,
       penalty: r.penalty,
       netPayout: r.netPayout,
       // token intentionally omitted: it is a hash of a 6-digit code (low
@@ -132,7 +134,7 @@ export async function POST(req: Request) {
   if (!plan) return NextResponse.json({ error: 'Savings plan not found' }, { status: 404 })
 
   const existing = await prisma.earlyRedemption.findFirst({
-    where: { savingsPlanId, status: { in: IN_FLIGHT_REDEMPTION_STATUSES }, ...excludeExpiredPending() },
+    where: { savingsPlanId, status: { in: [...IN_FLIGHT_REDEMPTION_STATUSES, 'Processing'] }, ...excludeExpiredPending() },
     select: { id: true },
   })
   if (existing) return NextResponse.json({ error: 'This plan already has a request in progress' }, { status: 409 })

@@ -9,12 +9,14 @@ import Module, { createRequire } from 'node:module'
 import { existsSync } from 'node:fs'
 import bcrypt from 'bcryptjs'
 
+let adminNotices = 0
 const stub = { getServerSession: async (..._a: unknown[]): Promise<unknown> => null }
 const M = Module as unknown as { _load: (req: string, ...rest: unknown[]) => unknown }
 const realLoad = M._load
 M._load = function (req: string, ...rest: unknown[]) {
   const mod = realLoad.call(this, req, ...rest) as Record<string, unknown>
   if (req === 'next-auth') return new Proxy(mod, { get: (t, k) => (k === 'getServerSession' ? stub.getServerSession : t[k as string]) })
+  if (req.endsWith('redemption-notify')) return { ...mod, notifySuperAdminsRedemptionPending: async () => { adminNotices++ } }
   return mod
 }
 let currentToken = ''
@@ -120,6 +122,8 @@ async function withLivePaystack<T>(handler: (path: string) => unknown, fn: () =>
 }
 const recipientThen = (transfer: (path: string) => unknown) => (path: string) =>
   path.includes('/transferrecipient') ? { status: true, data: { recipient_code: 'RCP_x' } } : transfer(path)
+const paidAnswer = (r: { ref: string }, over: Record<string, unknown> = {}) => ({ status: true, data: { status: 'success', reference: r.ref, amount: 950000, currency: 'NGN', transfer_code: 'TRF_ok', ...over } })
+const statusAnswer = (r: { ref: string }, status: string, over: Record<string, unknown> = {}) => ({ status: true, data: { status, reference: r.ref, ...over } })
 const verifyCall = (id: string) => verifyRoute.POST({} as never, ctx(id))
 const money = async () => {
   const a = await prisma.agent.findUniqueOrThrow({ where: { id: agentId } })
@@ -491,8 +495,8 @@ test('only a plain 4xx refusal releases: a 5xx, rate limit or duplicate referenc
 test('verify: the transfer went through, so the ledger completes once', async () => {
   const { planId, r } = await stuckProcessing()
   const m0 = await money()
-  const res = await withLivePaystack(() => ({ status: true, data: { status: 'success', transfer_code: 'TRF_ok' } }), () => verifyCall(r.id))
-  assert.deepEqual(await res.json(), { ok: true, status: 'Approved', bankTransferStatus: 'success' })
+  const res = await withLivePaystack(() => paidAnswer(r), () => verifyCall(r.id))
+  assert.deepEqual(await res.json(), { ok: true, status: 'Approved', bankTransferStatus: 'success', reviewNeeded: false })
   const row = await erRow(r.id)
   assert.equal(row.status, 'Approved')
   assert.equal(row.paystackTransferCode, 'TRF_ok')
@@ -506,16 +510,17 @@ test('verify: the transfer went through, so the ledger completes once', async ()
   assert.equal(await prisma.transaction.count({ where: { ref: r.ref } }), 1)
 })
 
-test('verify: failed, reversed or not found reopens the plan with the money, keeping any deposit', async () => {
-  const answers: [string, unknown, string | null][] = [
-    ['failed', { status: true, data: { status: 'failed' } }, 'failed'],
-    ['reversed', { status: true, data: { status: 'reversed' } }, 'reversed'],
-    ['not found', { status: false, message: 'Transfer not found' }, null],
+test('verify: what the docs say means no money left reopens the plan with the money, keeping any deposit', async () => {
+  const answers: [string, (r: { ref: string }) => unknown, string | null][] = [
+    ['failed', r => statusAnswer(r, 'failed'), 'failed'],
+    ['reversed', r => statusAnswer(r, 'reversed'), 'reversed'],
+    ['abandoned', r => statusAnswer(r, 'abandoned'), 'abandoned'],
+    ['not found', () => ({ status: false, message: 'Transfer not found' }), null],
   ]
   for (const [label, answer, stored] of answers) {
     const { planId, r } = await stuckProcessing(45000)
     const m0 = await money()
-    const res = await withLivePaystack(() => answer, () => verifyCall(r.id))
+    const res = await withLivePaystack(() => answer(r), () => verifyCall(r.id))
     assert.equal(res.status, 200, label)
     const row = await erRow(r.id)
     assert.equal(row.status, 'AgentApproved', label)
@@ -528,17 +533,272 @@ test('verify: failed, reversed or not found reopens the plan with the money, kee
   }
 })
 
-test('verify: only success records a payout; pending and unknown statuses change nothing', async () => {
-  for (const status of ['pending', 'received', 'abandoned', 'blocked', 'rejected', 'something_new']) {
+test('verify: pending, blocked, rejected and unknown statuses change nothing but what Paystack said', async () => {
+  for (const status of ['pending', 'received', 'blocked', 'rejected', 'something_new']) {
     const { planId, r } = await stuckProcessing()
     const m0 = await money()
-    const res = await withLivePaystack(() => ({ status: true, data: { status } }), () => verifyCall(r.id))
-    assert.deepEqual(await res.json(), { ok: true, status: 'Processing', bankTransferStatus: status }, status)
-    assert.equal((await erRow(r.id)).status, 'Processing', status)
+    const res = await withLivePaystack(() => statusAnswer(r, status), () => verifyCall(r.id))
+    const body = await res.json()
+    assert.equal(body.status, 'Processing', status)
+    assert.equal(body.bankTransferStatus, status)
+    const row = await erRow(r.id)
+    assert.equal(row.status, 'Processing', status)
+    assert.equal(row.bankTransferStatus, status)
     assert.equal(await prisma.transaction.count({ where: { ref: r.ref } }), 0, status)
     assert.equal((await planRow(planId)).status, 'Redeemed', status)
     assert.deepEqual(await money(), m0, status)
   }
+})
+
+test('verify: an answer that does not match this payout writes nothing', async () => {
+  const cases: [string, (r: { ref: string }) => unknown][] = [
+    ['reference', r => paidAnswer(r, { reference: 'OTHER' })],
+    ['amount', r => paidAnswer(r, { amount: 1 })],
+    ['currency', r => paidAnswer(r, { currency: 'USD' })],
+    ['reference on a failure', () => ({ status: true, data: { status: 'failed', reference: 'OTHER' } })],
+  ]
+  for (const [label, answer] of cases) {
+    const { planId, r } = await stuckProcessing()
+    const m0 = await money()
+    const res = await withLivePaystack(() => answer(r), () => verifyCall(r.id))
+    assert.equal(res.status, 409, label)
+    assert.equal((await erRow(r.id)).status, 'Processing', label)
+    assert.equal((await planRow(planId)).status, 'Redeemed', label)
+    assert.deepEqual(await money(), m0, label)
+  }
+})
+
+test('verify: an out-of-date answer cannot release a request approved again in the meantime', async () => {
+  const { planId, r } = await stuckProcessing()
+  const res = await withLivePaystack(async () => {
+    await prisma.earlyRedemption.update({ where: { id: r.id }, data: { decidedAt: new Date() } })
+    return statusAnswer(r, 'failed')
+  }, () => verifyCall(r.id))
+  assert.equal(res.status, 409)
+  assert.equal((await erRow(r.id)).status, 'Processing')
+  assert.equal((await planRow(planId)).status, 'Redeemed')
+})
+
+test('verify: acts on AwaitingOTP and Finalizing too', async () => {
+  for (const from of ['AwaitingOTP', 'Finalizing']) {
+    const paid = await mkRedemption({ planId: await mkPlan(0, 'Redeemed'), method: 'BankTransfer', status: from, transferCode: `TRF_${RUN}_v${from}` })
+    assert.equal((await (await withLivePaystack(() => paidAnswer(paid), () => verifyCall(paid.id))).json()).status, 'Approved', from)
+    assert.equal(await prisma.transaction.count({ where: { ref: paid.ref } }), 1, from)
+    const planId = await mkPlan(0, 'Redeemed')
+    const expired = await mkRedemption({ planId, method: 'BankTransfer', status: from, transferCode: `TRF_${RUN}_x${from}` })
+    assert.equal((await (await withLivePaystack(() => statusAnswer(expired, 'abandoned'), () => verifyCall(expired.id))).json()).status, 'AgentApproved', from)
+    assert.equal((await planRow(planId)).balance, 10000, from)
+    assert.equal((await planRow(planId)).status, 'Active', from)
+  }
+})
+
+test('verify: a paid record with a deposit on its plan is flagged, not zeroed', async () => {
+  const { planId, r } = await stuckProcessing(45000)
+  const body = await (await withLivePaystack(() => paidAnswer(r), () => verifyCall(r.id))).json()
+  assert.equal(body.status, 'Approved')
+  assert.equal(body.reviewNeeded, true)
+  assert.equal((await planRow(planId)).balance, 45000)
+  assert.equal(await prisma.auditLog.count({ where: { action: 'early_redemption_review_needed', entityId: r.id } }), 1)
+})
+
+test('verify: otp with no transfer code stays Processing rather than a record no one can finish', async () => {
+  const { r } = await stuckProcessing()
+  const body = await (await withLivePaystack(() => statusAnswer(r, 'otp'), () => verifyCall(r.id))).json()
+  assert.equal(body.status, 'Processing')
+  assert.equal((await erRow(r.id)).status, 'Processing')
+})
+
+test('verify: not found on a transfer we hold a code for changes nothing', async () => {
+  const planId = await mkPlan(0, 'Redeemed')
+  const r = await mkRedemption({ planId, method: 'BankTransfer', status: 'AwaitingOTP', transferCode: `TRF_${RUN}_nf` })
+  const body = await (await withLivePaystack(() => ({ status: false, message: 'Transfer not found' }), () => verifyCall(r.id))).json()
+  assert.equal(body.status, 'AwaitingOTP')
+  assert.equal((await planRow(planId)).status, 'Redeemed')
+})
+
+// ---------- what approve and finalize book as paid ----------
+test('approve: success and pending book the payout as today; other answers do not', async () => {
+  for (const status of ['success', 'pending']) {
+    const planId = await mkPlan(10000)
+    const r = await mkRedemption({ planId, method: 'BankTransfer' })
+    const res = await withLivePaystack(recipientThen(() => ({ status: true, data: { transfer_code: `TRF_${status}`, status } })), () => approve(r.id))
+    assert.equal(res.status, 200, status)
+    assert.equal((await erRow(r.id)).status, 'Approved', status)
+    assert.equal((await erRow(r.id)).bankTransferStatus, status)
+    assert.equal(await prisma.transaction.count({ where: { ref: r.ref } }), 1, status)
+  }
+  for (const status of ['received', 'blocked', 'rejected', 'something_new']) {
+    const planId = await mkPlan(10000)
+    const r = await mkRedemption({ planId, method: 'BankTransfer' })
+    const res = await withLivePaystack(recipientThen(() => ({ status: true, data: { transfer_code: `TRF_${status}`, status } })), () => approve(r.id))
+    assert.deepEqual(await res.json(), { ok: true, status: 'Processing', bankTransferStatus: status }, status)
+    const row = await erRow(r.id)
+    assert.equal(row.status, 'Processing', status)
+    assert.equal(row.paystackTransferCode, `TRF_${status}`)
+    assert.equal(await prisma.transaction.count({ where: { ref: r.ref } }), 0, status)
+    assert.equal((await planRow(planId)).balance, 0, status)
+  }
+  const planId = await mkPlan(10000)
+  const r = await mkRedemption({ planId, method: 'BankTransfer' })
+  assert.equal((await withLivePaystack(recipientThen(() => ({ status: true, data: { transfer_code: 'TRF_a', status: 'abandoned' } })), () => approve(r.id))).status, 502)
+  assert.equal((await erRow(r.id)).status, 'AgentApproved')
+  assert.equal((await planRow(planId)).balance, 10000)
+})
+
+async function awaitingOtp(tag: string) {
+  const planId = await mkPlan(0, 'Redeemed')
+  const r = await mkRedemption({ planId, method: 'BankTransfer', status: 'AwaitingOTP', transferCode: `TRF_${RUN}_${tag}` })
+  return { planId, r }
+}
+
+test('finalize: failed or reversed reopens the plan and books nothing', async () => {
+  for (const status of ['failed', 'reversed']) {
+    const { planId, r } = await awaitingOtp(`f${status}`)
+    const m0 = await money()
+    const res = await withLivePaystack(() => ({ status: true, data: { status } }), () => finalize(r.id))
+    assert.equal(res.status, 502, status)
+    const row = await erRow(r.id)
+    assert.equal(row.status, 'AgentApproved', status)
+    assert.equal(row.bankTransferStatus, status)
+    const plan = await planRow(planId)
+    assert.equal(plan.balance, 10000, status)
+    assert.equal(plan.status, 'Active', status)
+    assert.deepEqual(await money(), m0, status)
+    assert.equal(await prisma.transaction.count({ where: { ref: r.ref } }), 0, status)
+  }
+})
+
+test('finalize: anything but an explicit success stays Finalizing, including no status at all', async () => {
+  const answers: [string, unknown][] = [
+    ['pending', { status: true, data: { status: 'pending' } }],
+    ['no status', { status: true, data: {} }],
+    ['no data', { status: true }],
+    ['unknown', { status: true, data: { status: 'something_new' } }],
+  ]
+  for (const [label, answer] of answers) {
+    const { r } = await awaitingOtp(`s${label.replace(/\s/g, '')}`)
+    const m0 = await money()
+    const res = await withLivePaystack(() => answer, () => finalize(r.id))
+    assert.equal(res.status, 200, label)
+    assert.equal((await res.json()).status, 'Finalizing', label)
+    assert.equal((await erRow(r.id)).status, 'Finalizing', label)
+    assert.deepEqual(await money(), m0, label)
+    assert.equal(await prisma.transaction.count({ where: { ref: r.ref } }), 0, label)
+  }
+})
+
+test('finalize: a wrong code goes back for a retry; a 5xx or 429 is not taken as a wrong code', async () => {
+  const wrong = await awaitingOtp('w')
+  assert.equal((await withLivePaystack(() => ({ status: false, message: 'Invalid OTP' }), () => finalize(wrong.r.id))).status, 400)
+  assert.equal((await erRow(wrong.r.id)).status, 'AwaitingOTP')
+  for (const http of [500, 429]) {
+    const { r } = await awaitingOtp(`h${http}`)
+    assert.equal((await withLivePaystack(() => ({ status: false, http, message: 'Busy' }), () => finalize(r.id))).status, 502, String(http))
+    assert.equal((await erRow(r.id)).status, 'Finalizing', String(http))
+  }
+})
+
+// ---------- the way out of AwaitingOTP ----------
+test('reject from AwaitingOTP: restores the balance on top of a deposit, and the code can no longer be used', async () => {
+  const planId = await mkPlan(45000, 'Redeemed')
+  const r = await mkRedemption({ planId, method: 'BankTransfer', status: 'AwaitingOTP', transferCode: `TRF_${RUN}_rj` })
+  const m0 = await money()
+  assert.equal((await reject(r.id)).status, 200)
+  assert.equal((await erRow(r.id)).status, 'Rejected')
+  const plan = await planRow(planId)
+  assert.equal(plan.balance, 55000)
+  assert.equal(plan.status, 'Active')
+  assert.deepEqual(await money(), m0)
+  assert.equal((await finalize(r.id)).status, 409)
+  assert.equal((await reject(r.id)).status, 409, 'once only')
+  assert.equal((await planRow(planId)).balance, 55000)
+})
+
+test('reject still refuses Processing and Finalizing, where money may have gone', async () => {
+  for (const status of ['Processing', 'Finalizing']) {
+    const planId = await mkPlan(0, 'Redeemed')
+    const r = await mkRedemption({ planId, method: 'BankTransfer', status })
+    assert.equal((await reject(r.id)).status, 409, status)
+    assert.equal((await planRow(planId)).status, 'Redeemed', status)
+  }
+})
+
+// ---------- agent confirmation and agent route ----------
+test('agent routes only move a request from TokenValidated, once', async () => {
+  const route = require('../src/app/api/agent/redemption/[id]/route') as typeof import('../src/app/api/agent/redemption/[id]/route') // eslint-disable-line @typescript-eslint/no-require-imports
+  asAgent()
+  const call = (id: string, action: string) => route.PATCH({ json: async () => ({ action }) } as never, ctx(id))
+  const planId = await mkPlan(10000)
+  const r = await mkRedemption({ planId, status: 'TokenValidated' })
+  // The request changes hands between the route's read and its write.
+  const realFind = prisma.earlyRedemption.findUnique
+  prisma.earlyRedemption.findUnique = (async (...args: Parameters<typeof realFind>) => {
+    const row = await realFind.apply(prisma.earlyRedemption, args)
+    await prisma.earlyRedemption.update({ where: { id: r.id }, data: { status: 'Rejected' } })
+    return row
+  }) as unknown as typeof prisma.earlyRedemption.findUnique
+  try {
+    assert.equal((await call(r.id, 'approve')).status, 409)
+  } finally { prisma.earlyRedemption.findUnique = realFind }
+  assert.equal((await erRow(r.id)).status, 'Rejected', 'a decided request is not reopened')
+})
+
+// ---------- where an agent can send a payout ----------
+const bankPaystack = (accountName: string) => (path: string) => {
+  if (path.endsWith('/bank/resolve')) return { status: true, data: { account_name: accountName, account_number: '0123456789' } }
+  if (path.endsWith('/bank')) return { status: true, data: [{ code: '058', name: 'GTBank' }] }
+  return { status: false, message: `unexpected ${path}` }
+}
+const bankBody = (planId: string, over: Record<string, unknown> = {}) => ({ customerId, planId, payoutMethod: 'Bank Transfer', accountNumber: '0123456789', bankCode: '058', accountName: 'C X', bankName: 'Fake Bank', ...over })
+const requestBank = (body: unknown, accountName: string) => withLivePaystack(bankPaystack(accountName), () => requestRoute.POST({ json: async () => body } as never))
+
+test('agent bank payout: name and bank come from Paystack, never the request', async () => {
+  const planId = await mkPlan(10000)
+  asAgent()
+  const res = await requestBank(bankBody(planId), 'X CHIOMA C')
+  assert.equal(res.status, 200, JSON.stringify(await res.clone().json()))
+  const { ref } = await res.json()
+  refs.push(ref)
+  const row = await prisma.earlyRedemption.findUniqueOrThrow({ where: { ref } })
+  erIds.push(row.id)
+  assert.equal(row.accountName, 'X CHIOMA C')
+  assert.equal(row.bankName, 'GTBank')
+})
+
+test('agent bank payout: an account in someone else\'s name is refused, however the method is written', async () => {
+  for (const payoutMethod of ['Bank Transfer', 'BankTransfer']) {
+    const planId = await mkPlan(10000)
+    asAgent()
+    const res = await requestBank(bankBody(planId, { payoutMethod, accountName: 'C X' }), 'SOME AGENT')
+    assert.equal(res.status, 400, payoutMethod)
+    assert.match((await res.json()).error, /isn’t in C X’s name/)
+    assert.equal(await prisma.earlyRedemption.count({ where: { savingsPlanId: planId } }), 0)
+  }
+})
+
+test('agent bank payout: an account Paystack can\'t resolve is refused', async () => {
+  const planId = await mkPlan(10000)
+  asAgent()
+  const res = await withLivePaystack(() => ({ status: false, message: 'Could not resolve' }), () => requestRoute.POST({ json: async () => bankBody(planId) } as never))
+  assert.equal(res.status, 400)
+  assert.equal(await prisma.earlyRedemption.count({ where: { savingsPlanId: planId } }), 0)
+})
+
+test('needsReview in the admin list: paid, closed, and money still on the plan', async () => {
+  const flagged = await mkRedemption({ planId: await mkPlan(45000, 'Redeemed'), status: 'Approved' })
+  const clean = await mkRedemption({ planId: await mkPlan(0, 'Redeemed'), status: 'Approved' })
+  const open = await mkRedemption({ planId: await mkPlan(45000), status: 'AgentApproved' })
+  const { records } = await (await adminList.GET()).json()
+  const flag = (id: string) => records.find((x: { id: string }) => x.id === id).needsReview
+  assert.equal(flag(flagged.id), true)
+  assert.equal(flag(clean.id), false)
+  assert.equal(flag(open.id), false)
+})
+
+test('admin create: a transfer in Processing counts as in flight', async () => {
+  const planId = await mkPlan(0, 'Redeemed')
+  await mkRedemption({ planId, method: 'BankTransfer', status: 'Processing' })
+  assert.equal((await adminList.POST({ json: async () => ({ savingsPlanId: planId, reason: 'x' }) } as never)).status, 409)
 })
 
 test('verify: not found on a recent transfer changes nothing, because it may still appear', async () => {
@@ -559,7 +819,7 @@ test('verify: a 5xx saying not found is not an answer', async () => {
 
 test('verify: Paystack asking for a code moves the request to AwaitingOTP', async () => {
   const { r } = await stuckProcessing()
-  const res = await withLivePaystack(() => ({ status: true, data: { status: 'otp', transfer_code: 'TRF_otp' } }), () => verifyCall(r.id))
+  const res = await withLivePaystack(() => statusAnswer(r, 'otp', { transfer_code: 'TRF_otp' }), () => verifyCall(r.id))
   assert.equal((await res.json()).status, 'AwaitingOTP')
   const row = await erRow(r.id)
   assert.equal(row.status, 'AwaitingOTP')
@@ -630,11 +890,17 @@ test('agent flow: a correct code sends the request to the admin, who can then pa
   const code = uniqueCode()
   const { planId, r } = await codedRequest(code)
   asAgent()
+  const notices = adminNotices
   const res = await checkWithRef(r.ref, code)
   assert.equal((await res.json()).valid, true)
   const row = await erRow(r.id)
   assert.equal(row.status, 'AgentApproved')
   assert.ok(row.agentApprovedAt)
+  assert.equal(row.agentApprovedBy, agentCode)
+  assert.equal(adminNotices, notices + 1, 'super admins told')
+  await new Promise(done => setTimeout(done, 100)) // logAudit is fire-and-forget
+  const log = await prisma.auditLog.findFirstOrThrow({ where: { action: 'agent_redemption_code_confirmed', entityId: r.id } })
+  assert.equal(log.actorId, agentId)
   asAdmin()
   assert.equal((await approve(r.id)).status, 200)
   assert.equal((await planRow(planId)).balance, 0)
@@ -644,8 +910,11 @@ test('agent flow by code alone: the same, so nothing sits with the admin unappro
   const code = uniqueCode()
   const { r } = await codedRequest(code)
   asAgent()
+  const notices = adminNotices
   assert.equal((await (await checkCodeOnly(code)).json()).valid, true)
   assert.equal((await erRow(r.id)).status, 'AgentApproved')
+  assert.equal((await erRow(r.id)).agentApprovedBy, agentCode)
+  assert.equal(adminNotices, notices + 1)
   asAdmin()
   assert.equal((await approve(r.id)).status, 200)
 })

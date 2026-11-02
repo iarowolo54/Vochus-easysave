@@ -25,8 +25,8 @@ export interface RedemptionCompletionOpts {
   bankTransferStatus: string | null
   paystackRecipientCode: string | null
   paystackTransferCode: string | null
-  /** 'Processing' (bank transfer already pre-claimed, plan already locked) or the open statuses. */
-  claimFrom: 'Processing' | string[]
+  /** A single status (bank transfer already pre-claimed, plan already locked) or the open statuses. */
+  claimFrom: 'Processing' | 'AwaitingOTP' | 'Finalizing' | string[]
   walletAfter: number
   /** Optional transfer reference for a manual payout; written to the record only when provided. */
   adminNote?: string | null
@@ -57,7 +57,7 @@ export async function redemptionCompletionOps(
   })
   if (claim.count === 0) throw new ConflictError()
   // Lock the plan unless it was already locked by a Processing pre-claim (auto bank transfer).
-  if (claimFrom !== 'Processing') {
+  if (typeof claimFrom !== 'string') {
     const refused = await claimPlanForPayout(tx, record.savingsPlanId, record.balance)
     if (refused) throw new ConflictError(refused)
   }

@@ -9,6 +9,9 @@ import { createRedemptionWithUniqueCode } from '@/lib/redemption-create'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
+import { escapeHtml } from '@/lib/escape-html'
+import { listBanks, resolveAccount } from '@/lib/paystack'
+import { accountNameMatches, payoutDestination } from '@/lib/payout-account'
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,13 +22,12 @@ export async function POST(req: NextRequest) {
     if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
 
     const body = await req.json()
-    const { planId, customerId, payoutMethod, accountNumber, accountName, bankCode, bankName } = body
+    const { planId, customerId, payoutMethod, accountNumber, bankCode } = body
     if (!planId || !customerId) return NextResponse.json({ error: 'Missing fields: planId and customerId required' }, { status: 400 })
 
-    if (payoutMethod === 'Bank Transfer') {
-      if (!accountNumber || !accountName || !bankCode || !bankName) {
-        return NextResponse.json({ error: 'Bank account details required for Bank Transfer payout' }, { status: 400 })
-      }
+    const isBank = payoutMethod === 'Bank Transfer' || payoutMethod === 'BankTransfer'
+    if (isBank && (!accountNumber || !bankCode)) {
+      return NextResponse.json({ error: 'Bank account details required for Bank Transfer payout' }, { status: 400 })
     }
 
     const plan = await prisma.savingsPlan.findFirst({
@@ -38,6 +40,23 @@ export async function POST(req: NextRequest) {
     if (plan.customer.agentId !== agent.id) return NextResponse.json({ error: 'Customer does not belong to this agent' }, { status: 403 })
     if (!['Active', 'Matured'].includes(plan.status)) return NextResponse.json({ error: `Plan status is "${plan.status}" — must be Active or Matured` }, { status: 400 })
     if (plan.balance <= 0) return NextResponse.json({ error: 'No balance to redeem' }, { status: 400 })
+
+    // The account and its name come from Paystack, never the request, and must be the customer's own: the agent
+    // chooses where this goes, and the customer's code doesn't check it.
+    let resolvedAccountName: string | null = null
+    let resolvedBankName: string | null = null
+    if (isBank) {
+      try {
+        resolvedAccountName = (await resolveAccount(String(accountNumber), String(bankCode))).accountName
+        resolvedBankName = (await listBanks()).find(b => b.code === String(bankCode))?.name ?? null
+      } catch {
+        return NextResponse.json({ error: 'Could not verify that bank account. Check the account number and bank.' }, { status: 400 })
+      }
+      if (!resolvedBankName) return NextResponse.json({ error: 'Could not verify that bank account. Check the account number and bank.' }, { status: 400 })
+      if (!accountNameMatches(resolvedAccountName, plan.customer)) {
+        return NextResponse.json({ error: `This account isn’t in ${plan.customer.firstName} ${plan.customer.lastName}’s name, so it can’t be used. Use an account in the customer’s own name, or pay in cash.` }, { status: 400 })
+      }
+    }
 
     const existing = await prisma.earlyRedemption.findFirst({
       where: { savingsPlanId: planId, status: { in: IN_FLIGHT_REDEMPTION_STATUSES }, ...excludeExpiredPending() },
@@ -67,14 +86,15 @@ export async function POST(req: NextRequest) {
       token: tokenHash,
       tokenExpiry,
       payoutMethod: payoutMethod ?? 'Cash',
-      accountNumber: accountNumber ?? null,
-      accountName: accountName ?? null,
-      bankCode: bankCode ?? null,
-      bankName: bankName ?? null,
+      accountNumber: isBank ? String(accountNumber) : null,
+      accountName: resolvedAccountName,
+      bankCode: isBank ? String(bankCode) : null,
+      bankName: resolvedBankName,
     }))
 
     const expiryStr = tokenExpiry.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-    const smsBody = `Vochus Easy Save: Your redemption token is ${token}. Present this to your agent to collect N${netPayout.toLocaleString()}. Expires ${expiryStr}.`
+    const destination = isBank && resolvedBankName ? payoutDestination(resolvedBankName, String(accountNumber)) : ''
+    const smsBody = `Vochus Easy Save: Your redemption token is ${token}. Present this to your agent to collect N${netPayout.toLocaleString()}. Expires ${expiryStr}.${destination ? ` ${destination}` : ''}`
 
     // The plaintext token is delivered only out-of-band (SMS/email) — never
     // logged. Only its hash is stored (createRedemptionWithUniqueCode above).
@@ -84,7 +104,7 @@ export async function POST(req: NextRequest) {
       sendMail({
         to: plan.customer.email,
         subject: 'Your Vochus Easy Save Redemption Token',
-        html: `<p>Hi ${plan.customer.firstName},</p><p>Your savings plan has matured. Present the token below to your agent to collect your payout.</p><div style="background:#1a3c2e;border-radius:12px;padding:24px;text-align:center;margin:24px 0"><p style="color:#8fc9a9;font-size:12px;letter-spacing:2px;margin:0 0 8px">REDEMPTION TOKEN</p><p style="color:#4ade80;font-size:48px;font-weight:900;font-family:monospace;letter-spacing:8px;margin:0">${token}</p><p style="color:#8fc9a9;font-size:12px;margin:8px 0 0">Expires: ${expiryStr}</p></div><p>Balance: <strong>N${plan.balance.toLocaleString()}</strong><br/>Deduction: <strong>N${deduction.toLocaleString()}</strong><br/>Payout amount: <strong>N${netPayout.toLocaleString()}</strong></p><p>Ref: <code>${ref}</code></p><p>Do not share this token with anyone other than your registered Vochus agent.</p>`,
+        html: `<p>Hi ${plan.customer.firstName},</p><p>Your savings plan has matured. Present the token below to your agent to collect your payout.</p><div style="background:#1a3c2e;border-radius:12px;padding:24px;text-align:center;margin:24px 0"><p style="color:#8fc9a9;font-size:12px;letter-spacing:2px;margin:0 0 8px">REDEMPTION TOKEN</p><p style="color:#4ade80;font-size:48px;font-weight:900;font-family:monospace;letter-spacing:8px;margin:0">${token}</p><p style="color:#8fc9a9;font-size:12px;margin:8px 0 0">Expires: ${expiryStr}</p></div><p>Balance: <strong>N${plan.balance.toLocaleString()}</strong><br/>Deduction: <strong>N${deduction.toLocaleString()}</strong><br/>Payout amount: <strong>N${netPayout.toLocaleString()}</strong></p>${destination ? `<p>${escapeHtml(destination)}</p>` : ''}<p>Ref: <code>${ref}</code></p><p>Do not share this token with anyone other than your registered Vochus agent.</p>`,
       }).catch(() => {})
     }
 

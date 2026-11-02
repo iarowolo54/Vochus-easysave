@@ -5,7 +5,7 @@ import { verifyApprovalPin } from '@/lib/approval-pin'
 import { createRecipient, initiateTransfer, PaystackRejected } from '@/lib/paystack'
 import { logAudit } from '@/lib/audit'
 import { redemptionCompletionOps, ConflictError } from '@/lib/redemption-complete'
-import { BALANCE_CHANGED, balanceUnchanged, claimPlanForPayout, reopenPlanAfterNoTransfer } from '@/lib/redemption-balance'
+import { BALANCE_CHANGED, balanceUnchanged, claimPlanForPayout, NO_MONEY_LEFT, reopenPlanAfterNoTransfer, TRANSFER_ACCEPTED } from '@/lib/redemption-balance'
 import { getPayoutMode } from '@/lib/payout-mode'
 import { customerType } from '@/lib/customer-type'
 import {
@@ -76,7 +76,10 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   })
 
   if (!record) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (!OPEN_STATUSES.includes(record.status)) return conflict('Already decided')
+  // Waiting for a Paystack code can be rejected too: nothing moves until the code is entered, and the record
+  // leaving AwaitingOTP means it never can be.
+  const decidable = action === 'reject' ? [...OPEN_STATUSES, 'AwaitingOTP'] : OPEN_STATUSES
+  if (!decidable.includes(record.status)) return conflict('Already decided')
 
   const adminUser = session.user as { name?: string }
   const decidedBy = adminUser.name ?? 'Super Admin'
@@ -92,10 +95,15 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     try {
       await prisma.$transaction(async (tx) => {
         const claim = await tx.earlyRedemption.updateMany({
-          where: { id, status: { in: OPEN_STATUSES } },
+          where: { id, status: record.status },
           data: { status: 'Rejected', decidedAt: new Date(), decidedBy },
         })
         if (claim.count === 0) throw new ConflictError()
+        // AwaitingOTP took the balance off the plan when it was pre-claimed, so it goes back on top of anything since.
+        if (record.status === 'AwaitingOTP') {
+          await reopenPlanAfterNoTransfer(tx, record.savingsPlanId, record.balance, 'Active')
+          return
+        }
         // Another request on this plan may already have closed it for a payout; don't reopen that.
         await tx.savingsPlan.updateMany({
           where: { id: record.savingsPlanId, status: { not: 'Redeemed' } },
@@ -206,7 +214,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
         paystackTransferCode = transfer.transferCode
         bankTransferStatus = transfer.status
 
-        if (transfer.status === 'failed' || transfer.status === 'reversed') {
+        if (NO_MONEY_LEFT.includes(transfer.status)) {
           await releaseClaim()
           return NextResponse.json({ error: `Paystack transfer ${transfer.status}. Check your Paystack balance and try again.` }, { status: 502 })
         }
@@ -229,6 +237,15 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
             transferCode: paystackTransferCode,
             message: 'Paystack has sent an OTP to your transfer-approval phone. Enter it to complete the payout.',
           })
+        }
+
+        // Not a status we can book as paid. It stays here, with what Paystack said, for Check with Paystack.
+        if (!TRANSFER_ACCEPTED.includes(transfer.status)) {
+          await prisma.earlyRedemption.updateMany({
+            where: { id, status: 'Processing' },
+            data: { paystackRecipientCode, paystackTransferCode, bankTransferStatus },
+          })
+          return NextResponse.json({ ok: true, status: 'Processing', bankTransferStatus })
         }
       } catch (err) {
         // Release only when no transfer can exist: Paystack was never asked, or definitely said no. A timeout

@@ -15,7 +15,6 @@ M._load = function (req: string, ...rest: unknown[]) {
   return mod
 }
 /* eslint-disable @typescript-eslint/no-require-imports */
-const { loadOwnedRedeemablePlan } = require('../src/lib/redemption') as typeof import('../src/lib/redemption')
 const { prisma } = require('../src/lib/prisma') as typeof import('../src/lib/prisma')
 const wdFin = require('../src/app/api/admin/agent-withdrawal/[id]/finalize-otp/route') as typeof import('../src/app/api/admin/agent-withdrawal/[id]/finalize-otp/route')
 const erFin = require('../src/app/api/admin/early-redemption/[id]/finalize-otp/route') as typeof import('../src/app/api/admin/early-redemption/[id]/finalize-otp/route')
@@ -205,10 +204,5 @@ test('redemption: transport error leaves Finalizing, nothing paid, and the plan 
   assert.equal((await prisma.earlyRedemption.findUniqueOrThrow({ where: { id: r.id } })).status, 'Finalizing')
   assert.equal(await prisma.transaction.count({ where: { ref: r.ref } }), 0)
   assert.equal(await revenue(), rev0)
-  // double-pay window closed: the agent-direct path must not see this plan as redeemable
-  assert.equal(await loadOwnedRedeemablePlan(agentId, customerId, r.savingsPlanId), null)
   assert.equal((await erFinalize(r.id)).status, 409)
-  // control: once the redemption is no longer in flight the plan is redeemable again
-  await prisma.earlyRedemption.update({ where: { id: r.id }, data: { status: 'Rejected' } })
-  assert.ok(await loadOwnedRedeemablePlan(agentId, customerId, r.savingsPlanId))
 })

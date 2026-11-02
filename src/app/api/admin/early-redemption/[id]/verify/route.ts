@@ -4,15 +4,18 @@ import { prisma } from '@/lib/prisma'
 import { PaystackRejected, verifyTransfer } from '@/lib/paystack'
 import { logAudit } from '@/lib/audit'
 import { ConflictError, redemptionCompletionOps } from '@/lib/redemption-complete'
-import { reopenPlanAfterNoTransfer } from '@/lib/redemption-balance'
+import { NO_MONEY_LEFT, reopenPlanAfterNoTransfer, settlePlanAfterPayout } from '@/lib/redemption-balance'
 
-// Resolves a redemption left in Processing: the approve call lost contact with Paystack, or the ledger
-// write failed after the transfer. The plan is closed and nothing else moves this record on.
+// Resolves a redemption whose transfer is unsettled: approve lost contact with Paystack, the ledger write failed
+// after the transfer, the code expired, or finalize got no clear answer. Nothing else moves these records on.
 // Only a clear answer changes anything. Paid means success, nothing else; any status not named here is left.
+const CHECKABLE = ['Processing', 'AwaitingOTP', 'Finalizing'] as const
+type Checkable = (typeof CHECKABLE)[number]
 
 // A transfer Paystack hasn't logged yet can still arrive (an approve may be running, or one timed out moments
 // ago), so "not found" only counts once a started transfer has had time to appear.
 const NOT_FOUND_AFTER_MS = 30 * 60 * 1000
+
 export async function POST(_req: Request, context: { params: Promise<{ id: string }> }) {
   const guard = await requireSuperAdmin()
   if (!guard.ok) return guard.response
@@ -25,15 +28,16 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
     include: { savingsPlan: { select: { customer: { select: { id: true, agentId: true } } } } },
   })
   if (!record) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (record.status !== 'Processing') return NextResponse.json({ error: 'Already processed' }, { status: 409 })
+  if (!CHECKABLE.includes(record.status as Checkable)) return NextResponse.json({ error: 'Already processed' }, { status: 409 })
+  const from = record.status as Checkable
 
   // Paystack saying it has no such transfer means none was made. Any other refusal or failure tells us nothing.
   let status: string
-  let transferCode: string | null = null
+  let raw: { reference?: unknown; amount?: unknown; currency?: unknown; transfer_code?: unknown } | null = null
   try {
     const result = await verifyTransfer(record.ref)
     status = result.status
-    transferCode = typeof result.raw?.transfer_code === 'string' ? result.raw.transfer_code : null
+    raw = result.raw
   } catch (err) {
     if (!(err instanceof PaystackRejected && /not found/i.test(err.message))) {
       return NextResponse.json({ error: 'We couldn’t get an answer from Paystack. Nothing has changed. Try again shortly.' }, { status: 502 })
@@ -41,26 +45,49 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
     status = 'not_found'
   }
 
+  // Only a transfer that was never confirmed can be missing; one we hold a code for exists.
+  if (status === 'not_found' && (from !== 'Processing' || record.paystackTransferCode)) {
+    return NextResponse.json({ ok: true, status: from, bankTransferStatus: record.bankTransferStatus })
+  }
   if (status === 'not_found' && record.decidedAt && Date.now() - record.decidedAt.getTime() < NOT_FOUND_AFTER_MS) {
     return NextResponse.json({ error: 'Paystack has no record of this transfer yet. It may still appear, so check again in 30 minutes.' }, { status: 409 })
   }
 
-  let newStatus = 'Processing'
+  // The answer must be about this payout before anything is written. (raw is null only with a test key.)
+  const wrongTransfer = raw && (raw.reference !== record.ref || (status === 'success' && (raw.amount !== Math.round(record.netPayout * 100) || raw.currency !== 'NGN')))
+  if (wrongTransfer) {
+    logAudit({
+      action: 'early_redemption_verify_mismatch',
+      entity: 'EarlyRedemption',
+      entityId: id,
+      details: `MANUAL REVIEW: Paystack's answer for ${record.ref} (${status}) doesn't match this request's reference, amount or currency. Nothing changed.`,
+      actorType: 'admin',
+      actorId: admin.id,
+      actorName: decidedBy,
+    })
+    return NextResponse.json({ error: 'Paystack’s record doesn’t match this request’s reference, amount or currency. Nothing has changed. This needs a manual check.' }, { status: 409 })
+  }
+
+  const transferCode = typeof raw?.transfer_code === 'string' ? raw.transfer_code : record.paystackTransferCode
+  // decidedAt too: if this request was released and approved again while we waited, this answer is out of date.
+  const claim = { id, status: from, decidedAt: record.decidedAt }
+  let newStatus: string = from
+  let reviewNeeded = false
   try {
-    if (status === 'failed' || status === 'reversed' || status === 'not_found') {
+    if (NO_MONEY_LEFT.includes(status) || status === 'not_found') {
       // No money left, so the request goes back to the admin to approve again or reject.
       await prisma.$transaction(async (tx) => {
         const rel = await tx.earlyRedemption.updateMany({
-          where: { id, status: 'Processing' },
+          where: claim,
           data: { status: 'AgentApproved', bankTransferStatus: status === 'not_found' ? null : status, decidedAt: null },
         })
         if (rel.count === 0) throw new ConflictError()
         await reopenPlanAfterNoTransfer(tx, record.savingsPlanId, record.balance, 'Active')
       })
       newStatus = 'AgentApproved'
-    } else if (status === 'otp') {
+    } else if (status === 'otp' && transferCode) {
       const moved = await prisma.earlyRedemption.updateMany({
-        where: { id, status: 'Processing' },
+        where: claim,
         data: { status: 'AwaitingOTP', bankTransferStatus: status, paystackTransferCode: transferCode },
       })
       if (moved.count === 0) throw new ConflictError()
@@ -68,21 +95,23 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
     } else if (status === 'success') {
       const { agentId, id: customerId } = record.savingsPlan.customer
       const agent = await prisma.agent.findUnique({ where: { id: agentId }, select: { walletBalance: true } })
-      await prisma.$transaction((tx) =>
-        redemptionCompletionOps(tx, record, agentId, customerId, {
+      reviewNeeded = await prisma.$transaction(async (tx) => {
+        await redemptionCompletionOps(tx, record, agentId, customerId, {
           decidedBy,
           isBankTransfer: true,
           bankTransferStatus: status,
           paystackRecipientCode: record.paystackRecipientCode,
-          paystackTransferCode: transferCode ?? record.paystackTransferCode,
-          claimFrom: 'Processing',
+          paystackTransferCode: transferCode,
+          claimFrom: from,
           walletAfter: agent?.walletBalance ?? 0,
-        }),
-      )
+        })
+        return settlePlanAfterPayout(tx, record)
+      })
       newStatus = 'Approved'
     } else {
-      // Pending, or a status we don't recognise: not paid, not failed. It stays here to check again.
-      await prisma.earlyRedemption.updateMany({ where: { id, status: 'Processing' }, data: { bankTransferStatus: status } })
+      // Pending, blocked, rejected, otp with no code to finish it, or a status we don't recognise. Not paid and not
+      // released: it stays, and the admin screen says what Paystack said.
+      await prisma.earlyRedemption.updateMany({ where: claim, data: { bankTransferStatus: status } })
     }
   } catch (err) {
     if (err instanceof ConflictError) return NextResponse.json({ error: 'Already processed' }, { status: 409 })
@@ -99,5 +128,5 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
     actorName: decidedBy,
   })
 
-  return NextResponse.json({ ok: true, status: newStatus, bankTransferStatus: status === 'not_found' ? null : status })
+  return NextResponse.json({ ok: true, status: newStatus, bankTransferStatus: status === 'not_found' ? null : status, reviewNeeded })
 }

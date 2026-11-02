@@ -52,7 +52,7 @@ export async function POST(req: NextRequest) {
   if (record.status === 'Rejected') return NextResponse.json({ valid: false, error: 'REJECTED', planId: record.savingsPlanId, customerName: `${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName}` })
   if (record.status !== 'Pending') return NextResponse.json({ valid: false, error: `This redemption has already been ${record.status.toLowerCase()}` })
   if (!record.tokenExpiry || record.tokenExpiry < new Date()) return NextResponse.json({ valid: false, error: 'Token has expired' })
-  if (!(await confirmRequestWithCode(prisma, record.id))) return NextResponse.json({ valid: false, error: 'This redemption is no longer pending' })
+  if (!(await confirmRequestWithCode(record, agent))) return NextResponse.json({ valid: false, error: 'This redemption is no longer pending' })
 
   return NextResponse.json({
     valid: true,

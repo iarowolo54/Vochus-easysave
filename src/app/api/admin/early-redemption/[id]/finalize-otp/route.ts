@@ -5,7 +5,7 @@ import { finalizeTransfer, PaystackRejected } from '@/lib/paystack'
 import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
 import { interestPayoutOps } from '@/lib/redemption-interest-ops'
-import { BALANCE_CHANGED_AWAITING_OTP, closePlanAfterFinalize, readyToFinalize } from '@/lib/redemption-balance'
+import { BALANCE_CHANGED_AWAITING_OTP, NO_MONEY_LEFT, readyToFinalize, reopenPlanAfterNoTransfer, settlePlanAfterPayout } from '@/lib/redemption-balance'
 
 export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
   const guard = await requireSuperAdmin()
@@ -56,7 +56,23 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     }
     // Timeout / network / unknown: Paystack may have accepted the finalize. Do NOT release the claim.
     console.error('early-redemption finalize-otp: outcome unknown, left Finalizing', id, err instanceof Error ? err.name : 'unknown')
-    return NextResponse.json({ error: 'Could not confirm the Paystack finalisation. It is being verified; do not retry. Contact support.' }, { status: 502 })
+    return NextResponse.json({ error: 'Could not confirm the Paystack finalisation. Don’t retry. Use Check with Paystack on this request.' }, { status: 502 })
+  }
+
+  // Only an explicit success is booked as paid.
+  if (NO_MONEY_LEFT.includes(finalStatus)) {
+    await prisma.$transaction(async (tx) => {
+      const rel = await tx.earlyRedemption.updateMany({
+        where: { id, status: 'Finalizing' },
+        data: { status: 'AgentApproved', bankTransferStatus: finalStatus, decidedAt: null },
+      })
+      if (rel.count === 1) await reopenPlanAfterNoTransfer(tx, record.savingsPlanId, record.balance, 'Active')
+    })
+    return NextResponse.json({ error: `Paystack says this transfer ${finalStatus === 'reversed' ? 'was reversed' : 'failed'}. Nothing was paid, and the money is back on the plan.` }, { status: 502 })
+  }
+  if (finalStatus !== 'success') {
+    await prisma.earlyRedemption.updateMany({ where: { id, status: 'Finalizing' }, data: { bankTransferStatus: finalStatus } })
+    return NextResponse.json({ ok: true, status: 'Finalizing', bankTransferStatus: finalStatus })
   }
 
   const adminUser = session.user as { name?: string }
@@ -76,25 +92,8 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
         data: { status: 'Approved', decidedAt: new Date(), decidedBy, bankTransferStatus: finalStatus },
       })
       if (fin.count === 0) throw new Error('Finalizing claim lost')
-      // The customer has been paid, so the ledger is written whatever happened. A deposit that landed in
-      // this gap stays on the plan, in the same transaction as a flag for someone to sort it out.
-      if (!(await closePlanAfterFinalize(tx, record.savingsPlanId, record.balance))) {
-        reviewNeeded = true
-        // A closed plan's balance is all new money. An open plan (no pre-claim) still holds what was just paid.
-        const current = await tx.savingsPlan.findUniqueOrThrow({ where: { id: record.savingsPlanId }, select: { status: true, balance: true } })
-        const deposit = current.status === 'Redeemed' ? current.balance : Math.max(0, money(current.balance - record.balance))
-        await tx.savingsPlan.update({ where: { id: record.savingsPlanId }, data: { status: 'Redeemed', balance: deposit } })
-        await tx.auditLog.create({
-          data: {
-            action: 'early_redemption_review_needed',
-            entity: 'EarlyRedemption',
-            entityId: id,
-            details: `MANUAL REVIEW: ${record.ref} was paid by Paystack, but plan ${record.savingsPlanId} holds ₦${deposit.toLocaleString()} that arrived during the payout. It was left on the closed plan.`,
-            actorType: 'system',
-            actorName: 'Finalize OTP',
-          },
-        })
-      }
+      // The customer has been paid, so the ledger is written whatever happened.
+      reviewNeeded = await settlePlanAfterPayout(tx, record)
       await tx.platformWallet.upsert({
         where: { type: 'Revenue' },
         update: { balance: { increment: revenueCredit } },
