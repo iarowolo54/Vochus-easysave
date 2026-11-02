@@ -43,7 +43,8 @@ function txnIcon(type: string, method: string | null): IconName {
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
   const session = await getServerSession(authOptions)
-  if (!session?.user) redirect('/login')
+  if (!session) redirect('/login')
+  if (!session.user) redirect('/login?ended=1')
 
   const agent = await prisma.agent.findFirst({ where: { agentId: session.user.agentId } })
   if (!agent) redirect('/login')

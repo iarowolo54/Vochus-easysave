@@ -84,8 +84,13 @@ function EnrollContent() {
   const [state, setState] = useState('')
   const [lga, setLga] = useState('')
   const [bvn, setBvn] = useState('')
-  const [bvnResult, setBvnResult] = useState<null | { ok: boolean; firstName?: string; lastName?: string; dob?: string | null; error?: string }>(null)
+  const [bvnResult, setBvnResult] = useState<null | { key: string; ok: boolean; match?: boolean; error?: string }>(null)
   const [bvnChecking, setBvnChecking] = useState(false)
+  /** Bumped by "Check again", because a failed check is otherwise kept for the same BVN and name. */
+  const [bvnRetry, setBvnRetry] = useState(0)
+  /** Out of BVN checks: on the BVN screen it was removed for them; at the end they're asked to remove it. */
+  const [bvnDropped, setBvnDropped] = useState(false)
+  const [bvnRefused, setBvnRefused] = useState(false)
   const [nokName, setNokName] = useState('')
   const [nokRelation, setNokRelation] = useState('Spouse')
   const [nokPhone, setNokPhone] = useState('')
@@ -135,9 +140,14 @@ function EnrollContent() {
   const [invite, setInvite] = useState<{ firstName: string; area: string | null; photo: string | null } | null>(null)
   const [result, setResult] = useState<{ customerId: string; name: string; agentName: string; plan: unknown } | null>(null)
 
+  // The server only answers whether this name matches this BVN. Each check is a paid lookup from a small
+  // budget, so it runs on the BVN screen, not per keystroke elsewhere, and only when something changed.
+  const bvnKey = `${bvn}|${firstName}|${lastName}|${email}`
   useEffect(() => {
+    if (screen !== 'bvn' || bvnResult?.key === bvnKey) return
     setBvnResult(null)
-    if (bvn.length !== 11) return
+    // The contact screen has already confirmed the email the server asks for.
+    if (bvn.length !== 11 || !emailVerified) return
     const ctrl = new AbortController()
     setBvnChecking(true)
     const t = setTimeout(async () => {
@@ -145,19 +155,23 @@ function EnrollContent() {
         const r = await fetch('/api/identity/bvn', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ bvn }),
+          body: JSON.stringify({ bvn, email, firstName, lastName }),
           signal: ctrl.signal,
         })
         const d = await r.json()
-        setBvnResult(d.ok ? { ok: true, firstName: d.firstName, lastName: d.lastName, dob: d.dob } : { ok: false, error: d.error ?? 'We couldn’t check this BVN.' })
+        setBvnChecking(false)
+        // The confirmation lapsed: the screen sends them back to confirm it, then this checks again.
+        if (r.status === 403) { setEmailVerified(false); return }
+        if (d.code === 'bvn_budget') { setBvn(''); setBvnDropped(true); return }
+        setBvnResult(d.ok ? { key: bvnKey, ok: true, match: !!d.match } : { key: bvnKey, ok: false, error: d.error ?? 'We couldn’t check this BVN.' })
       } catch (e) {
-        if ((e as { name?: string })?.name !== 'AbortError') setBvnResult({ ok: false, error: 'No connection. We couldn’t check your BVN.' })
-      } finally {
+        if ((e as { name?: string })?.name === 'AbortError') return
+        setBvnResult({ key: bvnKey, ok: false, error: 'No connection. We couldn’t check your BVN.' })
         setBvnChecking(false)
       }
     }, 500)
-    return () => { ctrl.abort(); clearTimeout(t) }
-  }, [bvn])
+    return () => { ctrl.abort(); clearTimeout(t); setBvnChecking(false) }
+  }, [screen, bvnKey, emailVerified, bvnRetry])
 
   useEffect(() => () => { streamRef.current?.getTracks().forEach(t => t.stop()) }, [])
 
@@ -303,11 +317,8 @@ function EnrollContent() {
       : v.length < 11 ? `Phone numbers have 11 digits. This has ${v.length}.`
       : !v.startsWith('0') ? 'Start with 0, like 0803 123 4567'
       : ''
-  const bvnName = bvnResult?.ok ? `${bvnResult.firstName ?? ''} ${bvnResult.lastName ?? ''}`.trim() : ''
-  const bvnMismatch = !!bvnResult?.ok && !(
-    bvnName.toLowerCase() === `${firstName} ${lastName}`.trim().toLowerCase()
-    || ((bvnResult.firstName ?? '').toLowerCase() === firstName.trim().toLowerCase() && (bvnResult.lastName ?? '').toLowerCase() === lastName.trim().toLowerCase())
-  )
+  // A result for an older name or BVN says nothing about what's typed now; the server checks again at the end.
+  const bvnMismatch = bvnResult?.key === bvnKey && !!bvnResult.ok && !bvnResult.match
   const rules: Record<string, string> = {
     fn: firstName.trim() ? '' : 'Enter your first name',
     ln: lastName.trim() ? '' : 'Enter your last name',
@@ -318,7 +329,7 @@ function EnrollContent() {
     lga: !state ? 'Choose your state first' : lga ? '' : 'Choose your local government',
     dob: dob && new Date(dob) > new Date() ? 'Your date of birth can’t be in the future' : '',
     gd: gender ? '' : 'Choose your gender',
-    bvn: bvn && bvn.length < 11 ? `A BVN has 11 digits. This has ${bvn.length}.` : bvnMismatch ? 'This BVN is in a different name' : '',
+    bvn: bvn && bvn.length < 11 ? `A BVN has 11 digits. This has ${bvn.length}.` : bvnMismatch ? 'This BVN doesn’t match your name' : '',
     nok: nokName.trim() ? '' : 'Enter their name',
     nokp: phoneError(nokPhone, 'their') || (nokPhone === phone ? 'Use a different number from your own' : ''),
     pw: password.length >= 6 ? '' : password ? `Use at least 6 characters. This has ${password.length}.` : 'Create a password',
@@ -480,7 +491,7 @@ function EnrollContent() {
         }),
       })
       const data = await res.json()
-      if (!res.ok) { setError(data.error ?? 'Your account couldn’t be created. Please try again.'); return }
+      if (!res.ok) { setError(data.error ?? 'Your account couldn’t be created. Please try again.'); setBvnRefused(data.code === 'bvn_budget'); return }
       clearDraft()
       setResult(data)
       window.scrollTo({ top: 0 })
@@ -767,10 +778,12 @@ function EnrollContent() {
               <input id="bvn" className="ag-tf-input ag-tf-num" type="tel" inputMode="numeric" maxLength={11} placeholder="11 digits" autoComplete="off"
                 value={bvn} {...v('bvn')} onKeyDown={blockNonDigit} onChange={e => setBvn(digitsOnly(e.target.value).slice(0, 11))} />
             </Field>
-            {bvnResult && bvnResult.ok && (!bvnMismatch
-                ? <div className="ag-verified ag-verified--sm"><span className="ag-verified-icon" aria-hidden="true"><Icons.check size={18} /></span><div><p className="ui-row-sub">BVN confirmed</p><p className="ui-row-title">{bvnResult.firstName} {bvnResult.lastName}</p></div></div>
-                : <div className={`ui-banner ${showMissing ? 'ui-banner--danger' : 'ui-banner--warn'}`} role="alert"><Icons.error size={18} aria-hidden="true" /><div>This BVN belongs to <strong>{bvnName}</strong>, not <strong>{`${firstName} ${lastName}`.trim()}</strong>. We can’t open the account until they match. <button type="button" className="ag-banner-link" onClick={() => go('name')}>Change your name</button> or clear the BVN.</div></div>)}
-            {bvnResult && !bvnResult.ok && <p className="ui-field-error"><Icons.error size={16} aria-hidden="true" /> {bvnResult.error}</p>}
+            {bvnResult?.key === bvnKey && bvnResult.ok && (!bvnMismatch
+                ? <div className="ag-verified ag-verified--sm" role="status"><span className="ag-verified-icon" aria-hidden="true"><Icons.check size={18} /></span><div><p className="ui-row-title">BVN matches your name</p></div></div>
+                : <div className={`ui-banner ${showMissing ? 'ui-banner--danger' : 'ui-banner--warn'}`} role="alert"><Icons.error size={18} aria-hidden="true" /><div>This BVN doesn’t match the name you entered. Your name needs to be the same as on your bank records. <button type="button" className="ag-banner-link" onClick={() => go('name')}>Change your name</button> or <button type="button" className="ag-banner-link" onClick={() => setBvn('')}>remove the BVN</button> to carry on without it.</div></div>)}
+            {bvnResult?.key === bvnKey && !bvnResult.ok && <p className="ui-field-error" role="alert"><Icons.error size={16} aria-hidden="true" /> <span>{bvnResult.error} <button type="button" className="ag-banner-link" onClick={() => { setBvnResult(null); setBvnRetry(n => n + 1) }}>Check again</button> or <button type="button" className="ag-banner-link" onClick={() => setBvn('')}>remove the BVN</button>.</span></p>}
+            {bvn.length === 11 && !emailVerified && <p className="ui-field-error" role="alert"><Icons.error size={16} aria-hidden="true" /> <span>Your email needs confirming again before we can check this BVN. <button type="button" className="ag-banner-link" onClick={() => go('contact')}>Confirm your email</button>.</span></p>}
+            {bvnDropped && !bvn && <p className="cu-note" role="status">We’ve done too many BVN checks for now, so we’ve removed it. You can carry on without it.</p>}
             <div className="cu-actions">{cta(bvn ? 'Continue' : 'Skip for now', nextIfOk, bvn.length === 11 && bvnChecking)}</div>
           </>
         )}
@@ -1000,6 +1013,8 @@ function EnrollContent() {
               ))}
             </ul>
             <button type="button" className="cu-add" onClick={addPlan}><Icons.add size={18} aria-hidden="true" /> Add another plan</button>
+
+            {bvnRefused && bvn && <p className="cu-note" role="alert">Your account can still open without a BVN. <button type="button" className="ag-banner-link" onClick={() => { setBvn(''); setBvnRefused(false); setError('') }}>Remove the BVN</button></p>}
 
             <button type="button" role="checkbox" aria-checked={terms} className={`ag-agree cu-agree${terms ? ' is-on' : ''}`} onClick={() => { setTerms(t => !t); setError('') }}>
               <span className="ag-agree-box" aria-hidden="true">{terms && <Icons.check size={16} />}</span>
