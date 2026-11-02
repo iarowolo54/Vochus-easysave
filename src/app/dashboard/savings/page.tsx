@@ -9,11 +9,13 @@ import { avatarTint } from '@/lib/avatar'
 import { waLink } from '@/lib/whatsapp'
 import { displayName, formatDate, formatNaira, formatTime } from '@/lib/format'
 import { addDays, isoDate, parseDateInput, today } from '@/lib/plan-dates'
+import { createReceiptSender, SEND_IDLE } from '@/lib/receipt-send'
 import BottomSheet from '@/components/ui/BottomSheet'
 import EmptyState from '@/components/ui/EmptyState'
 import EndDateField, { endDateDays } from '@/components/ui/EndDateField'
 import { FormError } from '@/components/ui/FormErrors'
 import PinPad from '@/components/ui/PinPad'
+import { SendReceiptButton, SendReceiptNotices } from '@/components/ui/SendReceipt'
 import ListRow from '@/components/ui/ListRow'
 import Toast from '@/components/ui/Toast'
 import { Icons } from '@/components/ui/icons'
@@ -104,6 +106,10 @@ function SavingsContent() {
   const [lastReceipt, setLastReceipt] = useState<Receipt | null>(null)
   const [lastDays, setLastDays] = useState(1)
   const [lastPhone, setLastPhone] = useState('')
+  // Kept apart from lastReceipt, which is posted as-is to the app's receipt printer.
+  const [lastTxIds, setLastTxIds] = useState<string[]>([])
+  const [send, setSend] = useState(SEND_IDLE)
+  const [sender] = useState(() => createReceiptSender(setSend))
   const [walletBalance, setWalletBalance] = useState<number | null>(null)
   const [recent, setRecent] = useState<RecentCustomer[]>([])
   const [paidToday, setPaidToday] = useState<PaidToday[] | null>(null)
@@ -361,11 +367,11 @@ function SavingsContent() {
     const isBulk = bulkMode && !recordDate
     const endpoint = isBulk ? '/api/transactions/saving/bulk' : '/api/transactions/saving'
     const body = isBulk
-      ? { customerId: selected.id, dates: selectedDates, method, planId: plan?.id }
+      ? { customerId: selected.id, dates: [...selectedDates].sort(), method, planId: plan?.id }
       : { customerId: selected.id, amount, method, planId: plan?.id, ...(recordDate ? { date: recordDate } : {}) }
 
     let res: Response
-    let data: { error?: string; total?: number; transaction?: { ref?: string }; transactions?: { ref?: string }[] }
+    let data: { error?: string; total?: number; transaction?: { id?: string; ref?: string }; transactions?: { id?: string; ref?: string }[] }
     try {
       res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       data = await res.json()
@@ -405,8 +411,14 @@ function SavingsContent() {
     })
     setLastDays(isBulk ? selectedDates.length : 1)
     setLastPhone(selected.phone ?? '')
+    setLastTxIds((isBulk ? data.transactions ?? [] : data.transaction ? [data.transaction] : []).flatMap(t => t.id ? [t.id] : []))
     reset()
     setRefreshKey(k => k + 1)
+  }
+
+  function recordAnother() {
+    setLastReceipt(null); setLastTxIds([]); sender.reset()
+    requestAnimationFrame(() => searchRef.current?.focus())
   }
 
   const canPrint = typeof window !== 'undefined'
@@ -417,6 +429,19 @@ function SavingsContent() {
     w.VochusPrinter?.postMessage(JSON.stringify(lastReceipt))
   }
 
+  const canSend = lastTxIds.length > 0
+  const sentNoChat = send.state === 'sent' && !send.canOpenChat
+  const whatsAppFirst = sentNoChat && !!lastPhone
+  const whatsAppRef = useRef<HTMLAnchorElement>(null)
+  // It's now the main action and can land under the bottom nav, so bring it into view.
+  useEffect(() => {
+    if (whatsAppFirst) whatsAppRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [whatsAppFirst])
+  const whatsAppButton = lastReceipt && lastPhone && (
+    <a ref={whatsAppRef} className={`ui-btn ui-btn--block ${whatsAppFirst ? 'ui-btn--primary' : 'ui-btn--secondary'}`} href={whatsAppLink(lastPhone, lastReceipt, lastDays)} target="_blank" rel="noopener noreferrer">
+      <Icons.share size={18} aria-hidden="true" /> Send receipt on WhatsApp
+    </a>
+  )
   const redeemed = selected?.planStatus === 'Redeemed'
   const bulkTotal = (plan?.dailyAmount ?? 0) * selectedDates.length
   const payAmount = bulkMode ? bulkTotal : parseFloat(amount || '0')
@@ -458,15 +483,17 @@ function SavingsContent() {
                 <div><dt>Reference</dt><dd className="ag-mono">{lastReceipt.ref}</dd></div>
               </dl>
 
+              <div style={{ width: '100%', textAlign: 'left', marginTop: send.error || sentNoChat ? 'var(--ui-s4)' : 0 }}>
+                <SendReceiptNotices send={send} />
+              </div>
+
               <div className="ag-done-actions">
-                <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => { setLastReceipt(null); requestAnimationFrame(() => searchRef.current?.focus()) }}>
+                {canSend && <SendReceiptButton send={send} onSend={() => sender.send(lastTxIds)} block />}
+                {whatsAppFirst && whatsAppButton}
+                <button type="button" className={`ui-btn ui-btn--block ${canSend && (send.state !== 'sent' || whatsAppFirst) ? 'ui-btn--secondary' : 'ui-btn--primary'}`} onClick={recordAnother}>
                   <Icons.add size={18} aria-hidden="true" /> Record another
                 </button>
-                {lastPhone && (
-                  <a className="ui-btn ui-btn--secondary ui-btn--block" href={whatsAppLink(lastPhone, lastReceipt, lastDays)} target="_blank" rel="noopener noreferrer">
-                    <Icons.share size={18} aria-hidden="true" /> Send receipt on WhatsApp
-                  </a>
-                )}
+                {!whatsAppFirst && whatsAppButton}
                 {canPrint && (
                   <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={printReceipt}>
                     <Icons.print size={18} aria-hidden="true" /> Print receipt

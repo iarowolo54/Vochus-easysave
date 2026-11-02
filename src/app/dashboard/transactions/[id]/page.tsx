@@ -5,16 +5,19 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import Logo from '@/components/Logo'
 import EmptyState from '@/components/ui/EmptyState'
+import { SendReceiptButton, SendReceiptNotices } from '@/components/ui/SendReceipt'
 import { Bone } from '@/components/ui/Skeleton'
 import { Icons, type IconName } from '@/components/ui/icons'
 import { txStatus } from '@/components/customer/DepositReceipt'
 import { displayName, formatDate, formatNaira, formatTime } from '@/lib/format'
 import { saveReceiptImage } from '@/lib/receipt-image'
+import { createReceiptSender, SEND_IDLE } from '@/lib/receipt-send'
 import { waLink } from '@/lib/whatsapp'
 
 interface Txn {
   id: string; ref: string; type: string; amount: number
-  method: string | null; status: string; note: string | null; createdAt: string
+  method: string | null; status: string; receiptStatus: string; canSendReceipt: boolean
+  note: string | null; createdAt: string
   agent: { name: string; agentId: string }
   customer: { name: string; customerId: string; phone: string } | null
   plan: { goal: string; durationDays: number } | null
@@ -45,6 +48,8 @@ export default function TransactionDetailPage() {
   const [canPrint, setCanPrint] = useState(false)
   const [copied, setCopied] = useState(false)
   const [saving, setSaving] = useState(false)
+  const [send, setSend] = useState(SEND_IDLE)
+  const [sender] = useState(() => createReceiptSender(setSend))
 
   useEffect(() => {
     const check = () => setCanPrint(!!(window as unknown as { __vochusCanPrint?: boolean }).__vochusCanPrint)
@@ -106,7 +111,10 @@ export default function TransactionDetailPage() {
   }
 
   const m = meta(txn.type)
-  const status = txStatus(txn.status)
+  // From the server, because a payout row says Done even when the transfer hasn't gone through.
+  // txStatus would read Processing as Pending.
+  const baseStatus = txStatus(txn.receiptStatus)
+  const status = txn.receiptStatus === 'Processing' ? { ...baseStatus, label: 'Processing' } : baseStatus
   const StatusIcon = Icons[status.icon]
   const showAmt = txn.type !== 'enrolment'
   const amount = `${m.sign}${formatNaira(txn.amount)}`
@@ -140,6 +148,14 @@ export default function TransactionDetailPage() {
       await saveReceiptImage({ title: m.label, amount: showAmt ? amount : '—', status: status.label, rows, reference: txn!.ref })
     } finally { setSaving(false) }
   }
+
+  // A failed payout offers nothing that could pass as proof of payment, including WhatsApp. The app's slip is headed "Savings Receipt"
+  // whatever it prints, so it's only offered for savings until the app can print a title it's given.
+  const showSave = txn.canSendReceipt
+  const showBluetoothPrint = canPrint && txn.type === 'saving'
+  const showBrowserPrint = !canPrint
+  // A lone button in the two-column row takes the whole row rather than leaving a gap.
+  const soloAction = showSave !== (showBluetoothPrint || showBrowserPrint) ? { gridColumn: '1 / -1' } : undefined
 
   return (
     <div className="ag-page">
@@ -177,20 +193,25 @@ export default function TransactionDetailPage() {
             </div>
           </dl>
 
-          <p className="ag-receipt-foot">Official receipt from Vochus Easy Save. Keep it for your records.</p>
+          {txn.receiptStatus === 'Completed' && <p className="ag-receipt-foot">Official receipt from Vochus Easy Save. Keep it for your records.</p>}
+          {!txn.canSendReceipt && <p className="ag-receipt-foot">This payout {txn.receiptStatus === 'Reversed' ? 'was reversed' : 'failed'}, so the receipt can’t be sent.{!showBrowserPrint && ' Contact the customer directly.'}</p>}
+
+          <div className="no-print"><SendReceiptNotices send={send} /></div>
 
           <div className="ag-receipt-actions no-print">
-            {txn.customer?.phone && (
-              <a className="ui-btn ui-btn--primary" href={waLink(txn.customer.phone, shareText)} target="_blank" rel="noopener noreferrer">
-                <Icons.share size={18} aria-hidden="true" /> Send to customer
+            {txn.customer && txn.canSendReceipt && <SendReceiptButton send={send} onSend={() => sender.send([txn.id])} />}
+            {txn.customer?.phone && txn.canSendReceipt && (
+              <a className={`ui-btn ${send.state === 'sent' && !send.canOpenChat ? 'ui-btn--primary' : 'ui-btn--secondary'}`} style={{ gridColumn: '1 / -1' }} href={waLink(txn.customer.phone, shareText)} target="_blank" rel="noopener noreferrer">
+                <Icons.share size={18} aria-hidden="true" /> Send on WhatsApp
               </a>
             )}
-            <button type="button" className="ui-btn ui-btn--secondary" onClick={saveImage} disabled={saving}>
-              {saving ? <span className="ui-spinner ui-spinner--sm ag-spin-dark" aria-hidden="true" /> : <Icons.image size={18} aria-hidden="true" />} Save image
-            </button>
-            {canPrint
-              ? <button type="button" className="ui-btn ui-btn--secondary" onClick={printReceipt}><Icons.print size={18} aria-hidden="true" /> Print</button>
-              : <button type="button" className="ui-btn ui-btn--secondary" onClick={() => window.print()}><Icons.download size={18} aria-hidden="true" /> Print or PDF</button>}
+            {showSave && (
+              <button type="button" className="ui-btn ui-btn--secondary" style={soloAction} onClick={saveImage} disabled={saving}>
+                {saving ? <span className="ui-spinner ui-spinner--sm ag-spin-dark" aria-hidden="true" /> : <Icons.image size={18} aria-hidden="true" />} Save image
+              </button>
+            )}
+            {showBluetoothPrint && <button type="button" className="ui-btn ui-btn--secondary" style={soloAction} onClick={printReceipt}><Icons.print size={18} aria-hidden="true" /> Print</button>}
+            {showBrowserPrint && <button type="button" className="ui-btn ui-btn--secondary" style={soloAction} onClick={() => window.print()}><Icons.download size={18} aria-hidden="true" /> Print or PDF</button>}
           </div>
         </article>
       </div>
