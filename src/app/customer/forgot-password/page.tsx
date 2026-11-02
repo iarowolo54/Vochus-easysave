@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { blockNonDigit, digitsOnly } from '@/lib/numeric'
 import Logo from '@/components/Logo'
+import { Icons } from '@/components/ui/icons'
+import { RESENT_MESSAGE, useResendCooldown, waitMessage } from '@/components/useResendCooldown'
 
 type Stage = 'phone' | 'reset' | 'done'
 
@@ -30,8 +32,12 @@ export default function ForgotPasswordPage() {
     if (typeof id === 'string' && (!sent.current || Date.now() - sent.current.at >= 60_000)) sent.current = { id, at: Date.now() }
   }
 
+  const { secondsLeft, start: startCooldown } = useResendCooldown()
+  const [notice, setNotice] = useState('')
+
   async function sendCode() {
     if (!phone.trim()) { setError('Enter your phone number'); return }
+    if (stage === 'reset' && secondsLeft > 0) { setError(''); setNotice(waitMessage(secondsLeft)); return }
     if (fromLink.current) { fromLink.current = false; setError(''); setStage('reset'); return }
     setError(''); setLoading(true)
     try {
@@ -43,6 +49,8 @@ export default function ForgotPasswordPage() {
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? 'Failed to send code'); return }
       remember(data.resetId)
+      startCooldown()
+      setNotice(stage === 'reset' ? RESENT_MESSAGE : '')
       setStage('reset')
     } finally { setLoading(false) }
   }
@@ -107,22 +115,23 @@ export default function ForgotPasswordPage() {
                   type={showPass ? 'text' : 'password'} placeholder="Min 6 characters"
                   style={{ paddingRight: 44 }}
                   onKeyDown={e => e.key === 'Enter' && resetPassword()} autoComplete="new-password" />
-                <button type="button" onClick={() => setShowPass(p => !p)}
+                <button type="button" aria-label={showPass ? 'Hide password' : 'Show password'} onClick={() => setShowPass(p => !p)}
                   style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-72%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 18 }}>
-                  {showPass ? '🙈' : '👁'}
+                  {showPass ? <Icons.hide size={20} aria-hidden="true" /> : <Icons.show size={20} aria-hidden="true" />}
                 </button>
               </div>
               <button onClick={resetPassword} disabled={loading} style={btnStyle}>
                 {loading ? 'Resetting…' : 'Reset Password'}
               </button>
-              <button onClick={sendCode} disabled={loading} style={linkBtnStyle}>Resend code</button>
+              <button onClick={sendCode} disabled={loading} style={linkBtnStyle}>{secondsLeft > 0 ? `Resend code in ${secondsLeft}s` : 'Resend code'}</button>
+              {notice && <p role="status" style={{ marginTop: 8, fontSize: 13, textAlign: 'center', color: 'var(--mu)' }}>{notice}</p>}
             </>
           )}
 
           {stage === 'done' && (
             <>
               <div style={{ textAlign: 'center', padding: '16px 0' }}>
-                <div style={{ fontSize: 48, marginBottom: 10 }}>✅</div>
+                <div style={{ marginBottom: 10, color: '#1DC96A' }}><Icons.check size={48} aria-hidden="true" /></div>
                 <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Password Updated!</div>
                 <div style={{ fontSize: 13, color: 'var(--mu)' }}>You can now sign in with your new password.</div>
               </div>
