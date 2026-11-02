@@ -32,10 +32,10 @@ async function call(method: string, path: string, body?: object) {
   return (await request(method, path, body)).data
 }
 
-/** A status:false from a transfer call. Only a plain refusal proves nothing was sent. A 5xx, a rate limit or
+/** A status:false from a transfer call. Only a plain 4xx refusal proves nothing was sent. A 5xx, a rate limit or
  *  a timeout tells us nothing, and a duplicate reference means a transfer may already exist. */
 function transferRefusal(httpStatus: number, message: string): Error {
-  const refused = httpStatus < 500 && httpStatus !== 408 && httpStatus !== 429 && !/duplicate|already/i.test(message)
+  const refused = httpStatus >= 400 && httpStatus < 500 && httpStatus !== 408 && httpStatus !== 429 && !/duplicate|already/i.test(message)
   return refused ? new PaystackRejected(message) : new Error(message)
 }
 
@@ -49,7 +49,7 @@ export async function resolveAccount(accountNumber: string, bankCode: string) {
   if (bankCode === '001') {
     return { accountName: 'Test Account', accountNumber }
   }
-  const data = await call('GET', `/bank/resolve?account_number=${accountNumber}&bank_code=${bankCode}`)
+  const data = await call('GET', `/bank/resolve?account_number=${encodeURIComponent(accountNumber)}&bank_code=${encodeURIComponent(bankCode)}`)
   if (!data.status) throw new Error(data.message ?? 'Could not resolve account')
   return { accountName: data.data.account_name as string, accountNumber: data.data.account_number as string }
 }
@@ -132,7 +132,13 @@ export async function finalizeTransfer(transferCode: string, otp: string) {
     transfer_code: transferCode,
     otp,
   })
-  if (!data.status) throw transferRefusal(httpStatus, data.message ?? 'OTP finalization failed')
+  if (!data.status) {
+    const message: string = data.message ?? 'OTP finalization failed'
+    // Handing the claim back allows another try, so only a refusal that's clearly about the code does that.
+    // Anything else is unknown: the record stays Finalizing and verify decides.
+    const wrongCode = /\b(otp|code)\b/i.test(message) && httpStatus < 500 && httpStatus !== 408 && httpStatus !== 429
+    throw wrongCode ? new PaystackRejected(message) : new Error(message)
+  }
   // No status isn't a success: callers only book a payout on an explicit one.
   return { status: (data.data?.status ?? 'unknown') as string }
 }

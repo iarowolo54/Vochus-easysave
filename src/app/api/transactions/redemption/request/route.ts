@@ -29,6 +29,9 @@ export async function POST(req: NextRequest) {
     if (isBank && (!accountNumber || !bankCode)) {
       return NextResponse.json({ error: 'Bank account details required for Bank Transfer payout' }, { status: 400 })
     }
+    if (isBank && (!/^\d{10}$/.test(String(accountNumber)) || !/^\w+$/.test(String(bankCode)))) {
+      return NextResponse.json({ error: 'Account numbers have 10 digits. Check the account number and bank.' }, { status: 400 })
+    }
 
     const plan = await prisma.savingsPlan.findFirst({
       where: { id: planId },
@@ -47,7 +50,9 @@ export async function POST(req: NextRequest) {
     let resolvedBankName: string | null = null
     if (isBank) {
       try {
-        resolvedAccountName = (await resolveAccount(String(accountNumber), String(bankCode))).accountName
+        const resolved = await resolveAccount(String(accountNumber), String(bankCode))
+        if (resolved.accountNumber !== String(accountNumber)) throw new Error('Paystack resolved a different account')
+        resolvedAccountName = resolved.accountName
         resolvedBankName = (await listBanks()).find(b => b.code === String(bankCode))?.name ?? null
       } catch {
         return NextResponse.json({ error: 'Could not verify that bank account. Check the account number and bank.' }, { status: 400 })

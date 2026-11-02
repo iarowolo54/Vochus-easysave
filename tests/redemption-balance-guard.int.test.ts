@@ -646,6 +646,7 @@ test('approve: success and pending book the payout as today; other answers do no
 })
 
 async function awaitingOtp(tag: string) {
+  tag = `${tag}${seq.n}`
   const planId = await mkPlan(0, 'Redeemed')
   const r = await mkRedemption({ planId, method: 'BankTransfer', status: 'AwaitingOTP', transferCode: `TRF_${RUN}_${tag}` })
   return { planId, r }
@@ -700,18 +701,66 @@ test('finalize: a wrong code goes back for a retry; a 5xx or 429 is not taken as
 
 // ---------- the way out of AwaitingOTP ----------
 test('reject from AwaitingOTP: restores the balance on top of a deposit, and the code can no longer be used', async () => {
-  const planId = await mkPlan(45000, 'Redeemed')
-  const r = await mkRedemption({ planId, method: 'BankTransfer', status: 'AwaitingOTP', transferCode: `TRF_${RUN}_rj` })
-  const m0 = await money()
-  assert.equal((await reject(r.id)).status, 200)
-  assert.equal((await erRow(r.id)).status, 'Rejected')
-  const plan = await planRow(planId)
-  assert.equal(plan.balance, 55000)
-  assert.equal(plan.status, 'Active')
-  assert.deepEqual(await money(), m0)
-  assert.equal((await finalize(r.id)).status, 409)
-  assert.equal((await reject(r.id)).status, 409, 'once only')
-  assert.equal((await planRow(planId)).balance, 55000)
+  for (const status of ['otp', 'abandoned', 'failed', 'reversed']) {
+    const planId = await mkPlan(45000, 'Redeemed')
+    const r = await mkRedemption({ planId, method: 'BankTransfer', status: 'AwaitingOTP', transferCode: `TRF_${RUN}_rj${status}` })
+    const m0 = await money()
+    assert.equal((await withLivePaystack(() => statusAnswer(r, status), () => reject(r.id))).status, 200, status)
+    assert.equal((await erRow(r.id)).status, 'Rejected', status)
+    const plan = await planRow(planId)
+    assert.equal(plan.balance, 55000, status)
+    assert.equal(plan.status, 'Active', status)
+    assert.deepEqual(await money(), m0, status)
+    assert.equal((await finalize(r.id)).status, 409, status)
+    assert.equal((await reject(r.id)).status, 409, 'once only')
+    assert.equal((await planRow(planId)).balance, 55000, status)
+  }
+})
+
+test('reject from AwaitingOTP is refused unless Paystack clearly says the money has not gone', async () => {
+  const answers: [string, (r: { ref: string }) => unknown][] = [
+    ['already paid', r => paidAnswer(r)],
+    ['pending', r => statusAnswer(r, 'pending')],
+    ['blocked', r => statusAnswer(r, 'blocked')],
+    ['another transfer', () => ({ status: true, data: { status: 'otp', reference: 'OTHER' } })],
+    ['refused', () => ({ status: false, message: 'Transfer not found' })],
+    ['5xx', () => ({ status: false, http: 503, message: 'Down' })],
+    ['network', () => { throw new Error('network down') }],
+  ]
+  for (const [label, answer] of answers) {
+    const planId = await mkPlan(0, 'Redeemed')
+    const r = await mkRedemption({ planId, method: 'BankTransfer', status: 'AwaitingOTP', transferCode: `TRF_${RUN}_rf${label.replace(/\s/g, '')}` })
+    const res = await withLivePaystack(() => answer(r), () => reject(r.id))
+    assert.equal(res.status, 409, label)
+    assert.match((await res.json()).error, /Check with Paystack/)
+    assert.equal((await erRow(r.id)).status, 'AwaitingOTP', label)
+    assert.equal((await planRow(planId)).status, 'Redeemed', label)
+    assert.equal((await planRow(planId)).balance, 0, label)
+  }
+})
+
+test('verify: otp never moves a Finalizing record back to AwaitingOTP', async () => {
+  const planId = await mkPlan(0, 'Redeemed')
+  const r = await mkRedemption({ planId, method: 'BankTransfer', status: 'Finalizing', transferCode: `TRF_${RUN}_fo` })
+  const body = await (await withLivePaystack(() => statusAnswer(r, 'otp', { transfer_code: 'TRF_x' }), () => verifyCall(r.id))).json()
+  assert.equal(body.status, 'Finalizing')
+  const row = await erRow(r.id)
+  assert.equal(row.status, 'Finalizing')
+  assert.equal(row.bankTransferStatus, 'otp')
+  assert.equal(row.paystackTransferCode, `TRF_${RUN}_fo`)
+})
+
+test('finalize: only a refusal about the code allows another try', async () => {
+  for (const message of ['Invalid OTP', 'The code you entered is wrong']) {
+    const { r } = await awaitingOtp(`m${message.length}`)
+    assert.equal((await withLivePaystack(() => ({ status: false, message }), () => finalize(r.id))).status, 400, message)
+    assert.equal((await erRow(r.id)).status, 'AwaitingOTP', message)
+  }
+  for (const message of ['Transfer has been processed', 'Insufficient balance', 'Something went wrong']) {
+    const { r } = await awaitingOtp(`n${message.length}`)
+    assert.equal((await withLivePaystack(() => ({ status: false, message }), () => finalize(r.id))).status, 502, message)
+    assert.equal((await erRow(r.id)).status, 'Finalizing', message)
+  }
 })
 
 test('reject still refuses Processing and Finalizing, where money may have gone', async () => {
@@ -774,6 +823,20 @@ test('agent bank payout: an account in someone else\'s name is refused, however 
     assert.match((await res.json()).error, /isn’t in C X’s name/)
     assert.equal(await prisma.earlyRedemption.count({ where: { savingsPlanId: planId } }), 0)
   }
+})
+
+test('agent bank payout: the account number must be 10 digits, and be the one Paystack resolved', async () => {
+  asAgent()
+  for (const accountNumber of ['123', '01234567890', '0123456789&bank_code=999', '012345678a']) {
+    const planId = await mkPlan(10000)
+    const res = await requestBank(bankBody(planId, { accountNumber }), 'C X')
+    assert.equal(res.status, 400, accountNumber)
+    assert.match((await res.json()).error, /10 digits/)
+  }
+  const planId = await mkPlan(10000)
+  const res = await requestBank(bankBody(planId, { accountNumber: '9999999999' }), 'C X')
+  assert.equal(res.status, 400)
+  assert.equal(await prisma.earlyRedemption.count({ where: { savingsPlanId: planId } }), 0)
 })
 
 test('agent bank payout: an account Paystack can\'t resolve is refused', async () => {

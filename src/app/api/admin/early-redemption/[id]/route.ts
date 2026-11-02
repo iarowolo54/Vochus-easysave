@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { verifyApprovalPin } from '@/lib/approval-pin'
-import { createRecipient, initiateTransfer, PaystackRejected } from '@/lib/paystack'
+import { createRecipient, initiateTransfer, PaystackRejected, verifyTransfer } from '@/lib/paystack'
 import { logAudit } from '@/lib/audit'
 import { redemptionCompletionOps, ConflictError } from '@/lib/redemption-complete'
 import { BALANCE_CHANGED, balanceUnchanged, claimPlanForPayout, NO_MONEY_LEFT, reopenPlanAfterNoTransfer, TRANSFER_ACCEPTED } from '@/lib/redemption-balance'
@@ -76,8 +76,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   })
 
   if (!record) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  // Waiting for a Paystack code can be rejected too: nothing moves until the code is entered, and the record
-  // leaving AwaitingOTP means it never can be.
+  // Waiting for a Paystack code can be rejected too, once Paystack confirms the transfer hasn't gone (below).
   const decidable = action === 'reject' ? [...OPEN_STATUSES, 'AwaitingOTP'] : OPEN_STATUSES
   if (!decidable.includes(record.status)) return conflict('Already decided')
 
@@ -85,6 +84,17 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   const decidedBy = adminUser.name ?? 'Super Admin'
 
   if (action === 'reject') {
+    // The money goes back on the plan, so first make sure it didn't leave. No clear answer means no release.
+    if (record.status === 'AwaitingOTP') {
+      let stillUnsent = false
+      try {
+        const { status, raw } = await verifyTransfer(record.ref)
+        stillUnsent = raw?.reference === record.ref && (status === 'otp' || NO_MONEY_LEFT.includes(status))
+      } catch {
+        /* treated as no clear answer */
+      }
+      if (!stillUnsent) return conflict('We couldn’t confirm with Paystack that this transfer hasn’t gone out, so it can’t be rejected yet. Use Check with Paystack.')
+    }
     const customerName = `${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName}`
     const planBalance = record.savingsPlan.balance
     const agentForBal = await prisma.agent.findUnique({

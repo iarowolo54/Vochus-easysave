@@ -85,7 +85,8 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
         await reopenPlanAfterNoTransfer(tx, record.savingsPlanId, record.balance, 'Active')
       })
       newStatus = 'AgentApproved'
-    } else if (status === 'otp' && transferCode) {
+    } else if (status === 'otp' && transferCode && from === 'Processing') {
+      // Never from Finalizing: a code may already have gone in, and going back would allow another try.
       const moved = await prisma.earlyRedemption.updateMany({
         where: claim,
         data: { status: 'AwaitingOTP', bankTransferStatus: status, paystackTransferCode: transferCode },
@@ -109,7 +110,7 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
       })
       newStatus = 'Approved'
     } else {
-      // Pending, blocked, rejected, otp with no code to finish it, or a status we don't recognise. Not paid and not
+      // Pending, blocked, rejected, otp we can't or mustn't act on, or a status we don't recognise. Not paid and not
       // released: it stays, and the admin screen says what Paystack said.
       await prisma.earlyRedemption.updateMany({ where: claim, data: { bankTransferStatus: status } })
     }
