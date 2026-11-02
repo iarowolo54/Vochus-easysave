@@ -28,7 +28,7 @@ export async function POST(req: Request) {
       ],
     },
   })
-  if (!agent?.lockedAt || !(await verifyResetCode('agent', agent.id, token, Date.now(), 'unlock'))) {
+  if (!agent || !(await verifyResetCode('agent', agent.id, token, Date.now(), 'unlock'))) {
     return NextResponse.json({ error: INVALID_CODE_MESSAGE }, { status: 400 })
   }
 

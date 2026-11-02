@@ -502,7 +502,7 @@ test('customer login puts the current token version in the session', async () =>
   assert.equal(decodeJwt(res.cookies.get('customer_token')!.value).tokenVersion, 4)
 })
 
-test('reset and unlock codes only work on their own route, and unlock needs a locked account', async () => {
+test('reset and unlock codes only work on their own route', async () => {
   const unlock = (await import('../src/app/api/agent/unlock/reset/route')).POST
   const reset = (await import('../src/app/api/agent/forgot-password/reset/route')).POST
   const a = await mkAgent({ lockedAt: new Date() })
@@ -512,10 +512,10 @@ test('reset and unlock codes only work on their own route, and unlock needs a lo
   const u = (await issueResetCode('agent', a.id, t0 + RESEND_COOLDOWN_MS, 'unlock'))!
   assert.equal((await reset(req({ identifier: a.agentId, code: u.code, newPassword: 'newpass1' }))).status, 400)
 
-  const open = await mkAgent()
-  const c = (await issueResetCode('agent', open.id, t0, 'unlock'))!
-  assert.equal((await unlock(req({ identifier: open.agentId, token: c.code, newPin: '123456' }))).status, 400)
-  assert.ok(await bcrypt.compare('oldpass', (await prisma.agent.findUniqueOrThrow({ where: { id: open.id } })).password))
+  // A lock can clear while a code is on its way, and a stranger's wrong login mustn't kill a valid code.
+  const cleared = await mkAgent()
+  const c = (await issueResetCode('agent', cleared.id, t0, 'unlock'))!
+  assert.equal((await unlock(req({ identifier: cleared.agentId, token: c.code, newPin: '123456' }))).status, 200)
 })
 
 test('hitting the daily cap writes one audit entry', async () => {
