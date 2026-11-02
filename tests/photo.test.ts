@@ -39,3 +39,16 @@ test('an oversized photo is rejected', () => {
   const huge = 'data:image/png;base64,' + 'A'.repeat(8 * 1024 * 1024) // ~6MB decoded
   assert.equal(validatePhoto(huge).ok, false)
 })
+
+test('the bytes must match the claimed image type', () => {
+  const html = Buffer.from('<html><script>alert(1)</script></html>').toString('base64')
+  const r = validatePhoto(`data:image/png;base64,${html}`)
+  assert.equal(r.ok, false)
+  assert.equal(validatePhoto('data:image/png;base64,/9j/4AAQSkZJRg==').ok, false) // JPEG bytes, labelled PNG
+})
+
+test('a chat-style javascript or remote URL is refused', () => {
+  assert.equal(validatePhoto('javascript:alert(1)').ok, false)
+  assert.equal(validatePhoto('https://evil.test/x.png').ok, false)
+  assert.equal(validatePhoto('data:text/html;base64,PGh0bWw+').ok, false)
+})

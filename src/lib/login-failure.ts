@@ -2,7 +2,7 @@
 
 export type AgentCheck = {
   locked?: boolean; lockedMinutesRemaining?: number; deviceMismatch?: boolean
-  unverifiedEmail?: boolean; exists?: boolean; status?: string
+  unverifiedEmail?: boolean; exists?: boolean; status?: string; throttledSeconds?: number
 }
 
 export type LoginFailure = { message: string; field?: 'identifier' | 'password' }
@@ -10,6 +10,7 @@ export type LoginFailure = { message: string; field?: 'identifier' | 'password' 
 export const FINGERPRINT_FAILED = 'Fingerprint sign-in didn’t work. Please sign in with your password.'
 
 export function loginFailure(c: AgentCheck, via: 'password' | 'fingerprint'): LoginFailure {
+  if (c.throttledSeconds) return { message: `Too many sign-in attempts from this network. Try again in ${Math.ceil(c.throttledSeconds / 60)} min.` }
   if (c.locked && via === 'fingerprint') return { message: `Your account is locked. Try again in ${c.lockedMinutesRemaining} min, or tap “Forgot password?” to reset it now.` }
   if (c.locked) return { message: `Your account is locked after too many wrong passwords. Try again in ${c.lockedMinutesRemaining} min, or tap “Forgot password?” to reset it now.` }
   if (c.deviceMismatch) return { message: 'This account is linked to another phone. Ask your administrator to reset it.' }

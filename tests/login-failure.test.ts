@@ -49,3 +49,12 @@ test('a locked account: fingerprint wording does not blame wrong passwords', () 
   assert.match(r, /5 min/)
   assert.doesNotMatch(r, /wrong password/i)
 })
+
+test('too many attempts from this network is said plainly, by password or fingerprint', () => {
+  for (const via of ['password', 'fingerprint'] as const) {
+    const r = loginFailure({ exists: true, status: 'Active', throttledSeconds: 600 }, via)
+    assert.match(r.message, /too many/i)
+    assert.match(r.message, /10 min/)
+    assert.equal(r.field, undefined)
+  }
+})

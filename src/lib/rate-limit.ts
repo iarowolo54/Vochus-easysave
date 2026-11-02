@@ -46,6 +46,11 @@ export const enrolRateLimiter = createRateLimiter()
 // per-agent cap bounds brute-forcing the code space. Keyed by agent id.
 export const redemptionLookupRateLimiter = createRateLimiter()
 
+// Limiter for the two unauthenticated agent lookups behind the login screen, which say whether an account exists
+// and what state it's in. The budget is well above what the screen uses: one call per failed sign-in.
+export const agentLookupRateLimiter = createRateLimiter()
+export const AGENT_LOOKUP_LIMIT = { perIp: 30, windowMs: 60_000 }
+
 // Best-effort client IP from proxy headers. Uses the RIGHTMOST X-Forwarded-For
 // entry (the one our own proxy appended) to resist client-supplied spoofing,
 // matching how the customer login route derives the IP.

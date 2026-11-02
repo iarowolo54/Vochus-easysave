@@ -4,6 +4,14 @@ import CredentialsProvider from 'next-auth/providers/credentials'
 import bcrypt from 'bcryptjs'
 import { prisma } from './prisma'
 import { isPastAbsoluteCap, IDLE_SECONDS } from '@/lib/session-policy'
+import { checkLoginThrottle, recordLoginFailure } from '@/lib/login-attempt'
+
+/** The address nginx appended (rightmost; the rest is client-supplied), namespaced apart from customer login's counts. */
+export function agentLoginIpKey(xff: string | string[] | undefined): string | null {
+  const header = Array.isArray(xff) ? xff.join(',') : xff
+  const ip = header?.split(',').map(s => s.trim()).filter(Boolean).pop()
+  return ip && ip.length <= 45 ? `agent:${ip}` : null
+}
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -17,10 +25,19 @@ export const authOptions: NextAuthOptions = {
         biometricToken: { label: 'Biometric Token', type: 'text' },
         device: { label: 'Device Meta (JSON)', type: 'text' },
       },
-      async authorize(credentials) {
+      async authorize(credentials, req) {
         if (!credentials?.identifier) return null
         const biometricToken = (credentials as any).biometricToken as string | undefined
         if (!credentials.password && !biometricToken) return null
+
+        // Across both PM2 instances, since the count is in the database. A failure of the throttle itself must not
+        // take down login: if the database is truly gone, the lookup below fails too.
+        const ip = agentLoginIpKey(req?.headers?.['x-forwarded-for'])
+        if (ip) {
+          const throttle = await checkLoginThrottle({ ip }).catch(() => null)
+          if (throttle?.blocked) return null
+        }
+        const countFailure = async () => { if (ip) await recordLoginFailure({ ip }).catch(() => {}) }
 
         const id = credentials.identifier.trim().toLowerCase()
 
@@ -34,7 +51,10 @@ export const authOptions: NextAuthOptions = {
           },
         })
 
-        if (!agent) return null
+        if (!agent) {
+          await countFailure()
+          return null
+        }
 
         // Auto-unlock after 30 min
         const LOCKOUT_MS = 30 * 60 * 1000
@@ -54,21 +74,26 @@ export const authOptions: NextAuthOptions = {
         const deviceIdForBio = (credentials as any).deviceId as string | undefined
 
         let valid = false
-        if (biometricToken && deviceIdForBio) {
-          const { createHash } = await import('crypto')
-          const hash = createHash('sha256').update(biometricToken).digest('hex')
-          const t = await prisma.biometricToken.findFirst({
-            where: { agentId: agent.id, deviceId: deviceIdForBio, tokenHash: hash, revokedAt: null },
-          })
-          if (t) {
-            valid = true
-            await prisma.biometricToken.update({ where: { id: t.id }, data: { lastUsedAt: new Date() } }).catch(() => {})
+        // A request with a biometric token is only ever a biometric attempt. Its failures don't lock the account, so
+        // falling through to the password here would give unlimited, uncounted guesses.
+        if (biometricToken) {
+          if (deviceIdForBio) {
+            const { createHash } = await import('crypto')
+            const hash = createHash('sha256').update(biometricToken).digest('hex')
+            const t = await prisma.biometricToken.findFirst({
+              where: { agentId: agent.id, deviceId: deviceIdForBio, tokenHash: hash, revokedAt: null },
+            })
+            if (t) {
+              valid = true
+              await prisma.biometricToken.update({ where: { id: t.id }, data: { lastUsedAt: new Date() } }).catch(() => {})
+            }
           }
         } else if (credentials.password) {
           valid = await bcrypt.compare(credentials.password, agent.password)
         }
 
         if (!valid) {
+          await countFailure()
           if (!biometricToken) {
             const newAttempts = agent.loginAttempts + 1
             if (newAttempts >= 3) {

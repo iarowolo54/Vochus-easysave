@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { AGENT_LOOKUP_LIMIT, agentLookupRateLimiter, clientIp } from '@/lib/rate-limit'
 
 export async function GET(req: NextRequest) {
+  const limit = agentLookupRateLimiter.check(`login-status:${clientIp(req)}`, AGENT_LOOKUP_LIMIT.perIp, AGENT_LOOKUP_LIMIT.windowMs)
+  if (!limit.allowed) return NextResponse.json({ error: 'Too many tries. Please wait a minute and try again.' }, { status: 429 })
+
   const identifier = req.nextUrl.searchParams.get('identifier') ?? ''
   if (!identifier) return NextResponse.json({ locked: false, attemptsLeft: 3 })
 

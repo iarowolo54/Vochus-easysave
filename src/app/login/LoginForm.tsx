@@ -56,6 +56,7 @@ function LoginPageInner() {
       setLoading(true)
       setError('')
       setNotice('')
+      setFieldErrors({ identifier: '', password: '' })
       try {
         const device = (window as unknown as { __vochusDevice?: Record<string, string> }).__vochusDevice
         const r = await signIn('credentials', {
@@ -128,7 +129,7 @@ function LoginPageInner() {
       // signIn only says "failed"; ask why so the agent gets a specific answer.
       const check = await postJson<AgentCheck>('/api/auth/check-agent', { identifier: identifier.trim(), app, deviceId })
       if (!check.ok) {
-        setError(check.kind === 'http' ? 'That agent ID and password don’t match. Check them and try again.' : describeFailure(check))
+        setError(check.kind === 'http' && check.status !== 429 ? 'That agent ID and password don’t match. Check them and try again.' : describeFailure(check))
         return
       }
       const failure = loginFailure(check.data, 'password')

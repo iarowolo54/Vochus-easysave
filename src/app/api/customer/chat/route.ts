@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
+import { validatePhoto } from '@/lib/photo'
 import { loadChatThread } from '@/lib/chat'
 
 export const maxDuration = 30
@@ -27,6 +28,9 @@ export async function POST(req: NextRequest) {
 
   const { message, imageUrl } = await req.json()
   if (!message?.trim() && !imageUrl) return NextResponse.json({ error: 'Empty message' }, { status: 400 })
+  // Shown as a link and an image to the other side, so it must really be a picture.
+  const image = validatePhoto(imageUrl)
+  if (!image.ok) return NextResponse.json({ error: image.error }, { status: 400 })
 
   const msg = await prisma.customerChatMessage.create({
     data: {

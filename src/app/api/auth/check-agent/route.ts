@@ -1,12 +1,18 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
+import { agentLoginIpKey } from '@/lib/auth'
+import { checkLoginThrottle } from '@/lib/login-attempt'
+import { AGENT_LOOKUP_LIMIT, agentLookupRateLimiter, clientIp } from '@/lib/rate-limit'
 
 const LOCKOUT_MS = 30 * 60 * 1000
 
 export async function POST(req: NextRequest) {
+  const limit = agentLookupRateLimiter.check(`check-agent:${clientIp(req)}`, AGENT_LOOKUP_LIMIT.perIp, AGENT_LOOKUP_LIMIT.windowMs)
+  if (!limit.allowed) return NextResponse.json({ error: 'Too many tries. Please wait a minute and try again.' }, { status: 429 })
+
   const { identifier, deviceId, app } = await req.json()
 
-  if (!identifier) {
+  if (!identifier || typeof identifier !== 'string') {
     return NextResponse.json({ exists: false, status: null })
   }
 
@@ -40,7 +46,12 @@ export async function POST(req: NextRequest) {
 
   const unverifiedEmail = !!(agent?.email && !agent.emailVerified)
 
+  // If this address is blocked, that's why the sign-in failed, whatever the account's state.
+  const ip = agentLoginIpKey(req.headers.get('x-forwarded-for') ?? undefined)
+  const throttle = ip ? await checkLoginThrottle({ ip }).catch(() => null) : null
+
   return NextResponse.json({
+    throttledSeconds: throttle?.retryAfterSeconds ?? 0,
     exists: !!agent,
     status: agent?.status ?? null,
     deviceMismatch,
