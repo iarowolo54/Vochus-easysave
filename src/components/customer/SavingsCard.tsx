@@ -75,13 +75,15 @@ function pickLabel(slot: Slot, weekly: boolean, ended: boolean, picker?: Picker)
 /* ── Home screen: this week at a glance ─────────────────────────────── */
 
 type StripProps = {
+  /** A collection is in progress, so don't prompt to save. */
+  paused?: boolean
   plan: Plan
   deposits: Deposit[]
   onOpenCard: () => void
   onSelect: (s: DaySelection) => void
 }
 
-export function WeekStrip({ plan, deposits, onOpenCard, onSelect }: StripProps) {
+export function WeekStrip({ plan, deposits, paused, onOpenCard, onSelect }: StripProps) {
   const { weekly, ended, slots, select } = useCardData(plan, deposits)
   const today = dateKey(new Date())
 
@@ -98,7 +100,7 @@ export function WeekStrip({ plan, deposits, onOpenCard, onSelect }: StripProps) 
     const saved = counted.filter(c => c.slot!.state === 'saved').length
     summary = counted.length
       ? `${saved} of ${counted.length} day${counted.length > 1 ? 's' : ''} saved this week`
-      : slots.length && slots[0].key > today ? `Your plan starts ${formatDate(slots[0].date)}` : 'Save today to start your week'
+      : slots.length && slots[0].key > today ? `Your plan starts ${formatDate(slots[0].date)}` : paused ? '' : 'Save today to start your week'
   } else {
     // The current week is found by date, not state: a week already saved this week is still "now".
     const isNow = (s: Slot) => s.key <= today && today <= slotEndKey(s, true)
@@ -136,7 +138,6 @@ export function WeekStrip({ plan, deposits, onOpenCard, onSelect }: StripProps) 
         ))}
       </ol>
       <div className="ui-week-foot">
-        <span className="ui-week-hint">Tap a {weekly ? 'week' : 'day'} for details</span>
         <button type="button" className="ui-link ui-week-more" onClick={onOpenCard}>
           See full card <Icons.next size={16} aria-hidden="true" />
         </button>

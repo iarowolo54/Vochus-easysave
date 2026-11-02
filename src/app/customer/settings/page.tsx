@@ -9,6 +9,8 @@ import EmptyState from '@/components/ui/EmptyState'
 import { FormSkeleton } from '@/components/ui/Skeleton'
 import ListRow from '@/components/ui/ListRow'
 import { Icons } from '@/components/ui/icons'
+import Toast from '@/components/ui/Toast'
+import { biometricState, disableBiometric, enableBiometric } from '@/lib/app-biometric'
 import { displayName } from '@/lib/format'
 import { getHideBalance, getTextSize, setHideBalance, setTextSize, type TextSize } from '@/lib/preferences'
 
@@ -19,6 +21,27 @@ export default function CustomerSettingsPage() {
   const { data, loading, failed, reload } = useCustomerMe<CustomerData>()
   const [textSize, setSize] = useState<TextSize>('normal')
   const [hideBalance, setHide] = useState(false)
+  const [bio, setBio] = useState({ canManage: false, enrolled: false })
+  const [bioBusy, setBioBusy] = useState(false)
+  const [toast, setToast] = useState('')
+
+  useEffect(() => {
+    const check = () => {
+      const s = biometricState()
+      setBio({ canManage: s.canManage, enrolled: s.enrolled })
+    }
+    check()
+    window.addEventListener('vochus:flags-ready', check)
+    return () => window.removeEventListener('vochus:flags-ready', check)
+  }, [])
+
+  async function toggleBiometric() {
+    setBioBusy(true)
+    const on = !bio.enrolled
+    if (await (on ? enableBiometric() : disableBiometric())) setBio(b => ({ ...b, enrolled: on }))
+    else setToast('That didn’t work. Check your connection and try again.')
+    setBioBusy(false)
+  }
 
   useEffect(() => {
     setSize(getTextSize())
@@ -107,8 +130,23 @@ export default function CustomerSettingsPage() {
           </div>
         </section>
 
-        <div className="ui-section-head"><h2>App</h2></div>
-        <section className="ui-card ui-card--list">
+        {bio.canManage && (
+          <>
+            <div className="ui-section-head"><h2>Security</h2></div>
+            <section className="ui-card ui-card--list">
+              <div className="ui-row">
+                <div className="ui-row-main">
+                  <div className="ui-row-title" id="fingerprint-label">Sign in with fingerprint</div>
+                  <div className="ui-row-sub">Use your fingerprint instead of your password on this phone.</div>
+                </div>
+                <button type="button" role="switch" className="ui-switch" aria-checked={bio.enrolled} aria-labelledby="fingerprint-label" disabled={bioBusy} onClick={toggleBiometric} />
+              </div>
+            </section>
+          </>
+        )}
+
+        <div className="ui-section-head ui-browser-only"><h2>App</h2></div>
+        <section className="ui-card ui-card--list ui-browser-only">
           <ListRow
             leading={<Logo size={40} />}
             title="Vochus Easy Save for Android"
@@ -126,6 +164,7 @@ export default function CustomerSettingsPage() {
         </button>
       </main>
 
+      {toast && <Toast message={toast} onDone={() => setToast('')} />}
       <BottomNav items={CUSTOMER_NAV} />
     </div>
   )

@@ -43,10 +43,10 @@ function txnIcon(type: string, method: string | null): IconName {
 
 export default async function DashboardPage({ searchParams }: { searchParams: Promise<{ [key: string]: string | string[] | undefined }> }) {
   const session = await getServerSession(authOptions)
-  if (!session?.user) redirect('/')
+  if (!session?.user) redirect('/login')
 
   const agent = await prisma.agent.findFirst({ where: { agentId: session.user.agentId } })
-  if (!agent) redirect('/')
+  if (!agent) redirect('/login')
 
   const sp = await searchParams
   const page = Math.max(1, parseInt(String(sp.mpage ?? '1'), 10))
@@ -151,15 +151,11 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       </section>
 
       <div className="ag-kpis">
-        <section className="ui-card ag-wallet-card" aria-label="Agent wallet">
-          <span className="ui-row-sub">Agent wallet</span>
+        <section className="ui-card ag-wallet-card" aria-label="Wallet">
           <Amount value={agent.walletBalance} size="hero" animate />
-          <div className="ag-wallet-foot">
-            <p className="ui-row-sub">Recording a cash saving takes the amount from this wallet.</p>
-            <Link href="/dashboard/wallet" className="ui-btn ui-btn--secondary ag-wallet-btn">
-              <Icons.add size={18} aria-hidden="true" /> Fund wallet
-            </Link>
-          </div>
+          <Link href="/dashboard/wallet" className="ui-btn ui-btn--secondary ag-wallet-btn">
+            <Icons.add size={18} aria-hidden="true" /> Fund wallet
+          </Link>
         </section>
         <nav className="ui-actions ag-actions" aria-label="Main actions">
           <Link href="/dashboard/savings" className="ui-action">

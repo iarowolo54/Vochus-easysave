@@ -162,7 +162,7 @@ export default function AgentOnboardPage() {
   )
 
   if (done) return (
-    <div style={{ minHeight: '100vh', background: 'linear-gradient(155deg,#051810 0%,#0A3520 60%,#0C4824 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '32px 18px' }}>
+    <div style={{ minHeight: '100dvh', background: 'linear-gradient(155deg,#051810 0%,#0A3520 60%,#0C4824 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '32px 18px' }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
       <div style={{ background: 'rgba(255,255,255,.06)', border: '1px solid rgba(255,255,255,.10)', borderRadius: 22, padding: '30px 20px', textAlign: 'center', maxWidth: 340, width: '100%' }}>
         <div style={{ width: 68, height: 68, borderRadius: '50%', background: 'linear-gradient(135deg,#0D6B3A,#1DC96A)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 30, margin: '0 auto 16px', boxShadow: '0 12px 40px rgba(29,201,106,.38)' }}>🎉</div>
@@ -188,14 +188,14 @@ export default function AgentOnboardPage() {
 
   // ── SCREEN 1: LANDING ──
   if (screen === 'landing') return (
-    <div style={{ background: 'linear-gradient(155deg,#051810 0%,#0A3520 50%,#0C4824 100%)', minHeight: '100vh', fontFamily: '-apple-system,BlinkMacSystemFont,sans-serif' }}>
+    <div style={{ background: 'linear-gradient(155deg,#051810 0%,#0A3520 50%,#0C4824 100%)', minHeight: '100dvh', fontFamily: '-apple-system,BlinkMacSystemFont,sans-serif' }}>
       <style>{`
         @keyframes bdot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(.5)}}
         @keyframes shimmer{0%{left:-120%}60%,100%{left:160%}}
         .sh-btn{position:relative;overflow:hidden}
         .sh-btn::after{content:'';position:absolute;top:0;left:-120%;width:50%;height:100%;background:linear-gradient(90deg,transparent,rgba(255,255,255,.22),transparent);animation:shimmer 2.8s ease-in-out infinite;pointer-events:none}
       `}</style>
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px 18px 48px', minHeight: '100vh', position: 'relative', overflow: 'hidden' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '40px 18px 48px', minHeight: '100dvh', position: 'relative', overflow: 'hidden' }}>
         {/* Rings */}
         <div style={{ position: 'absolute', width: 300, height: 300, top: -60, right: -60, borderRadius: '50%', border: '1px solid rgba(29,201,106,.10)', pointerEvents: 'none' }} />
         <div style={{ position: 'absolute', width: 190, height: 190, bottom: -45, left: -45, borderRadius: '50%', border: '1px solid rgba(29,201,106,.10)', pointerEvents: 'none' }} />
@@ -277,7 +277,7 @@ export default function AgentOnboardPage() {
 
   // ── SCREEN 2: LOADER ──
   if (screen === 'loading') return (
-    <div style={{ background: 'linear-gradient(155deg,#051810 0%,#0C3A1A 55%,#0A3520 100%)', minHeight: '100vh', fontFamily: '-apple-system,BlinkMacSystemFont,sans-serif', position: 'relative', overflow: 'hidden' }}>
+    <div style={{ background: 'linear-gradient(155deg,#051810 0%,#0C3A1A 55%,#0A3520 100%)', minHeight: '100dvh', fontFamily: '-apple-system,BlinkMacSystemFont,sans-serif', position: 'relative', overflow: 'hidden' }}>
       <style>{`
         @keyframes coinup{0%{bottom:-28px;opacity:0;transform:rotate(0deg)}10%{opacity:.8}90%{opacity:.8}100%{bottom:105%;opacity:0;transform:rotate(360deg)}}
         @keyframes ring{0%{transform:scale(.5);opacity:.7}100%{transform:scale(1);opacity:0}}
@@ -293,7 +293,7 @@ export default function AgentOnboardPage() {
         ))}
       </div>
 
-      <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 22px', textAlign: 'center', position: 'relative', zIndex: 1 }}>
+      <div style={{ minHeight: '100dvh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: '40px 22px', textAlign: 'center', position: 'relative', zIndex: 1 }}>
         <div style={{ position: 'relative', zIndex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%', maxWidth: 320 }}>
           {/* Logo with rings */}
           <div style={{ position: 'relative', width: 76, height: 76, marginBottom: 30, flexShrink: 0 }}>
@@ -337,7 +337,7 @@ export default function AgentOnboardPage() {
 
   // ── SCREEN 3: FORM ──
   return (
-    <div style={{ minHeight: '100vh', background: '#f7f8fa', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '24px 16px 48px' }}>
+    <div style={{ minHeight: '100dvh', background: '#f7f8fa', display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '24px 16px 48px' }}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
       {/* Header */}
       <div style={{ width: '100%', maxWidth: 560, marginBottom: 28 }}>
@@ -512,7 +512,7 @@ export default function AgentOnboardPage() {
   )
 }
 
-const centered: React.CSSProperties = { minHeight: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#f7f8fa', padding: 20 }
+const centered: React.CSSProperties = { minHeight: '100dvh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: '#f7f8fa', padding: 20 }
 const spinner: React.CSSProperties = { width: 40, height: 40, border: '3px solid #d1fae5', borderTop: '3px solid #1a5c35', borderRadius: '50%', animation: 'spin 1s linear infinite' }
 const sectionLabel: React.CSSProperties = { fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 1.2, color: '#6b7280', marginBottom: 16 }
 const lbl: React.CSSProperties = { display: 'block', fontSize: 11.5, fontWeight: 700, color: '#6b7280', marginBottom: 5 }

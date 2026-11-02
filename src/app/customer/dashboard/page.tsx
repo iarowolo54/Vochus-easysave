@@ -12,6 +12,7 @@ import { useCustomerMe } from '@/components/customer/useCustomerMe'
 import ActionButton from '@/components/ui/ActionButton'
 import BottomSheet from '@/components/ui/BottomSheet'
 import Toast from '@/components/ui/Toast'
+import { biometricDeclined, biometricState, enableBiometric, setBiometricDeclined } from '@/lib/app-biometric'
 import { HomeSkeleton } from '@/components/ui/Skeleton'
 import { takeJustPaid } from '@/lib/payment-flash'
 import Amount, { useCountUp } from '@/components/ui/Amount'
@@ -59,7 +60,6 @@ function daysLeftText(iso: string) {
 /** Plain facts about a running plan, as a list under the actions. */
 function PlanDetails({ plan }: { plan: Plan }) {
   const weekly = isWeekly(plan)
-  const left = daysUntil(plan.maturityDate)
   return (
     <>
       <div className="ui-section-head"><h2>Plan details</h2></div>
@@ -72,7 +72,6 @@ function PlanDetails({ plan }: { plan: Plan }) {
           <dt className="ui-row-main ui-row-sub ui-summary-key">You collect on</dt>
           <dd className="ui-row-value ui-value-stack">
             <span>{formatDate(plan.maturityDate)}</span>
-            <span className="ui-row-sub">{left === 0 ? 'Today' : left === 1 ? 'Tomorrow' : `In ${left} days`}</span>
           </dd>
         </div>
         <div className="ui-row">
@@ -94,6 +93,17 @@ export default function CustomerDashboard() {
   const [daySel, setDaySel] = useState<DaySelection | null>(null)
   const [receiptTx, setReceiptTx] = useState<Tx | null>(null)
   const [toast, setToast] = useState('')
+  const [bioOffer, setBioOffer] = useState(false)
+
+  async function acceptBiometric() {
+    setBioOffer(false)
+    if (!await enableBiometric()) setToast('Couldn’t turn on fingerprint sign-in. Try again in Settings.')
+  }
+
+  function declineBiometric() {
+    setBiometricDeclined(true)
+    setBioOffer(false)
+  }
 
   // Arriving from a successful Paystack payment: confirm it here, where the new balance is.
   useEffect(() => {
@@ -103,27 +113,16 @@ export default function CustomerDashboard() {
 
   useEffect(() => { setHide(getHideBalance()) }, [])
 
+  // Offer fingerprint sign-in once, on this phone; Settings can change it later.
   useEffect(() => {
     if (!data) return
-    const w = window as unknown as {
-      __vochusCanBiometric?: boolean
-      __vochusBiometricEnrolled?: boolean
-      __vochusDeviceId?: string
-      VochusBiometric?: { postMessage: (s: string) => void }
+    const check = () => {
+      const bio = biometricState()
+      setBioOffer(bio.canEnrol && !bio.enrolled && !biometricDeclined())
     }
-    if (!w.__vochusCanBiometric || w.__vochusBiometricEnrolled || !w.VochusBiometric) return
-    ;(async () => {
-      try {
-        const r = await fetch('/api/customer/auth/biometric/issue', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ deviceId: w.__vochusDeviceId ?? '' }),
-        })
-        if (!r.ok) return
-        const d = await r.json()
-        w.VochusBiometric!.postMessage(JSON.stringify({ token: d.token, identifier: d.identifier }))
-      } catch {}
-    })()
+    check()
+    window.addEventListener('vochus:flags-ready', check)
+    return () => window.removeEventListener('vochus:flags-ready', check)
   }, [data])
 
   const plans = data ? data.plans ?? (data.plan ? [data.plan] : []) : []
@@ -232,14 +231,6 @@ export default function CustomerDashboard() {
           <div className="ui-topbar-sub ui-topbar-sub--above">{greeting}</div>
           <div className="ui-topbar-title">{firstName}</div>
         </div>
-        <button
-          type="button"
-          className="ui-icon-btn"
-          onClick={() => router.push('/customer/chat')}
-          aria-label={`Message your agent, ${displayName(data.agent.name)}`}
-        >
-          <Icons.chat size={20} aria-hidden="true" />
-        </button>
       </header>
 
       <main className="ui-container">
@@ -266,7 +257,6 @@ export default function CustomerDashboard() {
               {planSwitch}
               {eyeButton}
             </div>
-            <p className="ui-balance-label">Saved so far</p>
             {hideBalance
               ? <span className="ui-amount ui-amount--hero" aria-label="Balance hidden">₦ ••••</span>
               : <Amount value={plan?.balance ?? 0} size="hero" animate />}
@@ -331,11 +321,11 @@ export default function CustomerDashboard() {
             <InterestCard plan={plan} hideAmounts={hideBalance} />
             <PlanDetails plan={plan} />
             {!ended && <AutoFunding plan={plan} hideAmounts={hideBalance} />}
-            <WeekStrip plan={plan} deposits={planTxs} onOpenCard={() => setCardOpen(true)} onSelect={setDaySel} />
+            <WeekStrip plan={plan} deposits={planTxs} paused={!!pending} onOpenCard={() => setCardOpen(true)} onSelect={setDaySel} />
           </>
         ) : (
           <>
-            <WeekStrip plan={plan} deposits={planTxs} onOpenCard={() => setCardOpen(true)} onSelect={setDaySel} />
+            <WeekStrip plan={plan} deposits={planTxs} paused={!!pending} onOpenCard={() => setCardOpen(true)} onSelect={setDaySel} />
             <PlanDetails plan={plan} />
           </>
         ))}
@@ -445,6 +435,14 @@ export default function CustomerDashboard() {
             onHelp={() => router.push(`/customer/chat?ref=${encodeURIComponent(receiptTx.ref)}`)}
           />
         )}
+      </BottomSheet>
+
+      <BottomSheet open={bioOffer} onClose={declineBiometric} title="Sign in with your fingerprint?">
+        <p className="ui-row-sub">Use your fingerprint instead of your password on this phone. You can change this in Settings.</p>
+        <div className="ui-btn-row">
+          <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={acceptBiometric}>Turn on</button>
+          <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={declineBiometric}>Not now</button>
+        </div>
       </BottomSheet>
 
       {toast && <Toast message={toast} onDone={() => setToast('')} />}

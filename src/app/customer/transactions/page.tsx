@@ -121,10 +121,7 @@ export default function TransactionsPage() {
 
   const header = (
     <header className="ui-topbar">
-      <button type="button" className="ui-icon-btn" onClick={() => router.push('/customer/dashboard')} aria-label="Back to home">
-        <Icons.back size={22} aria-hidden="true" />
-      </button>
-      <div className="ui-topbar-main"><h1 className="ui-topbar-title">History</h1></div>
+      <div className="ui-topbar-main"><h1 className="ui-page-title">History</h1></div>
       <button type="button" className="ui-icon-btn ui-icon-btn--plain" onClick={toggleHide} aria-label={hide ? 'Show amounts' : 'Hide amounts'} aria-pressed={hide}>
         {hide ? <Icons.show size={20} aria-hidden="true" /> : <Icons.hide size={20} aria-hidden="true" />}
       </button>

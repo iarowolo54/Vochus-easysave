@@ -4,6 +4,7 @@ import Providers from './providers'
 import DownloadAppBanner from '@/components/DownloadAppBanner'
 import { TEXT_SIZE_BOOT_SCRIPT } from '@/lib/preferences'
 import Splash from '@/components/Splash'
+import AppShellFlag from '@/components/AppShellFlag'
 import { SPLASH_BOOT_SCRIPT } from '@/lib/splash'
 
 export const metadata: Metadata = {
@@ -22,6 +23,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
       </head>
       <body>
+        <AppShellFlag />
         <Splash />
         <DownloadAppBanner />
         <Providers>{children}</Providers>

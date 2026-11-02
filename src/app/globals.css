@@ -22,6 +22,7 @@ html, body { height: 100%; font-family: 'Inter', sans-serif; background: var(--b
 ═══════════════════════════════════════════════════════ */
 .login-page {
   min-height: 100vh;
+  min-height: 100dvh;
   background: linear-gradient(160deg, #071a0e 0%, #0e4d24 45%, #0a3318 100%);
   display: flex; align-items: center; justify-content: center;
 }
@@ -69,7 +70,7 @@ html, body { height: 100%; font-family: 'Inter', sans-serif; background: var(--b
 /* ═══════════════════════════════════════════════════════
    APP LAYOUT
 ═══════════════════════════════════════════════════════ */
-.app-layout { display: flex; height: 100vh; flex-direction: row; overflow: hidden; }
+.app-layout { display: flex; height: 100vh; height: 100dvh; flex-direction: row; overflow: hidden; }
 
 /* SIDEBAR */
 .sidebar {
@@ -512,12 +513,17 @@ textarea.finput { resize: vertical; min-height: 80px; }
   --ui-r-sm: 8px; --ui-r-md: 16px; --ui-r-pill: 999px;
   --ui-tap: 44px;
   --ui-nav-h: 64px;
+  --ui-safe-top: env(safe-area-inset-top);
+  --ui-safe-bottom: env(safe-area-inset-bottom);
 }
+/* Inside the apps the Flutter SafeArea has already applied these (see AppShellFlag). */
+html[data-vochus-shell] { --ui-safe-top: 0px; --ui-safe-bottom: 0px; }
+html[data-vochus-shell] .ui-browser-only { display: none; }
 
 .ui-screen {
   min-height: 100dvh; background: var(--ui-canvas); color: var(--ui-ink);
   font-family: 'Inter', sans-serif; font-size: var(--ui-fs-md); line-height: 1.45;
-  padding-bottom: calc(var(--ui-nav-h) + env(safe-area-inset-bottom) + var(--ui-s5));
+  padding-bottom: calc(var(--ui-nav-h) + var(--ui-safe-bottom) + var(--ui-s5));
 }
 .ui-screen--center { display: flex; align-items: center; justify-content: center; padding: var(--ui-s4); }
 .ui-container { max-width: 560px; margin: 0 auto; padding: 0 var(--ui-s4); }
@@ -663,7 +669,7 @@ textarea.finput { resize: vertical; min-height: 80px; }
 /* Bottom nav (mobile only) */
 .ui-bottom-nav {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 100;
-  height: calc(var(--ui-nav-h) + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom);
+  height: calc(var(--ui-nav-h) + var(--ui-safe-bottom)); padding-bottom: var(--ui-safe-bottom);
   display: flex; background: var(--ui-surface); border-top: 1px solid var(--ui-line);
 }
 .ui-bottom-nav-item {
@@ -762,7 +768,7 @@ button.ui-cal-day:active { transform: scale(.9); }
 }
 .ui-sheet[open] { animation: ui-sheet-in .22s ease-out; }
 .ui-sheet::backdrop { background: rgba(15, 42, 29, .45); }
-.ui-sheet-inner { padding: var(--ui-s4) var(--ui-s4) calc(var(--ui-s4) + env(safe-area-inset-bottom)); }
+.ui-sheet-inner { padding: var(--ui-s4) var(--ui-s4) calc(var(--ui-s4) + var(--ui-safe-bottom)); }
 .ui-sheet-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: var(--ui-s2); }
 @keyframes ui-sheet-in { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
 @media (min-width: 769px) { .ui-sheet { margin: auto; border-radius: var(--ui-r-md); } }
@@ -801,7 +807,6 @@ button.ui-cal-day:active { transform: scale(.9); }
 .ui-balance .ui-plan-picker { background: var(--ui-canvas); min-width: 0; }
 .ui-balance .ui-plan-name { padding-left: var(--ui-s1); }
 .ui-balance .ui-hero-eye { position: static; transform: none; margin: 0; }
-.ui-balance-label { font-size: var(--ui-fs-sm); font-weight: 600; color: var(--ui-ink-2); margin: 0 0 var(--ui-s1); }
 .ui-balance-note { font-size: var(--ui-fs-md); color: var(--ui-ink-2); margin: var(--ui-s2) 0 0; }
 .ui-balance-bar { margin-top: var(--ui-s4); }
 .ui-balance-goal { display: flex; justify-content: space-between; gap: var(--ui-s3); margin: var(--ui-s2) 0 0; font-size: var(--ui-fs-sm); color: var(--ui-ink-2); }
@@ -840,7 +845,7 @@ button.ui-cal-day:active { transform: scale(.9); }
 /* Sign-in screens: fit one phone screen. Vertical gaps shrink with the viewport height (dvh, so the
    iOS toolbar and keyboard are accounted for) instead of overflowing on short phones. */
 /* No min-height: the app banner sits above this page, so 100dvh here would always scroll by the banner's height. */
-.ui-auth { min-height: 0; padding: 0 0 max(var(--ui-s4), env(safe-area-inset-bottom)); overflow-x: hidden; }
+.ui-auth { min-height: 0; padding: 0 0 max(var(--ui-s4), var(--ui-safe-bottom)); overflow-x: hidden; }
 body:has(.ui-auth) { background: var(--ui-canvas) !important; }
 .ui-auth-inner {
   width: 100%; max-width: 420px; margin: 0 auto;
@@ -913,8 +918,7 @@ body:has(.ui-auth) { background: var(--ui-canvas) !important; }
 .ui-week-label { font-size: var(--ui-fs-xs); font-weight: 600; color: var(--ui-ink-2); white-space: nowrap; }
 .ui-week-day.is-today .ui-week-label { color: var(--ui-brand-ink); }
 .ui-week .ui-cal-day { max-width: 40px; }
-.ui-week-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--ui-s3); margin-top: var(--ui-s3); }
-.ui-week-hint { font-size: var(--ui-fs-sm); color: var(--ui-ink-2); }
+.ui-week-foot { display: flex; justify-content: flex-end; margin-top: var(--ui-s3); }
 .ui-week-more { flex-shrink: 0; }
 
 /* Finished plan: row linking to the full card */
@@ -1014,7 +1018,7 @@ body:has(.ui-auth) { background: var(--ui-canvas) !important; }
 
 /* Toast */
 .ui-toast {
-  position: fixed; z-index: 300; left: 50%; top: calc(env(safe-area-inset-top) + 12px); transform: translateX(-50%);
+  position: fixed; z-index: 300; left: 50%; top: calc(var(--ui-safe-top) + 12px); transform: translateX(-50%);
   width: min(528px, calc(100% - 32px)); display: flex; align-items: center; gap: var(--ui-s2);
   padding: var(--ui-s3) var(--ui-s4); border-radius: var(--ui-r-md);
   background: var(--ui-brand); color: var(--ui-brand-on); font-weight: 600; box-shadow: 0 8px 24px rgba(0,0,0,.18);
@@ -1057,7 +1061,7 @@ body:has(.ui-auth) { background: var(--ui-canvas) !important; }
 /* Chat: full-screen conversation (no tab bar), composer pinned above the keyboard */
 .ui-chat {
   position: fixed; inset: 0; z-index: 260; display: flex; flex-direction: column; /* above the app banner (250) */
-  min-height: 0; padding: env(safe-area-inset-top) 0 0; background: var(--ui-canvas);
+  min-height: 0; padding: var(--ui-safe-top) 0 0; background: var(--ui-canvas);
 }
 .ui-chat-head { max-width: none; width: 100%; margin: 0; background: var(--ui-surface); border-bottom: 1px solid var(--ui-line); }
 .ui-chat-head .ui-topbar-title { font-size: var(--ui-fs-md); }
@@ -1079,7 +1083,7 @@ body:has(.ui-auth) { background: var(--ui-canvas) !important; }
 .ui-chat-prompts { display: flex; flex-direction: column; align-items: center; gap: var(--ui-s2); }
 .ui-chat-prompts .ui-chip { white-space: normal; text-align: center; min-height: 44px; padding: 8px 16px; }
 
-.ui-composer { background: var(--ui-surface); border-top: 1px solid var(--ui-line); padding: var(--ui-s2) var(--ui-s3) calc(var(--ui-s2) + env(safe-area-inset-bottom)); }
+.ui-composer { background: var(--ui-surface); border-top: 1px solid var(--ui-line); padding: var(--ui-s2) var(--ui-s3) calc(var(--ui-s2) + var(--ui-safe-bottom)); }
 .ui-composer > * { max-width: 560px; margin-left: auto; margin-right: auto; }
 .ui-composer-row { display: flex; align-items: flex-end; gap: var(--ui-s2); }
 :is(.ui-screen, .ag-shell) .ui-composer-input {
@@ -1123,6 +1127,7 @@ body:has(.ui-auth) { background: var(--ui-canvas) !important; }
   display: flex; align-items: center; gap: var(--ui-s3); width: 100%; min-height: 44px; padding: 0 var(--ui-s3);
   border: none; border-radius: var(--ui-r-sm); background: none; cursor: pointer; text-decoration: none; text-align: left;
   font-family: inherit; font-size: var(--ui-fs-sm); font-weight: 500; color: var(--ui-ink);
+  -webkit-user-select: none; user-select: none;
 }
 .ag-nav-item svg { color: var(--ui-ink-2); flex-shrink: 0; }
 .ag-nav-item span { flex: 1; }
@@ -1154,7 +1159,7 @@ body:has(.ui-auth) { background: var(--ui-canvas) !important; }
   .ag-shell { grid-template-columns: minmax(0, 1fr); }
   .ag-sidebar {
     position: fixed; z-index: 270; top: 0; bottom: 0; left: 0; width: min(300px, 86vw); height: auto;
-    padding-top: calc(var(--ui-s4) + env(safe-area-inset-top)); padding-bottom: calc(var(--ui-s4) + env(safe-area-inset-bottom));
+    padding-top: calc(var(--ui-s4) + var(--ui-safe-top)); padding-bottom: calc(var(--ui-s4) + var(--ui-safe-bottom));
     transform: translateX(-102%); transition: transform .22s ease-out; box-shadow: 8px 0 24px rgba(0,0,0,.12);
   }
   .ag-sidebar.is-open { transform: none; }
@@ -1163,7 +1168,7 @@ body:has(.ui-auth) { background: var(--ui-canvas) !important; }
   .ag-backdrop.is-open { opacity: 1; pointer-events: auto; }
   .ag-menu-btn { display: flex; }
   .ag-topbar { padding: 0 var(--ui-s4); }
-  .ag-content.content-area { padding: var(--ui-s4) var(--ui-s4) calc(var(--ui-nav-h) + env(safe-area-inset-bottom) + var(--ui-s5)); }
+  .ag-content.content-area { padding: var(--ui-s4) var(--ui-s4) calc(var(--ui-nav-h) + var(--ui-safe-bottom) + var(--ui-s5)); }
 }
 @media (prefers-reduced-motion: reduce) { .ag-sidebar, .ag-backdrop { transition: none; } }
 @media print { .ag-sidebar, .ag-topbar, .ag-backdrop, .ui-bottom-nav { display: none !important; } .ag-shell { display: block; } }
@@ -1175,10 +1180,9 @@ body:has(.ui-auth) { background: var(--ui-canvas) !important; }
 .ag-home-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--ui-s5); align-items: start; }
 .ag-col { min-width: 0; }
 .ag-col > .ui-section-head:first-child { margin-top: 0; }
-.ag-wallet-card { display: flex; flex-direction: column; gap: var(--ui-s1); padding: var(--ui-s5); margin: 0; }
-.ag-wallet-foot { display: flex; align-items: center; justify-content: space-between; gap: var(--ui-s3); flex-wrap: wrap; margin-top: auto; padding-top: var(--ui-s3); }
-.ag-wallet-foot p { flex: 1 1 220px; }
-.ag-wallet-btn { min-height: 44px; font-size: var(--ui-fs-sm); flex-shrink: 0; }
+/* Balance on the left, its one action on the right; the button drops below on narrow phones. */
+.ag-wallet-card { display: flex; align-items: center; justify-content: space-between; gap: var(--ui-s3); flex-wrap: wrap; padding: var(--ui-s5); margin: 0; }
+.ag-wallet-btn { min-height: 44px; font-size: var(--ui-fs-sm); flex-shrink: 0; text-decoration: none; }
 .ag-actions { justify-content: flex-start; gap: var(--ui-s5); margin: var(--ui-s5) 0; }
 .ag-actions .ui-action { text-decoration: none; font-size: var(--ui-fs-sm); }
 .ag-stats { display: grid; grid-template-columns: 1fr 1fr; gap: var(--ui-s4) var(--ui-s3); margin: var(--ui-s2) 0 0; }
@@ -1273,7 +1277,7 @@ html.ves-splash-out .ves-splash-screen { opacity: 0; }
 .ag-sheet-text strong { color: var(--ui-ink); }
 .ag-shell .ag-pin { text-align: center; letter-spacing: 8px; font-size: 24px; }
 
-/* Several days */
+/* Bulk Savings */
 .ag-cal-hint { margin-bottom: var(--ui-s3); }
 .ag-cal-state { display: flex; justify-content: center; padding: var(--ui-s6) 0; }
 .ag-cal .ui-cal-grid li { display: flex; }
@@ -1591,7 +1595,15 @@ html.ves-splash-out .ves-splash-screen { opacity: 0; }
 .ag-round-more { display: inline-flex; align-items: center; gap: 4px; margin-top: var(--ui-s3); }
 .ag-round-more svg { transition: transform .2s; }
 .ag-round-more svg.is-open { transform: rotate(180deg); }
-@media (max-width: 768px) { .ag-round { padding: var(--ui-s4); } .ag-round-grid { grid-template-columns: minmax(0, 1fr); } }
+@media (max-width: 768px) {
+  .ag-round { padding: var(--ui-s4); }
+  /* One column on phones: a flat list with dividers, so names get the width the box borders took. */
+  .ag-round-grid { grid-template-columns: minmax(0, 1fr); gap: 0; }
+  .ag-round-item { padding: var(--ui-s2) 0; border: 0; border-radius: 0; }
+  .ag-round-item + .ag-round-item { border-top: 1px solid var(--ui-line); }
+  .ag-round-item.is-paid { background: none; }
+  .ag-round-record { padding: 0 var(--ui-s3); }
+}
 
 /* Bottom nav: raised main action, More button, badges */
 button.ui-bottom-nav-item { border: 0; background: none; cursor: pointer; font-family: inherit; }
@@ -1695,7 +1707,7 @@ button.ui-bottom-nav-item { border: 0; background: none; cursor: pointer; font-f
   .ag-flow-head { padding: var(--ui-s2) var(--ui-s4) 0; border-radius: 0; }
   .ag-flow-line { margin: var(--ui-s2) calc(-1 * var(--ui-s4)) 0; }
   .ag-flow-body { padding: var(--ui-s5) var(--ui-s4) 0; }
-  .ag-flow-actions { bottom: calc(var(--ui-nav-h) + env(safe-area-inset-bottom)); margin: var(--ui-s5) calc(-1 * var(--ui-s4)) 0; padding: var(--ui-s3) var(--ui-s4); border-radius: 0; }
+  .ag-flow-actions { bottom: calc(var(--ui-nav-h) + var(--ui-safe-bottom)); margin: var(--ui-s5) calc(-1 * var(--ui-s4)) 0; padding: var(--ui-s3) var(--ui-s4); border-radius: 0; }
 }
 
 /* Step list beside the form (Neo pattern) */
@@ -1813,7 +1825,7 @@ button.ui-bottom-nav-item { border: 0; background: none; cursor: pointer; font-f
 /* While enrolling on a phone, the tab bar steps aside (as banking apps do mid-application). */
 @media (max-width: 768px) {
   .ag-shell:has(.ag-flow) .ui-bottom-nav { display: none; }
-  .ag-shell:has(.ag-flow) .ag-flow-actions { bottom: 0; padding-bottom: calc(var(--ui-s3) + env(safe-area-inset-bottom)); }
+  .ag-shell:has(.ag-flow) .ag-flow-actions { bottom: 0; padding-bottom: calc(var(--ui-s3) + var(--ui-safe-bottom)); }
   .ag-shell:has(.ag-flow) .ag-content.content-area { padding-bottom: 0; }
   .ag-oval { width: min(200px, 52vw); }
 }
@@ -2104,7 +2116,7 @@ button.ui-bottom-nav-item { border: 0; background: none; cursor: pointer; font-f
 
 /* ═══ Customer: self-enrolment (Neo / Fidelity / Acorns pattern: one question per screen) ═══ */
 .cu-enroll { padding: 0; background: var(--ui-surface); }
-.cu-page { max-width: 480px; min-height: 100dvh; margin: 0 auto; padding: env(safe-area-inset-top) 20px 0; display: flex; flex-direction: column; }
+.cu-page { max-width: 480px; min-height: 100dvh; margin: 0 auto; padding: var(--ui-safe-top) 20px 0; display: flex; flex-direction: column; }
 .cu-top { position: sticky; top: 0; z-index: 5; display: flex; align-items: center; gap: var(--ui-s2); min-height: 56px; margin: 0 -20px; padding: 0 20px 0 8px; background: var(--ui-surface); }
 .cu-back { width: 44px; height: 44px; flex-shrink: 0; display: grid; place-items: center; border: 0; border-radius: 50%; background: none; color: var(--ui-ink); cursor: pointer; }
 .cu-back:active { background: var(--ui-canvas); }
@@ -2142,7 +2154,7 @@ button.ui-bottom-nav-item { border: 0; background: none; cursor: pointer; font-f
 .cu-enroll .ag-verified, .cu-enroll .ui-banner, .cu-enroll .ui-field-error { margin-top: var(--ui-s1); }
 
 /* Pinned button: sits at the bottom of short screens, follows long ones */
-.cu-actions { position: sticky; bottom: 0; z-index: 4; display: grid; gap: var(--ui-s1); margin-top: auto; padding: var(--ui-s6) 0 calc(var(--ui-s4) + env(safe-area-inset-bottom)); background: linear-gradient(to bottom, rgba(255,255,255,0), var(--ui-surface) 28px); }
+.cu-actions { position: sticky; bottom: 0; z-index: 4; display: grid; gap: var(--ui-s1); margin-top: auto; padding: var(--ui-s6) 0 calc(var(--ui-s4) + var(--ui-safe-bottom)); background: linear-gradient(to bottom, rgba(255,255,255,0), var(--ui-surface) 28px); }
 .cu-cta { width: 100%; min-height: 56px; border-radius: var(--ui-r-pill); font-size: 16px; font-weight: 700; }
 .cu-cta-2 { width: 100%; min-height: 48px; color: var(--ui-brand-ink); font-weight: 600; }
 
@@ -2174,7 +2186,7 @@ button.ui-bottom-nav-item { border: 0; background: none; cursor: pointer; font-f
 .cu-hub-oval { width: 78px; aspect-ratio: 3 / 4; border-radius: 50%; display: grid; place-items: center; border: 2px dashed rgba(23,120,58,.35); background: var(--ui-surface); color: var(--ui-brand); }
 
 /* Welcome: a deep green header, the content sheet sliding over it */
-.cu-hello { display: flow-root; padding: env(safe-area-inset-top) 0 40px; background: radial-gradient(120% 90% at 100% 0%, rgba(255,255,255,.07), transparent 60%), #0f3d22; color: #fff; }
+.cu-hello { display: flow-root; padding: var(--ui-safe-top) 0 40px; background: radial-gradient(120% 90% at 100% 0%, rgba(255,255,255,.07), transparent 60%), #0f3d22; color: #fff; }
 .cu-hello-in { max-width: 480px; margin: 0 auto; padding: 0 20px; }
 .cu-hello .cu-brand { color: #fff; font-size: 16px; font-weight: 700; }
 .cu-hello .cu-brand img { filter: brightness(0) invert(1); }
@@ -2205,7 +2217,7 @@ button.ui-bottom-nav-item { border: 0; background: none; cursor: pointer; font-f
 .cu-goal-label { font-size: 15px; font-weight: 600; line-height: 1.3; }
 .cu-goal-icon { width: 40px; height: 40px; flex-shrink: 0; border-radius: 50%; display: grid; place-items: center; background: var(--ui-canvas); color: var(--ui-ink); }
 .cu-goal-icon--sm { width: 36px; height: 36px; }
-.cu-hello-foot { margin: var(--ui-s5) 0 calc(var(--ui-s5) + env(safe-area-inset-bottom)); }
+.cu-hello-foot { margin: var(--ui-s5) 0 calc(var(--ui-s5) + var(--ui-safe-bottom)); }
 
 /* Intro: what the plan adds up to */
 .cu-resume { display: block; margin: 0 0 var(--ui-s4); padding: 16px 18px; border-radius: 20px; background: var(--ui-canvas); }
@@ -2282,7 +2294,7 @@ button.ui-bottom-nav-item { border: 0; background: none; cursor: pointer; font-f
 .cu-otp-actions { margin-top: var(--ui-s4); }
 
 /* Done */
-.cu-done { padding-top: calc(48px + env(safe-area-inset-top)); }
+.cu-done { padding-top: calc(48px + var(--ui-safe-top)); }
 .cu-done-mark { position: relative; width: 112px; height: 112px; margin: 0 auto var(--ui-s5); }
 .cu-done-mark img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; }
 .cu-done-blank { width: 100%; height: 100%; border-radius: 50%; display: grid; place-items: center; background: var(--ui-brand); color: #fff; }
@@ -2443,12 +2455,12 @@ a.ag-crow { text-decoration: none; color: inherit; }
   .ag-chat-back { display: inline-grid; }
 }
 @media (max-width: 768px) {
-  .ag-chat { height: calc(100dvh - 60px - var(--ui-s4) - var(--ui-nav-h) - env(safe-area-inset-bottom) - var(--ui-s5)); border-radius: 16px; }
+  .ag-chat { height: calc(100dvh - 60px - var(--ui-s4) - var(--ui-nav-h) - var(--ui-safe-bottom) - var(--ui-s5)); border-radius: 16px; }
   /* An open conversation takes the whole screen; the tab bar steps aside so the message box sits at the bottom. */
   .ag-shell:has(.ag-chat.is-open) .ui-bottom-nav { display: none; }
   .ag-shell:has(.ag-chat.is-open) .ag-content.content-area { padding: 0; }
   .ag-chat.is-open { height: calc(100dvh - 60px); border: 0; border-radius: 0; }
-  .ag-chat-compose { padding-bottom: calc(var(--ui-s3) + env(safe-area-inset-bottom)); }
+  .ag-chat-compose { padding-bottom: calc(var(--ui-s3) + var(--ui-safe-bottom)); }
   .ag-chat-head .ui-btn--sm { padding: 0 var(--ui-s3); }
 }
 
@@ -2491,11 +2503,11 @@ a.ag-crow { text-decoration: none; color: inherit; }
 /* Customers: cash savers vs online */
 .ag-kind button { min-height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: var(--ui-s2); font-weight: 600; }
 .ag-kind-count { min-width: 22px; padding: 1px 7px; border-radius: var(--ui-r-pill); background: var(--ui-canvas); color: var(--ui-ink-2); font-size: var(--ui-fs-xs); font-variant-numeric: tabular-nums; }
-.ag-round { display: flex; gap: var(--ui-s3); align-items: flex-start; padding: var(--ui-s3) var(--ui-s4); margin-bottom: var(--ui-s4); border-radius: var(--ui-r-md); background: var(--ui-brand-tint); color: var(--ui-ink); }
-.ag-round > svg { flex-shrink: 0; margin-top: 2px; color: var(--ui-brand-ink); }
-.ag-round.is-overdue { background: var(--ui-warn-tint); }
-.ag-round.is-overdue > svg { color: var(--ui-warn); }
-.ag-round-title { font-weight: 700; }
+.ag-collect-note { display: flex; gap: var(--ui-s3); align-items: flex-start; padding: var(--ui-s3) var(--ui-s4); margin-bottom: var(--ui-s4); border-radius: var(--ui-r-md); background: var(--ui-brand-tint); color: var(--ui-ink); }
+.ag-collect-note > svg { flex-shrink: 0; margin-top: 2px; color: var(--ui-brand-ink); }
+.ag-collect-note.is-overdue { background: var(--ui-warn-tint); }
+.ag-collect-note.is-overdue > svg { color: var(--ui-warn); }
+.ag-collect-note-title { font-weight: 700; }
 .ag-late { color: var(--ui-danger); font-weight: 600; }
 .ag-paid { color: var(--ui-positive); font-weight: 600; }
 .ag-crow-row { position: relative; }
@@ -2591,7 +2603,7 @@ button.ui-cal-day::after { content: ''; position: absolute; inset: -3px; border-
 button.ui-cal-day--inert, button.ui-cal-day--inert:disabled { cursor: default; opacity: .55; }
 button.ui-cal-day--inert.ui-cal-day--saved { opacity: 1; }
 button.ui-cal-day:disabled:active { transform: none; }
-.ui-catchup-bar { position: sticky; bottom: 0; display: flex; flex-direction: column; gap: var(--ui-s2); padding: var(--ui-s3) 0 calc(var(--ui-s3) + env(safe-area-inset-bottom)); background: var(--ui-canvas); border-top: 1px solid var(--ui-line); margin-top: var(--ui-s3); }
+.ui-catchup-bar { position: sticky; bottom: 0; display: flex; flex-direction: column; gap: var(--ui-s2); padding: var(--ui-s3) 0 calc(var(--ui-s3) + var(--ui-safe-bottom)); background: var(--ui-canvas); border-top: 1px solid var(--ui-line); margin-top: var(--ui-s3); }
 .ui-catchup-sum { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: var(--ui-s3); }
 .ui-catchup-sum strong { font-size: var(--ui-fs-xl); font-weight: 800; }
 .ui-catchup-legend { margin: var(--ui-s3) 0 0; font-size: var(--ui-fs-sm); color: var(--ui-ink-2); }

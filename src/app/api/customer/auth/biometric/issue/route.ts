@@ -29,3 +29,18 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({ token, identifier: customer.phone })
 }
+
+export async function DELETE(req: NextRequest) {
+  const session = await getCustomerSession()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { deviceId } = await req.json().catch(() => ({}))
+  if (!deviceId || typeof deviceId !== 'string') return NextResponse.json({ error: 'deviceId required' }, { status: 400 })
+
+  await prisma.biometricToken.updateMany({
+    where: { customerId: session.id, deviceId, revokedAt: null },
+    data: { revokedAt: new Date() },
+  })
+
+  return NextResponse.json({ ok: true })
+}

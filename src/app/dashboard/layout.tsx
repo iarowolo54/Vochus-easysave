@@ -74,6 +74,20 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const router = useRouter()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [chatUnread, setChatUnread] = useState(0)
+  const [canOpenAppSettings, setCanOpenAppSettings] = useState(false)
+
+  // Only the agent app has a printer/fingerprint sheet; older installs don't announce it.
+  useEffect(() => {
+    const check = () => setCanOpenAppSettings(!!(window as unknown as { __vochusCanOpenSettings?: boolean }).__vochusCanOpenSettings)
+    check()
+    window.addEventListener('vochus:flags-ready', check)
+    return () => window.removeEventListener('vochus:flags-ready', check)
+  }, [])
+
+  function openAppSettings() {
+    setSidebarOpen(false)
+    ;(window as unknown as { VochusAppSettings?: { postMessage: (s: string) => void } }).VochusAppSettings?.postMessage('')
+  }
 
   useEffect(() => {
     async function pollChat() {
@@ -174,7 +188,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </span>
         </div>
         <Link href="/dashboard/wallet" className="ag-wallet">
-          <span className="ui-row-sub">Agent wallet</span>
+          <span className="ui-row-sub">Wallet</span>
           <span className="ui-amount ag-wallet-amount">{formatNaira(walletBalance)}</span>
         </Link>
 
@@ -202,6 +216,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           ))}
         </nav>
 
+        {canOpenAppSettings && (
+          <button type="button" className="ag-nav-item" onClick={openAppSettings}>
+            <Icons.print size={20} aria-hidden="true" />
+            <span>Printer &amp; fingerprint</span>
+          </button>
+        )}
         <button type="button" className="ag-nav-item ag-signout" onClick={() => signOut({ callbackUrl: '/login' })}>
           <Icons.logout size={20} aria-hidden="true" />
           <span>Sign out</span>

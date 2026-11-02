@@ -174,7 +174,7 @@ function ChatInner() {
 
         {messages && messages.length === 0 && (
           <div className="ui-chat-empty">
-            <EmptyState icon="chat" title={`Message ${firstName}`} text="Ask about a deposit, collecting your money or your plan. Tap a question to start." />
+            <EmptyState icon="chat" title={`Message ${firstName}`} text="Ask about a deposit, collecting your money or your plan." />
             <div className="ui-chat-prompts">
               {PROMPTS.map(p => (
                 <button key={p} type="button" className="ui-chip" onClick={() => { setText(p); inputRef.current?.focus() }}>{p}</button>

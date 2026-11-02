@@ -151,7 +151,7 @@ function LoginPageInner() {
       title="Agent sign in"
       lead="Enter your agent ID or phone number."
       audience="Agent"
-      footer={<span><Icons.locked size={14} aria-hidden="true" /> Secure sign-in · CBN compliant<br />Vochus Financial Services © 2025</span>}
+      footer={<span><Icons.locked size={14} aria-hidden="true" /> Secure sign-in · CBN compliant<br />© 2026 Vochus Global Services Ltd.</span>}
     >
       <form onSubmit={login} noValidate>
         <div className="ui-field">
@@ -161,6 +161,7 @@ function LoginPageInner() {
             className="ui-input"
             value={identifier}
             onChange={e => { setIdentifier(e.target.value); clearErrors('identifier') }}
+            onInput={e => setIdentifier((e.target as HTMLInputElement).value)}
             aria-invalid={!!fieldErrors.identifier}
             aria-describedby={fieldErrors.identifier ? 'agent-identifier-error' : undefined}
             type="text"
@@ -178,14 +179,16 @@ function LoginPageInner() {
             id="agent-password"
             value={password}
             onChange={e => { setPassword(e.target.value); clearErrors('password') }}
+            onInput={e => setPassword((e.target as HTMLInputElement).value)}
             autoComplete="current-password"
             aria-invalid={!!fieldErrors.password}
             aria-describedby={fieldErrors.password ? 'agent-password-error' : undefined}
           />
           <FieldError id="agent-password-error" message={fieldErrors.password} />
-          <button type="button" className="ui-link ui-field-link" onClick={() => router.push('/forgot-password')}>
-            Forgot password?
-          </button>
+          <div className="ui-field-links">
+            <button type="button" className="ui-link" onClick={() => router.push('/forgot-password')}>Forgot password?</button>
+            <button type="button" className="ui-link ui-link--muted" onClick={() => router.push('/unlock')}>Account locked?</button>
+          </div>
         </div>
 
         <FormError message={error} />

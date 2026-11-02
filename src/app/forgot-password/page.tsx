@@ -49,7 +49,7 @@ export default function AgentForgotPasswordPage() {
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg,#051810 0%,#0A3520 50%,#0C4824 100%)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+    <div style={{ minHeight: '100dvh', background: 'linear-gradient(135deg,#051810 0%,#0A3520 50%,#0C4824 100%)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
       <div style={{ width: '100%', maxWidth: 420 }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
           <Logo size={56} tile style={{ marginBottom: 12 }} />

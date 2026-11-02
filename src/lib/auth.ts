@@ -178,7 +178,7 @@ export const authOptions: NextAuthOptions = {
     },
   },
   pages: {
-    signIn: '/',
+    signIn: '/login',
   },
   secret: requireEnv('NEXTAUTH_SECRET'),
 }

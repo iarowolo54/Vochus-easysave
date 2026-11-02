@@ -566,7 +566,7 @@ function SavingsContent() {
                   {!recordDate && (
                     <div className="ui-segment ag-segment" role="group" aria-label="Days to record">
                       <button type="button" aria-pressed={!bulkMode} onClick={() => setBulkMode(false)}>Today</button>
-                      <button type="button" aria-pressed={bulkMode} onClick={() => setBulkMode(true)}>Several days</button>
+                      <button type="button" aria-pressed={bulkMode} onClick={() => setBulkMode(true)}>Bulk Savings</button>
                     </div>
                   )}
 
@@ -706,7 +706,7 @@ function SavingsContent() {
   )
 }
 
-/* ── Several days: month calendar of the plan ── */
+/* ── Bulk Savings: month calendar of the plan ── */
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
 const DOW = ['M', 'T', 'W', 'T', 'F', 'S', 'S']
