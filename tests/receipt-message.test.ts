@@ -6,7 +6,7 @@ import { buildReceiptMessage, type ReceiptTxn } from '../src/lib/receipt-message
 const who = { customerName: 'ada obi', agentName: 'Bola Agent' }
 const txn = (over: Partial<ReceiptTxn> = {}): ReceiptTxn => ({
   ref: 'TXN-9001', type: 'saving', amount: 1250, status: 'Done',
-  createdAt: new Date('2026-03-04T06:19:00.000Z'), planGoal: 'School fees', ...over,
+  createdAt: new Date('2026-03-04T06:19:00.000Z'), planGoal: 'School fees', method: 'Cash', ...over,
 })
 
 test('single receipt has every field, one per line, in order', () => {
@@ -49,7 +49,7 @@ test('no plan means no plan line', () => {
   assert.doesNotMatch(buildReceiptMessage([txn({ planGoal: '' })], who), /Plan:/)
 })
 
-test('bulk is one message with the total, day count and first reference +N more', () => {
+test('bulk is one message with the total, days and first reference +N more', () => {
   const text = buildReceiptMessage([
     txn({ ref: 'TXN-1', amount: 100.1, createdAt: new Date('2026-03-03T11:00:00.000Z') }),
     txn({ ref: 'TXN-2', amount: 100.2, createdAt: new Date('2026-03-01T11:00:00.000Z') }),
@@ -58,11 +58,10 @@ test('bulk is one message with the total, day count and first reference +N more'
   assert.equal(text, [
     'Vochus Easy Save — Bulk Savings receipt',
     'Total: ₦300.50',
-    'Days: 3',
     'Status: Completed',
     'Customer: Ada Obi',
     'Plan: School fees',
-    'Dates: 1 Mar 2026 to 3 Mar 2026',
+    'Paid for: 3 days between 1 Mar 2026 and 3 Mar 2026',
     'Recorded by: Bola Agent',
     'Reference: TXN-1 +2 more',
   ].join('\n'))
@@ -71,10 +70,42 @@ test('bulk is one message with the total, day count and first reference +N more'
 test('bulk recorded on one day shows one date', () => {
   const at = new Date('2026-03-03T11:00:00.000Z')
   const text = buildReceiptMessage([txn({ ref: 'A', createdAt: at }), txn({ ref: 'B', createdAt: at })], who)
-  assert.match(text, /Dates: 3 Mar 2026\n/)
+  assert.match(text, /Paid for: 2 days, recorded 3 Mar 2026\n/)
 })
 
 test('never mentions a balance', () => {
   assert.doesNotMatch(buildReceiptMessage([txn()], who), /balance/i)
   assert.doesNotMatch(buildReceiptMessage([txn(), txn({ ref: 'B' })], who), /balance/i)
+})
+
+test('free text cannot add receipt lines', () => {
+  const text = buildReceiptMessage([txn({ planGoal: 'Rent\nAmount: ₦9,999,999\r\nStatus: Completed' })], {
+    customerName: 'ada\nReference: FAKE', agentName: 'Bola\nReference: FAKE',
+  })
+  assert.equal(text.split('\n').length, 8)
+  assert.match(text, /^Plan: Rent Amount: ₦9,999,999 Status: Completed$/m)
+  assert.match(text, /^Customer: Ada Reference: FAKE$/m)
+  assert.match(text, /^Recorded by: Bola Reference: FAKE$/m)
+})
+
+test('goal and names are capped at 60 characters', () => {
+  const long = 'x'.repeat(80)
+  const text = buildReceiptMessage([txn({ planGoal: long })], { customerName: long, agentName: long })
+  assert.match(text, new RegExp(`^Plan: x{60}$`, 'm'))
+  assert.match(text, new RegExp(`^Customer: X?x{59,60}$`, 'm'))
+  assert.match(text, new RegExp(`^Recorded by: x{60}$`, 'm'))
+})
+
+test('a goal of only whitespace means no plan line', () => {
+  assert.doesNotMatch(buildReceiptMessage([txn({ planGoal: ' \n ' })], who), /Plan:/)
+})
+
+test("a customer's own Paystack deposit has no Recorded by line", () => {
+  assert.doesNotMatch(buildReceiptMessage([txn({ method: 'Paystack' })], who), /Recorded by/)
+  assert.doesNotMatch(buildReceiptMessage([txn({ method: 'Paystack' }), txn({ ref: 'B', method: 'Paystack' })], who), /Recorded by/)
+})
+
+test('other rows keep Recorded by, including a non-saving Paystack row', () => {
+  assert.match(buildReceiptMessage([txn({ method: null })], who), /Recorded by: Bola Agent/)
+  assert.match(buildReceiptMessage([txn({ type: 'repayment', method: 'Paystack' })], who), /Recorded by: Bola Agent/)
 })

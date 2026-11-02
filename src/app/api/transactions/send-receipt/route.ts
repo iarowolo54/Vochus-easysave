@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
   const rows = await prisma.transaction.findMany({
     where: { id: { in: ids }, agentId: agent.id },
     select: {
-      id: true, ref: true, type: true, amount: true, status: true, createdAt: true, customerId: true, planId: true,
+      id: true, ref: true, type: true, amount: true, method: true, status: true, createdAt: true, customerId: true, planId: true,
       customer: { select: { firstName: true, lastName: true, agentId: true } },
       plan: { select: { goal: true } },
     },
@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
   }
 
   const message = buildReceiptMessage(
-    txns.map(t => ({ ref: t.ref, type: t.type, amount: t.amount, status: t.status, createdAt: t.createdAt, planGoal: t.plan?.goal ?? null })),
+    txns.map(t => ({ ref: t.ref, type: t.type, amount: t.amount, status: t.status, createdAt: t.createdAt, planGoal: t.plan?.goal ?? null, method: t.method })),
     { customerName: `${customer.firstName} ${customer.lastName}`, agentName: agent.name },
   )
 

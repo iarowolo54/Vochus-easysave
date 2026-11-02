@@ -118,7 +118,7 @@ test('several ids post one message, with the first reference in request order', 
   const msgs = await messages(ids.custA)
   assert.equal(msgs.length, 1)
   assert.match(msgs[0].message, /Total: ₦300\.00/)
-  assert.match(msgs[0].message, /Days: 3/)
+  assert.match(msgs[0].message, /Paid for: 3 days between 1 Mar 2026 and 3 Mar 2026/)
   assert.match(msgs[0].message, new RegExp(`Reference: SR-d2-${RUN} \\+2 more`))
 })
 
