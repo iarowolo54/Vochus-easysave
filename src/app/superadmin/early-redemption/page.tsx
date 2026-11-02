@@ -20,6 +20,8 @@ interface RedemptionRecord {
   note: string | null
   status: string
   balance: number
+  currentBalance: number
+  balanceChanged: boolean
   penalty: number
   netPayout: number
   token: string | null
@@ -97,10 +99,12 @@ const REASONS = [
 
 const PAGE_SIZE = 25
 const PLAN_LIMIT = 100 // the plan picker asks the savings API for up to this many active plans
-const PENDING_STATUSES = IN_FLIGHT_REDEMPTION_STATUSES.filter(s => s !== 'Approved')
+const PENDING_STATUSES = [...IN_FLIGHT_REDEMPTION_STATUSES.filter(s => s !== 'Approved'), 'Processing']
 const DECIDABLE = ['Pending', 'TokenValidated', 'AgentApproved']
 const NO_CONNECTION = 'No connection. Check your internet and try again.'
 
+/** Sent a code that hasn't been confirmed yet. Only a request an admin made (no code) can be approved from Pending. */
+const needsCode = (r: { status: string; tokenExpiry: string | null }) => r.status === 'Pending' && !!r.tokenExpiry
 const isBank = (method: string | null | undefined) => method === 'Bank Transfer' || method === 'BankTransfer'
 const last4 = (acct: string | null) => acct ? `••••${acct.slice(-4)}` : ''
 const typeLabel = (t: string) => t === 'early' ? 'Early exit' : 'After maturity'
@@ -116,6 +120,7 @@ function StatusBadge({ status }: { status: string }) {
     case 'TokenValidated': return <span className="bdg bdg-a">Waiting for agent</span>
     case 'AgentApproved': return <span className="bdg bdg-b">Agent approved</span>
     case 'AwaitingOTP': return <span className="bdg bdg-a">Waiting for Paystack code</span>
+    case 'Processing': return <span className="bdg bdg-a">Check with Paystack</span>
     case 'Finalizing': return <span className="bdg bdg-b">Finalising payout</span>
     case 'Approved': return <span className="bdg bdg-g">Approved</span>
     case 'Rejected': return <span className="bdg bdg-r">Rejected</span>
@@ -179,6 +184,7 @@ export default function RedemptionsPage() {
   const [rejectTarget, setRejectTarget] = useState<RedemptionRecord | null>(null)
   const [rejectBusy, setRejectBusy] = useState(false)
   const [rejectError, setRejectError] = useState('')
+  const [checking, setChecking] = useState(false)
 
   const [detail, setDetail] = useState<RedemptionRecord | null>(null)
 
@@ -356,6 +362,16 @@ export default function RedemptionsPage() {
             : { action: 'approve', pin: pinValue },
         ),
       })
+      if (res.status === 409) {
+        // The request has moved on, so approving again can't work: show its current state and the way out.
+        const msg = await errorOf(res, 'This request has changed. Nothing was paid.')
+        const current = records.find(r => r.id === pinModal.id)
+        setPinModal(null); setPinValue(''); setApproveError('')
+        toast(msg)
+        if (current) setDetail(current)
+        load()
+        return
+      }
       if (!res.ok) {
         const msg = await errorOf(res, 'The payout wasn’t approved. Nothing was paid. Try again.')
         if (/pin/i.test(msg)) setPinError(msg); else setApproveError(msg)
@@ -413,11 +429,21 @@ export default function RedemptionsPage() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ otp: otpValue.trim() }),
       })
+      if (res.status === 409) {
+        const msg = await errorOf(res, 'This request has changed. Nothing was paid.')
+        const current = records.find(r => r.id === otpModal.id)
+        setOtpModal(null); setOtpValue('')
+        toast(msg)
+        if (current) setDetail(current)
+        load()
+        return
+      }
       if (!res.ok) { setOtpError(await errorOf(res, 'Paystack didn’t accept that code. Check it and try again.')); return }
+      const done = await res.json().catch(() => ({})) as { reviewNeeded?: boolean }
       setOtpModal(null); setOtpValue('')
       setResult({
         heading: 'Payout sent', title: `${nairaKobo(otpModal.amount)} sent`,
-        text: <>Paystack accepted the code and completed the transfer to {otpModal.customerName}.</>,
+        text: <>Paystack accepted the code and completed the transfer to {otpModal.customerName}.{done.reviewNeeded && <> Money arrived on this plan during the payout and was left on it. This needs a manual review; it’s flagged in the audit log.</>}</>,
         rows: [{ label: 'Customer', value: otpModal.customerName }, { label: 'Reference', value: otpModal.ref }, { label: 'Net payout', value: nairaKobo(otpModal.amount), total: true }],
       })
       load()
@@ -428,8 +454,31 @@ export default function RedemptionsPage() {
     }
   }
 
+  async function checkWithPaystack(r: RedemptionRecord) {
+    setChecking(true)
+    try {
+      const res = await fetch(`/api/admin/early-redemption/${r.id}/verify`, { method: 'POST' })
+      if (!res.ok) { toast(await errorOf(res, 'We couldn’t get an answer from Paystack. Nothing has changed. Try again shortly.')); return }
+      const d = await res.json().catch(() => ({})) as { status?: string }
+      toast(d.status === 'Approved' ? `${r.ref}: Paystack has the transfer, so the payout is recorded.`
+        : d.status === 'AwaitingOTP' ? `${r.ref}: Paystack needs a code. Enter it from the list.`
+        : `${r.ref}: no transfer went out. The money is back on the plan, so you can approve or reject it.`, 'success')
+      setDetail(null)
+      load()
+    } catch {
+      toast(NO_CONNECTION)
+    } finally {
+      setChecking(false)
+    }
+  }
+
   // ── Derived lists ──
   const records = data?.records ?? []
+
+  // An open detail shows the latest figures after the list reloads.
+  useEffect(() => {
+    setDetail(d => (d ? data?.records.find(r => r.id === d.id) ?? d : d))
+  }, [data])
   const pending = records.filter(r => PENDING_STATUSES.includes(r.status))
   const awaitingOtp = pending.filter(r => r.status === 'AwaitingOTP').length
   const hq = historySearch.trim().toLowerCase()
@@ -847,7 +896,7 @@ export default function RedemptionsPage() {
           title={`Reject ${rejectTarget.ref}?`}
           body={<>
             {rejectTarget.customerName} ({rejectTarget.customerId}) won’t receive the {nairaKobo(rejectTarget.netPayout)} payout.
-            Their plan goes back to active with its {nairaKobo(rejectTarget.balance)} balance. No money moves.
+            Their plan goes back to active with its {nairaKobo(rejectTarget.currentBalance)} balance. No money moves.
           </>}
           confirmLabel="Reject request" danger
           busy={rejectBusy} error={rejectError}
@@ -860,11 +909,19 @@ export default function RedemptionsPage() {
         <Modal icon="redeem" title={detail.ref} sub="Redemption request" onClose={() => setDetail(null)}
           footer={DECIDABLE.includes(detail.status) ? <>
             <button type="button" className="btn btn-outline" onClick={() => { const r = detail; setDetail(null); openReject(r) }}>Reject</button>
-            <button type="button" className="btn btn-green" onClick={() => { const r = detail; setDetail(null); openApprove(r) }}>{manual && isBank(detail.payoutMethod) ? 'Mark as paid' : 'Approve'}</button>
+            {!needsCode(detail) && !detail.balanceChanged && <button type="button" className="btn btn-green" onClick={() => { const r = detail; setDetail(null); openApprove(r) }}>{manual && isBank(detail.payoutMethod) ? 'Mark as paid' : 'Approve'}</button>}
           </> : detail.status === 'AwaitingOTP' ? <>
             <button type="button" className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>
-            <button type="button" className="btn btn-green" onClick={() => { const r = detail; setDetail(null); setOtpValue(''); setOtpError(''); setOtpModal({ id: r.id, ref: r.ref, customerName: r.customerName, amount: r.netPayout }) }}>Enter Paystack code</button>
+            {!detail.balanceChanged && <button type="button" className="btn btn-green" onClick={() => { const r = detail; setDetail(null); setOtpValue(''); setOtpError(''); setOtpModal({ id: r.id, ref: r.ref, customerName: r.customerName, amount: r.netPayout }) }}>Enter Paystack code</button>}
+          </> : detail.status === 'Processing' ? <>
+            <button type="button" className="btn btn-outline" disabled={checking} onClick={() => setDetail(null)}>Close</button>
+            <button type="button" className="btn btn-green" disabled={checking} onClick={() => checkWithPaystack(detail)}>{checking ? 'Checking…' : 'Check with Paystack'}</button>
           </> : <button type="button" className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>}>
+          {detail.balanceChanged && (detail.status === 'AwaitingOTP'
+            ? <p className="a-alert a-alert-r cm-gap" role="alert">This plan now holds {nairaKobo(detail.currentBalance)}, which arrived while this payout was waiting for its code. Nothing has been paid. Don’t enter the code; this request needs a manual fix.</p>
+            : <p className="a-alert a-alert-r cm-gap" role="alert">The balance has changed. They asked to collect from {nairaKobo(detail.balance)}, and the plan now holds {nairaKobo(detail.currentBalance)}. Reject this request and ask them to request again.</p>)}
+          {needsCode(detail) && <p className="a-alert a-alert-a cm-gap" role="status">The customer hasn’t confirmed this request with their code, so it can’t be approved yet. You can reject it.</p>}
+          {detail.status === 'Processing' && <p className="a-alert a-alert-a cm-gap" role="status">We lost contact with Paystack during this transfer, so it may or may not have gone out. Check before doing anything else.</p>}
           <div className="dlg-hero">
             <div className="dlg-hero-lbl">Amount to collect</div>
             <div className="dlg-hero-amt">{nairaKobo(detail.netPayout)}</div>

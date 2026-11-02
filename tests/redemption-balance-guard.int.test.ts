@@ -754,6 +754,30 @@ test('admin create: refused while a request is in progress, allowed after an aba
   refs.push(made.ref); erIds.push(made.id)
 })
 
+test('the admin list shows the current balance and flags a change, and only when it matters', async () => {
+  const cases: [string, number, string, boolean][] = [
+    ['unchanged', 10000, 'AgentApproved', false],
+    ['deposit', 55000, 'AgentApproved', true],
+    ['decided', 55000, 'Rejected', false],
+  ]
+  const made: [string, number, boolean][] = []
+  for (const [, balance, status, flagged] of cases) {
+    const planId = await mkPlan(balance)
+    made.push([(await mkRedemption({ planId, status })).id, balance, flagged])
+  }
+  const otpClean = await mkRedemption({ planId: await mkPlan(0, 'Redeemed'), method: 'BankTransfer', status: 'AwaitingOTP' })
+  made.push([otpClean.id, 0, false])
+  const otpDeposit = await mkRedemption({ planId: await mkPlan(10000, 'Redeemed'), method: 'BankTransfer', status: 'AwaitingOTP' })
+  made.push([otpDeposit.id, 10000, true])
+  const { records } = await (await adminList.GET()).json()
+  for (const [id, balance, flagged] of made) {
+    const row = records.find((r: { id: string }) => r.id === id)
+    assert.equal(row.currentBalance, balance)
+    assert.equal(row.balanceChanged, flagged, `${id} at ${balance}`)
+    assert.equal(row.balance, 10000)
+  }
+})
+
 test('the refusal message is not mistaken for a PIN error on the admin screen', () => {
   assert.doesNotMatch(BALANCE_CHANGED, /pin/i)
 })

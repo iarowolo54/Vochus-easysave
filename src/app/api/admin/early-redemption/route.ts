@@ -5,9 +5,18 @@ import { prisma } from '@/lib/prisma'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
 import { excludeExpiredPending, IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
+import { balanceUnchanged, readyToFinalize } from '@/lib/redemption-balance'
 
-// Awaiting admin action = in flight but not yet Approved (incl. AwaitingOTP / Finalizing).
-const AWAITING_ACTION_STATUSES = IN_FLIGHT_REDEMPTION_STATUSES.filter(s => s !== 'Approved')
+// Awaiting admin action = in flight but not yet Approved (incl. AwaitingOTP / Finalizing), or a transfer
+// whose outcome the admin needs to check (Processing).
+const AWAITING_ACTION_STATUSES = [...IN_FLIGHT_REDEMPTION_STATUSES.filter(s => s !== 'Approved'), 'Processing']
+const DECIDABLE_STATUSES = ['Pending', 'TokenValidated', 'AgentApproved']
+
+/** Whether approving, or entering the Paystack code, would now be refused because money moved. */
+function balanceChanged(r: { status: string; balance: number; savingsPlan: { status: string; balance: number } }) {
+  if (r.status === 'AwaitingOTP') return !readyToFinalize(r.savingsPlan, r.balance)
+  return DECIDABLE_STATUSES.includes(r.status) && !balanceUnchanged(r.savingsPlan.balance, r.balance)
+}
 
 function genRef() {
   return `ER-${Date.now().toString(36).toUpperCase()}-${randomBytes(4).toString('hex').toUpperCase()}`
@@ -77,6 +86,8 @@ export async function GET() {
       note: r.note,
       status: r.status,
       balance: r.balance,
+      currentBalance: r.savingsPlan.balance,
+      balanceChanged: balanceChanged(r),
       penalty: r.penalty,
       netPayout: r.netPayout,
       // token intentionally omitted: it is a hash of a 6-digit code (low
