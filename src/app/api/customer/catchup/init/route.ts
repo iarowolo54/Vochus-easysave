@@ -4,13 +4,12 @@ import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { createPaymentIntent } from '@/lib/payment-intent'
-import { buildSlots } from '@/lib/savings-card'
-import { isEligiblePlan, validateSelection } from '@/lib/catchup'
+import { checkBulkSelection } from '@/lib/bulk-savings'
 
-// Online catch-up: a customer tops up previously *missed* days on their own
+// Bulk Savings: a customer pays for missed, today's or upcoming days on their own
 // self-service plan. The server validates the selected day-keys against the
-// plan's live slots and computes the amount from the plan rate — the client
-// amount is never trusted. The ref deliberately reuses the VCHS-CST- style so
+// plan's live slots (in WAT, where the customer's calendar is) and computes the
+// amount from the plan rate — the client amount is never trusted. The ref deliberately reuses the VCHS-CST- style so
 // /customer/save/callback routes it to the normal paystack/verify handler.
 export async function POST(req: NextRequest) {
   const session = await getCustomerSession()
@@ -28,22 +27,9 @@ export async function POST(req: NextRequest) {
   const plan = await prisma.savingsPlan.findFirst({ where: { id: planId, customerId: customer.id } })
   if (!plan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 })
 
-  if (!isEligiblePlan(plan)) return NextResponse.json({ error: 'Plan is not eligible for catch-up' }, { status: 400 })
-
-  // Build the plan's live slots from its actual deposits + existing coverage.
-  const [deposits, coverage] = await Promise.all([
-    prisma.transaction.findMany({ where: { planId: plan.id, type: 'saving', status: 'Done' }, select: { createdAt: true } }),
-    prisma.planDayCoverage.findMany({ where: { savingsPlanId: plan.id }, select: { coversKey: true } }),
-  ])
-  const slots = buildSlots(
-    { startDate: plan.startDate.toISOString(), maturityDate: plan.maturityDate.toISOString(), periodDays: plan.periodDays, cadence: plan.cadence },
-    deposits.map(d => d.createdAt.toISOString()),
-    coverage.map(c => c.coversKey),
-  )
-
-  const result = validateSelection(plan, slots, keys)
-  if (!result.ok) return NextResponse.json({ error: result.error }, { status: 400 })
-  const amount = result.total
+  const check = await checkBulkSelection(prisma, plan, keys, new Date(), { kind: 'customer', customerId: customer.id })
+  if (!check.ok) return NextResponse.json({ error: check.error }, { status: check.status })
+  const amount = check.total
 
   const email = customer.email ?? `${customer.customerId.toLowerCase()}@vochus.ng`
   const rand = randomBytes(9).toString('base64url').toUpperCase()

@@ -11,6 +11,10 @@ import { prisma } from './prisma'
 
 export const INTENT_PENDING = 'Pending'
 export const INTENT_DONE = 'Done'
+/** Money arrived that can't be credited as it stands (wrong currency, closed plan). Staff resolve it from the audit log. */
+export const INTENT_REVIEW = 'Review'
+/** Audit action for money that arrived but wasn't credited. Staff work from these rows. */
+export const REVIEW_ACTION = 'payment_needs_manual_review'
 
 export interface IntentInput {
   ref: string
@@ -35,6 +39,17 @@ export function createPaymentIntent(data: IntentInput) {
       coversKeys: data.coversKeys ? JSON.stringify(data.coversKeys) : null,
     },
   })
+}
+
+/** The day-keys stored on an intent. Malformed or absent means none. */
+export function parseCoversKeys(stored: string | null): string[] {
+  if (!stored) return []
+  try {
+    const parsed: unknown = JSON.parse(stored)
+    return Array.isArray(parsed) ? parsed.filter((k): k is string => typeof k === 'string') : []
+  } catch {
+    return []
+  }
 }
 
 /** The still-pending intent for this ref, but only if it belongs to the actor. */

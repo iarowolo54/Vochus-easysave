@@ -23,13 +23,13 @@ import InterestNudge, { InterestCard, InterestChip, earnsInterest } from '@/comp
 import AutoFunding from '@/components/customer/AutoFunding'
 import { displayName, formatDate, formatNaira } from '@/lib/format'
 import { getHideBalance, setHideBalance } from '@/lib/preferences'
-import { isEligiblePlan } from '@/lib/catchup'
-import { buildSlots, dateKey, hasEnded, isWeekly } from '@/lib/savings-card'
+import { BULK_SAVINGS_LABEL, isEligiblePlan, selectableKeys } from '@/lib/catchup'
+import { buildSlots, currentSlot, dateKey, dayDeposits, hasEnded, isWeekly } from '@/lib/savings-card'
 
 type Plan = {
   id: string; dailyAmount: number; periodDays: number; cadence?: string; goal: string
   startDate: string; maturityDate: string; balance: number; status: string; interest?: number
-  source?: string; coveredKeys?: string[]; nextInterestAmount?: number; daysToNextInterest?: number | null
+  source?: string; coveredKeys?: string[]; coveredRefs?: string[]; nextInterestAmount?: number; daysToNextInterest?: number | null
 }
 type Tx = {
   id: string; amount: number; ref: string; createdAt: string; method: string | null
@@ -131,7 +131,9 @@ export default function CustomerDashboard() {
     () => (data && plan ? data.transactions.filter(t => t.planId === plan.id) : []),
     [data, plan],
   )
-  const depositDates = useMemo(() => planTxs.map(t => t.createdAt), [planTxs])
+  // Bulk Savings deposits count for the days they cover, not the day they were paid.
+  const dayTxs = useMemo(() => dayDeposits(planTxs, plan?.coveredRefs), [planTxs, plan?.coveredRefs])
+  const depositDates = useMemo(() => dayTxs.map(t => t.createdAt), [dayTxs])
   // The goal bar fills with the same counter as the balance, so they land together.
   const shownBalance = useCountUp(plan?.balance ?? 0, !hideBalance)
 
@@ -183,11 +185,12 @@ export default function CustomerDashboard() {
     const daysIn = Math.max(0, Math.floor((Date.now() - startDay.getTime()) / 86400000))
     windowStart = dateKey(new Date(startDay.getFullYear(), startDay.getMonth(), startDay.getDate() + daysIn - (daysIn % 7)))
   }
-  // "Catch up" is offered only for eligible (active, self-service, daily/weekly) plans with a missed slot.
-  const canCatchUp = !!plan && !ended && !pending
+  // Bulk Savings is offered only for eligible (active, self-service, daily/weekly) plans with a day left to pay for.
+  const slots = plan ? buildSlots(plan, depositDates, plan.coveredKeys ?? []) : []
+  const canBulkSave = !!plan && !ended && !pending
     && isEligiblePlan({ status: plan.status, source: plan.source ?? '', cadence: plan.cadence })
-    && buildSlots(plan, depositDates, plan.coveredKeys ?? []).some(x => x.state === 'missed')
-  const recentForStatus = planTxs.filter(t => {
+    && selectableKeys(slots).length > 0
+  const recentForStatus = dayTxs.filter(t => {
     const k = dateKey(new Date(t.createdAt))
     return k >= windowStart && k <= today
   })
@@ -287,7 +290,7 @@ export default function CustomerDashboard() {
                 </p>
               </>
             )}
-            {plan && !ended && !pending && <TodayStatus weekly={weekly} deposits={recentForStatus} />}
+            {plan && !ended && !pending && <TodayStatus weekly={weekly} deposits={recentForStatus} covered={currentSlot(slots, today, weekly)?.coveredOnly} paidAhead={slots.filter(s => s.key > today && s.coveredOnly).length} />}
           </section>
         )}
 
@@ -302,8 +305,8 @@ export default function CustomerDashboard() {
               onClick={() => router.push(plan ? `/customer/save?planId=${plan.id}` : '/customer/save')}
             />
           )}
-          {canCatchUp && plan && (
-            <ActionButton icon="history" label="Catch up" onClick={() => router.push(`/customer/catchup?planId=${encodeURIComponent(plan.id)}`)} />
+          {canBulkSave && plan && (
+            <ActionButton icon="history" label={BULK_SAVINGS_LABEL} onClick={() => router.push(`/customer/catchup?planId=${encodeURIComponent(plan.id)}`)} />
           )}
           <ActionButton icon="withdraw" label="Collect" onClick={() => router.push('/customer/redeem')} />
           <ActionButton
@@ -334,7 +337,7 @@ export default function CustomerDashboard() {
             <span className="ui-row-main">
               <span className="ui-row-title">Savings card</span>
               <span className="ui-row-sub">
-                You saved on {buildSlots(plan, depositDates, plan.coveredKeys ?? []).filter(x => x.state === 'saved').length} of{' '}
+                You saved on {slots.filter(x => x.state === 'saved').length} of{' '}
                 {weekly ? Math.ceil(plan.periodDays / 7) : plan.periodDays} {weekly ? 'weeks' : 'days'}
               </span>
             </span>

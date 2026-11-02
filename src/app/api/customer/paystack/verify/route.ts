@@ -1,10 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
-import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
-import { creditRegistrationReward } from '@/lib/reward'
-import { findOwnedPendingIntent, consumePaymentIntent } from '@/lib/payment-intent'
+import { daysNotBought, settleIntentPayment } from '@/lib/customer-settle'
 
 export async function POST(req: NextRequest) {
   const session = await getCustomerSession()
@@ -22,8 +20,20 @@ export async function POST(req: NextRequest) {
     actorName: session.name,
   })
 
-  const existing = await prisma.transaction.findUnique({ where: { ref: reference } })
-  if (existing) return NextResponse.json({ alreadyProcessed: true })
+  const alreadyProcessed = async () => {
+    const tx = await prisma.transaction.findUnique({ where: { ref: reference }, select: { amount: true, planId: true, customerId: true } })
+    if (!tx) return null
+    // Only the payer sees the details of this payment.
+    if (tx.customerId !== session.id) return NextResponse.json({ alreadyProcessed: true })
+    const [plan, notBought] = await Promise.all([
+      tx.planId ? prisma.savingsPlan.findUnique({ where: { id: tx.planId }, select: { balance: true } }) : null,
+      daysNotBought(prisma, reference, session.id),
+    ])
+    return NextResponse.json({ alreadyProcessed: true, amount: tx.amount, newBalance: plan?.balance, notBought })
+  }
+
+  const processed = await alreadyProcessed()
+  if (processed) return processed
 
   const res = await fetch(`https://api.paystack.co/transaction/verify/${encodeURIComponent(reference)}`, {
     headers: { Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}` },
@@ -47,107 +57,27 @@ export async function POST(req: NextRequest) {
   const customer = await prisma.customer.findUnique({ where: { id: session.id } })
   if (!customer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  // Require a server-side intent for THIS customer (reject arbitrary references)
-  // and bind the credited amount/currency to what was initiated.
-  const intent = await findOwnedPendingIntent(reference, { customerId: customer.id })
+  // The server-side intent is the authority on who and which plan. This reference must be one this server
+  // initiated for THIS customer; an arbitrary reference is rejected.
+  const intent = await prisma.paymentIntent.findFirst({ where: { ref: reference, customerId: customer.id } })
   if (!intent) return NextResponse.json({ error: 'Reference mismatch' }, { status: 403 })
-  if (txData.currency && txData.currency !== intent.currency) {
-    return NextResponse.json({ error: 'Currency mismatch' }, { status: 400 })
-  }
-  if (money(txData.amount / 100) !== money(intent.amount)) {
-    return NextResponse.json({ error: 'Amount mismatch' }, { status: 400 })
-  }
-  const amount = money(intent.amount)
 
-  const priorSavings = await prisma.transaction.count({
-    where: { customerId: customer.id, type: 'saving' },
+  // Same rule as the webhook, which may have settled this during the Paystack fetch above.
+  const result = await settleIntentPayment(prisma, {
+    intent,
+    reference,
+    amountNaira: txData.amount / 100,
+    currency: txData.currency,
+    channel: txData.channel,
+    via: 'Paystack',
   })
 
-  // Credit the plan the payment was initiated for (from the intent), confirmed
-  // to belong to this customer.
-  const plan = intent.planId
-    ? await prisma.savingsPlan.findFirst({ where: { id: intent.planId, customerId: customer.id } })
-    : null
-  if (!plan) return NextResponse.json({ error: 'No active plan' }, { status: 400 })
+  if (result.kind === 'review') return NextResponse.json({ review: true })
+  if (result.kind === 'already') return (await alreadyProcessed()) ?? NextResponse.json({ alreadyProcessed: true })
 
-  const agent = await prisma.agent.findUnique({ where: { id: customer.agentId } })
-  if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
-
-  // Online catch-up: the day-keys this payment covers (display-only; never read by
-  // interest, which only sees the now-stamped deposit).
-  let coversKeys: string[] = []
-  if (intent.coversKeys) {
-    try {
-      const parsed: unknown = JSON.parse(intent.coversKeys)
-      if (Array.isArray(parsed)) coversKeys = parsed.filter((k): k is string => typeof k === 'string')
-    } catch {
-      coversKeys = []
-    }
-  }
-
-  try {
-    await prisma.$transaction(async (tx) => {
-      // Atomically consume the intent; a losing/replayed call must not credit.
-      const consumed = await consumePaymentIntent(tx, reference, { customerId: customer.id })
-      if (!consumed) throw new Error('ALREADY_PROCESSED')
-      await tx.transaction.create({
-        data: {
-          ref: reference,
-          agentId: agent.id,
-          customerId: customer.id,
-          planId: plan.id,
-          type: 'saving',
-          amount,
-          method: 'Paystack',
-          status: 'Done',
-          note: `Customer self-pay via Paystack — ${txData.channel ?? 'card'}`,
-        },
-      })
-      await tx.savingsPlan.update({ where: { id: plan.id }, data: { balance: { increment: amount } } })
-      await tx.customerPayment.create({
-        data: {
-          ref: `PAY-${reference}`,
-          customerId: customer.id,
-          planId: plan.id,
-          amount,
-          status: 'Done',
-          channel: txData.channel ?? 'card',
-        },
-      })
-      // Catch-up: record display-only coverage for each covered day, tagged with
-      // this transaction's ref. The intent-consume above already makes a replay a
-      // no-op; the upsert on the unique (savingsPlanId, coversKey) also keeps a day
-      // that was already covered from erroring. (SQLite has no createMany skipDuplicates.)
-      for (const coversKey of coversKeys) {
-        await tx.planDayCoverage.upsert({
-          where: { savingsPlanId_coversKey: { savingsPlanId: plan.id, coversKey } },
-          create: { savingsPlanId: plan.id, coversKey, ref: reference },
-          update: {},
-        })
-      }
-    })
-  } catch (e: any) {
-    if ((e instanceof Error && e.message === 'ALREADY_PROCESSED') || e?.code === 'P2002') {
-      const updated = await prisma.savingsPlan.findUnique({ where: { id: plan.id } })
-      return NextResponse.json({ alreadyProcessed: true, newBalance: updated?.balance })
-    }
-    throw e
-  }
-
-  const updated = await prisma.savingsPlan.findUnique({ where: { id: plan.id } })
-
-  logAudit({
-    action: 'customer_paystack_payment',
-    entity: 'Transaction',
-    details: `${customer.firstName} ${customer.lastName} (${customer.customerId}) paid ₦${amount.toLocaleString()} via Paystack — ref ${reference}`,
-    actorType: 'customer',
-    actorId: customer.id,
-    actorName: `${customer.firstName} ${customer.lastName}`,
-  })
-
-  if (priorSavings === 0) {
-    creditRegistrationReward(customer).catch(() => {})
-  }
-
-  return NextResponse.json({ amount, newBalance: updated?.balance })
+  const [updated, notBought] = await Promise.all([
+    prisma.savingsPlan.findUnique({ where: { id: result.planId }, select: { balance: true } }),
+    daysNotBought(prisma, reference, customer.id),
+  ])
+  return NextResponse.json({ amount: result.amount, newBalance: updated?.balance, notBought })
 }

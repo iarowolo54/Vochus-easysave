@@ -3,14 +3,15 @@ import { useMemo, useState } from 'react'
 import { Icons } from '@/components/ui/icons'
 import { formatDate, formatNaira, formatTime } from '@/lib/format'
 import { depositIcon, depositMethod } from './DepositReceipt'
+import { BULK_SAVINGS_LABEL } from '@/lib/catchup'
 import {
-  buildSlots, currentWeekDays, dateKey, depositsByDay, hasEnded, isWeekly, slotEndKey,
+  buildSlots, currentWeekDays, dateKey, dayDeposits, depositsByDay, hasEnded, isWeekly, slotEndKey,
   type Slot, type SlotState,
 } from '@/lib/savings-card'
 
-type Plan = { startDate: string; maturityDate: string; periodDays: number; cadence?: string; balance: number; dailyAmount: number; coveredKeys?: string[] }
+type Plan = { startDate: string; maturityDate: string; periodDays: number; cadence?: string; balance: number; dailyAmount: number; coveredKeys?: string[]; coveredRefs?: string[] }
 
-export type Deposit = { id: string; amount: number; createdAt: string; method: string | null; recordedBy: string }
+export type Deposit = { id: string; ref?: string; amount: number; createdAt: string; method: string | null; recordedBy: string }
 
 /** What the day-details sheet shows for a tapped day (or week). */
 export type DaySelection = { title: string; state: SlotState; deposits: Deposit[]; ended: boolean; coveredOnly: boolean }
@@ -28,8 +29,9 @@ function shortDate(d: Date) {
 function useCardData(plan: Plan, deposits: Deposit[]) {
   const weekly = isWeekly(plan)
   const ended = hasEnded(plan)
-  const slots = useMemo(() => buildSlots(plan, deposits.map(d => d.createdAt), plan.coveredKeys ?? []), [plan, deposits])
-  const byDay = useMemo(() => depositsByDay(deposits), [deposits])
+  const counted = useMemo(() => dayDeposits(deposits, plan.coveredRefs), [deposits, plan.coveredRefs])
+  const slots = useMemo(() => buildSlots(plan, counted.map(d => d.createdAt), plan.coveredKeys ?? []), [plan, counted])
+  const byDay = useMemo(() => depositsByDay(counted), [counted])
 
   function select(slot: Slot): DaySelection {
     const end = slotEndKey(slot, weekly)
@@ -55,7 +57,7 @@ function stateClass(state: SlotState, ended: boolean) {
   return `ui-cal-day ui-cal-day--${ended && state === 'missed' ? 'unsaved' : state}`
 }
 
-/** Catch-up mode: only `selectable` (missed) slots can be toggled; everything else is shown but inert. */
+/** Bulk Savings mode: only `selectable` (not yet saved) slots can be toggled; everything else is shown but inert. */
 type Picker = { selectable: Set<string>; selected: Set<string> }
 
 function pickClass(slot: Slot, ended: boolean, picker?: Picker) {
@@ -68,7 +70,7 @@ function pickClass(slot: Slot, ended: boolean, picker?: Picker) {
 
 function pickLabel(slot: Slot, weekly: boolean, ended: boolean, picker?: Picker) {
   const base = slotLabel(slot, weekly, ended)
-  if (!picker || !picker.selectable.has(slot.key)) return slot.coveredOnly ? `${base} (covered in a catch-up payment)` : base
+  if (!picker || !picker.selectable.has(slot.key)) return slot.coveredOnly ? `${base} (paid for through ${BULK_SAVINGS_LABEL})` : base
   return `${base}, ${picker.selected.has(slot.key) ? 'selected' : 'tap to select'}`
 }
 
@@ -244,7 +246,7 @@ function MonthCalendar({ slots, ended, plan, onPick, picker }: { slots: Slot[]; 
           <span className="ui-cal-title">{label}</span>
           <span className="ui-cal-sub">
             {months.length > 1 && `Month ${idx + 1} of ${months.length} · `}
-            {shortDate(new Date(plan.startDate))} – {shortDate(new Date(plan.maturityDate))}
+            {shortDate(slots[0].date)} – {shortDate(slots[slots.length - 1].date)}
           </span>
         </div>
         <button type="button" className="ui-icon-btn ui-icon-btn--soft" onClick={() => setIdx(i => i + 1)} disabled={idx === months.length - 1} aria-label="Next month">
@@ -312,7 +314,7 @@ export function DayDetails({ selection, hideAmounts, onOpen }: { selection: DayS
   const { deposits, state, ended, coveredOnly } = selection
   if (deposits.length === 0) {
     const text = coveredOnly
-      ? 'Covered in a catch-up payment.'
+      ? `Paid for through ${BULK_SAVINGS_LABEL}.`
       : state === 'upcoming'
       ? 'This day hasn’t come yet.'
       : state === 'today'
@@ -342,7 +344,7 @@ export function DayDetails({ selection, hideAmounts, onOpen }: { selection: DayS
   )
 }
 
-/* ── Catch-up: pick missed days to pay for ──────────────────────────── */
+/* ── Bulk Savings: pick days to pay for ─────────────────────────────── */
 
 type CatchupProps = {
   plan: Plan
