@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import {
   generateCode,
   pickChannel,
+  recoveryChannel,
   maskTarget,
 } from '../src/lib/unlock-otp'
 
@@ -31,4 +32,10 @@ test('maskTarget hides most of the destination', () => {
   const sms = maskTarget('sms', '08012345678')
   assert.match(sms, /5678$/)
   assert.ok(!sms.includes('0801234'))
+})
+
+test('recoveryChannel ignores an unverified email', () => {
+  const phone = '08012345678'
+  assert.deepEqual(recoveryChannel({ email: 'agent@b.com', emailVerifiedAt: null, phone }), { channel: 'sms', target: phone })
+  assert.deepEqual(recoveryChannel({ email: 'own@b.com', emailVerifiedAt: new Date(), phone }), { channel: 'email', target: 'own@b.com' })
 })

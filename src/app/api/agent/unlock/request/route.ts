@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { sendSMS } from '@/lib/kudisms'
+import { clientIp } from '@/lib/rate-limit'
 import { deliverInBackground, issueResetCode, limitByIp, newResetId, readBody, text } from '@/lib/password-reset'
 
 export async function POST(req: Request) {
@@ -22,7 +23,7 @@ export async function POST(req: Request) {
         ],
       },
     })
-    const issued = agent?.lockedAt ? await issueResetCode('agent', agent.id, Date.now(), 'unlock') : null
+    const issued = agent?.lockedAt ? await issueResetCode('agent', agent.id, Date.now(), 'unlock', clientIp(req)) : null
     if (agent && issued) {
       resetId = issued.resetId
       deliverInBackground(issued.id, async () => {

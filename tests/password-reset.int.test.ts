@@ -12,6 +12,7 @@ import {
   GUESS_ALARM_PER_HOUR,
   IP_GUESSES_PER_15_MIN,
   IP_REQUESTS_PER_HOUR,
+  MAX_ACCOUNT_SENDS_PER_DAY,
   MAX_FAILED_GUESSES_PER_DAY,
   MAX_SENDS_PER_DAY,
   MAX_VERIFY_ATTEMPTS,
@@ -936,4 +937,37 @@ test('otp/send audits each send and caps an agent in the database', async () => 
   assert.equal((await POST(req({ phone: other }))).status, 429)
   assert.equal(await prisma.phoneOTP.count({ where: { phone: other } }), 0)
   stubbedAgentId = null
+})
+
+test('send limits count per account and IP, under an overall ceiling', async () => {
+  const c = await mkCustomer()
+  const t0 = Date.now()
+  const send = (at: number, ip: string) => issueResetCode('customer', c.id, at, 'reset', ip)
+
+  const first = (await send(t0, '10.1.0.1'))!
+  assert.equal(await send(t0 + 1, '10.1.0.1'), null, 'same IP is in its cooldown')
+  assert.ok(await send(t0 + 2, '10.1.0.2'), 'the owner on another IP still gets a code')
+  const row = await prisma.passwordResetOtp.findUniqueOrThrow({ where: { id: first.id } })
+  assert.ok(row.requestIpHash && !row.requestIpHash.includes('10.1.0.1'), 'the IP is not stored')
+
+  for (let i = 1; i < MAX_SENDS_PER_DAY; i++) assert.ok(await send(t0 + i * RESEND_COOLDOWN_MS, '10.1.0.1'))
+  assert.equal(await send(t0 + MAX_SENDS_PER_DAY * RESEND_COOLDOWN_MS, '10.1.0.1'), null, 'this IP is at its cap')
+  assert.ok(await send(t0 + MAX_SENDS_PER_DAY * RESEND_COOLDOWN_MS, '10.1.0.3'), 'another IP is not')
+
+  const sent = await prisma.passwordResetOtp.count({ where: { actorId: c.id } })
+  for (let i = sent; i < MAX_ACCOUNT_SENDS_PER_DAY; i++) assert.ok(await send(t0 + 3, `10.2.0.${i}`))
+  assert.equal(await send(t0 + 4, '10.3.0.1'), null, 'overall ceiling')
+})
+
+test('an agent-entered email gets no recovery code; a verified one does', async () => {
+  const { requestUnlockOtp } = await import('../src/lib/unlock-otp')
+  const channelFor = async (over: Record<string, unknown>) => {
+    const c = await mkCustomer({ email: `c${seq}-${rid}@example.com`, ...over })
+    let used = ''
+    const issued = await requestUnlockOtp(c, Date.now(), async ch => { used = ch; return true })
+    await issued?.delivered
+    return used
+  }
+  assert.equal(await channelFor({}), 'sms')
+  assert.equal(await channelFor({ emailVerifiedAt: new Date() }), 'email')
 })

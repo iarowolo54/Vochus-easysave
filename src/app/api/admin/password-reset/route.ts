@@ -6,7 +6,7 @@ import { logAudit } from '@/lib/audit'
 import { sendMail } from '@/lib/mail'
 import { sendSMS } from '@/lib/kudisms'
 import { cancelResetCode, issueAdminResetCode, readBody, text, type ResetActor } from '@/lib/password-reset'
-import { maskTarget, pickChannel } from '@/lib/unlock-otp'
+import { maskTarget, pickChannel, recoveryChannel } from '@/lib/unlock-otp'
 
 // Sends a password reset code to the channel already on file, past the cooldown and daily cap, for
 // someone locked out of recovery. The admin never sees the code, and the code's resetId travels in a link.
@@ -29,14 +29,14 @@ export async function POST(req: NextRequest) {
 
   const type: ResetActor = actorType
   const account = type === 'customer'
-    ? await prisma.customer.findUnique({ where: { id }, select: { id: true, email: true, phone: true, firstName: true, lastName: true, customerId: true } })
+    ? await prisma.customer.findUnique({ where: { id }, select: { id: true, email: true, emailVerifiedAt: true, phone: true, firstName: true, lastName: true, customerId: true } })
     : await prisma.agent.findUnique({ where: { id }, select: { id: true, email: true, phone: true, name: true, agentId: true } })
   if (!account) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 
   const label = 'customerId' in account
     ? `${account.firstName} ${account.lastName} (${account.customerId})`
     : `${account.name} (${account.agentId})`
-  const { channel, target } = pickChannel(account)
+  const { channel, target } = 'customerId' in account ? recoveryChannel(account) : pickChannel(account)
   const issued = await issueAdminResetCode(type, account.id)
   const path = type === 'customer' ? '/customer/forgot-password' : '/forgot-password'
   const link = `${baseUrl}${path}?r=${issued.resetId}`

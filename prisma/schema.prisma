@@ -84,6 +84,7 @@ model Customer {
   lastName     String
   phone        String
   email        String?
+  emailVerifiedAt DateTime? // set only when the customer proved the address; agent-entered emails stay null
   dob          DateTime?
   address      String
   language     String       @default("English")
@@ -584,6 +585,7 @@ model PasswordResetOtp {
   actorId    String
   purpose    String    @default("reset") // 'reset' | 'unlock' | 'admin'
   resetId    String? // given only to whoever requested this code; guesses must present it
+  requestIpHash String? // keyed hash of the requester's IP, for the per-account-and-IP send limits
   codeHash   String
   expiresAt  DateTime
   attempts   Int       @default(0)

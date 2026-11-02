@@ -4,7 +4,8 @@ import { sendMail } from '@/lib/mail'
 import { emailLogo } from '@/lib/email-brand'
 import { sendSMS } from '@/lib/kudisms'
 import { deliverInBackground, issueResetCode, limitByIp, newResetId, readBody, text } from '@/lib/password-reset'
-import { pickChannel } from '@/lib/unlock-otp'
+import { clientIp } from '@/lib/rate-limit'
+import { recoveryChannel } from '@/lib/unlock-otp'
 
 function resetEmailHtml(code: string) {
   return `
@@ -35,10 +36,10 @@ export async function POST(req: NextRequest) {
   let resetId = newResetId()
   try {
     const customer = await prisma.customer.findFirst({ where: { phone } })
-    const issued = customer ? await issueResetCode('customer', customer.id) : null
+    const issued = customer ? await issueResetCode('customer', customer.id, Date.now(), 'reset', clientIp(req)) : null
     if (customer && issued) {
       resetId = issued.resetId
-      const { channel, target } = pickChannel(customer)
+      const { channel, target } = recoveryChannel(customer)
       deliverInBackground(issued.id, async () => {
         if (channel === 'email') {
           await sendMail({ to: target, subject: 'Vochus Easy Save — Password Reset Code', html: resetEmailHtml(issued.code) })

@@ -68,8 +68,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'The code couldn’t be sent. Try again.' }, { status: 500 })
   }
 
-  const customer = await prisma.customer.findFirst({ where: { phone }, select: { email: true, firstName: true } })
-  if (customer?.email) {
+  const customer = await prisma.customer.findFirst({ where: { phone }, select: { email: true, emailVerifiedAt: true, firstName: true } })
+  if (customer?.email && customer.emailVerifiedAt) {
     sendMail({
       to: customer.email,
       subject: 'Your Vochus Easy Save verification code',

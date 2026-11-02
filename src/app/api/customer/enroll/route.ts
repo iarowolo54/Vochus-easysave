@@ -146,6 +146,7 @@ export async function POST(req: NextRequest) {
       lastName,
       phone: normalizePhone(String(phone)),
       email: email ? normalizeEmail(String(email)) : null,
+      emailVerifiedAt: new Date(), // the email-OTP check above is required to get here
       dob: dob ? new Date(dob) : null,
       address,
       gender: genderCheck.value,

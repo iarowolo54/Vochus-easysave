@@ -9,8 +9,9 @@
 //  - Attempts and send limits live in the database, so they hold across PM2 instances and restarts.
 //  - Separate from PhoneOTP/EmailOTP, so a code from enrolment or onboarding can't reset a password.
 //
-// Limits are generous because market customers may share a phone or a mobile network. A stranger can
-// still use up an account's daily sends; an admin can send a code past that limit (issueAdminResetCode).
+// Limits are generous because market customers may share a phone or a mobile network. The cooldown and
+// daily cap count per account and IP, so one IP can't hold an account's limit against its owner. Many IPs
+// can still reach the overall ceiling; an admin can send a code past it (issueAdminResetCode).
 import { createHmac, randomBytes, randomInt, randomUUID, timingSafeEqual } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { prisma } from './prisma'
@@ -21,7 +22,8 @@ import { clientIp, createRateLimiter } from './rate-limit'
 export const OTP_TTL_MS = 10 * 60_000
 export const MAX_VERIFY_ATTEMPTS = 5
 export const RESEND_COOLDOWN_MS = 60_000
-export const MAX_SENDS_PER_DAY = 10
+export const MAX_SENDS_PER_DAY = 10 // per account and IP
+export const MAX_ACCOUNT_SENDS_PER_DAY = 40
 export const MAX_FAILED_GUESSES_PER_DAY = 50
 export const LOCK_SPIKE_PER_HOUR = 20
 export const GUESS_ALARM_PER_HOUR = 200
@@ -82,25 +84,31 @@ export async function issueResetCode(
   actorId: string,
   now: number = Date.now(),
   purpose: ResetPurpose = 'reset',
+  ip: string = 'unknown',
 ): Promise<{ id: string; code: string; resetId: string } | null> {
   try {
+    const ipHash = ip === 'unknown' ? null : hmacCode('reset-ip', ip)
     const code = generateCode()
     const id = randomUUID()
     const resetId = newResetId()
     // One statement, so concurrent requests can't both pass the cooldown and daily cap.
     const inserted = await prisma.$executeRaw`
-      INSERT INTO "PasswordResetOtp" ("id", "actorType", "actorId", "purpose", "resetId", "codeHash", "expiresAt", "attempts", "createdAt")
-      SELECT ${id}, ${actorType}, ${actorId}, ${purpose}, ${resetId}, ${hashResetCode(code)}, ${now + OTP_TTL_MS}, 0, ${now}
+      INSERT INTO "PasswordResetOtp" ("id", "actorType", "actorId", "purpose", "resetId", "requestIpHash", "codeHash", "expiresAt", "attempts", "createdAt")
+      SELECT ${id}, ${actorType}, ${actorId}, ${purpose}, ${resetId}, ${ipHash}, ${hashResetCode(code)}, ${now + OTP_TTL_MS}, 0, ${now}
       WHERE NOT EXISTS (
         SELECT 1 FROM "PasswordResetOtp"
-        WHERE "actorType" = ${actorType} AND "actorId" = ${actorId} AND "purpose" = ${purpose} AND "createdAt" > ${now - RESEND_COOLDOWN_MS}
+        WHERE "actorType" = ${actorType} AND "actorId" = ${actorId} AND "purpose" = ${purpose} AND "requestIpHash" IS ${ipHash} AND "createdAt" > ${now - RESEND_COOLDOWN_MS}
       )
       AND (
         SELECT COUNT(*) FROM "PasswordResetOtp"
+        WHERE "actorType" = ${actorType} AND "actorId" = ${actorId} AND "purpose" = ${purpose} AND "requestIpHash" IS ${ipHash} AND "createdAt" > ${now - DAY_MS}
+      ) < ${MAX_SENDS_PER_DAY}
+      AND (
+        SELECT COUNT(*) FROM "PasswordResetOtp"
         WHERE "actorType" = ${actorType} AND "actorId" = ${actorId} AND "purpose" = ${purpose} AND "createdAt" > ${now - DAY_MS}
-      ) < ${MAX_SENDS_PER_DAY}`
+      ) < ${MAX_ACCOUNT_SENDS_PER_DAY}`
     if (inserted !== 1) {
-      await auditDailyCap(actorType, actorId, purpose, now)
+      await auditDailyCap(actorType, actorId, purpose, ipHash, now)
       return null
     }
     return { id, code, resetId }
@@ -126,10 +134,11 @@ export async function cancelResetCode(id: string) {
 }
 
 /** Records that an account hit its daily cap, at most once a day, so an admin can see why someone isn't getting codes. */
-async function auditDailyCap(actorType: ResetActor, actorId: string, purpose: ResetPurpose, now: number) {
+async function auditDailyCap(actorType: ResetActor, actorId: string, purpose: ResetPurpose, ipHash: string | null, now: number) {
   const since = new Date(now - DAY_MS)
-  const sent = await prisma.passwordResetOtp.count({ where: { actorType, actorId, purpose, createdAt: { gt: since } } })
-  if (sent < MAX_SENDS_PER_DAY) return
+  const account = { actorType, actorId, purpose, createdAt: { gt: since } }
+  const fromIp = await prisma.passwordResetOtp.count({ where: { ...account, requestIpHash: ipHash } })
+  if (fromIp < MAX_SENDS_PER_DAY && (await prisma.passwordResetOtp.count({ where: account })) < MAX_ACCOUNT_SENDS_PER_DAY) return
   const logged = await prisma.auditLog.findFirst({
     where: { action: 'password_reset_daily_cap', entityId: actorId, createdAt: { gt: since } },
     select: { id: true },
@@ -139,7 +148,7 @@ async function auditDailyCap(actorType: ResetActor, actorId: string, purpose: Re
     action: 'password_reset_daily_cap',
     entity: actorType === 'customer' ? 'Customer' : 'Agent',
     entityId: actorId,
-    details: `Password reset codes stopped after ${MAX_SENDS_PER_DAY} sends in 24 hours`,
+    details: `Password reset codes stopped at the daily limit (${MAX_SENDS_PER_DAY} per IP, ${MAX_ACCOUNT_SENDS_PER_DAY} per account)`,
     actorType,
     actorId,
   })

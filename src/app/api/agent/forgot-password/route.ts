@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { sendMail } from '@/lib/mail'
 import { emailLogo } from '@/lib/email-brand'
+import { clientIp } from '@/lib/rate-limit'
 import { deliverInBackground, issueResetCode, limitByIp, newResetId, readBody, text } from '@/lib/password-reset'
 
 function resetEmailHtml(code: string) {
@@ -42,7 +43,7 @@ export async function POST(req: NextRequest) {
       },
     })
     const email = agent?.email
-    const issued = agent && email ? await issueResetCode('agent', agent.id) : null
+    const issued = agent && email ? await issueResetCode('agent', agent.id, Date.now(), 'reset', clientIp(req)) : null
     if (email && issued) {
       resetId = issued.resetId
       deliverInBackground(issued.id, async () => {
