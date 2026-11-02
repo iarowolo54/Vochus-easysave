@@ -24,6 +24,7 @@ interface RedemptionRecord {
   balanceChanged: boolean
   needsReview: boolean
   agentActive: boolean
+  nameMismatch: boolean
   penalty: number
   netPayout: number
   token: string | null
@@ -81,7 +82,7 @@ interface ActivePlan {
   id: string; customerName: string; customerId: string; balance: number; status: string; periodDays: number; dailyAmount: number; cadence: string
 }
 
-interface PinTarget {
+interface PinTarget { nameMismatch: boolean;
   id: string; ref: string; customerName: string; customerId: string; amount: number
   payoutMethod: string; accountName: string | null; bankName: string | null; accountNumber: string | null
 }
@@ -326,7 +327,7 @@ export default function RedemptionsPage() {
   // ── Approve / reject ──
   function openApprove(r: RedemptionRecord) {
     setPinModal({
-      id: r.id, ref: r.ref, customerName: r.customerName, customerId: r.customerId, amount: r.netPayout,
+      id: r.id, ref: r.ref, customerName: r.customerName, customerId: r.customerId, amount: r.netPayout, nameMismatch: r.nameMismatch,
       payoutMethod: r.payoutMethod ?? 'Cash', accountName: r.accountName ?? null, bankName: r.bankName ?? null, accountNumber: r.accountNumber ?? null,
     })
     setPinValue(''); setPinError(''); setApproveError(''); setTransferRef('')
@@ -371,8 +372,8 @@ export default function RedemptionsPage() {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(
           manual && isBank(pinModal.payoutMethod) && transferRef.trim()
-            ? { action: 'approve', pin: pinValue, adminNote: transferRef.trim() }
-            : { action: 'approve', pin: pinValue },
+            ? { action: 'approve', pin: pinValue, adminNote: transferRef.trim(), overrideNameMismatch: pinModal.nameMismatch }
+            : { action: 'approve', pin: pinValue, overrideNameMismatch: pinModal.nameMismatch },
         ),
       })
       if (res.status === 409) {
@@ -884,6 +885,7 @@ export default function RedemptionsPage() {
               <div className="dlg-hero-extra"><span className="dlg-hero-lbl">Payout method</span><strong>{pinModal.payoutMethod}</strong></div>
             )}
           </div>
+          {pinModal.nameMismatch && <p className="a-alert a-alert-r cm-gap" role="alert">The names don’t match. Customer: <strong>{pinModal.customerName}</strong>. Name on the account: <strong>{pinModal.accountName ?? '—'}</strong>. Your PIN confirms you’ve checked this, and it’s recorded.</p>}
           <p className="a-hint cm-gap">
             {(manual && isBank(pinModal.payoutMethod))
               ? 'Paystack is bypassed. Only confirm after you have paid this customer’s bank account yourself. The plan closes when you confirm.'
@@ -947,7 +949,7 @@ export default function RedemptionsPage() {
         <Modal icon="redeem" title={detail.ref} sub="Redemption request" onClose={() => setDetail(null)}
           footer={DECIDABLE.includes(detail.status) ? <>
             <button type="button" className="btn btn-outline" onClick={() => { const r = detail; setDetail(null); openReject(r) }}>Reject</button>
-            {!needsCode(detail) && !detail.balanceChanged && !cashBlocked(detail) && <button type="button" className="btn btn-green" onClick={() => { const r = detail; setDetail(null); openApprove(r) }}>{manual && isBank(detail.payoutMethod) ? 'Mark as paid' : 'Approve'}</button>}
+            {!needsCode(detail) && !detail.balanceChanged && !cashBlocked(detail) && <button type="button" className="btn btn-green" onClick={() => { const r = detail; setDetail(null); openApprove(r) }}>{detail.nameMismatch ? 'Review and approve anyway' : manual && isBank(detail.payoutMethod) ? 'Mark as paid' : 'Approve'}</button>}
           </> : detail.status === 'AwaitingOTP' ? <>
             <button type="button" className="btn btn-outline" onClick={() => { const r = detail; setDetail(null); openReject(r) }}>Reject</button>
             <button type="button" className="btn btn-outline" disabled={checking} onClick={() => checkWithPaystack(detail)}>{checking ? 'Checking…' : 'Check with Paystack'}</button>
@@ -960,6 +962,15 @@ export default function RedemptionsPage() {
             ? <p className="a-alert a-alert-r cm-gap" role="alert">This plan now holds {nairaKobo(detail.currentBalance)}, which arrived while this payout was waiting for its code. Nothing has been paid. Don’t enter the code. Once it expires, about 30 minutes after it was sent, use Check with Paystack and ask them to request again.</p>
             : <p className="a-alert a-alert-r cm-gap" role="alert">The balance has changed. They asked to collect from {nairaKobo(detail.balance)}, and the plan now holds {nairaKobo(detail.currentBalance)}. Reject this request and ask them to request again.</p>)}
           {cashBlocked(detail) && DECIDABLE.includes(detail.status) && <p className="a-alert a-alert-r cm-gap" role="alert">This customer’s agent isn’t active, so cash can’t be paid through them. Reject this request and ask the customer to request again with a bank account.</p>}
+          {detail.nameMismatch && DECIDABLE.includes(detail.status) && (
+            <div className="a-alert a-alert-r cm-gap" role="alert">
+              <strong>Held: the names don’t match.</strong> An agent asked to pay this to an account in another name.
+              <dl className="dlg-ledger">
+                <DlRow label="Customer">{detail.customerName}</DlRow>
+                <DlRow label="Name on the account">{detail.accountName ?? '—'}</DlRow>
+              </dl>
+            </div>
+          )}
           {needsCode(detail) && <p className="a-alert a-alert-a cm-gap" role="status">The customer hasn’t confirmed this request with their code, so it can’t be approved yet. You can reject it.</p>}
           {(detail.status === 'Processing' || detail.status === 'Finalizing') && (UNCLEAR_FINAL.includes(detail.bankTransferStatus ?? '')
             ? <p className="a-alert a-alert-r cm-gap" role="alert">Paystack says “{detail.bankTransferStatus}”. That’s final, but it doesn’t say whether money moved, so this hasn’t been recorded or released. Check the Paystack dashboard.</p>

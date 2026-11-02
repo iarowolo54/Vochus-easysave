@@ -7,6 +7,7 @@ import { logAudit } from '@/lib/audit'
 import { redemptionCompletionOps, ConflictError } from '@/lib/redemption-complete'
 import { BALANCE_CHANGED, balanceUnchanged, CASH_NEEDS_ACTIVE_AGENT, claimPlanForPayout, NO_MONEY_LEFT, reopenPlanAfterNoTransfer, settlePlanAfterPayout, TRANSFER_ACCEPTED } from '@/lib/redemption-balance'
 import { getPayoutMode } from '@/lib/payout-mode'
+import { heldForNameCheck } from '@/lib/payout-account'
 import { customerType } from '@/lib/customer-type'
 import {
   notifyCustomerRedemptionPaid,
@@ -153,6 +154,11 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     // A request with a code has to be confirmed with it first; only an admin's own request (no code) can skip that.
     if (record.status === 'Pending' && record.tokenExpiry) {
       return conflict('The customer hasn’t confirmed this request with their code yet, so it can’t be approved. You can reject it.')
+    }
+    // An agent's payout in another name goes ahead only if the admin has seen both names and says so, with their PIN.
+    const nameOverride = heldForNameCheck(record, record.savingsPlan.customer)
+    if (nameOverride && body.overrideNameMismatch !== true) {
+      return conflict(`This account is in the name ${record.accountName}, not ${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName}. Compare the names before approving.`)
     }
     // Never pay out a plan that has already been redeemed.
     if (record.savingsPlan.status === 'Redeemed' || record.savingsPlan.balance <= 0) {
@@ -317,6 +323,17 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       actorId: (session.user as any).id,
       actorName: decidedBy,
     })
+    if (nameOverride) {
+      logAudit({
+        action: 'early_redemption_name_override',
+        entity: 'EarlyRedemption',
+        entityId: id,
+        details: `${decidedBy} approved ${record.ref} with their PIN despite a name mismatch: customer ${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName}, account name ${record.accountName}, ${record.bankName} ending ${record.accountNumber?.slice(-4)}, payout ₦${record.netPayout.toLocaleString()}`,
+        actorType: 'admin',
+        actorId: (session.user as any).id,
+        actorName: decidedBy,
+      })
+    }
     if (manualBank) {
       await notifyManualOutcome({ kind: 'paid' }, record, customerId, agentId)
     }

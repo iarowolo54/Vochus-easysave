@@ -1,7 +1,7 @@
 // Whether a bank account is the customer's own, and what the customer is told about it.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { accountNameMatches, payoutDestination } from '../src/lib/payout-account'
+import { accountNameMatches, heldForNameCheck, payoutDestination } from '../src/lib/payout-account'
 
 const ada = { firstName: 'Ada', lastName: 'Obi' }
 
@@ -38,4 +38,13 @@ test('a business or joint account is refused even with the customer\'s name in i
     assert.equal(accountNameMatches(name, ada), false, name)
   }
   assert.equal(accountNameMatches('ADA OBI GLOBAL', ada), true, 'global alone can be a name')
+})
+
+test('only an agent\'s bank payout in another name is held', () => {
+  const record = (ref: string, payoutMethod: string, accountName: string | null) => ({ ref, payoutMethod, accountName })
+  assert.equal(heldForNameCheck(record('RDM-1', 'Bank Transfer', 'SOME AGENT'), ada), true)
+  assert.equal(heldForNameCheck(record('RDM-1', 'BankTransfer', null), ada), true, 'no name is not a match')
+  assert.equal(heldForNameCheck(record('RDM-1', 'Bank Transfer', 'OBI ADA'), ada), false)
+  assert.equal(heldForNameCheck(record('RDM-1', 'Cash', null), ada), false)
+  assert.equal(heldForNameCheck(record('RED-1', 'BankTransfer', 'SOME OTHER'), ada), false, 'a customer chooses their own account')
 })

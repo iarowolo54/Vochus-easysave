@@ -11,7 +11,7 @@ import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
 import { escapeHtml } from '@/lib/escape-html'
 import { listBanks, PaystackRejected, resolveAccount } from '@/lib/paystack'
-import { accountNameMatches, payoutDestination } from '@/lib/payout-account'
+import { accountNameMatches, AGENT_REQUEST_PREFIX, payoutDestination } from '@/lib/payout-account'
 
 const MISMATCHED_ACCOUNT = 'Paystack resolved a different account'
 
@@ -52,6 +52,7 @@ export async function POST(req: NextRequest) {
     // chooses where this goes, and the customer's code doesn't check it.
     let resolvedAccountName: string | null = null
     let resolvedBankName: string | null = null
+    let nameCheckHeld = false
     if (isBank) {
       try {
         const resolved = await resolveAccount(String(accountNumber), String(bankCode))
@@ -65,9 +66,8 @@ export async function POST(req: NextRequest) {
         return NextResponse.json({ error }, { status: 400 })
       }
       if (!resolvedBankName) return NextResponse.json({ error: 'Could not verify that bank account. Check the account number and bank.' }, { status: 400 })
-      if (!accountNameMatches(resolvedAccountName, plan.customer)) {
-        return NextResponse.json({ error: `This account isn’t in ${plan.customer.firstName} ${plan.customer.lastName}’s name, so it can’t be used. Use an account in the customer’s own name or pay in cash, or the customer can collect in their Vochus app if they have it.` }, { status: 400 })
-      }
+      // Not refused, because real names differ on bank records: held for a super admin, who sees both names. See heldForNameCheck.
+      nameCheckHeld = !accountNameMatches(resolvedAccountName, plan.customer)
     }
 
     const existing = await prisma.earlyRedemption.findFirst({
@@ -76,7 +76,7 @@ export async function POST(req: NextRequest) {
     if (existing) return NextResponse.json({ error: 'A pending redemption request already exists for this customer' }, { status: 409 })
 
     const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000)
-    const ref = `RDM-${Date.now().toString(36).toUpperCase()}`
+    const ref = `${AGENT_REQUEST_PREFIX}${Date.now().toString(36).toUpperCase()}`
     const customerName = `${plan.customer.firstName} ${plan.customer.lastName}`
 
     const hasCashDeposit = await planHasCashDeposit(prisma, plan.id)
@@ -123,7 +123,7 @@ export async function POST(req: NextRequest) {
     logAudit({
       action: 'redemption_requested',
       entity: 'EarlyRedemption',
-      details: `Agent ${agent.name} (${agent.agentId}) created redemption request for ${customerName} — plan ${planId}, balance ₦${plan.balance.toLocaleString()}, net payout ₦${netPayout.toLocaleString()}, ref ${ref}`,
+      details: `Agent ${agent.name} (${agent.agentId}) created redemption request for ${customerName} — plan ${planId}, balance ₦${plan.balance.toLocaleString()}, net payout ₦${netPayout.toLocaleString()}, ref ${ref}${nameCheckHeld ? `, HELD: account in the name ${resolvedAccountName}` : ''}`,
       actorType: 'agent',
       actorId: agent.id,
       actorName: agent.name,
@@ -131,7 +131,10 @@ export async function POST(req: NextRequest) {
 
     // Super admins are notified at the admin-approval stage (when the agent approves and
     // sends to admin — see api/agent/redemption/[id]), not at request creation.
-    return NextResponse.json({ ref, tokenExpiry, balance: plan.balance, deduction, netPayout, customerName, sentTo: { phone: plan.customer.phone, email: plan.customer.email ?? null } })
+    const nameCheckNote = nameCheckHeld
+      ? `This account is in the name ${resolvedAccountName}, not ${customerName}. A super admin will have to check it before it can be paid. The customer can also collect in their Vochus app if they have it.`
+      : undefined
+    return NextResponse.json({ ref, nameCheckNote, tokenExpiry, balance: plan.balance, deduction, netPayout, customerName, sentTo: { phone: plan.customer.phone, email: plan.customer.email ?? null } })
   } catch (err: any) {
     console.error('[redemption/request]', err)
     return NextResponse.json({ error: err?.message ?? 'Internal server error' }, { status: 500 })

@@ -21,4 +21,20 @@ export function accountNameMatches(accountName: string, customer: { firstName: s
   return [...first, ...last].every(w => account.includes(w))
 }
 
+/** Refs of requests an agent made. Customers choose their own account, so only these are checked against the name. */
+export const AGENT_REQUEST_PREFIX = 'RDM-'
+const isBankMethod = (m: string | null) => m === 'Bank Transfer' || m === 'BankTransfer'
+
+/**
+ * An agent's bank payout in another name isn't refused outright, because real names differ on bank records. It's held:
+ * a super admin compares the two names and can approve it with their PIN. Worked out from the record, so nothing can
+ * clear it except that decision.
+ */
+export function heldForNameCheck(
+  record: { ref: string; payoutMethod: string | null; accountName: string | null },
+  customer: { firstName: string; lastName: string },
+): boolean {
+  return record.ref.startsWith(AGENT_REQUEST_PREFIX) && isBankMethod(record.payoutMethod) && !accountNameMatches(record.accountName ?? '', customer)
+}
+
 export const payoutDestination = (bankName: string, accountNumber: string) => `Payout goes to ${bankName} account ending ${accountNumber.slice(-4)}.`

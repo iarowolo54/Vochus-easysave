@@ -6,6 +6,7 @@ import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
 import { excludeExpiredPending, IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
 import { balanceUnchanged, readyToFinalize } from '@/lib/redemption-balance'
+import { heldForNameCheck } from '@/lib/payout-account'
 
 // Awaiting admin action = in flight but not yet Approved (incl. AwaitingOTP / Finalizing), or a transfer
 // whose outcome the admin needs to check (Processing).
@@ -110,6 +111,7 @@ export async function GET() {
       agentName: r.savingsPlan.customer.agent.name,
       agentId: r.savingsPlan.customer.agent.agentId,
       agentActive: r.savingsPlan.customer.agent.status === 'Active',
+      nameMismatch: heldForNameCheck(r, r.savingsPlan.customer),
       savingsPlanId: r.savingsPlanId,
       planStatus: r.savingsPlan.status,
       // The plan being redeemed.

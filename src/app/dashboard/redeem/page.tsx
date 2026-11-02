@@ -61,6 +61,7 @@ export default function RedeemPage() {
   const [selected, setSelected] = useState<Customer | null>(null)
   const [selectedPlanId, setSelectedPlanId] = useState('')
   const [payoutMethod, setPayoutMethod] = useState('Cash')
+  const [nameCheckNote, setNameCheckNote] = useState('')
 
   // Bank transfer fields
   const [banks, setBanks] = useState<Bank[]>([])
@@ -225,7 +226,7 @@ export default function RedeemPage() {
     if (!bankTransferReady) { setError('Confirm the bank account before continuing.'); return }
     setLoading(true); setError('')
     let res: Response
-    let data: { error?: string; ref?: string; netPayout?: number; tokenExpiry?: string; customerName?: string; sentTo?: { phone?: string; email?: string } }
+    let data: { error?: string; ref?: string; nameCheckNote?: string; netPayout?: number; tokenExpiry?: string; customerName?: string; sentTo?: { phone?: string; email?: string } }
     try {
       res = await fetch('/api/transactions/redemption/request', {
         method: 'POST',
@@ -253,6 +254,7 @@ export default function RedeemPage() {
       setLoading(false); return
     }
     setIssuedRef(data.ref ?? '')
+    setNameCheckNote(data.nameCheckNote ?? '')
     setIssuedNetPayout(data.netPayout ?? 0)
     setTokenExpiry(data.tokenExpiry ?? '')
     setIssuedCustomerName(data.customerName ?? '')
@@ -531,6 +533,7 @@ export default function RedeemPage() {
                   <span className="ag-big-icon" aria-hidden="true"><Icons.send size={26} /></span>
                   <h2 className="ag-q">We sent {displayName(issuedCustomerName)} a code</h2>
                   <p className="ag-q-lead">Ask them to check their messages and read the 6-digit code back to you.</p>
+                  {nameCheckNote && <div className="ui-banner ui-banner--warn" role="status"><Icons.error size={18} aria-hidden="true" /><div>{nameCheckNote}</div></div>}
                   <dl className="ag-breakdown">
                     {sentToPhone && <div><dt>Text message</dt><dd>{formattedPhone}</dd></div>}
                     {sentToEmail && <div><dt>Email</dt><dd>{sentToEmail}</dd></div>}

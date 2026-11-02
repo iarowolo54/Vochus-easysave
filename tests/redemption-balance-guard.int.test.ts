@@ -136,6 +136,8 @@ const recipientThen = (transfer: (path: string) => unknown) => (path: string) =>
 const paidAnswer = (r: { ref: string }, over: Record<string, unknown> = {}) => ({ status: true, data: { status: 'success', reference: r.ref, amount: 950000, currency: 'NGN', transfer_code: 'TRF_ok', ...over } })
 const statusAnswer = (r: { ref: string }, status: string, over: Record<string, unknown> = {}) => ({ status: true, data: { status, reference: r.ref, ...over } })
 const verifyCall = (id: string) => verifyRoute.POST({} as never, ctx(id))
+// Totals build up across the run, so compare them the way the app does, to the kobo.
+const assertKobo = (actual: number, expected: number) => assert.ok(Math.abs(actual - expected) < 0.005, `${actual} != ${expected}`)
 const money = async () => {
   const a = await prisma.agent.findUniqueOrThrow({ where: { id: agentId } })
   return { wallet: a.walletBalance, commission: a.commissionBalance, revenue: await revenue() }
@@ -204,7 +206,7 @@ test('cash approve, balance unchanged: pays and closes the plan', async () => {
   assert.equal(plan.balance, 0)
   assert.equal(plan.status, 'Redeemed')
   assert.equal((await erRow(r.id)).status, 'Approved')
-  assert.equal((await money()).wallet, m0.wallet + 9500)
+  assertKobo((await money()).wallet, m0.wallet + 9500)
   assert.equal(await prisma.transaction.count({ where: { ref: r.ref } }), 1)
 })
 
@@ -354,8 +356,8 @@ test('finalize: money landing while Paystack answers still writes the ledger, ke
   assert.equal(plan.balance, 45000, 'the deposit survives')
   assert.equal(plan.status, 'Redeemed')
   const m1 = await money()
-  assert.equal(m1.commission, m0.commission + 300)
-  assert.equal(m1.revenue, m0.revenue + 200)
+  assertKobo(m1.commission, m0.commission + 300)
+  assertKobo(m1.revenue, m0.revenue + 200)
   const flag = await prisma.auditLog.findFirstOrThrow({ where: { action: 'early_redemption_review_needed', entityId: r.id } })
   assert.match(flag.details ?? '', /MANUAL REVIEW/)
   assert.match(flag.details ?? '', /45,000/)
@@ -392,7 +394,7 @@ test('finalize credits exactly what approve credits, from the stored penalty, wi
     const m0 = await money()
     assert.equal((await run(r.id)).status, 200)
     const m1 = await money()
-    return { commission: m1.commission - m0.commission, revenue: m1.revenue - m0.revenue }
+    return { commission: Math.round((m1.commission - m0.commission) * 100) / 100, revenue: Math.round((m1.revenue - m0.revenue) * 100) / 100 }
   }
   const viaOtp = await credit(finalize, 'AwaitingOTP', 'BankTransfer', 0, 'Redeemed')
   const viaApprove = await credit(approve, 'AgentApproved', 'BankTransfer', 10000, 'Active')
@@ -515,8 +517,8 @@ test('verify: the transfer went through, so the ledger completes once', async ()
   assert.equal(row.paystackTransferCode, 'TRF_ok')
   assert.equal(await prisma.transaction.count({ where: { ref: r.ref } }), 1)
   const m1 = await money()
-  assert.equal(m1.commission, m0.commission + 300)
-  assert.equal(m1.revenue, m0.revenue + 200)
+  assertKobo(m1.commission, m0.commission + 300)
+  assertKobo(m1.revenue, m0.revenue + 200)
   assert.equal(m1.wallet, m0.wallet, 'Paystack paid, so no agent wallet credit')
   assert.equal((await planRow(planId)).status, 'Redeemed')
   assert.equal((await verifyCall(r.id)).status, 409)
@@ -828,15 +830,77 @@ test('agent bank payout: name and bank come from Paystack, never the request', a
   assert.equal(row.bankName, 'GTBank')
 })
 
-test('agent bank payout: an account in someone else\'s name is refused, however the method is written', async () => {
+const heldRequest = async (accountName = 'SOME AGENT') => {
+  const planId = await mkPlan(10000)
+  asAgent()
+  const res = await requestBank(bankBody(planId, { accountName: 'C X' }), accountName)
+  assert.equal(res.status, 200, JSON.stringify(await res.clone().json()))
+  const body = await res.json()
+  refs.push(body.ref)
+  const row = await prisma.earlyRedemption.findUniqueOrThrow({ where: { ref: body.ref } })
+  erIds.push(row.id)
+  await prisma.earlyRedemption.update({ where: { id: row.id }, data: { status: 'AgentApproved' } })
+  asAdmin()
+  return { planId, row, body }
+}
+const approveOverride = (id: string, pin = PIN) => er.PATCH({ json: async () => ({ action: 'approve', pin, overrideNameMismatch: true }) } as never, ctx(id))
+
+test('name mismatch: the request is held, not refused, and the agent is told', async () => {
   for (const payoutMethod of ['Bank Transfer', 'BankTransfer']) {
     const planId = await mkPlan(10000)
     asAgent()
     const res = await requestBank(bankBody(planId, { payoutMethod, accountName: 'C X' }), 'SOME AGENT')
-    assert.equal(res.status, 400, payoutMethod)
-    assert.match((await res.json()).error, /isn’t in C X’s name/)
-    assert.equal(await prisma.earlyRedemption.count({ where: { savingsPlanId: planId } }), 0)
+    assert.equal(res.status, 200, payoutMethod)
+    const body = await res.json()
+    refs.push(body.ref)
+    assert.match(body.nameCheckNote, /in the name SOME AGENT, not C X.*super admin.*Vochus app/)
+    const row = await prisma.earlyRedemption.findUniqueOrThrow({ where: { ref: body.ref } })
+    erIds.push(row.id)
+    assert.equal(row.accountName, 'SOME AGENT', 'the resolved name, not what was sent')
+    assert.equal(row.bankName, 'GTBank')
   }
+})
+
+test('name mismatch: a plain approve is refused and nothing moves; a matching name is not held', async () => {
+  const { planId, row } = await heldRequest()
+  const m0 = await money()
+  const res = await er.PATCH({ json: async () => ({ action: 'approve', pin: PIN }) } as never, ctx(row.id))
+  assert.equal(res.status, 409)
+  assert.match((await res.json()).error, /in the name SOME AGENT, not C X/)
+  assert.equal((await erRow(row.id)).status, 'AgentApproved')
+  assert.equal((await planRow(planId)).balance, 10000)
+  assert.deepEqual(await money(), m0)
+  const { records } = await (await adminList.GET()).json()
+  assert.equal(records.find((x: { id: string }) => x.id === row.id).nameMismatch, true)
+  assert.equal(records.find((x: { id: string }) => x.id === row.id).accountName, 'SOME AGENT')
+  const fine = await heldRequest('X C')
+  assert.equal(records.find((x: { id: string }) => x.id === fine.row.id)?.nameMismatch ?? false, false)
+  assert.equal((await er.PATCH({ json: async () => ({ action: 'approve', pin: PIN }) } as never, ctx(fine.row.id))).status, 200)
+})
+
+test('name mismatch: override needs the right PIN, pays, and audits both names', async () => {
+  const { planId, row } = await heldRequest()
+  assert.equal((await approveOverride(row.id, '000000')).status, 403)
+  assert.equal((await erRow(row.id)).status, 'AgentApproved')
+  await prisma.approvalPinAttempt.deleteMany({ where: { adminId } })
+  assert.equal((await approveOverride(row.id)).status, 200)
+  assert.equal((await erRow(row.id)).status, 'Approved')
+  assert.equal((await planRow(planId)).balance, 0)
+  await new Promise(done => setTimeout(done, 100)) // logAudit is fire-and-forget
+  const log = await prisma.auditLog.findFirstOrThrow({ where: { action: 'early_redemption_name_override', entityId: row.id } })
+  assert.match(log.details ?? '', /customer C X, account name SOME AGENT, GTBank ending 6789/)
+  assert.equal(log.actorId, adminId)
+})
+
+test('name mismatch: a non-admin cannot override, and an override on a matching name records nothing', async () => {
+  const { row } = await heldRequest()
+  stub.getServerSession = async () => ({ user: { id: 'x', role: 'agent' } })
+  assert.equal((await approveOverride(row.id)).status, 403)
+  asAdmin()
+  const fine = await heldRequest('X C')
+  assert.equal((await approveOverride(fine.row.id)).status, 200)
+  await new Promise(done => setTimeout(done, 100))
+  assert.equal(await prisma.auditLog.count({ where: { action: 'early_redemption_name_override', entityId: fine.row.id } }), 0)
 })
 
 test('agent request: online plans are refused with a pointer to the customer\'s app', async () => {
@@ -995,9 +1059,9 @@ test('withdrawal verify: failed, reversed and abandoned refund once, from every 
       const m0 = await money()
       const res = await withLivePaystack(() => ({ status: true, data: { status, reference: w.ref } }), () => wdCheck(w.id))
       assert.equal((await res.json()).status, 'Rejected', `${from} ${status}`)
-      assert.equal((await money()).commission, m0.commission + 500, `${from} ${status}`)
+      assertKobo((await money()).commission, m0.commission + 500)
       assert.equal((await withLivePaystack(() => ({ status: true, data: { status, reference: w.ref } }), () => wdCheck(w.id))).status, 409)
-      assert.equal((await money()).commission, m0.commission + 500, 'once only')
+      assertKobo((await money()).commission, m0.commission + 500)
     }
   }
 })
@@ -1160,8 +1224,6 @@ test('agent bank payout: a Paystack outage says so, and a refusal does not', asy
   assert.match((await http5.json()).error, /Paystack is unavailable/)
   const refused = await withLivePaystack(() => ({ status: false, message: 'Could not resolve' }), () => requestRoute.POST({ json: async () => bankBody(planId) } as never))
   assert.match((await refused.json()).error, /Could not verify/)
-  const mismatch = await requestBank(bankBody(planId), 'SOME AGENT')
-  assert.match((await mismatch.json()).error, /collect in their Vochus app/)
 })
 
 // ---------- a suspended agent: no money through them ----------
@@ -1191,7 +1253,7 @@ test('suspended agent: withdrawal reject still refunds and verify still resolves
     const pending = await mkWithdrawal('Pending', { decidedAt: null })
     const m0 = await money()
     assert.equal((await wdRoute.PATCH({ json: async () => ({ action: 'reject' }) } as never, ctx(pending.id))).status, 200)
-    assert.equal((await money()).commission, m0.commission + 500)
+    assertKobo((await money()).commission, m0.commission + 500)
     const stuck = await mkWithdrawal('AwaitingOTP', { paystackTransferCode: 'TRF_w' })
     assert.equal((await (await withLivePaystack(() => ({ status: true, data: { status: 'abandoned', reference: stuck.ref } }), () => wdCheck(stuck.id))).json()).status, 'Rejected')
   })
