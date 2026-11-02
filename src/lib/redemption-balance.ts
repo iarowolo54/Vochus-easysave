@@ -55,6 +55,18 @@ export async function closePlanAfterFinalize(client: Client, planId: string, req
   return closed.count === 1
 }
 
+/**
+ * Reopen a plan after its pre-claim, when no transfer happened. Adds the balance back rather than setting
+ * it, because a deposit may have landed on the closed plan. Approval then refuses, correctly, if one did.
+ */
+export async function reopenPlanAfterNoTransfer(client: Client, planId: string, balance: number, status: string): Promise<void> {
+  const reopened = await client.savingsPlan.updateMany({
+    where: { id: planId, status: 'Redeemed' },
+    data: { status, balance: { increment: balance } },
+  })
+  if (reopened.count !== 1) throw new Error('Plan was not closed by this redemption')
+}
+
 /** Thrown inside a saving's transaction to undo its debit when the plan closed after it was loaded. */
 export class PlanClosedError extends Error {}
 

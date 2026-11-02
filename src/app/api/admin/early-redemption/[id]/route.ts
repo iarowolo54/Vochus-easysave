@@ -2,10 +2,10 @@ import { NextResponse } from 'next/server'
 import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { verifyApprovalPin } from '@/lib/approval-pin'
-import { createRecipient, initiateTransfer } from '@/lib/paystack'
+import { createRecipient, initiateTransfer, PaystackRejected } from '@/lib/paystack'
 import { logAudit } from '@/lib/audit'
 import { redemptionCompletionOps, ConflictError } from '@/lib/redemption-complete'
-import { BALANCE_CHANGED, balanceUnchanged, claimPlanForPayout } from '@/lib/redemption-balance'
+import { BALANCE_CHANGED, balanceUnchanged, claimPlanForPayout, reopenPlanAfterNoTransfer } from '@/lib/redemption-balance'
 import { getPayoutMode } from '@/lib/payout-mode'
 import { customerType } from '@/lib/customer-type'
 import {
@@ -96,8 +96,9 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
           data: { status: 'Rejected', decidedAt: new Date(), decidedBy },
         })
         if (claim.count === 0) throw new ConflictError()
-        await tx.savingsPlan.update({
-          where: { id: record.savingsPlanId },
+        // Another request on this plan may already have closed it for a payout; don't reopen that.
+        await tx.savingsPlan.updateMany({
+          where: { id: record.savingsPlanId, status: { not: 'Redeemed' } },
           data: { status: 'Active' },
         })
       })
@@ -179,14 +180,10 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
             where: { id, status: 'Processing', paystackTransferCode: null },
             data: { status: originalStatus },
           })
-          if (rel.count === 1) {
-            await tx.savingsPlan.updateMany({
-              where: { id: record.savingsPlanId, status: 'Redeemed', balance: 0 },
-              data: { status: originalPlanStatus, balance: originalPlanBalance },
-            })
-          }
+          if (rel.count === 1) await reopenPlanAfterNoTransfer(tx, record.savingsPlanId, originalPlanBalance, originalPlanStatus)
         })
 
+      let transferRequested = false
       let transferStarted = false
       try {
         const customerName = `${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName}`
@@ -195,6 +192,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
           record.accountNumber,
           record.bankCode,
         )
+        transferRequested = true
         const transfer = await initiateTransfer(
           record.netPayout,
           paystackRecipientCode,
@@ -228,10 +226,16 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
             message: 'Paystack has sent an OTP to your transfer-approval phone. Enter it to complete the payout.',
           })
         }
-      } catch (err: any) {
-        // Once Paystack has accepted a transfer the claim is never released (would allow a 2nd transfer).
-        if (!transferStarted) await releaseClaim()
-        return NextResponse.json({ error: `Paystack transfer failed: ${err.message}` }, { status: 502 })
+      } catch (err) {
+        // Release only when no transfer can exist: Paystack was never asked, or definitely said no. A timeout
+        // may still have gone through, so releasing then would allow a second transfer. Check it with verify.
+        const noTransfer = !transferRequested || (!transferStarted && err instanceof PaystackRejected)
+        if (!noTransfer) {
+          console.error('early-redemption approve: transfer outcome unknown, left Processing', id, err instanceof Error ? err.name : 'unknown')
+          return NextResponse.json({ error: 'We couldn’t confirm this transfer with Paystack, and it may still go through. Don’t approve it again. Use Check with Paystack on this request.' }, { status: 502 })
+        }
+        await releaseClaim()
+        return NextResponse.json({ error: `Paystack transfer failed: ${err instanceof Error ? err.message : 'unknown error'}` }, { status: 502 })
       }
     }
 

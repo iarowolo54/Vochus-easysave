@@ -100,7 +100,7 @@ export async function initiateTransfer(amountNaira: number, recipientCode: strin
     recipient: recipientCode,
     reference,
   })
-  if (!data.status) throw new Error(data.message ?? 'Transfer initiation failed')
+  if (!data.status) throw new PaystackRejected(data.message ?? 'Transfer initiation failed')
   return {
     transferCode: data.data.transfer_code as string,
     status: data.data.status as string, // 'success' | 'pending' | 'otp' | 'reversed' | 'failed'
@@ -111,7 +111,7 @@ export async function initiateTransfer(amountNaira: number, recipientCode: strin
 export async function verifyTransfer(reference: string) {
   if (isTestMode()) return { status: 'success' as string, raw: null as any }
   const data = await call('GET', `/transfer/verify/${reference}`)
-  if (!data.status) throw new Error(data.message ?? 'Transfer verification failed')
+  if (!data.status) throw new PaystackRejected(data.message ?? 'Transfer verification failed')
   return { status: data.data.status as string, raw: data.data }
 }
 
