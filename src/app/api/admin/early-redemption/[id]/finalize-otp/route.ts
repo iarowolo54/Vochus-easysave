@@ -6,6 +6,7 @@ import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
 import { interestPayoutOps } from '@/lib/redemption-interest-ops'
+import { BALANCE_CHANGED_AWAITING_OTP, closePlanAfterFinalize, readyToFinalize } from '@/lib/redemption-balance'
 
 export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
   const guard = await requireSuperAdmin()
@@ -27,6 +28,11 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
   if (!record) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (record.status !== 'AwaitingOTP') return NextResponse.json({ error: 'Already processed' }, { status: 409 })
   if (!record.paystackTransferCode) return NextResponse.json({ error: 'Missing Paystack transfer code on record' }, { status: 400 })
+
+  // Last point before money moves: refuse if a deposit landed after the pre-claim, while waiting for the code.
+  if (!readyToFinalize(record.savingsPlan.balance, record.balance)) {
+    return NextResponse.json({ error: BALANCE_CHANGED_AWAITING_OTP }, { status: 409 })
+  }
 
   // Read-only inputs for the credit, computed before the claim.
   const hasCashDeposit = await planHasCashDeposit(prisma, record.savingsPlanId)
@@ -74,10 +80,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
         data: { status: 'Approved', decidedAt: new Date(), decidedBy, bankTransferStatus: finalStatus },
       })
       if (fin.count === 0) throw new Error('Finalizing claim lost')
-      await tx.savingsPlan.update({
-        where: { id: record.savingsPlanId },
-        data: { status: 'Redeemed', balance: 0 },
-      })
+      if (!(await closePlanAfterFinalize(tx, record.savingsPlanId, record.balance))) throw new Error('Plan balance changed during finalize')
       await tx.platformWallet.upsert({
         where: { type: 'Revenue' },
         update: { balance: { increment: revenueCredit } },

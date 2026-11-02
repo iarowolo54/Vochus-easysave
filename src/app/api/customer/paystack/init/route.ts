@@ -4,6 +4,7 @@ import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { createPaymentIntent } from '@/lib/payment-intent'
+import { hasOpenRedemption } from '@/lib/redemption-balance'
 
 export async function POST(req: NextRequest) {
   const session = await getCustomerSession()
@@ -26,6 +27,10 @@ export async function POST(req: NextRequest) {
     })
     if (!targetPlan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 })
     Object.assign(plan, targetPlan)
+  }
+
+  if (await hasOpenRedemption(prisma, plan.id)) {
+    return NextResponse.json({ error: 'You’ve asked to collect from this plan. You can’t add money until that request is finished.' }, { status: 409 })
   }
 
   const amount = parseFloat(body.amount ?? plan.dailyAmount)

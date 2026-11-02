@@ -5,6 +5,7 @@ import { verifyApprovalPin } from '@/lib/approval-pin'
 import { createRecipient, initiateTransfer } from '@/lib/paystack'
 import { logAudit } from '@/lib/audit'
 import { redemptionCompletionOps, ConflictError } from '@/lib/redemption-complete'
+import { BALANCE_CHANGED, balanceUnchanged, claimPlanForPayout } from '@/lib/redemption-balance'
 import { getPayoutMode } from '@/lib/payout-mode'
 import { customerType } from '@/lib/customer-type'
 import {
@@ -133,6 +134,8 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     if (record.savingsPlan.status === 'Redeemed' || record.savingsPlan.balance <= 0) {
       return NextResponse.json({ error: 'This plan has already been redeemed' }, { status: 409 })
     }
+    // Money arrived since the request: block, so the payout can't wipe it. The claims below re-check atomically.
+    if (!balanceUnchanged(record.savingsPlan.balance, record.balance)) return conflict(BALANCE_CHANGED)
     // Manual mode changes only the payout rail: no Paystack, same ledger. A throw here => 500 (fail closed).
     const agentId = record.savingsPlan.customer.agentId
     const customerId = record.savingsPlan.customer.id
@@ -161,11 +164,8 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
             data: { status: 'Processing' },
           })
           if (claim.count === 0) throw new ConflictError()
-          const plan = await tx.savingsPlan.updateMany({
-            where: { id: record.savingsPlanId, status: { not: 'Redeemed' }, balance: { gt: 0 } },
-            data: { status: 'Redeemed', balance: 0 },
-          })
-          if (plan.count === 0) throw new ConflictError('This plan has already been redeemed')
+          const refused = await claimPlanForPayout(tx, record.savingsPlanId, record.balance)
+          if (refused) throw new ConflictError(refused)
         })
       } catch (err) {
         if (err instanceof ConflictError) return conflict(err.message || 'Already processed')

@@ -4,6 +4,7 @@
 import type { Prisma } from '@prisma/client'
 import { money } from '@/lib/wallet-guard'
 import { interestPayoutOps } from '@/lib/redemption-interest-ops'
+import { claimPlanForPayout } from '@/lib/redemption-balance'
 
 export class ConflictError extends Error {}
 
@@ -11,6 +12,7 @@ export interface RedemptionRecord {
   id: string
   ref: string
   savingsPlanId: string
+  balance: number
   penalty: number
   netPayout: number
   payoutMethod: string | null
@@ -56,11 +58,8 @@ export async function redemptionCompletionOps(
   if (claim.count === 0) throw new ConflictError()
   // Lock the plan unless it was already locked by a Processing pre-claim (auto bank transfer).
   if (claimFrom !== 'Processing') {
-    const plan = await tx.savingsPlan.updateMany({
-      where: { id: record.savingsPlanId, status: { not: 'Redeemed' }, balance: { gt: 0 } },
-      data: { status: 'Redeemed', balance: 0 },
-    })
-    if (plan.count === 0) throw new ConflictError('This plan has already been redeemed')
+    const refused = await claimPlanForPayout(tx, record.savingsPlanId, record.balance)
+    if (refused) throw new ConflictError(refused)
   }
   await tx.platformWallet.upsert({
     where: { type: 'Revenue' },

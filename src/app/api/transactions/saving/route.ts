@@ -7,6 +7,7 @@ import { assertSufficient, insufficientResponse, InsufficientFundsError, money }
 import { debitAgentBalance } from '@/lib/wallet-debit'
 import { creditRegistrationReward } from '@/lib/reward'
 import { selectActivePlan, depositCreatedAt } from '@/lib/saving-plan'
+import { hasOpenRedemption } from '@/lib/redemption-balance'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -36,6 +37,10 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'This customer has more than one active plan — choose which plan to save into' }, { status: 400 })
   }
   const plan = selected.plan
+
+  if (await hasOpenRedemption(prisma, plan.id)) {
+    return NextResponse.json({ error: 'This customer has asked to collect from this plan. New savings can’t be recorded until that request is finished.' }, { status: 409 })
+  }
 
   const rounded = money(amt)
   // SR-3: ignore a client backdate on online (self) plans.
