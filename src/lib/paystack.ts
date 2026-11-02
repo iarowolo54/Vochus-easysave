@@ -49,8 +49,9 @@ export async function resolveAccount(accountNumber: string, bankCode: string) {
   if (bankCode === '001') {
     return { accountName: 'Test Account', accountNumber }
   }
-  const data = await call('GET', `/bank/resolve?account_number=${encodeURIComponent(accountNumber)}&bank_code=${encodeURIComponent(bankCode)}`)
-  if (!data.status) throw new Error(data.message ?? 'Could not resolve account')
+  const { httpStatus, data } = await request('GET', `/bank/resolve?account_number=${encodeURIComponent(accountNumber)}&bank_code=${encodeURIComponent(bankCode)}`)
+  // A PaystackRejected means this account was refused; anything else means Paystack didn't really answer.
+  if (!data.status) throw transferRefusal(httpStatus, data.message ?? 'Could not resolve account')
   return { accountName: data.data.account_name as string, accountNumber: data.data.account_number as string }
 }
 

@@ -20,3 +20,22 @@ test('refuses another person, half a name, a short form or an initial', () => {
 test('the customer is told the bank and last four digits only', () => {
   assert.equal(payoutDestination('GTBank', '0123456789'), 'Payout goes to GTBank account ending 6789.')
 })
+
+test('accents are ignored, whichever side has them', () => {
+  assert.equal(accountNameMatches('ADEBAYO OBI', { firstName: 'Adébáyọ̀', lastName: 'Obi' }), true)
+  assert.equal(accountNameMatches('Adébáyọ̀ Obi', { firstName: 'Adebayo', lastName: 'Obi' }), true)
+  assert.equal(accountNameMatches('NWÁNYỊ̀ ÌBÀDÀN', { firstName: 'nwanyi', lastName: 'ibadan' }), true)
+})
+
+test('both parts of the name are required', () => {
+  assert.equal(accountNameMatches('ADA OBI', { firstName: 'Ada', lastName: '' }), false)
+  assert.equal(accountNameMatches('ADA OBI', { firstName: '', lastName: 'Obi' }), false)
+  assert.equal(accountNameMatches('ADA OBI', { firstName: "'", lastName: 'Obi' }), false)
+})
+
+test('a business or joint account is refused even with the customer\'s name in it', () => {
+  for (const name of ['ADA OBI VENTURES', 'ADA OBI LTD', 'OBI ADA ENTERPRISES', 'ADA OBI GLOBAL RESOURCES', 'ADA AND OBI', 'ADA OBI LIMITED']) {
+    assert.equal(accountNameMatches(name, ada), false, name)
+  }
+  assert.equal(accountNameMatches('ADA OBI GLOBAL', ada), true, 'global alone can be a name')
+})

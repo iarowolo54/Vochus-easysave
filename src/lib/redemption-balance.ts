@@ -24,7 +24,10 @@ const near = (amount: number) => ({ gte: amount - TOLERANCE, lte: amount + TOLER
 // (no OTP within 30 minutes) will not be processed. Blocked and rejected are final too, but the page doesn't
 // say whether money moved, so they are flagged for a person rather than released.
 export const NO_MONEY_LEFT = ['failed', 'reversed', 'abandoned']
-// What approve books straight away. Pending is kept because that's how live bank payouts come back today.
+// What approve books straight away. Pending is kept there because that's how live bank payouts come back today, and
+// nothing would otherwise close them: the live webhook ignores transfer events and Processing would wait for an admin
+// on every payout. Finalize and verify book only success, since an admin is already there to check again. Once the
+// webhook task reports real outcomes, approve should stop booking pending too.
 export const TRANSFER_ACCEPTED = ['success', 'pending']
 
 export const balanceUnchanged = (current: number, requested: number) => Math.abs(current - requested) <= TOLERANCE

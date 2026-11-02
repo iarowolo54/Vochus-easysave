@@ -5,7 +5,7 @@ import { verifyApprovalPin } from '@/lib/approval-pin'
 import { createRecipient, initiateTransfer, PaystackRejected, verifyTransfer } from '@/lib/paystack'
 import { logAudit } from '@/lib/audit'
 import { redemptionCompletionOps, ConflictError } from '@/lib/redemption-complete'
-import { BALANCE_CHANGED, balanceUnchanged, claimPlanForPayout, NO_MONEY_LEFT, reopenPlanAfterNoTransfer, TRANSFER_ACCEPTED } from '@/lib/redemption-balance'
+import { BALANCE_CHANGED, balanceUnchanged, claimPlanForPayout, NO_MONEY_LEFT, reopenPlanAfterNoTransfer, settlePlanAfterPayout, TRANSFER_ACCEPTED } from '@/lib/redemption-balance'
 import { getPayoutMode } from '@/lib/payout-mode'
 import { customerType } from '@/lib/customer-type'
 import {
@@ -106,7 +106,8 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     try {
       await prisma.$transaction(async (tx) => {
         const claim = await tx.earlyRedemption.updateMany({
-          where: { id, status: record.status },
+          // decidedAt too: if this moved on and came back while the admin was deciding, it's a different request now.
+          where: { id, status: record.status, decidedAt: record.decidedAt },
           data: { status: 'Rejected', decidedAt: new Date(), decidedBy },
         })
         if (claim.count === 0) throw new ConflictError()
@@ -130,7 +131,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       action: 'early_redemption_rejected',
       entity: 'EarlyRedemption',
       entityId: id,
-      details: `Admin rejected ${record.ref} — customer ${customerName} balance ₦${planBalance.toLocaleString()} restored to Active | agent wallet ₦${(agentForBal?.walletBalance ?? 0).toLocaleString()}`,
+      details: `Admin rejected ${record.ref} — customer ${customerName} ${record.status === 'AwaitingOTP' ? `₦${record.balance.toLocaleString()} put back on the plan, on top of ₦${planBalance.toLocaleString()}, now Active` : `balance ₦${planBalance.toLocaleString()} left on the plan`} | agent wallet ₦${(agentForBal?.walletBalance ?? 0).toLocaleString()}`,
       actorType: 'admin',
       actorId: (session.user as any).id,
       actorName: decidedBy,
@@ -276,9 +277,10 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       ? (agentForBalance?.walletBalance ?? 0)
       : (agentForBalance?.walletBalance ?? 0) + record.netPayout
 
+    let reviewNeeded = false
     try {
-      await prisma.$transaction((tx) =>
-        redemptionCompletionOps(tx, record, agentId, customerId, {
+      reviewNeeded = await prisma.$transaction(async (tx) => {
+        await redemptionCompletionOps(tx, record, agentId, customerId, {
           decidedBy,
           isBankTransfer,
           // Manual bank transfer: no Paystack pre-claim happened, so claim from OPEN and let the helper lock the plan.
@@ -291,8 +293,11 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
           adminNote: manualBank && typeof body.adminNote === 'string' && body.adminNote.trim()
             ? body.adminNote.trim().slice(0, 200)
             : undefined,
-        }),
-      )
+        })
+        // A transfer's plan was closed before Paystack was called, so money may have landed on it since. Cash and
+        // manual payouts close it in the claim above.
+        return isBankTransfer && !manualBank ? settlePlanAfterPayout(tx, record) : false
+      })
     } catch (err) {
       if (err instanceof ConflictError) return conflict(err.message || 'Already processed')
       throw err
@@ -310,7 +315,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     if (manualBank) {
       await notifyManualOutcome({ kind: 'paid' }, record, customerId, agentId)
     }
-    return NextResponse.json({ ok: true, status: 'Approved', bankTransferStatus: manualBank ? 'manual' : bankTransferStatus })
+    return NextResponse.json({ ok: true, status: 'Approved', bankTransferStatus: manualBank ? 'manual' : bankTransferStatus, reviewNeeded })
   }
 
   return NextResponse.json({ error: 'Invalid action' }, { status: 400 })

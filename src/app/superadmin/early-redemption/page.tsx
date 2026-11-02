@@ -388,7 +388,7 @@ export default function RedemptionsPage() {
         if (/pin/i.test(msg)) setPinError(msg); else setApproveError(msg)
         return
       }
-      const d = await res.json().catch(() => ({})) as { status?: string; bankTransferStatus?: string | null }
+      const d = await res.json().catch(() => ({})) as { status?: string; bankTransferStatus?: string | null; reviewNeeded?: boolean }
       const target = pinModal
       setPinModal(null); setPinValue('')
       if (d.status === 'Processing') {
@@ -407,6 +407,7 @@ export default function RedemptionsPage() {
         { label: 'Customer', value: `${target.customerName} · ${target.customerId}` },
         { label: 'Reference', value: target.ref },
       ]
+      if (d.reviewNeeded) toast('Money arrived on this plan during the payout and was left on it. This needs a manual review.')
       if (isBank(target.payoutMethod)) {
         const wasManual = d.bankTransferStatus === 'manual'
         const sent = d.bankTransferStatus === 'success' || wasManual
@@ -487,15 +488,17 @@ export default function RedemptionsPage() {
     try {
       const res = await fetch(`/api/admin/early-redemption/${r.id}/verify`, { method: 'POST' })
       if (!res.ok) { toast(await errorOf(res, 'We couldn’t get an answer from Paystack. Nothing has changed. Try again shortly.')); return }
-      const d = await res.json().catch(() => ({})) as { status?: string; bankTransferStatus?: string | null }
+      const d = await res.json().catch(() => ({})) as { status?: string; bankTransferStatus?: string | null; reviewNeeded?: boolean }
       if (d.status && CHECKABLE.includes(d.status) && d.status !== 'AwaitingOTP') {
         toast(`${r.ref}: Paystack says “${d.bankTransferStatus ?? 'unknown'}”. ${UNCLEAR_FINAL.includes(d.bankTransferStatus ?? '') ? 'That’s final, but it doesn’t say if money moved. Check the Paystack dashboard.' : 'It isn’t finished, so nothing has changed. Check again later.'}`)
         load()
         return
       }
-      toast(d.status === 'Approved' ? `${r.ref}: Paystack confirms the transfer, so the payout is recorded.`
+      const released = d.bankTransferStatus ? `Paystack says it ${d.bankTransferStatus === 'reversed' ? 'was reversed' : d.bankTransferStatus === 'abandoned' ? 'was abandoned (the code expired)' : 'failed'}` : 'Paystack has no record of it'
+      toast(d.status === 'Approved'
+        ? `${r.ref}: Paystack confirms the transfer, so the payout is recorded.${d.reviewNeeded ? ' Money arrived on the plan during the payout and was left on it. This needs a manual review.' : ''}`
         : d.status === 'AwaitingOTP' ? `${r.ref}: Paystack needs a code. Enter it from the list.`
-        : `${r.ref}: no transfer went out. The money is back on the plan, so you can approve or reject it.`, 'success')
+        : `${r.ref}: ${released}, so no money went out. It’s back on the plan, so you can approve or reject the request.`, d.reviewNeeded ? undefined : 'success')
       setDetail(null)
       load()
     } catch {

@@ -79,7 +79,7 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
       await prisma.$transaction(async (tx) => {
         const rel = await tx.earlyRedemption.updateMany({
           where: claim,
-          data: { status: 'AgentApproved', bankTransferStatus: status === 'not_found' ? null : status, decidedAt: null },
+          data: { status: 'AgentApproved', bankTransferStatus: status === 'not_found' ? null : status, decidedAt: null, paystackTransferCode: null },
         })
         if (rel.count === 0) throw new ConflictError()
         await reopenPlanAfterNoTransfer(tx, record.savingsPlanId, record.balance, 'Active')

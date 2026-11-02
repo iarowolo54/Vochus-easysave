@@ -10,8 +10,10 @@ import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
 import { escapeHtml } from '@/lib/escape-html'
-import { listBanks, resolveAccount } from '@/lib/paystack'
+import { listBanks, PaystackRejected, resolveAccount } from '@/lib/paystack'
 import { accountNameMatches, payoutDestination } from '@/lib/payout-account'
+
+const MISMATCHED_ACCOUNT = 'Paystack resolved a different account'
 
 export async function POST(req: NextRequest) {
   try {
@@ -53,15 +55,18 @@ export async function POST(req: NextRequest) {
     if (isBank) {
       try {
         const resolved = await resolveAccount(String(accountNumber), String(bankCode))
-        if (resolved.accountNumber !== String(accountNumber)) throw new Error('Paystack resolved a different account')
+        if (resolved.accountNumber !== String(accountNumber)) throw new Error(MISMATCHED_ACCOUNT)
         resolvedAccountName = resolved.accountName
         resolvedBankName = (await listBanks()).find(b => b.code === String(bankCode))?.name ?? null
-      } catch {
-        return NextResponse.json({ error: 'Could not verify that bank account. Check the account number and bank.' }, { status: 400 })
+      } catch (err) {
+        const error = err instanceof PaystackRejected || (err instanceof Error && err.message === MISMATCHED_ACCOUNT)
+          ? 'Could not verify that bank account. Check the account number and bank.'
+          : 'Paystack is unavailable right now, so we can’t check this account. Try again shortly, or pay in cash.'
+        return NextResponse.json({ error }, { status: 400 })
       }
       if (!resolvedBankName) return NextResponse.json({ error: 'Could not verify that bank account. Check the account number and bank.' }, { status: 400 })
       if (!accountNameMatches(resolvedAccountName, plan.customer)) {
-        return NextResponse.json({ error: `This account isn’t in ${plan.customer.firstName} ${plan.customer.lastName}’s name, so it can’t be used. Use an account in the customer’s own name, or pay in cash.` }, { status: 400 })
+        return NextResponse.json({ error: `This account isn’t in ${plan.customer.firstName} ${plan.customer.lastName}’s name, so it can’t be used. Use an account in the customer’s own name or pay in cash, or the customer can collect in their Vochus app if they have it.` }, { status: 400 })
       }
     }
 

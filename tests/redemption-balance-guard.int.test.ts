@@ -2,21 +2,24 @@
 // are scoped by a run id and removed by id. sk_test_ makes the paystack lib short-circuit.
 process.env.PAYSTACK_SECRET_KEY = 'sk_test_balance_guard'
 process.env.NEXTAUTH_URL = 'http://localhost:3000'
+process.env.PAYSTACK_WEBHOOK_SECRET = 'whsec_guard'
 process.env.NEXTAUTH_SECRET ??= 'test-secret'
 import { test, before, after, beforeEach } from 'node:test'
 import assert from 'node:assert/strict'
 import Module, { createRequire } from 'node:module'
 import { existsSync } from 'node:fs'
+import crypto from 'node:crypto'
 import bcrypt from 'bcryptjs'
 
 let adminNotices = 0
+let reviewAlerts = 0
 const stub = { getServerSession: async (..._a: unknown[]): Promise<unknown> => null }
 const M = Module as unknown as { _load: (req: string, ...rest: unknown[]) => unknown }
 const realLoad = M._load
 M._load = function (req: string, ...rest: unknown[]) {
   const mod = realLoad.call(this, req, ...rest) as Record<string, unknown>
   if (req === 'next-auth') return new Proxy(mod, { get: (t, k) => (k === 'getServerSession' ? stub.getServerSession : t[k as string]) })
-  if (req.endsWith('redemption-notify')) return { ...mod, notifySuperAdminsRedemptionPending: async () => { adminNotices++ } }
+  if (req.endsWith('redemption-notify')) return { ...mod, notifySuperAdminsRedemptionPending: async () => { adminNotices++ }, notifySuperAdminsPayoutReview: async () => { reviewAlerts++ } }
   return mod
 }
 let currentToken = ''
@@ -51,6 +54,7 @@ const er = require('../src/app/api/admin/early-redemption/[id]/route') as typeof
 const fin = require('../src/app/api/admin/early-redemption/[id]/finalize-otp/route') as typeof import('../src/app/api/admin/early-redemption/[id]/finalize-otp/route')
 const wdRoute = require('../src/app/api/admin/agent-withdrawal/[id]/route') as typeof import('../src/app/api/admin/agent-withdrawal/[id]/route')
 const wdVerify = require('../src/app/api/admin/agent-withdrawal/[id]/verify/route') as typeof import('../src/app/api/admin/agent-withdrawal/[id]/verify/route')
+const paystackWebhook = require('../src/app/api/paystack/webhook/route') as typeof import('../src/app/api/paystack/webhook/route')
 const verifyRoute = require('../src/app/api/admin/early-redemption/[id]/verify/route') as typeof import('../src/app/api/admin/early-redemption/[id]/verify/route')
 const saving = require('../src/app/api/transactions/saving/route') as typeof import('../src/app/api/transactions/saving/route')
 const bulk = require('../src/app/api/transactions/saving/bulk/route') as typeof import('../src/app/api/transactions/saving/bulk/route')
@@ -1054,6 +1058,107 @@ test('withdrawal verify: an out-of-date answer cannot refund a request approved 
   }, () => wdCheck(w.id))
   assert.equal(res.status, 409)
   assert.deepEqual(await money(), m0)
+})
+
+// ---------- review trail ----------
+const transferEvent = (event: string, data: Record<string, unknown>) => {
+  const body = JSON.stringify({ event, data })
+  const sig = crypto.createHmac('sha512', 'whsec_guard').update(body).digest('hex')
+  return paystackWebhook.POST({ text: async () => body, headers: new Headers({ 'x-paystack-signature': sig }) } as never)
+}
+
+test('a transfer.success for a released or rejected request is audited with Paystack\'s answer and alerts admins', async () => {
+  for (const status of ['Rejected', 'AgentApproved']) {
+    const r = await mkRedemption({ planId: await mkPlan(10000), method: 'BankTransfer', status })
+    const alerts = reviewAlerts
+    assert.equal((await transferEvent('transfer.success', { transfer_code: `TRF_gone_${r.ref}`, reference: r.ref, amount: 950000, currency: 'NGN' })).status, 200)
+    const log = await prisma.auditLog.findFirstOrThrow({ where: { action: 'early_redemption_paid_after_release', entityId: r.id } })
+    assert.match(log.details ?? '', /MANUAL REVIEW/)
+    assert.ok(log.details?.includes(`reference ${r.ref}`))
+    assert.match(log.details ?? '', /950000 NGN/)
+    assert.equal(reviewAlerts, alerts + 1)
+    assert.equal((await erRow(r.id)).bankTransferStatus, 'success', 'the status write is kept')
+    assert.equal((await erRow(r.id)).status, status, 'nothing else moves')
+  }
+})
+
+test('a normal transfer.success or a failure raises no alert', async () => {
+  const paid = await mkRedemption({ planId: await mkPlan(0, 'Redeemed'), method: 'BankTransfer', status: 'Approved', transferCode: `TRF_${RUN}_paid` })
+  const alerts = reviewAlerts
+  await transferEvent('transfer.success', { transfer_code: `TRF_${RUN}_paid`, reference: paid.ref })
+  const rejected = await mkRedemption({ planId: await mkPlan(10000), method: 'BankTransfer', status: 'Rejected' })
+  await transferEvent('transfer.failed', { transfer_code: 'x', reference: rejected.ref })
+  assert.equal(reviewAlerts, alerts)
+  assert.equal(await prisma.auditLog.count({ where: { action: 'early_redemption_paid_after_release', entityId: { in: [paid.id, rejected.id] } } }), 0)
+})
+
+test('a release clears the transfer code', async () => {
+  const viaVerify = await mkRedemption({ planId: await mkPlan(0, 'Redeemed'), method: 'BankTransfer', status: 'AwaitingOTP', transferCode: `TRF_${RUN}_cv` })
+  await withLivePaystack(() => statusAnswer(viaVerify, 'abandoned'), () => verifyCall(viaVerify.id))
+  assert.equal((await erRow(viaVerify.id)).paystackTransferCode, null)
+  const viaFinalize = await mkRedemption({ planId: await mkPlan(0, 'Redeemed'), method: 'BankTransfer', status: 'AwaitingOTP', transferCode: `TRF_${RUN}_cf` })
+  await withLivePaystack(() => ({ status: true, data: { status: 'failed' } }), () => finalize(viaFinalize.id))
+  assert.equal((await erRow(viaFinalize.id)).paystackTransferCode, null)
+})
+
+test('finalize audits both the no-money and the unclear answers', async () => {
+  const settle = () => new Promise(done => setTimeout(done, 100)) // logAudit is fire-and-forget
+  const failed = await mkRedemption({ planId: await mkPlan(0, 'Redeemed'), method: 'BankTransfer', status: 'AwaitingOTP', transferCode: `TRF_${RUN}_af` })
+  await withLivePaystack(() => ({ status: true, data: { status: 'failed' } }), () => finalize(failed.id))
+  const unclear = await mkRedemption({ planId: await mkPlan(0, 'Redeemed'), method: 'BankTransfer', status: 'AwaitingOTP', transferCode: `TRF_${RUN}_au` })
+  await withLivePaystack(() => ({ status: true, data: { status: 'pending' } }), () => finalize(unclear.id))
+  await settle()
+  assert.match((await prisma.auditLog.findFirstOrThrow({ where: { action: 'early_redemption_otp_no_money', entityId: failed.id } })).details ?? '', /10,000 put back/)
+  assert.match((await prisma.auditLog.findFirstOrThrow({ where: { action: 'early_redemption_otp_unclear', entityId: unclear.id } })).details ?? '', /"pending"/)
+})
+
+test('reject states the true amount restored, and a stale reject claims nothing', async () => {
+  const settle = () => new Promise(done => setTimeout(done, 100))
+  const r = await mkRedemption({ planId: await mkPlan(45000, 'Redeemed'), method: 'BankTransfer', status: 'AwaitingOTP', transferCode: `TRF_${RUN}_tr` })
+  assert.equal((await withLivePaystack(() => statusAnswer(r, 'abandoned'), () => reject(r.id))).status, 200)
+  await settle()
+  const log = await prisma.auditLog.findFirstOrThrow({ where: { action: 'early_redemption_rejected', entityId: r.id } })
+  assert.match(log.details ?? '', /₦10,000 put back on the plan, on top of ₦45,000/)
+  const stale = await mkRedemption({ planId: await mkPlan(10000), status: 'AgentApproved' })
+  const realFind = prisma.earlyRedemption.findUnique
+  prisma.earlyRedemption.findUnique = (async (...args: Parameters<typeof realFind>) => {
+    const row = await realFind.apply(prisma.earlyRedemption, args)
+    await prisma.earlyRedemption.update({ where: { id: stale.id }, data: { decidedAt: new Date() } })
+    return row
+  }) as unknown as typeof prisma.earlyRedemption.findUnique
+  try {
+    assert.equal((await reject(stale.id)).status, 409)
+  } finally { prisma.earlyRedemption.findUnique = realFind }
+  assert.equal((await erRow(stale.id)).status, 'AgentApproved')
+})
+
+test('approve flags money that landed on the closed plan during the transfer, and keeps it', async () => {
+  const planId = await mkPlan(10000)
+  const r = await mkRedemption({ planId, method: 'BankTransfer' })
+  const res = await withLivePaystack(recipientThen(async () => {
+    await prisma.savingsPlan.update({ where: { id: planId }, data: { balance: { increment: 45000 } } })
+    return { status: true, data: { transfer_code: 'TRF_d', status: 'pending' } }
+  }), () => approve(r.id))
+  assert.equal((await res.json()).reviewNeeded, true)
+  assert.equal((await erRow(r.id)).status, 'Approved')
+  assert.equal((await planRow(planId)).balance, 45000)
+  assert.equal(await prisma.auditLog.count({ where: { action: 'early_redemption_review_needed', entityId: r.id } }), 1)
+})
+
+test('agent bank payout: a Paystack outage says so, and a refusal does not', async () => {
+  asAgent()
+  const down = await withLivePaystack(() => { throw new Error('network down') }, () => requestRoute.POST({ json: async () => bankBody('x') } as never))
+  assert.equal(down.status, 404, 'the plan is checked first')
+  const planId = await mkPlan(10000)
+  const out = await withLivePaystack(() => { throw new Error('network down') }, () => requestRoute.POST({ json: async () => bankBody(planId) } as never))
+  assert.equal(out.status, 400)
+  assert.match((await out.json()).error, /Paystack is unavailable/)
+  const http5 = await withLivePaystack(() => ({ status: false, http: 503, message: 'Down' }), () => requestRoute.POST({ json: async () => bankBody(planId) } as never))
+  assert.match((await http5.json()).error, /Paystack is unavailable/)
+  const refused = await withLivePaystack(() => ({ status: false, message: 'Could not resolve' }), () => requestRoute.POST({ json: async () => bankBody(planId) } as never))
+  assert.match((await refused.json()).error, /Could not verify/)
+  const mismatch = await requestBank(bankBody(planId), 'SOME AGENT')
+  assert.match((await mismatch.json()).error, /collect in their Vochus app/)
 })
 
 // ---------- removed and gated paths ----------

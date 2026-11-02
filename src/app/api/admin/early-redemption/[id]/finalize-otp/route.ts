@@ -59,19 +59,38 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     return NextResponse.json({ error: 'Could not confirm the Paystack finalisation. Don’t retry. Use Check with Paystack on this request.' }, { status: 502 })
   }
 
-  // Only an explicit success is booked as paid.
+  // Only an explicit success is booked as paid, here and in verify; see TRANSFER_ACCEPTED for why approve still books pending.
+  const finalizedBy = (session.user as { name?: string }).name ?? 'Super Admin'
   if (NO_MONEY_LEFT.includes(finalStatus)) {
     await prisma.$transaction(async (tx) => {
       const rel = await tx.earlyRedemption.updateMany({
         where: { id, status: 'Finalizing' },
-        data: { status: 'AgentApproved', bankTransferStatus: finalStatus, decidedAt: null },
+        data: { status: 'AgentApproved', bankTransferStatus: finalStatus, decidedAt: null, paystackTransferCode: null },
       })
       if (rel.count === 1) await reopenPlanAfterNoTransfer(tx, record.savingsPlanId, record.balance, 'Active')
+    })
+    logAudit({
+      action: 'early_redemption_otp_no_money',
+      entity: 'EarlyRedemption',
+      entityId: id,
+      details: `${finalizedBy} entered the OTP for ${record.ref}: Paystack ${finalStatus}. Nothing paid; ₦${record.balance.toLocaleString()} put back on the plan.`,
+      actorType: 'admin',
+      actorId: (session.user as { id?: string }).id,
+      actorName: finalizedBy,
     })
     return NextResponse.json({ error: `Paystack says this transfer ${finalStatus === 'reversed' ? 'was reversed' : 'failed'}. Nothing was paid, and the money is back on the plan.` }, { status: 502 })
   }
   if (finalStatus !== 'success') {
     await prisma.earlyRedemption.updateMany({ where: { id, status: 'Finalizing' }, data: { bankTransferStatus: finalStatus } })
+    logAudit({
+      action: 'early_redemption_otp_unclear',
+      entity: 'EarlyRedemption',
+      entityId: id,
+      details: `${finalizedBy} entered the OTP for ${record.ref}: Paystack said "${finalStatus}". Not booked as paid; left Finalizing for Check with Paystack.`,
+      actorType: 'admin',
+      actorId: (session.user as { id?: string }).id,
+      actorName: finalizedBy,
+    })
     return NextResponse.json({ ok: true, status: 'Finalizing', bankTransferStatus: finalStatus })
   }
 
