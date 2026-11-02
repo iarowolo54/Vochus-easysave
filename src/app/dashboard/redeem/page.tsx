@@ -12,7 +12,7 @@ import { displayName, formatDate, formatNaira } from '@/lib/format'
 
 interface Plan {
   id: string; goal: string; status: string; balance: number; dailyAmount: number
-  periodDays: number; cadence?: string; maturityDate: string
+  periodDays: number; cadence?: string; maturityDate: string; source?: string
 }
 
 interface Customer {
@@ -117,7 +117,7 @@ export default function RedeemPage() {
         const plans: MaturePlan[] = []
         for (const c of (data.customers ?? []) as Customer[]) {
           for (const p of c.savingsPlans ?? []) {
-            if (p.status === 'Active' && p.balance > 0 && new Date(p.maturityDate) <= new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)) {
+            if (p.status === 'Active' && p.source !== 'self' && p.balance > 0 && new Date(p.maturityDate) <= new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)) {
               plans.push({ ...p, customer: c })
             }
           }
@@ -193,7 +193,9 @@ export default function RedeemPage() {
     }
   }, [accountNumber, selectedBank])
 
-  const eligiblePlans = selected?.savingsPlans?.filter(p => p.status !== 'Redeemed' && p.balance > 0) ?? []
+  const withMoney = selected?.savingsPlans?.filter(p => p.status !== 'Redeemed' && p.balance > 0) ?? []
+  // Online customers collect in their own app, so those plans aren't offered here.
+  const eligiblePlans = withMoney.filter(p => p.source !== 'self')
   const selectedPlan = eligiblePlans.find(p => p.id === selectedPlanId) ?? eligiblePlans[0] ?? null
   const preview = selectedPlan ? payoutFor(selectedPlan) : null
   const planMatured = selectedPlan ? (selectedPlan.status === 'Matured' || new Date(selectedPlan.maturityDate) <= new Date()) : false
@@ -428,7 +430,7 @@ export default function RedeemPage() {
                   </div>
 
                   {eligiblePlans.length === 0 ? (
-                    <EmptyState icon="plan" title="Nothing to collect" text="This customer has no savings plan with money in it." />
+                    <EmptyState icon="plan" title="Nothing to collect here" text={withMoney.length > 0 ? 'This customer’s plans are online, so they collect in their Vochus app.' : 'This customer has no savings plan with money in it.'} />
                   ) : (
                     <>
                       <h2 className="ag-q ag-q--amount">

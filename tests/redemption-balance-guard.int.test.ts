@@ -49,6 +49,8 @@ const { signCustomerToken } = require('../src/lib/customer-auth') as typeof impo
 const { BALANCE_CHANGED, closePlanAfterFinalize, creditOpenPlan, hasOpenRedemption, PlanClosedError } = require('../src/lib/redemption-balance') as typeof import('../src/lib/redemption-balance')
 const er = require('../src/app/api/admin/early-redemption/[id]/route') as typeof import('../src/app/api/admin/early-redemption/[id]/route')
 const fin = require('../src/app/api/admin/early-redemption/[id]/finalize-otp/route') as typeof import('../src/app/api/admin/early-redemption/[id]/finalize-otp/route')
+const wdRoute = require('../src/app/api/admin/agent-withdrawal/[id]/route') as typeof import('../src/app/api/admin/agent-withdrawal/[id]/route')
+const wdVerify = require('../src/app/api/admin/agent-withdrawal/[id]/verify/route') as typeof import('../src/app/api/admin/agent-withdrawal/[id]/verify/route')
 const verifyRoute = require('../src/app/api/admin/early-redemption/[id]/verify/route') as typeof import('../src/app/api/admin/early-redemption/[id]/verify/route')
 const saving = require('../src/app/api/transactions/saving/route') as typeof import('../src/app/api/transactions/saving/route')
 const bulk = require('../src/app/api/transactions/saving/bulk/route') as typeof import('../src/app/api/transactions/saving/bulk/route')
@@ -171,6 +173,7 @@ after(async () => {
   await prisma.transaction.deleteMany({ where: { OR: [{ agentId }, { ref: { in: refs } }] } })
   await prisma.paymentIntent.deleteMany({ where: { customerId } })
   await prisma.earlyRedemption.deleteMany({ where: { id: { in: erIds } } })
+  await prisma.agentWithdrawal.deleteMany({ where: { id: { in: wdIds } } })
   await prisma.savingsPlan.deleteMany({ where: { id: { in: planIds } } })
   await prisma.customer.deleteMany({ where: { id: customerId } })
   await prisma.agent.deleteMany({ where: { id: { in: [agentId, otherAgentId] } } })
@@ -942,6 +945,115 @@ test('rejecting one request does not reopen a plan another request closed', asyn
   await mkRedemption({ planId, method: 'BankTransfer', status: 'AwaitingOTP', transferCode: `TRF_${RUN}_s` })
   assert.equal((await reject(stale.id)).status, 200)
   assert.equal((await planRow(planId)).status, 'Redeemed')
+})
+
+// ---------- agent withdrawals: same rules as redemptions ----------
+const wdIds: string[] = []
+async function mkWithdrawal(status = 'Pending', over: { decidedAt?: Date | null; paystackTransferCode?: string | null } = {}) {
+  const ref = `WG-${RUN}-${seq.n++}`
+  const w = await prisma.agentWithdrawal.create({ data: { ref, agentId, amount: 500, status, accountNumber: '0123456789', bankCode: '058', accountName: 'A', decidedAt: new Date(Date.now() - 3_600_000), ...over } })
+  wdIds.push(w.id)
+  return w
+}
+const wdApprove = (id: string) => wdRoute.PATCH({ json: async () => ({ action: 'approve', pin: PIN }) } as never, ctx(id))
+const wdCheck = (id: string) => wdVerify.POST({} as never, ctx(id))
+const wdRow = (id: string) => prisma.agentWithdrawal.findUniqueOrThrow({ where: { id } })
+const wdPaid = (w: { ref: string }, over: Record<string, unknown> = {}) => ({ status: true, data: { status: 'success', reference: w.ref, amount: 50000, currency: 'NGN', transfer_code: 'TRF_w', ...over } })
+
+test('withdrawal approve: a timeout or 5xx stays Processing; a plain refusal or no call releases', async () => {
+  for (const [label, transfer] of [
+    ['timeout', () => { throw new DOMException('timed out', 'TimeoutError') }],
+    ['5xx', () => ({ status: false, http: 500, message: 'Down' })],
+    ['duplicate', () => ({ status: false, http: 400, message: 'Duplicate Transfer Reference' })],
+  ] as const) {
+    const w = await mkWithdrawal('Pending', { decidedAt: null })
+    const res = await withLivePaystack(recipientThen(transfer), () => wdApprove(w.id))
+    assert.equal(res.status, 502, label)
+    assert.match((await res.json()).error, /Don’t approve it again/, label)
+    assert.equal((await wdRow(w.id)).status, 'Processing', label)
+    assert.equal((await wdApprove(w.id)).status, 409, `${label}: a second approve never reaches Paystack`)
+  }
+  const refused = await mkWithdrawal('Pending', { decidedAt: null })
+  assert.equal((await withLivePaystack(recipientThen(() => ({ status: false, message: 'Insufficient balance' })), () => wdApprove(refused.id))).status, 502)
+  assert.equal((await wdRow(refused.id)).status, 'Pending')
+  const noCall = await mkWithdrawal('Pending', { decidedAt: null })
+  assert.equal((await withLivePaystack(() => { throw new Error('network down') }, () => wdApprove(noCall.id))).status, 502)
+  assert.equal((await wdRow(noCall.id)).status, 'Pending')
+})
+
+test('withdrawal verify: failed, reversed and abandoned refund once, from every in-flight status', async () => {
+  for (const from of ['Processing', 'AwaitingOTP', 'Finalizing']) {
+    for (const status of ['failed', 'reversed', 'abandoned']) {
+      const w = await mkWithdrawal(from, { paystackTransferCode: 'TRF_w' })
+      const m0 = await money()
+      const res = await withLivePaystack(() => ({ status: true, data: { status, reference: w.ref } }), () => wdCheck(w.id))
+      assert.equal((await res.json()).status, 'Rejected', `${from} ${status}`)
+      assert.equal((await money()).commission, m0.commission + 500, `${from} ${status}`)
+      assert.equal((await withLivePaystack(() => ({ status: true, data: { status, reference: w.ref } }), () => wdCheck(w.id))).status, 409)
+      assert.equal((await money()).commission, m0.commission + 500, 'once only')
+    }
+  }
+})
+
+test('withdrawal verify: success is checked against the withdrawal before it counts', async () => {
+  const w = await mkWithdrawal('Finalizing', { paystackTransferCode: 'TRF_w' })
+  assert.equal((await (await withLivePaystack(() => wdPaid(w), () => wdCheck(w.id))).json()).status, 'Approved')
+  for (const [label, over] of [['reference', { reference: 'OTHER' }], ['amount', { amount: 1 }], ['currency', { currency: 'USD' }]] as const) {
+    const bad = await mkWithdrawal('Processing', { paystackTransferCode: 'TRF_w' })
+    const m0 = await money()
+    assert.equal((await withLivePaystack(() => wdPaid(bad, over), () => wdCheck(bad.id))).status, 409, label)
+    assert.equal((await wdRow(bad.id)).status, 'Processing', label)
+    assert.deepEqual(await money(), m0, label)
+  }
+})
+
+test('withdrawal verify: unsettled answers never move it, and Finalizing never goes back or to Processing', async () => {
+  for (const from of ['AwaitingOTP', 'Finalizing']) {
+    for (const status of ['pending', 'received', 'blocked', 'rejected', 'otp', 'something_new']) {
+      const w = await mkWithdrawal(from, { paystackTransferCode: 'TRF_w' })
+      const m0 = await money()
+      const body = await (await withLivePaystack(() => ({ status: true, data: { status, reference: w.ref, transfer_code: 'TRF_w' } }), () => wdCheck(w.id))).json()
+      assert.equal(body.status, from, `${from} ${status}`)
+      const row = await wdRow(w.id)
+      assert.equal(row.status, from, `${from} ${status}`)
+      assert.equal(row.bankTransferStatus, status)
+      assert.deepEqual(await money(), m0)
+    }
+  }
+})
+
+test('withdrawal verify: from Processing, otp moves to AwaitingOTP only with a code', async () => {
+  const w = await mkWithdrawal('Processing')
+  assert.equal((await (await withLivePaystack(() => ({ status: true, data: { status: 'otp', reference: w.ref, transfer_code: 'TRF_o' } }), () => wdCheck(w.id))).json()).status, 'AwaitingOTP')
+  assert.equal((await wdRow(w.id)).paystackTransferCode, 'TRF_o')
+  const noCode = await mkWithdrawal('Processing')
+  assert.equal((await (await withLivePaystack(() => ({ status: true, data: { status: 'otp', reference: noCode.ref } }), () => wdCheck(noCode.id))).json()).status, 'Processing')
+})
+
+test('withdrawal verify: not found releases an old unconfirmed transfer with the commission still held, and only that', async () => {
+  const old = await mkWithdrawal('Processing')
+  const m0 = await money()
+  const notFound = () => ({ status: false, message: 'Transfer not found' })
+  assert.equal((await (await withLivePaystack(notFound, () => wdCheck(old.id))).json()).status, 'Pending')
+  assert.deepEqual(await money(), m0, 'no refund: it can be approved again or rejected')
+  const recent = await mkWithdrawal('Processing', { decidedAt: new Date() })
+  assert.equal((await withLivePaystack(notFound, () => wdCheck(recent.id))).status, 409)
+  assert.equal((await wdRow(recent.id)).status, 'Processing')
+  const known = await mkWithdrawal('Processing', { paystackTransferCode: 'TRF_w' })
+  assert.equal((await (await withLivePaystack(notFound, () => wdCheck(known.id))).json()).status, 'Processing')
+  const down = await mkWithdrawal('Processing')
+  assert.equal((await withLivePaystack(() => ({ status: false, http: 503, message: 'Transfer not found' }), () => wdCheck(down.id))).status, 502)
+})
+
+test('withdrawal verify: an out-of-date answer cannot refund a request approved again meanwhile', async () => {
+  const w = await mkWithdrawal('Processing', { paystackTransferCode: 'TRF_w' })
+  const m0 = await money()
+  const res = await withLivePaystack(async () => {
+    await prisma.agentWithdrawal.update({ where: { id: w.id }, data: { decidedAt: new Date() } })
+    return { status: true, data: { status: 'failed', reference: w.ref } }
+  }, () => wdCheck(w.id))
+  assert.equal(res.status, 409)
+  assert.deepEqual(await money(), m0)
 })
 
 // ---------- removed and gated paths ----------

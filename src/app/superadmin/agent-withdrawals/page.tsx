@@ -264,7 +264,7 @@ export default function AgentWithdrawalsPage() {
         {verifying === r.id ? 'Checking…' : 'Check status with Paystack'}
       </button>
     )
-    if (r.status === 'AwaitingOTP') return <button type="button" className="btn btn-green" onClick={() => openOtp(r)}>Enter OTP</button>
+    if (r.status === 'AwaitingOTP') return <>{checkStatus}<button type="button" className="btn btn-green" onClick={() => openOtp(r)}>Enter OTP</button></>
     if (r.status === 'Processing' || r.status === 'Finalizing') return checkStatus
     if (PENDING_STATUSES.includes(r.status)) return <>
       <button type="button" className="btn btn-outline" onClick={() => openReject(r)}>Reject</button>
