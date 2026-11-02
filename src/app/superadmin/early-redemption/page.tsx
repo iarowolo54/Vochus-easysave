@@ -459,8 +459,9 @@ export default function RedemptionsPage() {
     try {
       const res = await fetch(`/api/admin/early-redemption/${r.id}/verify`, { method: 'POST' })
       if (!res.ok) { toast(await errorOf(res, 'We couldn’t get an answer from Paystack. Nothing has changed. Try again shortly.')); return }
-      const d = await res.json().catch(() => ({})) as { status?: string }
-      toast(d.status === 'Approved' ? `${r.ref}: Paystack has the transfer, so the payout is recorded.`
+      const d = await res.json().catch(() => ({})) as { status?: string; bankTransferStatus?: string | null }
+      if (d.status === 'Processing') { toast(`${r.ref}: Paystack says “${d.bankTransferStatus ?? 'unknown'}”. It isn’t finished, so nothing has changed. Check again later.`); load(); return }
+      toast(d.status === 'Approved' ? `${r.ref}: Paystack confirms the transfer, so the payout is recorded.`
         : d.status === 'AwaitingOTP' ? `${r.ref}: Paystack needs a code. Enter it from the list.`
         : `${r.ref}: no transfer went out. The money is back on the plan, so you can approve or reject it.`, 'success')
       setDetail(null)

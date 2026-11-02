@@ -31,7 +31,8 @@ const realFetch = globalThis.fetch
 globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
   const u = typeof url === 'string' ? url : url.toString()
   if (paystackLive && u.includes('api.paystack.co') && !u.includes('/transaction/initialize')) {
-    return new Response(JSON.stringify(await paystackLive(new URL(u).pathname)), { status: 200 })
+    const { http, ...answer } = (await paystackLive(new URL(u).pathname)) as { status: boolean; http?: number }
+    return new Response(JSON.stringify(answer), { status: http ?? (answer.status ? 200 : 400) })
   }
   if (u.includes('/transaction/initialize')) {
     paystackInits++
@@ -431,11 +432,40 @@ test('a timeout on the transfer call stays Processing: no release, no second tra
   assert.equal(plan.status, 'Redeemed')
 })
 
-async function stuckProcessing(balance = 0) {
+async function stuckProcessing(balance = 0, startedMinutesAgo = 60) {
   const planId = await mkPlan(balance, 'Redeemed')
   const r = await mkRedemption({ planId, method: 'BankTransfer', status: 'Processing' })
+  await prisma.earlyRedemption.update({ where: { id: r.id }, data: { decidedAt: new Date(Date.now() - startedMinutesAgo * 60_000) } })
   return { planId, r }
 }
+
+test('approve stamps when the transfer started, and a release clears it', async () => {
+  const planId = await mkPlan(10000)
+  const r = await mkRedemption({ planId, method: 'BankTransfer' })
+  await withLivePaystack(recipientThen(async () => {
+    assert.ok((await erRow(r.id)).decidedAt, 'stamped before Paystack is called')
+    return { status: false, message: 'No' }
+  }), () => approve(r.id))
+  const row = await erRow(r.id)
+  assert.equal(row.status, 'AgentApproved')
+  assert.equal(row.decidedAt, null)
+})
+
+test('only a plain 4xx refusal releases: a 5xx, rate limit or duplicate reference stays Processing', async () => {
+  const answers = [
+    { status: false, http: 500, message: 'Server error' },
+    { status: false, http: 429, message: 'Slow down' },
+    { status: false, http: 400, message: 'Duplicate Transfer Reference' },
+  ]
+  for (const answer of answers) {
+    const planId = await mkPlan(10000)
+    const r = await mkRedemption({ planId, method: 'BankTransfer' })
+    const res = await withLivePaystack(recipientThen(() => answer), () => approve(r.id))
+    assert.equal(res.status, 502, answer.message)
+    assert.equal((await erRow(r.id)).status, 'Processing', answer.message)
+    assert.equal((await planRow(planId)).balance, 0, answer.message)
+  }
+})
 
 test('verify: the transfer went through, so the ledger completes once', async () => {
   const { planId, r } = await stuckProcessing()
@@ -477,6 +507,35 @@ test('verify: failed, reversed or not found reopens the plan with the money, kee
   }
 })
 
+test('verify: only success records a payout; pending and unknown statuses change nothing', async () => {
+  for (const status of ['pending', 'received', 'abandoned', 'blocked', 'rejected', 'something_new']) {
+    const { planId, r } = await stuckProcessing()
+    const m0 = await money()
+    const res = await withLivePaystack(() => ({ status: true, data: { status } }), () => verifyCall(r.id))
+    assert.deepEqual(await res.json(), { ok: true, status: 'Processing', bankTransferStatus: status }, status)
+    assert.equal((await erRow(r.id)).status, 'Processing', status)
+    assert.equal(await prisma.transaction.count({ where: { ref: r.ref } }), 0, status)
+    assert.equal((await planRow(planId)).status, 'Redeemed', status)
+    assert.deepEqual(await money(), m0, status)
+  }
+})
+
+test('verify: not found on a recent transfer changes nothing, because it may still appear', async () => {
+  const { planId, r } = await stuckProcessing(0, 5)
+  const res = await withLivePaystack(() => ({ status: false, message: 'Transfer not found' }), () => verifyCall(r.id))
+  assert.equal(res.status, 409)
+  assert.match((await res.json()).error, /check again in 30 minutes/)
+  assert.equal((await erRow(r.id)).status, 'Processing')
+  assert.equal((await planRow(planId)).status, 'Redeemed')
+})
+
+test('verify: a 5xx saying not found is not an answer', async () => {
+  const { r } = await stuckProcessing()
+  const res = await withLivePaystack(() => ({ status: false, http: 503, message: 'Transfer not found' }), () => verifyCall(r.id))
+  assert.equal(res.status, 502)
+  assert.equal((await erRow(r.id)).status, 'Processing')
+})
+
 test('verify: Paystack asking for a code moves the request to AwaitingOTP', async () => {
   const { r } = await stuckProcessing()
   const res = await withLivePaystack(() => ({ status: true, data: { status: 'otp', transfer_code: 'TRF_otp' } }), () => verifyCall(r.id))
@@ -487,7 +546,7 @@ test('verify: Paystack asking for a code moves the request to AwaitingOTP', asyn
 })
 
 test('verify: no clear answer from Paystack changes nothing', async () => {
-  for (const handler of [() => { throw new Error('network down') }, () => ({ status: false, message: 'Invalid key' })]) {
+  for (const handler of [() => { throw new Error('network down') }, () => ({ status: false, http: 401, message: 'Invalid key' })]) {
     const { planId, r } = await stuckProcessing()
     const m0 = await money()
     assert.equal((await withLivePaystack(handler, () => verifyCall(r.id))).status, 502)

@@ -18,14 +18,25 @@ export class PaystackRejected extends Error {
   }
 }
 
-async function call(method: string, path: string, body?: object) {
+async function request(method: string, path: string, body?: object) {
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers: headers(),
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(15000),
   })
-  return res.json()
+  return { httpStatus: res.status, data: await res.json() }
+}
+
+async function call(method: string, path: string, body?: object) {
+  return (await request(method, path, body)).data
+}
+
+/** A status:false from a transfer call. Only a plain 4xx refusal proves nothing was sent. A 5xx, a rate limit or
+ *  a timeout tells us nothing, and a duplicate reference means a transfer may already exist. */
+function transferRefusal(httpStatus: number, message: string): Error {
+  const refused = httpStatus >= 400 && httpStatus < 500 && httpStatus !== 408 && httpStatus !== 429 && !/duplicate|already/i.test(message)
+  return refused ? new PaystackRejected(message) : new Error(message)
 }
 
 export async function listBanks(): Promise<{ code: string; name: string }[]> {
@@ -93,14 +104,14 @@ export async function initiateTransfer(amountNaira: number, recipientCode: strin
   if (isTestMode()) {
     return { transferCode: `TRF_test_${Date.now()}`, status: 'success' as string, raw: null as any }
   }
-  const data = await call('POST', '/transfer', {
+  const { httpStatus, data } = await request('POST', '/transfer', {
     source: 'balance',
     reason,
     amount: Math.round(amountNaira * 100),
     recipient: recipientCode,
     reference,
   })
-  if (!data.status) throw new PaystackRejected(data.message ?? 'Transfer initiation failed')
+  if (!data.status) throw transferRefusal(httpStatus, data.message ?? 'Transfer initiation failed')
   return {
     transferCode: data.data.transfer_code as string,
     status: data.data.status as string, // 'success' | 'pending' | 'otp' | 'reversed' | 'failed'
@@ -110,8 +121,8 @@ export async function initiateTransfer(amountNaira: number, recipientCode: strin
 
 export async function verifyTransfer(reference: string) {
   if (isTestMode()) return { status: 'success' as string, raw: null as any }
-  const data = await call('GET', `/transfer/verify/${reference}`)
-  if (!data.status) throw new PaystackRejected(data.message ?? 'Transfer verification failed')
+  const { httpStatus, data } = await request('GET', `/transfer/verify/${reference}`)
+  if (!data.status) throw transferRefusal(httpStatus, data.message ?? 'Transfer verification failed')
   return { status: data.data.status as string, raw: data.data }
 }
 

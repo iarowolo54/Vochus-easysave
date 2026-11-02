@@ -8,6 +8,11 @@ import { reopenPlanAfterNoTransfer } from '@/lib/redemption-balance'
 
 // Resolves a redemption left in Processing: the approve call lost contact with Paystack, or the ledger
 // write failed after the transfer. The plan is closed and nothing else moves this record on.
+// Only a clear answer changes anything. Paid means success, nothing else; any status not named here is left.
+
+// A transfer Paystack hasn't logged yet can still arrive (an approve may be running, or one timed out moments
+// ago), so "not found" only counts once a started transfer has had time to appear.
+const NOT_FOUND_AFTER_MS = 30 * 60 * 1000
 export async function POST(_req: Request, context: { params: Promise<{ id: string }> }) {
   const guard = await requireSuperAdmin()
   if (!guard.ok) return guard.response
@@ -36,6 +41,10 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
     status = 'not_found'
   }
 
+  if (status === 'not_found' && record.decidedAt && Date.now() - record.decidedAt.getTime() < NOT_FOUND_AFTER_MS) {
+    return NextResponse.json({ error: 'Paystack has no record of this transfer yet. It may still appear, so check again in 30 minutes.' }, { status: 409 })
+  }
+
   let newStatus = 'Processing'
   try {
     if (status === 'failed' || status === 'reversed' || status === 'not_found') {
@@ -43,7 +52,7 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
       await prisma.$transaction(async (tx) => {
         const rel = await tx.earlyRedemption.updateMany({
           where: { id, status: 'Processing' },
-          data: { status: 'AgentApproved', bankTransferStatus: status === 'not_found' ? null : status },
+          data: { status: 'AgentApproved', bankTransferStatus: status === 'not_found' ? null : status, decidedAt: null },
         })
         if (rel.count === 0) throw new ConflictError()
         await reopenPlanAfterNoTransfer(tx, record.savingsPlanId, record.balance, 'Active')
@@ -56,8 +65,7 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
       })
       if (moved.count === 0) throw new ConflictError()
       newStatus = 'AwaitingOTP'
-    } else {
-      // Accepted, so complete it the way approve does when Paystack answers straight away.
+    } else if (status === 'success') {
       const { agentId, id: customerId } = record.savingsPlan.customer
       const agent = await prisma.agent.findUnique({ where: { id: agentId }, select: { walletBalance: true } })
       await prisma.$transaction((tx) =>
@@ -72,6 +80,9 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
         }),
       )
       newStatus = 'Approved'
+    } else {
+      // Pending, or a status we don't recognise: not paid, not failed. It stays here to check again.
+      await prisma.earlyRedemption.updateMany({ where: { id, status: 'Processing' }, data: { bankTransferStatus: status } })
     }
   } catch (err) {
     if (err instanceof ConflictError) return NextResponse.json({ error: 'Already processed' }, { status: 409 })

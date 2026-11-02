@@ -165,7 +165,8 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
         await prisma.$transaction(async (tx) => {
           const claim = await tx.earlyRedemption.updateMany({
             where: { id, status: { in: OPEN_STATUSES } },
-            data: { status: 'Processing' },
+            // decidedAt marks when the transfer was started, so verify can tell a call still running from a dead one.
+            data: { status: 'Processing', decidedAt: new Date() },
           })
           if (claim.count === 0) throw new ConflictError()
           const refused = await claimPlanForPayout(tx, record.savingsPlanId, record.balance)
@@ -181,7 +182,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
         prisma.$transaction(async (tx) => {
           const rel = await tx.earlyRedemption.updateMany({
             where: { id, status: 'Processing', paystackTransferCode: null },
-            data: { status: originalStatus },
+            data: { status: originalStatus, decidedAt: null },
           })
           if (rel.count === 1) await reopenPlanAfterNoTransfer(tx, record.savingsPlanId, originalPlanBalance, originalPlanStatus)
         })
