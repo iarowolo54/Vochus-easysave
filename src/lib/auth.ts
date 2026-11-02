@@ -82,8 +82,10 @@ export const authOptions: NextAuthOptions = {
         const LOCKOUT_MS = 30 * 60 * 1000
         if (agent.lockedAt) {
           if (Date.now() - new Date(agent.lockedAt).getTime() > LOCKOUT_MS) {
-            await prisma.agent.update({
-              where: { id: agent.id },
+            // Only a lock that's still the expired one. In a burst this read can be stale, and clearing unconditionally
+            // would wipe a new lock another attempt has just set.
+            await prisma.agent.updateMany({
+              where: { id: agent.id, lockedAt: { lte: new Date(Date.now() - LOCKOUT_MS) } },
               data: { lockedAt: null, loginAttempts: 0 },
             }).catch(logWriteFailure('auto-unlock'))
             agent.lockedAt = null

@@ -261,6 +261,21 @@ test('account lock: a parallel burst gets exactly 3 password checks, and ends in
   assert.equal(await authorize({ identifier: a.agentId, password: PASSWORD }), null, 'locked, even with the right password')
 })
 
+test('account lock: a burst as a lock expires still gets only 3 password checks', async () => {
+  const a = await mkAgent({ loginAttempts: 3, lockedAt: new Date(Date.now() - 31 * 60_000) })
+  const spy = bcrypt as unknown as { compare: typeof bcrypt.compare }
+  const real = spy.compare
+  let checks = 0
+  spy.compare = ((...args: Parameters<typeof bcrypt.compare>) => { checks++; return real(...args) }) as typeof bcrypt.compare
+  try {
+    await Promise.all(Array.from({ length: 30 }, () => authorize({ identifier: a.agentId, password: 'guess' }, fromIp(freshIp()))))
+  } finally {
+    spy.compare = real
+  }
+  assert.equal(checks, 3)
+  assert.ok((await prisma.agent.findUniqueOrThrow({ where: { id: a.id } })).lockedAt)
+})
+
 test('account lock: resets on success, including a success on the third try', async () => {
   const a = await mkAgent()
   await authorize({ identifier: a.agentId, password: 'guess' })
