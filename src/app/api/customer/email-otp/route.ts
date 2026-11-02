@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { randomInt } from 'node:crypto'
+import { randomInt, randomUUID } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { sendMail } from '@/lib/mail'
 import { emailLogo } from '@/lib/email-brand'
@@ -7,6 +7,8 @@ import { enrolRateLimiter, clientIp } from '@/lib/rate-limit'
 import { normalizeEmail } from '@/lib/email'
 
 const SEND_MIN_INTERVAL_MS = 60 * 1000 // one send per email per 60s (DB-backed, cluster-safe)
+const DAY_MS = 24 * 60 * 60_000
+const MAX_SENDS_PER_DAY = 10
 
 export async function POST(req: NextRequest) {
   const { email: rawEmail } = await req.json()
@@ -40,10 +42,22 @@ export async function POST(req: NextRequest) {
   }
 
   const code = randomInt(100000, 1000000).toString()
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000)
-
-  await prisma.emailOTP.deleteMany({ where: { email } })
-  await prisma.emailOTP.create({ data: { email, code, expiresAt } })
+  const id = randomUUID()
+  const now = Date.now()
+  // One statement, so concurrent requests can't pass the limits. Agent onboarding shares this table and
+  // its daily count, so older rows are expired, never deleted: deleting them would reset that count.
+  const inserted = await prisma.$executeRaw`
+    INSERT INTO "EmailOTP" ("id", "email", "code", "expiresAt", "verified", "attempts", "createdAt")
+    SELECT ${id}, ${email}, ${code}, ${now + 10 * 60_000}, false, 0, ${now}
+    WHERE NOT EXISTS (SELECT 1 FROM "EmailOTP" WHERE "email" = ${email} AND "createdAt" > ${now - SEND_MIN_INTERVAL_MS})
+    AND (SELECT COUNT(*) FROM "EmailOTP" WHERE "email" = ${email} AND "createdAt" > ${now - DAY_MS}) < ${MAX_SENDS_PER_DAY}`
+  if (inserted !== 1) {
+    return NextResponse.json({ error: 'Too many codes requested for this email. Please wait and try again.' }, { status: 429 })
+  }
+  await prisma.emailOTP.updateMany({
+    where: { email, id: { not: id } },
+    data: { expiresAt: new Date(now), verified: false },
+  })
 
   // Fire-and-forget, as elsewhere in the app: the code is already persisted, so
   // a transient SMTP error shouldn't fail the request — the user can resend

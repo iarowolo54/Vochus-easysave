@@ -175,7 +175,8 @@ export async function POST(req: NextRequest) {
   })
 
   // Consume the email verification (all rows for this email) so it can't be reused.
-  await prisma.emailOTP.deleteMany({ where: { email: normEmail } })
+  // Only the verified row, so the daily send count onboarding shares isn't reset.
+  await prisma.emailOTP.deleteMany({ where: { email: normEmail, verified: true } })
 
   if (Array.isArray(plans) && plans.length > 1) {
     for (let i = 0; i < plans.length - 1; i++) {

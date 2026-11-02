@@ -770,3 +770,28 @@ test('onboarding verify is limited per IP', async () => {
   for (let i = 0; i < IP_GUESSES_PER_15_MIN; i++) assert.equal((await POST(req({ code: '123456' }, '10.0.0.7') as never, params)).status, 400)
   assert.equal((await POST(req({ code: '123456' }, '10.0.0.7') as never, params)).status, 429)
 })
+
+test('customer email-otp can’t reset onboarding’s send count', async () => {
+  const route = (await import('../src/app/api/customer/email-otp/route')).POST
+  const send = (await import('../src/app/api/agent/onboard/[token]/send-otp/route')).POST
+  const email = `shared-${rid}@example.com`
+  const token = `tok3-${rid}`
+  await prisma.agentInvite.create({ data: { email, token, expiresAt: new Date(Date.now() + 86400000) } })
+  const params = { params: Promise.resolve({ token }) }
+  const hourAgo = new Date(Date.now() - 60 * 60_000)
+
+  const old = await prisma.emailOTP.create({ data: { email, code: '111111', verified: true, expiresAt: new Date(Date.now() + OTP_TTL_MS), createdAt: hourAgo } })
+  assert.equal((await route(req({ email }))).status, 200)
+  const kept = await prisma.emailOTP.findUniqueOrThrow({ where: { id: old.id } })
+  assert.equal(kept.verified, false, 'an older verified row no longer counts')
+  assert.ok(kept.expiresAt.getTime() <= Date.now(), 'the older row is expired, not deleted')
+  assert.equal(await prisma.emailOTP.count({ where: { email } }), 2)
+
+  // Fill today's budget, then both routes refuse and nothing is removed.
+  await prisma.emailOTP.createMany({ data: Array.from({ length: 8 }, (_, i) => ({ email, code: '222222', expiresAt: hourAgo, createdAt: new Date(hourAgo.getTime() + i) })) })
+  await prisma.emailOTP.updateMany({ where: { email, createdAt: { gt: new Date(Date.now() - 60_000) } }, data: { createdAt: hourAgo } })
+  assert.equal(await prisma.emailOTP.count({ where: { email } }), 10)
+  assert.equal((await route(req({ email }))).status, 429)
+  assert.equal((await send(req({}) as never, params)).status, 429)
+  assert.equal(await prisma.emailOTP.count({ where: { email } }), 10)
+})
