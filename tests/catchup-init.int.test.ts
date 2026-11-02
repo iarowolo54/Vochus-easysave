@@ -256,11 +256,23 @@ test('a past-maturity plan: 400, even with slots left to pay', async () => {
   assert.equal((await call(c, plan.id, [key])).status, 400)
 })
 
-test('a checkout still open on a day: 409 with a readable date; other days work', async () => {
+test('a customer who backed out of checkout can start again on the same day, and the old intent stays payable', async () => {
   const { c, plan } = await mk(19)
   const [a, b] = await slotsByState(plan.id, 'upcoming')
-  assert.equal((await call(c, plan.id, [a])).status, 200)
-  const r = await call(c, plan.id, [a, b])
+  const first = await call(c, plan.id, [a])
+  assert.equal(first.status, 200)
+  const again = await call(c, plan.id, [a, b])
+  assert.equal(again.status, 200)
+  assert.equal((await prisma.paymentIntent.findFirstOrThrow({ where: { ref: first.body.reference } })).status, 'Pending')
+  assert.equal((await prisma.paymentIntent.findFirstOrThrow({ where: { ref: again.body.reference } })).status, 'Pending')
+})
+
+test("someone else's open checkout on the day still holds it: 409 with a readable date", async () => {
+  const { c, plan } = await mk(23)
+  const { c: other } = await mk(24)
+  const [a, b] = await slotsByState(plan.id, 'upcoming')
+  await prisma.paymentIntent.create({ data: { ref: `CUI-other-${rid}`, actorType: 'customer', customerId: other.id, planId: plan.id, amount: 100, coversKeys: JSON.stringify([a]) } })
+  const r = await call(c, plan.id, [a])
   assert.equal(r.status, 409)
   assert.doesNotMatch(r.body.error, /\d{4}-\d{2}-\d{2}|catch/i)
   assert.equal((await call(c, plan.id, [b])).status, 200)

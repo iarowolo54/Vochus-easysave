@@ -184,6 +184,16 @@ for (const [label, prepare, expected] of [
   })
 }
 
+test('ONLINE: an agent refused by a customer checkout is told why, with a readable date', async () => {
+  const { c, plan } = await online()
+  await prisma.paymentIntent.create({ data: { ref: `hold-msg-${rid}-${plan.id}`, actorType: 'customer', customerId: c.id, planId: plan.id, amount: 100, coversKeys: JSON.stringify([wat(1)]) } })
+  const res = await call({ customerId: c.id, dates: [wat(1)], method: 'Cash', planId: plan.id })
+  assert.equal(res.status, 409)
+  const { error } = await res.json()
+  assert.match(error, /customer has a card payment open/i)
+  assert.doesNotMatch(error, /\d{4}-\d{2}-\d{2}/)
+})
+
 test('ONLINE monthly is refused', async () => {
   const { c, plan } = await online('monthly')
   assert.equal((await call({ customerId: c.id, dates: [wat(1)], method: 'Cash', planId: plan.id })).status, 400)

@@ -414,6 +414,20 @@ test('overlap: a second payment writes only the free days and audits the rest', 
   assert.equal(await balanceOf(plan.id), 300, 'all the money is still saved')
 })
 
+test('backing out and starting again, then both checkouts getting paid: the day is bought once and all the money is kept', async () => {
+  const { c, plan } = await mk()
+  const key = tomorrowKey()
+  assert.equal(await sendInit(c, plan.id, [key]), 200)
+  assert.equal(await sendInit(c, plan.id, [key]), 200)
+  const [older, newer] = await prisma.paymentIntent.findMany({ where: { planId: plan.id }, orderBy: { createdAt: 'asc' } })
+  for (const i of [older, newer]) koboByRef.set(i.ref, 10000)
+  assert.equal((await sendVerify(c, older.ref)).status, 200)
+  const v = await sendVerify(c, newer.ref)
+  assert.deepEqual(v.body.notBought, { count: 1, weekly: false })
+  assert.equal(await balanceOf(plan.id), 200)
+  assert.equal(await prisma.planDayCoverage.count({ where: { savingsPlanId: plan.id } }), 1)
+})
+
 test('overlap: a payment that bought no days does not count as saved today', async () => {
   const { c, plan } = await mk()
   const key = tomorrowKey()

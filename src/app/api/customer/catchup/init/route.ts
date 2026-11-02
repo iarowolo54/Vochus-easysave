@@ -27,7 +27,7 @@ export async function POST(req: NextRequest) {
   const plan = await prisma.savingsPlan.findFirst({ where: { id: planId, customerId: customer.id } })
   if (!plan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 })
 
-  const check = await checkBulkSelection(prisma, plan, keys, new Date())
+  const check = await checkBulkSelection(prisma, plan, keys, new Date(), { kind: 'customer', customerId: customer.id })
   if (!check.ok) return NextResponse.json({ error: check.error }, { status: check.status })
   const amount = check.total
 

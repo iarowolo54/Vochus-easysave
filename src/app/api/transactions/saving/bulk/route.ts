@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
   const online = plan.source === 'self'
   if (online) {
     const keys = rawDates.filter((k: unknown): k is string => typeof k === 'string')
-    const check = await checkBulkSelection(prisma, plan, keys.length === rawDates.length ? keys : [], new Date())
+    const check = await checkBulkSelection(prisma, plan, keys.length === rawDates.length ? keys : [], new Date(), { kind: 'agent' })
     if (!check.ok) return NextResponse.json({ error: check.error }, { status: check.status })
   }
 

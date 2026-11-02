@@ -41,9 +41,15 @@ export async function hasOpenRedemption(client: PrismaClient, planId: string, no
 }
 
 /** Days held by a checkout still open on this plan. A stale one stops holding after PENDING_HOLD_MS. */
-export async function heldKeys(client: PrismaClient, planId: string, now: Date): Promise<string[]> {
+export async function heldKeys(client: PrismaClient, planId: string, now: Date, exceptCustomerId?: string): Promise<string[]> {
   const intents = await client.paymentIntent.findMany({
-    where: { planId, status: INTENT_PENDING, coversKeys: { not: null }, createdAt: { gte: new Date(now.getTime() - PENDING_HOLD_MS) } },
+    where: {
+      planId,
+      status: INTENT_PENDING,
+      coversKeys: { not: null },
+      createdAt: { gte: new Date(now.getTime() - PENDING_HOLD_MS) },
+      ...(exceptCustomerId ? { customerId: { not: exceptCustomerId } } : {}),
+    },
     select: { coversKeys: true },
   })
   return intents.flatMap(i => parseCoversKeys(i.coversKeys))
@@ -74,10 +80,13 @@ export async function liveSlots(client: PrismaClient, plan: SavingsPlan, now: Da
   )
 }
 
+/** Who is buying: the customer themselves, or their agent recording it for them. */
+export type BulkBuyer = { kind: 'customer'; customerId: string } | { kind: 'agent' }
+
 export type BulkCheck = { ok: true; total: number } | { ok: false; status: 400 | 409; error: string }
 
 /** Can these days be bought on this plan right now? The total is computed here, never taken from the client. */
-export async function checkBulkSelection(client: PrismaClient, plan: SavingsPlan, keys: string[], now: Date): Promise<BulkCheck> {
+export async function checkBulkSelection(client: PrismaClient, plan: SavingsPlan, keys: string[], now: Date, buyer: BulkBuyer): Promise<BulkCheck> {
   if (!isEligiblePlan(plan)) return { ok: false, status: 400, error: 'Bulk Savings isn’t available for this plan' }
   if (plan.maturityDate.getTime() <= now.getTime()) return { ok: false, status: 400, error: 'This plan has ended' }
   if (await hasOpenRedemption(client, plan.id, now)) {
@@ -93,9 +102,20 @@ export async function checkBulkSelection(client: PrismaClient, plan: SavingsPlan
   const beingCharged = keys.find(k => charging.has(k))
   if (beingCharged) return { ok: false, status: 409, error: `The card on this plan is being charged for ${readableKey(beingCharged)}. Remove it, or try again shortly` }
 
-  const held = new Set(await heldKeys(client, plan.id, now))
+  // A customer who backed out of checkout can start again straight away. Their older intent is deliberately left
+  // Pending, not cancelled: if that checkout still gets paid it must be credited, and settlement then writes only the
+  // days still free. So paying twice loses nothing; the extra money stays in their savings.
+  const held = new Set(await heldKeys(client, plan.id, now, buyer.kind === 'customer' ? buyer.customerId : undefined))
   const open = keys.find(k => held.has(k))
-  if (open) return { ok: false, status: 409, error: `A payment for ${readableKey(open)} is still open. Finish it, or try again in about an hour` }
+  if (open) {
+    return {
+      ok: false,
+      status: 409,
+      error: buyer.kind === 'agent'
+        ? `The customer has a card payment open for ${readableKey(open)}. Pick another day, or try again in about an hour`
+        : `A payment for ${readableKey(open)} is still open. Finish it, or try again in about an hour`,
+    }
+  }
 
   return { ok: true, total: result.total }
 }
