@@ -1,40 +1,10 @@
 import { NextAuthOptions } from 'next-auth'
 import { requireEnv } from '@/lib/env'
-import CredentialsProvider from 'next-auth/providers/credentials'
-import bcrypt from 'bcryptjs'
-import { prisma } from './prisma'
 import { isPastAbsoluteCap, IDLE_SECONDS } from '@/lib/session-policy'
 
 export const adminAuthOptions: NextAuthOptions = {
-  providers: [
-    CredentialsProvider({
-      id: 'superadmin-credentials',
-      name: 'Super Admin',
-      credentials: {
-        email: { label: 'Email', type: 'email' },
-        password: { label: 'Password', type: 'password' },
-      },
-      async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) return null
-
-        const admin = await prisma.superAdmin.findUnique({
-          where: { email: credentials.email.trim().toLowerCase() },
-        })
-
-        if (!admin) return null
-
-        const valid = await bcrypt.compare(credentials.password, admin.password)
-        if (!valid) return null
-
-        return {
-          id: admin.id,
-          name: admin.name,
-          email: admin.email,
-          role: 'superadmin',
-        }
-      },
-    }),
-  ],
+  // Admins sign in only through /api/admin-auth/login, which applies the sign-in limit. This config just reads the session.
+  providers: [],
   session: { strategy: 'jwt', maxAge: IDLE_SECONDS.admin },
   cookies: {
     sessionToken: {

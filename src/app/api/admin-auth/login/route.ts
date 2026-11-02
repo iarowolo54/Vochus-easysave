@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { encode } from 'next-auth/jwt'
-import bcrypt from 'bcryptjs'
-import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { verifyAdminLogin } from '@/lib/admin-login-guard'
+import { rightmostForwardedIp } from '@/lib/rate-limit'
 import { requireEnv } from '@/lib/env'
 import { IDLE_SECONDS } from '@/lib/session-policy'
 
@@ -12,17 +12,18 @@ const SECRET = requireEnv('NEXTAUTH_SECRET')
 export async function POST(req: NextRequest) {
   const { email, password } = await req.json()
 
-  if (!email || !password) {
+  if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) {
     return NextResponse.json({ error: 'Missing credentials' }, { status: 400 })
   }
 
-  const admin = await prisma.superAdmin.findUnique({
-    where: { email: email.trim().toLowerCase() },
-  })
-
-  if (!admin || !(await bcrypt.compare(password, admin.password))) {
+  const result = await verifyAdminLogin(email, password, rightmostForwardedIp(req.headers.get('x-forwarded-for')))
+  if (result.kind === 'locked') {
+    return NextResponse.json({ error: 'Too many attempts. Please wait a few minutes and try again.' }, { status: 429 })
+  }
+  if (result.kind === 'invalid') {
     return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 })
   }
+  const { admin } = result
 
   const token = await encode({
     token: { sub: admin.id, email: admin.email, name: admin.name, role: 'superadmin', loginAt: Math.floor(Date.now() / 1000) },

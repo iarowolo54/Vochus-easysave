@@ -4,6 +4,21 @@ import CredentialsProvider from 'next-auth/providers/credentials'
 import bcrypt from 'bcryptjs'
 import { prisma } from './prisma'
 import { isPastAbsoluteCap, IDLE_SECONDS } from '@/lib/session-policy'
+import { refundAttempt, reserveAgentAttempt, reserveAttempt } from '@/lib/login-attempt'
+import { rightmostForwardedIp } from '@/lib/rate-limit'
+
+const AGENT_IP_FAIL_LIMIT = 20
+const AGENT_IP_LOCK_MS = 15 * 60_000
+
+/** The address nginx appended, namespaced apart from customer login's counts. */
+export function agentLoginIpKey(xff: string | string[] | null | undefined): string | null {
+  const ip = rightmostForwardedIp(xff)
+  return ip ? `agent:${ip}` : null
+}
+
+const logWriteFailure = (what: string) => (e: unknown) => {
+  console.error(`[agent-login] ${what} failed:`, e instanceof Error ? e.message : 'unknown')
+}
 
 export const authOptions: NextAuthOptions = {
   providers: [
@@ -17,12 +32,39 @@ export const authOptions: NextAuthOptions = {
         biometricToken: { label: 'Biometric Token', type: 'text' },
         device: { label: 'Device Meta (JSON)', type: 'text' },
       },
-      async authorize(credentials) {
-        if (!credentials?.identifier) return null
-        const biometricToken = (credentials as any).biometricToken as string | undefined
-        if (!credentials.password && !biometricToken) return null
+      async authorize(credentials, req) {
+        // NextAuth accepts JSON bodies, so any of these can arrive as an object: passed to Prisma, { not: '' } is a filter
+        // that matches anything. Only a string counts as supplied.
+        const field = (name: string) => {
+          const value = (credentials as Record<string, unknown> | undefined)?.[name]
+          return typeof value === 'string' ? value : undefined
+        }
+        const identifier = field('identifier')
+        const password = field('password')
+        const biometricToken = field('biometricToken')
+        if (!identifier) return null
+        if (!password && !biometricToken) return null
 
-        const id = credentials.identifier.trim().toLowerCase()
+        // Password attempts count against the address before anything else, in the database so it holds across both PM2
+        // instances. Fingerprint attempts don't: a token can't be guessed, so a valid one gets through a blocked address
+        // and a wrong one isn't a reason to block it. An attempt that can't be counted isn't allowed to try.
+        const ipKey = biometricToken ? null : agentLoginIpKey(req?.headers?.['x-forwarded-for'])
+        let ipLockStarted = false
+        const refundIp = async () => {
+          if (ipKey) await refundAttempt(`ip:${ipKey}`, ipLockStarted).catch(logWriteFailure('refund'))
+        }
+        if (ipKey) {
+          try {
+            const slot = await reserveAttempt(`ip:${ipKey}`, AGENT_IP_FAIL_LIMIT, [AGENT_IP_LOCK_MS])
+            if (!slot.allowed) return null
+            ipLockStarted = slot.startedLock
+          } catch (e) {
+            logWriteFailure('count address')(e)
+            return null
+          }
+        }
+
+        const id = identifier.trim().toLowerCase()
 
         const agent = await prisma.agent.findFirst({
           where: {
@@ -40,77 +82,85 @@ export const authOptions: NextAuthOptions = {
         const LOCKOUT_MS = 30 * 60 * 1000
         if (agent.lockedAt) {
           if (Date.now() - new Date(agent.lockedAt).getTime() > LOCKOUT_MS) {
-            await prisma.agent.update({
-              where: { id: agent.id },
+            // Only a lock that's still the expired one. In a burst this read can be stale, and clearing unconditionally
+            // would wipe a new lock another attempt has just set.
+            await prisma.agent.updateMany({
+              where: { id: agent.id, lockedAt: { lte: new Date(Date.now() - LOCKOUT_MS) } },
               data: { lockedAt: null, loginAttempts: 0 },
-            }).catch(() => {})
+            }).catch(logWriteFailure('auto-unlock'))
             agent.lockedAt = null
             agent.loginAttempts = 0
           } else {
+            await refundIp()
             return null
           }
         }
 
-        const deviceIdForBio = (credentials as any).deviceId as string | undefined
+        const deviceId = field('deviceId')
 
         let valid = false
-        if (biometricToken && deviceIdForBio) {
-          const { createHash } = await import('crypto')
-          const hash = createHash('sha256').update(biometricToken).digest('hex')
-          const t = await prisma.biometricToken.findFirst({
-            where: { agentId: agent.id, deviceId: deviceIdForBio, tokenHash: hash, revokedAt: null },
-          })
-          if (t) {
-            valid = true
-            await prisma.biometricToken.update({ where: { id: t.id }, data: { lastUsedAt: new Date() } }).catch(() => {})
-          }
-        } else if (credentials.password) {
-          valid = await bcrypt.compare(credentials.password, agent.password)
-        }
-
-        if (!valid) {
-          if (!biometricToken) {
-            const newAttempts = agent.loginAttempts + 1
-            if (newAttempts >= 3) {
-              await prisma.agent.update({
-                where: { id: agent.id },
-                data: { loginAttempts: newAttempts, lockedAt: new Date() },
-              }).catch(() => {})
-            } else {
-              await prisma.agent.update({
-                where: { id: agent.id },
-                data: { loginAttempts: newAttempts },
-              }).catch(() => {})
+        // A request with a biometric token is only ever a biometric attempt. Its failures don't lock the account, so
+        // falling through to the password here would give unlimited, uncounted guesses.
+        if (biometricToken) {
+          if (deviceId) {
+            const { createHash } = await import('crypto')
+            const hash = createHash('sha256').update(biometricToken).digest('hex')
+            const t = await prisma.biometricToken.findFirst({
+              where: { agentId: agent.id, deviceId, tokenHash: hash, revokedAt: null },
+            })
+            if (t) {
+              valid = true
+              await prisma.biometricToken.update({ where: { id: t.id }, data: { lastUsedAt: new Date() } }).catch(logWriteFailure('fingerprint last used'))
             }
           }
-          return null
+        } else if (password) {
+          let reserved: boolean
+          try {
+            reserved = await reserveAgentAttempt(agent.id)
+          } catch (e) {
+            logWriteFailure('count attempt')(e)
+            await refundIp()
+            return null
+          }
+          if (!reserved) {
+            await refundIp()
+            return null
+          }
+          valid = await bcrypt.compare(password, agent.password)
+          if (valid) {
+            // The password was right, whatever happens next: this attempt shouldn't build toward a lock.
+            await prisma.agent.update({ where: { id: agent.id }, data: { loginAttempts: 0, lockedAt: null } }).catch(logWriteFailure('reset attempts'))
+            await refundIp()
+          }
         }
+
+        if (!valid) return null
 
         if (agent.email && !agent.emailVerified) return null
 
         if (agent.status !== 'Active') return null
 
-        const app = (credentials as any).app
-        const deviceId = (credentials as any).deviceId as string | undefined
+        const app = field('app')
 
         // Device binding only applies to the mobile app. Web browsers can always log in.
         if (app === 'agent') {
           if (agent.boundDeviceId) {
             if (agent.boundDeviceId !== deviceId) return null
           } else if (deviceId) {
-            await prisma.agent.update({ where: { id: agent.id }, data: { boundDeviceId: deviceId } }).catch(() => {})
+            await prisma.agent.update({ where: { id: agent.id }, data: { boundDeviceId: deviceId } }).catch(logWriteFailure('bind device'))
           }
         }
 
         await prisma.agent.update({
           where: { id: agent.id },
           data: { loginAttempts: 0 },
-        }).catch(() => {})
+        }).catch(logWriteFailure('reset attempts'))
 
         if (app && deviceId) {
           const { recordDeviceSession } = await import('./device-session')
           let meta: Record<string, string | null> | undefined
-          try { meta = (credentials as any).device ? JSON.parse((credentials as any).device) : undefined } catch { meta = undefined }
+          const device = field('device')
+          try { meta = device ? JSON.parse(device) : undefined } catch { meta = undefined }
           recordDeviceSession({ deviceId, app, agentId: agent.id, meta })
         }
 

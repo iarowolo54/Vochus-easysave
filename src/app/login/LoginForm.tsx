@@ -8,7 +8,7 @@ import PasswordInput from '@/components/auth/PasswordInput'
 import { FieldError, FormError } from '@/components/ui/FormErrors'
 import { Icons } from '@/components/ui/icons'
 import { describeFailure, NETWORK_MESSAGE, postJson } from '@/lib/http'
-import { FINGERPRINT_FAILED, loginFailure, type AgentCheck } from '@/lib/login-failure'
+import { FINGERPRINT_FAILED, authReachability, loginFailure, reachabilityMessage, type AgentCheck } from '@/lib/login-failure'
 
 export default function LoginForm() {
   return (
@@ -56,7 +56,13 @@ function LoginPageInner() {
       setLoading(true)
       setError('')
       setNotice('')
+      setFieldErrors({ identifier: '', password: '' })
       try {
+        const reachable = await authReachability()
+        if (reachable !== 'ok') {
+          setError(reachabilityMessage(reachable))
+          return
+        }
         const device = (window as unknown as { __vochusDevice?: Record<string, string> }).__vochusDevice
         const r = await signIn('credentials', {
           identifier: creds.identifier,
@@ -113,6 +119,11 @@ function LoginPageInner() {
     const deviceId = w.__vochusDeviceId ?? ''
     const device = w.__vochusDevice ? JSON.stringify(w.__vochusDevice) : ''
     try {
+      const reachable = await authReachability()
+      if (reachable !== 'ok') {
+        setError(reachabilityMessage(reachable))
+        return
+      }
       const result = await signIn('credentials', {
         identifier: identifier.trim(),
         password,
@@ -128,7 +139,7 @@ function LoginPageInner() {
       // signIn only says "failed"; ask why so the agent gets a specific answer.
       const check = await postJson<AgentCheck>('/api/auth/check-agent', { identifier: identifier.trim(), app, deviceId })
       if (!check.ok) {
-        setError(check.kind === 'http' ? 'That agent ID and password don’t match. Check them and try again.' : describeFailure(check))
+        setError(check.kind === 'http' && check.status !== 429 ? 'That agent ID and password don’t match. Check them and try again.' : describeFailure(check))
         return
       }
       const failure = loginFailure(check.data, 'password')
