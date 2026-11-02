@@ -44,13 +44,14 @@ export async function GET(req: NextRequest) {
     agentDbId = invite?.agentId ?? null
   }
   let agent = agentDbId
-    ? await prisma.agent.findUnique({ where: { id: agentDbId }, select: { name: true, location: true, photoUrl: true } })
+    ? await prisma.agent.findUnique({ where: { id: agentDbId }, select: { name: true, location: true, photoUrl: true, status: true } })
     : null
   if (!agent && aid) {
-    agent = await prisma.agent.findFirst({ where: { agentId: aid }, select: { name: true, location: true, photoUrl: true } })
+    agent = await prisma.agent.findFirst({ where: { agentId: aid }, select: { name: true, location: true, photoUrl: true, status: true } })
   }
 
   if (!agent) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (agent.status !== 'Active') return NextResponse.json({ error: 'This invite link is no longer active.' }, { status: 410 })
 
   // Agents have a single `name`; surface only the first word as the first name.
   const firstName = agent.name.trim().split(/\s+/)[0] ?? agent.name

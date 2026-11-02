@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { verifyApprovalPin } from '@/lib/approval-pin'
 import { createRecipient, initiateTransfer, PaystackRejected, resolveAccount } from '@/lib/paystack'
 import { logAudit } from '@/lib/audit'
-import { NO_MONEY_LEFT } from '@/lib/redemption-balance'
+import { AGENT_NOT_ACTIVE, NO_MONEY_LEFT } from '@/lib/redemption-balance'
 import { getPayoutMode } from '@/lib/payout-mode'
 import { notifyAgentPayoutPaid, notifyAgentPayoutDeclined } from '@/lib/payout-notify'
 
@@ -71,6 +71,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   }
 
   if (action === 'approve') {
+    if (agent.status !== 'Active') return NextResponse.json({ error: AGENT_NOT_ACTIVE }, { status: 409 })
     // Fail closed: a mode-read error surfaces as a 500 rather than silently picking a rail.
     const manual = (await getPayoutMode()).agent === 'manual'
     if (manual) {

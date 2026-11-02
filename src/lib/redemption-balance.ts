@@ -12,6 +12,8 @@ type Client = Pick<PrismaClient, 'savingsPlan' | 'earlyRedemption'> | Prisma.Tra
 
 export const SAVING_BLOCKED = 'This customer has asked to collect from this plan, so new savings can’t be recorded yet. Wait for the office to decide, or ask an admin to reject the request.'
 export const PLAN_CLOSED = 'This plan has been closed, so nothing was recorded and your wallet wasn’t charged.'
+export const AGENT_NOT_ACTIVE = 'This agent’s account isn’t active, so this withdrawal can’t be paid. You can reject it, which returns the money to their commission.'
+export const CASH_NEEDS_ACTIVE_AGENT = 'This customer’s agent isn’t active, so cash can’t be paid through them. Reject this request and ask the customer to request again with a bank account.'
 export const BALANCE_CHANGED = 'This customer’s balance has changed since they asked to collect. Reject this request and ask them to request again.'
 export const BALANCE_CHANGED_AWAITING_OTP = 'This customer’s balance has changed while this payout was waiting for its code. Nothing has been paid. Don’t enter the code. Once it expires, about 30 minutes after it was sent, use Check with Paystack and ask them to request again.'
 

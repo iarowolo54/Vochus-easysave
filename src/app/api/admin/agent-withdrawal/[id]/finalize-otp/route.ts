@@ -3,7 +3,7 @@ import { requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { finalizeTransfer, PaystackRejected } from '@/lib/paystack'
 import { logAudit } from '@/lib/audit'
-import { NO_MONEY_LEFT } from '@/lib/redemption-balance'
+import { AGENT_NOT_ACTIVE, NO_MONEY_LEFT } from '@/lib/redemption-balance'
 
 export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
   const guard = await requireSuperAdmin()
@@ -18,6 +18,10 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
   if (!record) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (record.status !== 'AwaitingOTP') return NextResponse.json({ error: 'Already processed' }, { status: 409 })
   if (!record.paystackTransferCode) return NextResponse.json({ error: 'Missing Paystack transfer code on record' }, { status: 400 })
+
+  // Last point before money moves. Check status with Paystack still works, and resolves it once the code expires.
+  const agent = await prisma.agent.findUnique({ where: { id: record.agentId }, select: { status: true } })
+  if (agent?.status !== 'Active') return NextResponse.json({ error: AGENT_NOT_ACTIVE }, { status: 409 })
 
   // Claim BEFORE Paystack: AwaitingOTP -> Finalizing. A concurrent submit claims nothing and never finalizes.
   const claim = await prisma.agentWithdrawal.updateMany({

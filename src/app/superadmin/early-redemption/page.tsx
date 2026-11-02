@@ -23,6 +23,7 @@ interface RedemptionRecord {
   currentBalance: number
   balanceChanged: boolean
   needsReview: boolean
+  agentActive: boolean
   penalty: number
   netPayout: number
   token: string | null
@@ -109,6 +110,7 @@ const needsCode = (r: { status: string; tokenExpiry: string | null }) => r.statu
 /** Paystack's final statuses that don't say whether money moved, so a person has to look. */
 const UNCLEAR_FINAL = ['blocked', 'rejected']
 const CHECKABLE = ['Processing', 'AwaitingOTP', 'Finalizing']
+const cashBlocked = (r: { agentActive: boolean; payoutMethod: string | null }) => !r.agentActive && !isBank(r.payoutMethod)
 const isBank = (method: string | null | undefined) => method === 'Bank Transfer' || method === 'BankTransfer'
 const last4 = (acct: string | null) => acct ? `••••${acct.slice(-4)}` : ''
 const typeLabel = (t: string) => t === 'early' ? 'Early exit' : 'After maturity'
@@ -945,7 +947,7 @@ export default function RedemptionsPage() {
         <Modal icon="redeem" title={detail.ref} sub="Redemption request" onClose={() => setDetail(null)}
           footer={DECIDABLE.includes(detail.status) ? <>
             <button type="button" className="btn btn-outline" onClick={() => { const r = detail; setDetail(null); openReject(r) }}>Reject</button>
-            {!needsCode(detail) && !detail.balanceChanged && <button type="button" className="btn btn-green" onClick={() => { const r = detail; setDetail(null); openApprove(r) }}>{manual && isBank(detail.payoutMethod) ? 'Mark as paid' : 'Approve'}</button>}
+            {!needsCode(detail) && !detail.balanceChanged && !cashBlocked(detail) && <button type="button" className="btn btn-green" onClick={() => { const r = detail; setDetail(null); openApprove(r) }}>{manual && isBank(detail.payoutMethod) ? 'Mark as paid' : 'Approve'}</button>}
           </> : detail.status === 'AwaitingOTP' ? <>
             <button type="button" className="btn btn-outline" onClick={() => { const r = detail; setDetail(null); openReject(r) }}>Reject</button>
             <button type="button" className="btn btn-outline" disabled={checking} onClick={() => checkWithPaystack(detail)}>{checking ? 'Checking…' : 'Check with Paystack'}</button>
@@ -957,6 +959,7 @@ export default function RedemptionsPage() {
           {detail.balanceChanged && (detail.status === 'AwaitingOTP'
             ? <p className="a-alert a-alert-r cm-gap" role="alert">This plan now holds {nairaKobo(detail.currentBalance)}, which arrived while this payout was waiting for its code. Nothing has been paid. Don’t enter the code. Once it expires, about 30 minutes after it was sent, use Check with Paystack and ask them to request again.</p>
             : <p className="a-alert a-alert-r cm-gap" role="alert">The balance has changed. They asked to collect from {nairaKobo(detail.balance)}, and the plan now holds {nairaKobo(detail.currentBalance)}. Reject this request and ask them to request again.</p>)}
+          {cashBlocked(detail) && DECIDABLE.includes(detail.status) && <p className="a-alert a-alert-r cm-gap" role="alert">This customer’s agent isn’t active, so cash can’t be paid through them. Reject this request and ask the customer to request again with a bank account.</p>}
           {needsCode(detail) && <p className="a-alert a-alert-a cm-gap" role="status">The customer hasn’t confirmed this request with their code, so it can’t be approved yet. You can reject it.</p>}
           {(detail.status === 'Processing' || detail.status === 'Finalizing') && (UNCLEAR_FINAL.includes(detail.bankTransferStatus ?? '')
             ? <p className="a-alert a-alert-r cm-gap" role="alert">Paystack says “{detail.bankTransferStatus}”. That’s final, but it doesn’t say whether money moved, so this hasn’t been recorded or released. Check the Paystack dashboard.</p>

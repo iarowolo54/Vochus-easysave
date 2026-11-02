@@ -55,6 +55,9 @@ const fin = require('../src/app/api/admin/early-redemption/[id]/finalize-otp/rou
 const wdRoute = require('../src/app/api/admin/agent-withdrawal/[id]/route') as typeof import('../src/app/api/admin/agent-withdrawal/[id]/route')
 const wdVerify = require('../src/app/api/admin/agent-withdrawal/[id]/verify/route') as typeof import('../src/app/api/admin/agent-withdrawal/[id]/verify/route')
 const paystackWebhook = require('../src/app/api/paystack/webhook/route') as typeof import('../src/app/api/paystack/webhook/route')
+const wdFinalizeRoute = require('../src/app/api/admin/agent-withdrawal/[id]/finalize-otp/route') as typeof import('../src/app/api/admin/agent-withdrawal/[id]/finalize-otp/route')
+const enrollRoute = require('../src/app/api/customer/enroll/route') as typeof import('../src/app/api/customer/enroll/route')
+const inviteRoute = require('../src/app/api/customer/enroll/invite/route') as typeof import('../src/app/api/customer/enroll/invite/route')
 const verifyRoute = require('../src/app/api/admin/early-redemption/[id]/verify/route') as typeof import('../src/app/api/admin/early-redemption/[id]/verify/route')
 const saving = require('../src/app/api/transactions/saving/route') as typeof import('../src/app/api/transactions/saving/route')
 const bulk = require('../src/app/api/transactions/saving/bulk/route') as typeof import('../src/app/api/transactions/saving/bulk/route')
@@ -1159,6 +1162,90 @@ test('agent bank payout: a Paystack outage says so, and a refusal does not', asy
   assert.match((await refused.json()).error, /Could not verify/)
   const mismatch = await requestBank(bankBody(planId), 'SOME AGENT')
   assert.match((await mismatch.json()).error, /collect in their Vochus app/)
+})
+
+// ---------- a suspended agent: no money through them ----------
+async function whileSuspended<T>(fn: () => Promise<T>): Promise<T> {
+  await prisma.agent.update({ where: { id: agentId }, data: { status: 'Suspended' } })
+  try { return await fn() } finally { await prisma.agent.update({ where: { id: agentId }, data: { status: 'Active' } }) }
+}
+
+test('suspended agent: withdrawal approve and finalize are refused, and nothing moves', async () => {
+  await whileSuspended(async () => {
+    const pending = await mkWithdrawal('Pending', { decidedAt: null })
+    const a = await wdApprove(pending.id)
+    assert.equal(a.status, 409)
+    assert.match((await a.json()).error, /isn’t active/)
+    assert.equal((await wdRow(pending.id)).status, 'Pending')
+    const otp = await mkWithdrawal('AwaitingOTP', { paystackTransferCode: `TRF_${RUN}_wf` })
+    let calls = 0
+    const f = await withLivePaystack(() => { calls++; return { status: true, data: { status: 'success' } } }, () => wdFinalizeRoute.POST({ json: async () => ({ otp: '123456' }) } as never, ctx(otp.id)))
+    assert.equal(f.status, 409)
+    assert.equal(calls, 0, 'Paystack is never asked')
+    assert.equal((await wdRow(otp.id)).status, 'AwaitingOTP')
+  })
+})
+
+test('suspended agent: withdrawal reject still refunds and verify still resolves', async () => {
+  await whileSuspended(async () => {
+    const pending = await mkWithdrawal('Pending', { decidedAt: null })
+    const m0 = await money()
+    assert.equal((await wdRoute.PATCH({ json: async () => ({ action: 'reject' }) } as never, ctx(pending.id))).status, 200)
+    assert.equal((await money()).commission, m0.commission + 500)
+    const stuck = await mkWithdrawal('AwaitingOTP', { paystackTransferCode: 'TRF_w' })
+    assert.equal((await (await withLivePaystack(() => ({ status: true, data: { status: 'abandoned', reference: stuck.ref } }), () => wdCheck(stuck.id))).json()).status, 'Rejected')
+  })
+})
+
+test('suspended agent: cash approval is refused; bank still works; reject still works', async () => {
+  await whileSuspended(async () => {
+    const cashPlan = await mkPlan(10000)
+    const cash = await mkRedemption({ planId: cashPlan })
+    const m0 = await money()
+    const res = await approve(cash.id)
+    assert.equal(res.status, 409)
+    assert.match((await res.json()).error, /cash can’t be paid through them/)
+    assert.equal((await planRow(cashPlan)).balance, 10000)
+    assert.deepEqual(await money(), m0)
+    const { records } = await (await adminList.GET()).json()
+    assert.equal(records.find((x: { id: string }) => x.id === cash.id).agentActive, false)
+    assert.equal((await reject(cash.id)).status, 200)
+    const bankPlan = await mkPlan(10000)
+    const bank = await mkRedemption({ planId: bankPlan, method: 'BankTransfer' })
+    assert.equal((await approve(bank.id)).status, 200)
+    assert.equal((await erRow(bank.id)).status, 'Approved')
+  })
+})
+
+test('suspended agent: a customer can\'t ask for cash, and an active agent\'s customer still can', async () => {
+  const planId = await mkPlan(10000)
+  await prisma.savingsPlan.update({ where: { id: planId }, data: { startDate: new Date(Date.now() + 3 * 864e5) } })
+  await whileSuspended(async () => {
+    const res = await redeemRoute.POST({ json: async () => ({ reason: 'x' }), headers: new Headers() } as never)
+    assert.equal(res.status, 400)
+    assert.match((await res.json()).error, /choose a bank account/)
+  })
+  const ok = await redeemRoute.POST({ json: async () => ({ reason: 'x' }), headers: new Headers() } as never)
+  assert.equal(ok.status, 200)
+  const { ref } = await ok.json()
+  refs.push(ref)
+  erIds.push((await prisma.earlyRedemption.findUniqueOrThrow({ where: { ref } })).id)
+  await prisma.savingsPlan.update({ where: { id: planId }, data: { status: 'Completed' } })
+})
+
+test('suspended agent: old links stop enrolling, with the page told up front', async () => {
+  const email = `rg-enrol-${RUN}@test.local`
+  const url = (q: string) => ({ url: `http://x/api/customer/enroll/invite?${q}`, headers: new Headers({ 'x-forwarded-for': `10.9.${seq.n++}.1` }) }) as never
+  const body = { aid: agentCode, firstName: 'Ada', lastName: 'Obi', phone: `0809${String(Date.now()).slice(-7)}`, email, address: '12 Allen Avenue, Ikeja', nokName: 'N', nokRelation: 'R', nokPhone: '08090001122', password: 'secret1', gender: 'Female', state: 'Lagos', lga: 'Ikeja', dailyAmount: 500, periodDays: 90, goal: 'Rent' }
+  const post = () => enrollRoute.POST({ json: async () => body, headers: new Headers({ 'x-forwarded-for': `10.8.${seq.n++}.1` }) } as never)
+  await whileSuspended(async () => {
+    assert.equal((await inviteRoute.GET(url(`aid=${agentCode}`))).status, 410)
+    const res = await post()
+    assert.equal(res.status, 400)
+    assert.match((await res.json()).error, /no longer active/)
+    assert.equal(await prisma.customer.count({ where: { email } }), 0)
+  })
+  assert.equal((await inviteRoute.GET(url(`aid=${agentCode}`))).status, 200)
 })
 
 // ---------- removed and gated paths ----------

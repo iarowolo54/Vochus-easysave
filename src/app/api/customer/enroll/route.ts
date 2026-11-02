@@ -88,6 +88,8 @@ export async function POST(req: NextRequest) {
   if (!agent || !agentDbId) {
     return NextResponse.json({ error: 'Invalid invite link — ask your agent for a new link' }, { status: 400 })
   }
+  // An old link must not sign anyone up under an agent who has been suspended.
+  if (agent.status !== 'Active') return NextResponse.json({ error: 'This invite link is no longer active. Please contact Vochus for help.' }, { status: 400 })
 
   // Email must have been verified via the email-OTP flow, recently. This is the
   // server-side gate — the browser check alone is not enough. The row is

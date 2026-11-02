@@ -34,7 +34,7 @@ export async function GET() {
           customer: {
             select: {
               id: true, customerId: true, firstName: true, lastName: true, phone: true,
-              agent: { select: { name: true, agentId: true } },
+              agent: { select: { name: true, agentId: true, status: true } },
             },
           },
         },
@@ -109,6 +109,7 @@ export async function GET() {
       customerPhone: r.savingsPlan.customer.phone,
       agentName: r.savingsPlan.customer.agent.name,
       agentId: r.savingsPlan.customer.agent.agentId,
+      agentActive: r.savingsPlan.customer.agent.status === 'Active',
       savingsPlanId: r.savingsPlanId,
       planStatus: r.savingsPlan.status,
       // The plan being redeemed.

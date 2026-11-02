@@ -67,6 +67,12 @@ export async function POST(req: NextRequest) {
   const now = new Date()
   const isEarly = now < plan.maturityDate
   const payoutMethod = accountNumber ? 'BankTransfer' : 'Cash'
+  if (payoutMethod === 'Cash') {
+    const agent = await prisma.agent.findUnique({ where: { id: customer.agentId }, select: { status: true } })
+    if (agent?.status !== 'Active') {
+      return NextResponse.json({ error: 'Cash collection isn’t available on your account right now. Please choose a bank account instead.' }, { status: 400 })
+    }
+  }
 
   // Verify the bank account server-side and store the RESOLVED name, so a payout
   // can't be redirected via a spoofed account name (finding #5).

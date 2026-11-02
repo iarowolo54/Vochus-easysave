@@ -5,7 +5,7 @@ import { verifyApprovalPin } from '@/lib/approval-pin'
 import { createRecipient, initiateTransfer, PaystackRejected, verifyTransfer } from '@/lib/paystack'
 import { logAudit } from '@/lib/audit'
 import { redemptionCompletionOps, ConflictError } from '@/lib/redemption-complete'
-import { BALANCE_CHANGED, balanceUnchanged, claimPlanForPayout, NO_MONEY_LEFT, reopenPlanAfterNoTransfer, settlePlanAfterPayout, TRANSFER_ACCEPTED } from '@/lib/redemption-balance'
+import { BALANCE_CHANGED, balanceUnchanged, CASH_NEEDS_ACTIVE_AGENT, claimPlanForPayout, NO_MONEY_LEFT, reopenPlanAfterNoTransfer, settlePlanAfterPayout, TRANSFER_ACCEPTED } from '@/lib/redemption-balance'
 import { getPayoutMode } from '@/lib/payout-mode'
 import { customerType } from '@/lib/customer-type'
 import {
@@ -164,6 +164,11 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     const agentId = record.savingsPlan.customer.agentId
     const customerId = record.savingsPlan.customer.id
     const isBankTransfer = record.payoutMethod === 'Bank Transfer' || record.payoutMethod === 'BankTransfer'
+    // Cash reaches the customer through the agent's wallet, so it can't go through an agent who isn't active.
+    if (!isBankTransfer) {
+      const agent = await prisma.agent.findUnique({ where: { id: agentId }, select: { status: true } })
+      if (agent?.status !== 'Active') return conflict(CASH_NEEDS_ACTIVE_AGENT)
+    }
     // Manual applies to bank transfers only; Cash never reads the mode. A throw here => 500 (fail closed).
     const manualBank = isBankTransfer && (await getPayoutMode()).customer === 'manual'
     const originalStatus = record.status

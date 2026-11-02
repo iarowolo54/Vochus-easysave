@@ -7,6 +7,7 @@ import AmountField from '@/components/ui/AmountField'
 import EndDateField, { endDateDays } from '@/components/ui/EndDateField'
 import BottomSheet from '@/components/ui/BottomSheet'
 import CodeBoxes from '@/components/ui/CodeBoxes'
+import EmptyState from '@/components/ui/EmptyState'
 import { FieldError, FormError } from '@/components/ui/FormErrors'
 import { Icons, type IconName } from '@/components/ui/icons'
 import { formatDate, formatNaira } from '@/lib/format'
@@ -138,6 +139,8 @@ function EnrollContent() {
   const [resendIn, setResendIn] = useState(0)
   /** The agent who sent the invite, shown on the welcome screen. */
   const [invite, setInvite] = useState<{ firstName: string; area: string | null; photo: string | null } | null>(null)
+  /** The link's agent is no longer active, so say so now rather than after the whole form. */
+  const [inviteClosed, setInviteClosed] = useState(false)
   const [result, setResult] = useState<{ customerId: string; name: string; agentName: string; plan: unknown } | null>(null)
 
   // The server only answers whether this name matches this BVN. Each check is a paid lookup from a small
@@ -181,7 +184,7 @@ function EnrollContent() {
     if (ref) q.set('ref', ref)
     if (aid) q.set('aid', aid)
     fetch(`/api/customer/enroll/invite?${q}`)
-      .then(r => (r.ok ? r.json() : null))
+      .then(r => { if (r.status === 410) setInviteClosed(true); return r.ok ? r.json() : null })
       .then(d => { if (d?.firstName) setInvite({ firstName: d.firstName, area: d.area ?? null, photo: d.photo ?? null }) })
       .catch(() => {}) // The welcome screen works without it.
   }, [aid, ref])
@@ -533,6 +536,16 @@ function EnrollContent() {
   )
 
   // ── Welcome: their reason for saving comes first ──
+  if (inviteClosed && !result) {
+    return (
+      <div className="ui-screen cu-enroll">
+        <main className="cu-page">
+          <EmptyState icon="error" tone="danger" title="This link is no longer active" text="You can’t open an account with it. Please contact Vochus for help." />
+        </main>
+      </div>
+    )
+  }
+
   if (screen === 'intro') {
     return (
       <div className="ui-screen cu-enroll">
