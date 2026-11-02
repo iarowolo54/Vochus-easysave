@@ -1,6 +1,7 @@
 import { SignJWT, jwtVerify } from 'jose'
 import { cookies } from 'next/headers'
 import { requireEnv } from '@/lib/env'
+import { prisma } from '@/lib/prisma'
 import { IDLE_SECONDS, isPastAbsoluteCap } from '@/lib/session-policy'
 
 const SECRET = new TextEncoder().encode(requireEnv('NEXTAUTH_SECRET'))
@@ -14,6 +15,8 @@ export interface CustomerSession {
   customerId: string
   name: string
   agentId: string
+  /** Must match Customer.tokenVersion. A token without it counts as version 0. */
+  tokenVersion?: number
 }
 
 export interface SignCustomerTokenOptions {
@@ -58,7 +61,12 @@ export async function getCustomerSession(): Promise<CustomerSession | null> {
   const jar = await cookies()
   const token = jar.get(COOKIE)?.value
   if (!token) return null
-  return verifyCustomerToken(token)
+  const session = await verifyCustomerToken(token)
+  if (!session) return null
+  // A password reset bumps the stored version, which ends every session issued before it.
+  const customer = await prisma.customer.findUnique({ where: { id: session.id }, select: { tokenVersion: true } })
+  if (!customer || customer.tokenVersion !== (session.tokenVersion ?? 0)) return null
+  return session
 }
 
 export function customerCookieOptions(token: string) {

@@ -212,6 +212,7 @@ async function reissueCustomer(claims: Record<string, unknown>, loginAt: number)
     customerId: String(claims.customerId ?? ''),
     name: String(claims.name ?? ''),
     agentId: String(claims.agentId ?? ''),
+    ...(typeof claims.tokenVersion === 'number' ? { tokenVersion: claims.tokenVersion } : {}),
   }
   return signCustomerToken(session, { loginAt, expSeconds: IDLE_SECONDS.customer })
 }

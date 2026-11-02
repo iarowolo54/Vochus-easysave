@@ -99,6 +99,7 @@ model Customer {
   walletBalance Float       @default(0)
   password     String?
   inviteToken  String?      @unique
+  tokenVersion Int          @default(0)
   boundDeviceId String?
   createdAt    DateTime     @default(now())
   savingsPlans SavingsPlan[]
@@ -562,6 +563,21 @@ model LoginAttempt {
 // One-time codes for unlocking a hard-locked customer account. The code itself
 // is never stored or returned — only a SHA-256 hash. Sent on the customer's
 // registration channel: email (link-registered) or SMS (agent-registered).
+// Password-reset and agent-unlock codes. Only the hash is stored, and rows are
+// consumed rather than deleted so the send cooldown and daily cap keep counting.
+model PasswordResetOtp {
+  id         String    @id @default(cuid())
+  actorType  String // 'customer' | 'agent'
+  actorId    String
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([actorType, actorId, createdAt])
+}
+
 model AccountUnlockOtp {
   id         String    @id @default(cuid())
   customerId String
