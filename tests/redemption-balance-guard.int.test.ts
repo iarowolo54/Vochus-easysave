@@ -56,12 +56,14 @@ const redeemRoute = require('../src/app/api/customer/redeem/route') as typeof im
 const meRoute = require('../src/app/api/customer/me/route') as typeof import('../src/app/api/customer/me/route')
 const verifyToken = require('../src/app/api/transactions/redemption/verify-token/route') as typeof import('../src/app/api/transactions/redemption/verify-token/route')
 const lookupToken = require('../src/app/api/transactions/redemption/lookup-token/route') as typeof import('../src/app/api/transactions/redemption/lookup-token/route')
+const { CODE_LOOKUPS_PER_HOUR, spendCodeLookup } = require('../src/lib/redemption-attempts') as typeof import('../src/lib/redemption-attempts')
 const { hashRedemptionToken } = require('../src/lib/redemption-token') as typeof import('../src/lib/redemption-token')
 const requestRoute = require('../src/app/api/transactions/redemption/request/route') as typeof import('../src/app/api/transactions/redemption/request/route')
 const adminList = require('../src/app/api/admin/early-redemption/route') as typeof import('../src/app/api/admin/early-redemption/route')
 /* eslint-enable @typescript-eslint/no-require-imports */
 
 const RUN = Math.random().toString(36).slice(2, 8)
+const suiteStart = new Date()
 const PIN = '482913'
 let adminId = ''
 let agentId = ''
@@ -165,6 +167,7 @@ after(async () => {
   await prisma.savingsPlan.deleteMany({ where: { id: { in: planIds } } })
   await prisma.customer.deleteMany({ where: { id: customerId } })
   await prisma.agent.deleteMany({ where: { id: agentId } })
+  await prisma.loginAttempt.deleteMany({ where: { key: `redeem-lookup:agent:${agentId}` } })
   await prisma.approvalPinAttempt.deleteMany({ where: { adminId } })
   await prisma.superAdmin.deleteMany({ where: { id: adminId } })
   if (revenueBefore === null) await prisma.platformWallet.deleteMany({ where: { type: 'Revenue' } })
@@ -668,6 +671,58 @@ test('a wrong or expired code confirms nothing', async () => {
   assert.equal((await (await checkWithRef(expired.r.ref, expiredCode)).json()).valid, false)
   assert.equal((await (await checkCodeOnly(expiredCode)).json()).valid, false)
   assert.equal((await erRow(expired.r.id)).status, 'Pending')
+})
+
+const lookupKey = () => `redeem-lookup:agent:${agentId}`
+const lookupAudits = () => prisma.auditLog.count({ where: { action: 'redemption_code_lookup_limit', entityId: agentId, createdAt: { gte: suiteStart } } })
+
+test('code lookups are capped per agent: even a correct code is refused over the cap, with one alert', async () => {
+  await prisma.loginAttempt.deleteMany({ where: { key: lookupKey() } })
+  const before = await lookupAudits()
+  const code = uniqueCode()
+  const { r } = await codedRequest(code)
+  asAgent()
+  for (let i = 0; i < CODE_LOOKUPS_PER_HOUR; i++) {
+    const res = await checkCodeOnly('000001')
+    assert.equal(res.status, 200, `lookup ${i}`)
+    assert.equal((await res.json()).valid, false)
+  }
+  for (let i = 0; i < 3; i++) {
+    const res = await checkCodeOnly(code)
+    assert.equal(res.status, 429)
+    assert.match((await res.json()).error, /Too many code lookups/)
+  }
+  assert.equal((await erRow(r.id)).status, 'Pending', 'not confirmed')
+  assert.equal(await lookupAudits(), before + 1, 'one alert, not one per guess')
+  await prisma.loginAttempt.deleteMany({ where: { key: lookupKey() } })
+  assert.equal((await (await checkCodeOnly(code)).json()).valid, true, 'works again once the window has reset')
+  await prisma.loginAttempt.deleteMany({ where: { key: lookupKey() } })
+})
+
+test('the code lookup cap holds under concurrency, is per agent, and opens again after the hour', async () => {
+  const t0 = new Date('2026-11-02T10:00:00.000Z')
+  const first = `cap-a-${RUN}`
+  const second = `cap-b-${RUN}`
+  try {
+    const results = await Promise.all(Array.from({ length: CODE_LOOKUPS_PER_HOUR + 6 }, () => spendCodeLookup(prisma, first, t0)))
+    assert.equal(results.filter(r => r.allowed).length, CODE_LOOKUPS_PER_HOUR)
+    assert.equal(results.filter(r => r.firstRefusal).length, 1)
+    assert.equal((await spendCodeLookup(prisma, second, t0)).allowed, true)
+    assert.equal((await spendCodeLookup(prisma, first, new Date(t0.getTime() + 59 * 60_000))).allowed, false)
+    assert.equal((await spendCodeLookup(prisma, first, new Date(t0.getTime() + 61 * 60_000))).allowed, true)
+  } finally {
+    await prisma.loginAttempt.deleteMany({ where: { key: { in: [`redeem-lookup:agent:${first}`, `redeem-lookup:agent:${second}`] } } })
+  }
+})
+
+test('the ref-based code check has its own per-request cap and is not limited by lookups', async () => {
+  await prisma.loginAttempt.deleteMany({ where: { key: lookupKey() } })
+  for (let i = 0; i < CODE_LOOKUPS_PER_HOUR + 1; i++) await spendCodeLookup(prisma, agentId)
+  const code = uniqueCode()
+  const { r } = await codedRequest(code)
+  asAgent()
+  assert.equal((await (await checkWithRef(r.ref, code)).json()).valid, true)
+  await prisma.loginAttempt.deleteMany({ where: { key: lookupKey() } })
 })
 
 test('an admin-created request (no code) can still be approved from Pending', async () => {

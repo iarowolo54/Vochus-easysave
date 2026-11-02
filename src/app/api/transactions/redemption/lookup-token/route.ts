@@ -4,7 +4,8 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { hashRedemptionToken } from '@/lib/redemption-token'
-import { redemptionLookupRateLimiter } from '@/lib/rate-limit'
+import { logAudit } from '@/lib/audit'
+import { CODE_LOOKUPS_PER_HOUR, spendCodeLookup } from '@/lib/redemption-attempts'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -13,15 +14,21 @@ export async function POST(req: NextRequest) {
   const agent = await prisma.agent.findFirst({ where: { agentId: session.user.agentId } })
   if (!agent) return NextResponse.json({ valid: false, error: 'Agent not found' }, { status: 401 })
 
-  // This route resolves a redemption from the 6-digit code alone (no ref), so a
-  // wrong guess matches no record and can't be capped per-redemption like
-  // verify-token. Bound code-space brute-forcing with a soft per-agent cap.
-  const rl = redemptionLookupRateLimiter.check(`redeem-lookup:${agent.id}`, 10, 60_000)
-  if (!rl.allowed) {
-    return NextResponse.json(
-      { valid: false, error: 'Too many code lookups. Please wait a moment and try again.' },
-      { status: 429, headers: { 'Retry-After': String(Math.ceil(rl.retryAfterMs / 1000)) } },
-    )
+  // This route resolves a redemption from the 6-digit code alone (no ref), and a correct code confirms the
+  // request, so guessing has to be impractical. A wrong guess matches no record: cap it per agent instead.
+  const budget = await spendCodeLookup(prisma, agent.id)
+  if (!budget.allowed) {
+    if (budget.firstRefusal) {
+      await logAudit({
+        action: 'redemption_code_lookup_limit',
+        entity: 'Agent',
+        entityId: agent.id,
+        details: `${agent.name} (${agent.agentId}) reached ${CODE_LOOKUPS_PER_HOUR} redemption code lookups in an hour`,
+        actorId: agent.id,
+        actorName: agent.name,
+      })
+    }
+    return NextResponse.json({ valid: false, error: 'Too many code lookups. Please try again in an hour.' }, { status: 429 })
   }
 
   const { token } = await req.json()
