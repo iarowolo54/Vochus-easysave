@@ -10,18 +10,32 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:local_auth/local_auth.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:print_bluetooth_thermal/print_bluetooth_thermal.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import 'package:webview_flutter_android/webview_flutter_android.dart';
+import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 
-const String kHomeUrl = 'https://easysave.vochusglobalservices.co.uk/login';
+// Local testing: `adb reverse tcp:3000 tcp:3000`, then
+// flutter run --dart-define=VOCHUS_BASE_URL=http://localhost:3000
+// (localhost, not 10.0.2.2: Next dev blocks its scripts for other hosts).
+const String kBaseUrl = String.fromEnvironment(
+  'VOCHUS_BASE_URL',
+  defaultValue: 'https://easysave.vochusglobalservices.co.uk',
+);
+const String kHomeUrl = '$kBaseUrl/login';
 const Color kBrandGreen = Color(0xFF0E4D24);
 const String kPrinterMacKey = 'vochus_printer_mac';
 const String kPrinterNameKey = 'vochus_printer_name';
 const String kBioTokenKey = 'vochus_bio_token';
 const String kBioIdentifierKey = 'vochus_bio_identifier';
+// Sign out when the app comes back after this long in the background. While the
+// app is open, the page's IdleTimeout runs the timer (with a warning). Keep equal
+// to IN_APP_IDLE_SECONDS in src/lib/session-policy.ts.
 const Duration kIdleTimeout = Duration(minutes: 5);
 
 const _secure = FlutterSecureStorage(
@@ -45,6 +59,10 @@ Future<Map<String, String>> _readDeviceMeta() async {
       out['manufacturer'] = 'Apple';
       out['osVersion'] = '${i.systemName} ${i.systemVersion}';
     }
+  } catch (_) {}
+  try {
+    final pkg = await PackageInfo.fromPlatform();
+    out['appVersion'] = '${pkg.version}+${pkg.buildNumber}';
   } catch (_) {}
   return out;
 }
@@ -125,7 +143,6 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
   Map<String, String> _deviceMeta = const {};
   String? _bioToken;
   String? _bioIdentifier;
-  Timer? _idleTimer;
   DateTime? _backgroundedAt;
   bool _hasError = false;
   int _retryCount = 0;
@@ -135,16 +152,13 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     if (state == AppLifecycleState.paused || state == AppLifecycleState.hidden) {
-      _backgroundedAt = DateTime.now();
-      _idleTimer?.cancel();
+      _backgroundedAt ??= DateTime.now();
     } else if (state == AppLifecycleState.resumed) {
       final bg = _backgroundedAt;
       _backgroundedAt = null;
       if (bg != null && DateTime.now().difference(bg) >= kIdleTimeout) {
         _handleIdle();
-        return;
       }
-      _resetIdle();
     }
   }
 
@@ -152,11 +166,25 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _controller = WebViewController()
+    // iOS: let camera previews play inline instead of jumping to fullscreen.
+    final params = WebViewPlatform.instance is WebKitWebViewPlatform
+        ? WebKitWebViewControllerCreationParams(
+            allowsInlineMediaPlayback: true,
+            mediaTypesRequiringUserAction: const <PlaybackMediaTypes>{},
+          )
+        : const PlatformWebViewControllerCreationParams();
+    _controller = WebViewController.fromPlatformCreationParams(
+      params,
+      onPermissionRequest: _onPermissionRequest,
+    )
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setBackgroundColor(Colors.white)
       ..addJavaScriptChannel('VochusPrinter',
           onMessageReceived: (msg) => _handlePrintRequest(msg.message))
+      ..addJavaScriptChannel('VochusSaveReceipt',
+          onMessageReceived: (msg) => _handleSaveReceipt(msg.message))
+      ..addJavaScriptChannel('VochusAppSettings',
+          onMessageReceived: (_) => _openSettings())
       ..addJavaScriptChannel('VochusBiometric',
           onMessageReceived: (msg) => _handleBiometricEnroll(msg.message))
       ..addJavaScriptChannel('VochusTriggerBiometric',
@@ -177,15 +205,20 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
           },
           onWebResourceError: (err) => _handleWebError(err),
           onHttpError: (err) {
-            if (err.response?.statusCode != null && err.response!.statusCode >= 500) {
+            // Fires for every request (API calls too). Only a failed page load
+            // should reload / show the error screen, not one failing fetch.
+            final status = err.response?.statusCode ?? 0;
+            final uri = err.request?.uri;
+            if (status >= 500 && uri != null && _isCurrentPage(uri)) {
               _handleWebError(null);
             }
           },
           onUrlChange: (change) {
-            if (change.url != null) setState(() => _lastUrl = change.url!);
+            if (change.url != null) _lastUrl = change.url!;
           },
           onNavigationRequest: (req) {
-            if (req.url.endsWith('.apk') || req.url.contains('/downloads/')) {
+            if (Platform.isAndroid &&
+                (req.url.endsWith('.apk') || req.url.contains('/downloads/'))) {
               AndroidIntent(
                 action: 'action_view',
                 data: req.url,
@@ -196,25 +229,30 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
           },
         ),
       );
-    // Enable <input type="file"> on Android WebView
+    // Enable <input type="file"> on Android WebView (iOS shows its own picker)
     if (_controller.platform is AndroidWebViewController) {
       final android = _controller.platform as AndroidWebViewController;
       android.setOnShowFileSelector(_onShowFileSelector);
-      android.setOnPlatformPermissionRequest((request) async {
-        final needsCamera = request.types.contains(WebViewPermissionResourceType.camera);
-        final needsMic = request.types.contains(WebViewPermissionResourceType.microphone);
-        if (needsCamera) {
-          final s = await Permission.camera.request();
-          if (!s.isGranted) { await request.deny(); return; }
-        }
-        if (needsMic) {
-          final s = await Permission.microphone.request();
-          if (!s.isGranted) { await request.deny(); return; }
-        }
-        await request.grant();
-      });
     }
     _bootstrap();
+  }
+
+  Future<void> _onPermissionRequest(WebViewPermissionRequest request) async {
+    // On iOS the system asks for camera/mic itself (Info.plist usage strings);
+    // permission_handler isn't set up for iOS, so only ask here on Android.
+    if (Platform.isAndroid) {
+      final needsCamera = request.types.contains(WebViewPermissionResourceType.camera);
+      final needsMic = request.types.contains(WebViewPermissionResourceType.microphone);
+      if (needsCamera) {
+        final s = await Permission.camera.request();
+        if (!s.isGranted) { await request.deny(); return; }
+      }
+      if (needsMic) {
+        final s = await Permission.microphone.request();
+        if (!s.isGranted) { await request.deny(); return; }
+      }
+    }
+    await request.grant();
   }
 
   Future<List<String>> _onShowFileSelector(FileSelectorParams params) async {
@@ -284,9 +322,14 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
       "window.__vochusCanPrint = true;"
       "window.__vochusCanBiometric = true;"
       "window.__vochusBiometricEnrolled = $hasBio;"
+      "window.__vochusCanSaveReceipt = true;"
+      "window.__vochusCanOpenSettings = true;"
       "try { window.dispatchEvent(new Event('vochus:flags-ready')); } catch(e) {}",
     );
   }
+
+  bool _isCurrentPage(Uri uri) =>
+      uri.removeFragment().toString() == Uri.parse(_lastUrl).removeFragment().toString();
 
   Future<void> _handleWebError(WebResourceError? err) async {
     if (!mounted) return;
@@ -304,6 +347,23 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
     _retryCount = 0;
     setState(() { _hasError = false; _loading = true; });
     try { await _controller.loadRequest(Uri.parse(_lastUrl)); } catch (_) {}
+  }
+
+  Future<void> _handleSaveReceipt(String payload) async {
+    try {
+      final data = jsonDecode(payload) as Map<String, dynamic>;
+      final b64 = (data['data'] as String?) ?? '';
+      final filename = (data['filename'] as String?) ?? 'receipt.png';
+      final commaIdx = b64.indexOf(',');
+      final pure = commaIdx >= 0 ? b64.substring(commaIdx + 1) : b64;
+      final bytes = base64Decode(pure);
+      final dir = await getTemporaryDirectory();
+      final file = File('${dir.path}/$filename');
+      await file.writeAsBytes(bytes);
+      await Share.shareXFiles([XFile(file.path, mimeType: 'image/png')], subject: 'Vochus Receipt');
+    } catch (e) {
+      _toast('Could not save receipt: $e');
+    }
   }
 
   Future<void> _handleBiometricTrigger() async {
@@ -346,11 +406,6 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
   }
 
   // -------- Idle timeout --------
-
-  void _resetIdle() {
-    _idleTimer?.cancel();
-    _idleTimer = Timer(kIdleTimeout, _handleIdle);
-  }
 
   Future<void> _handleIdle() async {
     if (!mounted) return;
@@ -506,6 +561,75 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
     );
   }
 
+  // -------- App settings (opened from the site's More menu) --------
+
+  Future<void> _openSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    final current = prefs.getString(kPrinterNameKey);
+    if (!mounted) return;
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                  current == null
+                      ? 'Printer: none linked'
+                      : 'Printer: $current',
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            ListTile(
+              leading: const Icon(Icons.bluetooth_searching),
+              title: const Text('Pick / change printer'),
+              onTap: () => Navigator.pop(ctx, 'pick'),
+            ),
+            if (current != null)
+              ListTile(
+                leading: const Icon(Icons.link_off),
+                title: const Text('Unlink printer'),
+                onTap: () => Navigator.pop(ctx, 'unlink-printer'),
+              ),
+            const Divider(height: 0),
+            Padding(
+              padding: const EdgeInsets.all(16),
+              child: Text(
+                  _bioToken == null
+                      ? 'Biometric: not enrolled'
+                      : 'Biometric: enabled',
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            if (_bioToken != null)
+              ListTile(
+                leading: const Icon(Icons.fingerprint),
+                title: const Text('Disable biometric sign-in'),
+                onTap: () => Navigator.pop(ctx, 'unlink-bio'),
+              ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+    if (action == 'pick') {
+      await _ensureBluetoothPermissions();
+      final picked = await _pickPrinter();
+      if (picked != null) {
+        await prefs.setString(kPrinterMacKey, picked.macAdress);
+        await prefs.setString(kPrinterNameKey, picked.name ?? 'Printer');
+        _toast('Printer linked: ${picked.name ?? picked.macAdress}');
+      }
+    } else if (action == 'unlink-printer') {
+      await prefs.remove(kPrinterMacKey);
+      await prefs.remove(kPrinterNameKey);
+      _toast('Printer unlinked');
+    } else if (action == 'unlink-bio') {
+      await _clearBiometric();
+      _toast('Biometric sign-in disabled');
+    }
+  }
+
   void _toast(String msg) {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -524,13 +648,11 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
-    _idleTimer?.cancel();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
-    _resetIdle();
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) async {
@@ -541,124 +663,46 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
       },
       child: Scaffold(
         body: SafeArea(
-          child: Listener(
-            behavior: HitTestBehavior.translucent,
-            onPointerDown: (_) => _resetIdle(),
-            child: Stack(
-              children: [
-                WebViewWidget(controller: _controller),
-                if (_loading)
-                  LinearProgressIndicator(
-                    value: _progress / 100,
-                    backgroundColor: Colors.transparent,
-                    valueColor: const AlwaysStoppedAnimation(kBrandGreen),
-                  ),
-                if (_hasError)
-                  Container(
-                    color: Colors.white,
-                    alignment: Alignment.center,
-                    padding: const EdgeInsets.all(24),
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        const Icon(Icons.wifi_off_rounded, size: 56, color: Colors.black45),
-                        const SizedBox(height: 16),
-                        const Text('Something went wrong',
-                            style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
-                        const SizedBox(height: 6),
-                        const Text("The page couldn't load. Check your connection and try again.",
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: Colors.black54, fontSize: 13)),
-                        const SizedBox(height: 20),
-                        ElevatedButton.icon(
-                          onPressed: _reloadPage,
-                          icon: const Icon(Icons.refresh),
-                          label: const Text('Try again'),
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: kBrandGreen,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
-        floatingActionButton: _lastUrl.contains('/login') ? null : Padding(
-          padding: const EdgeInsets.only(bottom: 64),
-          child: FloatingActionButton.small(
-          backgroundColor: kBrandGreen,
-          tooltip: 'Settings',
-          onPressed: () async {
-            final prefs = await SharedPreferences.getInstance();
-            final current = prefs.getString(kPrinterNameKey);
-            if (!mounted) return;
-            final action = await showModalBottomSheet<String>(
-              context: context,
-              builder: (ctx) => SafeArea(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Text(
-                          current == null
-                              ? 'Printer: none linked'
-                              : 'Printer: $current',
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                    ListTile(
-                      leading: const Icon(Icons.bluetooth_searching),
-                      title: const Text('Pick / change printer'),
-                      onTap: () => Navigator.pop(ctx, 'pick'),
-                    ),
-                    if (current != null)
-                      ListTile(
-                        leading: const Icon(Icons.link_off),
-                        title: const Text('Unlink printer'),
-                        onTap: () => Navigator.pop(ctx, 'unlink-printer'),
-                      ),
-                    const Divider(height: 0),
-                    Padding(
-                      padding: const EdgeInsets.all(16),
-                      child: Text(
-                          _bioToken == null
-                              ? 'Biometric: not enrolled'
-                              : 'Biometric: enabled',
-                          style: const TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                    if (_bioToken != null)
-                      ListTile(
-                        leading: const Icon(Icons.fingerprint),
-                        title: const Text('Disable biometric sign-in'),
-                        onTap: () => Navigator.pop(ctx, 'unlink-bio'),
-                      ),
-                    const SizedBox(height: 8),
-                  ],
+          child: Stack(
+            children: [
+              WebViewWidget(controller: _controller),
+              if (_loading)
+                LinearProgressIndicator(
+                  value: _progress / 100,
+                  backgroundColor: Colors.transparent,
+                  valueColor: const AlwaysStoppedAnimation(kBrandGreen),
                 ),
-              ),
-            );
-            if (action == 'pick') {
-              await _ensureBluetoothPermissions();
-              final picked = await _pickPrinter();
-              if (picked != null) {
-                await prefs.setString(kPrinterMacKey, picked.macAdress);
-                await prefs.setString(kPrinterNameKey, picked.name ?? 'Printer');
-                _toast('Printer linked: ${picked.name ?? picked.macAdress}');
-              }
-            } else if (action == 'unlink-printer') {
-              await prefs.remove(kPrinterMacKey);
-              await prefs.remove(kPrinterNameKey);
-              _toast('Printer unlinked');
-            } else if (action == 'unlink-bio') {
-              await _clearBiometric();
-              _toast('Biometric sign-in disabled');
-            }
-          },
-          child: const Icon(Icons.settings, color: Colors.white),
+              if (_hasError)
+                Container(
+                  color: Colors.white,
+                  alignment: Alignment.center,
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      const Icon(Icons.wifi_off_rounded, size: 56, color: Colors.black45),
+                      const SizedBox(height: 16),
+                      const Text('Something went wrong',
+                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w800)),
+                      const SizedBox(height: 6),
+                      const Text("The page couldn't load. Check your connection and try again.",
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: Colors.black54, fontSize: 13)),
+                      const SizedBox(height: 20),
+                      ElevatedButton.icon(
+                        onPressed: _reloadPage,
+                        icon: const Icon(Icons.refresh),
+                        label: const Text('Try again'),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: kBrandGreen,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
           ),
         ),
       ),
