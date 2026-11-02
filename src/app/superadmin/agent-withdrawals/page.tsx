@@ -206,6 +206,7 @@ export default function AgentWithdrawalsPage() {
       toast('No connection. Check your internet and try again.', 'error')
     } finally {
       setVerifying(null)
+      setDetailRecord(null)
     }
   }
 
@@ -234,16 +235,31 @@ export default function AgentWithdrawalsPage() {
     }
   }
 
-  function pendingActions(r: WithdrawalRecord) {
-    if (r.status === 'AwaitingOTP') return <button type="button" className="btn btn-sm btn-green" onClick={() => openOtp(r)}>Enter OTP</button>
-    if (r.status === 'Processing' || r.status === 'Finalizing') return (
-      <button type="button" className="btn btn-sm btn-outline" disabled={verifying === r.id} onClick={() => verify(r.id)}>
-        {verifying === r.id ? 'Checking…' : 'Check status'}
+  // Skip the open when the click ends a text selection, so details in the row can still be copied.
+  function openRow(r: WithdrawalRecord) {
+    if (window.getSelection()?.toString()) return
+    setDetailRecord(r)
+  }
+
+  function viewButton(r: WithdrawalRecord) {
+    return <button type="button" className="btn btn-sm btn-outline" onClick={() => setDetailRecord(r)} aria-label={`View withdrawal ${r.ref}`}>View</button>
+  }
+
+  function detailActions(r: WithdrawalRecord) {
+    const checkStatus = (
+      <button type="button" className="btn btn-outline" disabled={verifying === r.id} onClick={() => verify(r.id)}>
+        {verifying === r.id ? 'Checking…' : 'Check status with Paystack'}
       </button>
     )
+    if (r.status === 'AwaitingOTP') return <button type="button" className="btn btn-green" onClick={() => openOtp(r)}>Enter OTP</button>
+    if (r.status === 'Processing' || r.status === 'Finalizing') return checkStatus
+    if (PENDING_STATUSES.includes(r.status)) return <>
+      <button type="button" className="btn btn-outline" onClick={() => openReject(r)}>Reject</button>
+      <button type="button" className="btn btn-green" onClick={() => openApprove(r)}>{manual ? 'Mark as paid' : 'Approve'} {naira(r.amount)}</button>
+    </>
     return <>
-      <button type="button" className="btn btn-sm btn-green" onClick={() => openApprove(r)} aria-label={`${manual ? 'Mark as paid' : 'Approve'} ${naira(r.amount)} for ${r.agentName}`}>{manual ? 'Mark as paid' : 'Approve'}</button>
-      <button type="button" className="btn btn-sm btn-outline" onClick={() => openReject(r)} aria-label={`Reject ${naira(r.amount)} for ${r.agentName}`}>Reject</button>
+      <button type="button" className="btn btn-outline" onClick={() => setDetailRecord(null)}>Close</button>
+      {r.paystackTransferCode && checkStatus}
     </>
   }
 
@@ -280,29 +296,27 @@ export default function AgentWithdrawalsPage() {
               <div className="tbl-wrap tbl-stack">
                 <table>
                   <thead>
-                    <tr><th>Agent</th><th>Reference</th><th className="num">Amount</th><th>Pay to</th><th>Note</th><th>Requested</th><th><span className="sr-only">Actions</span></th></tr>
+                    <tr><th>Agent</th><th>Reference</th><th className="num">Amount</th><th>Pay to</th><th>Note</th><th>Requested</th><th className="td-pin-end"><span className="sr-only">Actions</span></th></tr>
                   </thead>
                   <tbody>
                     {pending.map(r => (
-                      <tr key={r.id}>
+                      <tr key={r.id} className="is-clickable" onClick={() => openRow(r)}>
                         <td>
                           <span className="td-name ui-block">{r.agentName}</span>
                           <span className="td-sub ui-block">{r.agentDisplayId} · {r.agentPhone}</span>
                         </td>
-                        <td data-label="Reference">
-                          <button type="button" className="am-ref-btn" onClick={() => setDetailRecord(r)} aria-label={`View details of ${r.ref}`}>{r.ref}</button>
-                        </td>
+                        <td data-label="Reference"><span className="am-mono">{r.ref}</span></td>
                         <td className="num am-strong" data-label="Amount">{naira(r.amount)}</td>
                         <td data-label="Pay to">
                           <span className="ui-block am-strong">{r.accountName ?? '—'}</span>
-                          <span className="td-sub ui-block">{r.bankName ?? 'No bank'} · {last4(r.accountNumber)}</span>
+                          <span className="td-sub ui-block">{r.bankName ?? 'No bank'} · <span className="am-acct-sm">{last4(r.accountNumber)}</span></span>
                         </td>
                         <td className="am-muted" data-label="Note"><span className="am-clip" title={r.note ?? undefined}>{r.note ?? '—'}</span></td>
                         <td className="am-muted am-nowrap" data-label="Requested">{dateTime(r.requestedAt)}</td>
-                        <td>
+                        <td className="td-pin-end">
                           <div className="am-state">
                             {r.status !== 'Pending' && <StatusBadge s={r.status} />}
-                            <div className="a-row-actions">{pendingActions(r)}</div>
+                            <div className="a-row-actions">{viewButton(r)}</div>
                           </div>
                         </td>
                       </tr>
@@ -317,32 +331,24 @@ export default function AgentWithdrawalsPage() {
                 <div className="tbl-wrap tbl-stack">
                   <table>
                     <thead>
-                      <tr><th>Agent</th><th>Reference</th><th className="num">Amount</th><th>Pay to</th><th>Outcome</th><th>Paystack</th><th>Decided by</th><th>Date</th><th><span className="sr-only">Actions</span></th></tr>
+                      <tr><th>Agent</th><th>Reference</th><th className="num">Amount</th><th>Pay to</th><th>Outcome</th><th>Paystack</th><th>Decided by</th><th>Date</th><th className="td-pin-end"><span className="sr-only">Actions</span></th></tr>
                     </thead>
                     <tbody>
                       {historyPage.map(r => (
-                        <tr key={r.id}>
+                        <tr key={r.id} className="is-clickable" onClick={() => openRow(r)}>
                           <td>
                             <span className="td-name ui-block">{r.agentName}</span>
                             <span className="td-sub ui-block">{r.agentDisplayId}</span>
                           </td>
-                          <td data-label="Reference">
-                            <button type="button" className="am-ref-btn" onClick={() => setDetailRecord(r)} aria-label={`View details of ${r.ref}`}>{r.ref}</button>
-                          </td>
+                          <td data-label="Reference"><span className="am-mono">{r.ref}</span></td>
                           <td className="num am-strong" data-label="Amount">{naira(r.amount)}</td>
-                          <td className="am-muted" data-label="Pay to">{r.bankName ?? '—'} · {last4(r.accountNumber)}</td>
+                          <td className="am-muted" data-label="Pay to"><span>{r.bankName ?? '—'} · <span className="am-acct-sm">{last4(r.accountNumber)}</span></span></td>
                           <td data-label="Outcome"><StatusBadge s={r.status} /></td>
                           <td className="am-muted" data-label="Paystack">{paystackLabel(r.bankTransferStatus)}</td>
                           <td className="am-muted" data-label="Decided by">{r.decidedBy ?? '—'}</td>
                           <td className="am-muted am-nowrap" data-label="Date">{r.decidedAt ? dateTime(r.decidedAt) : '—'}</td>
-                          <td>
-                            {r.paystackTransferCode && (
-                              <div className="a-row-actions">
-                                <button type="button" className="btn btn-sm btn-outline" disabled={verifying === r.id} onClick={() => verify(r.id)}>
-                                  {verifying === r.id ? 'Checking…' : 'Check status'}
-                                </button>
-                              </div>
-                            )}
+                          <td className="td-pin-end">
+                            <div className="a-row-actions">{viewButton(r)}</div>
                           </td>
                         </tr>
                       ))}
@@ -357,15 +363,14 @@ export default function AgentWithdrawalsPage() {
       </section>
 
       {detailRecord && (
-        <Modal icon="withdraw" title={detailRecord.ref} sub={<StatusBadge s={detailRecord.status} />} onClose={() => setDetailRecord(null)}
-          footer={PENDING_STATUSES.includes(detailRecord.status) ? (
-            detailRecord.status === 'AwaitingOTP' ? <button type="button" className="btn btn-green" onClick={() => openOtp(detailRecord)}>Enter OTP</button>
-              : detailRecord.status === 'Processing' || detailRecord.status === 'Finalizing' ? <button type="button" className="btn btn-outline" disabled={verifying === detailRecord.id} onClick={() => { const id = detailRecord.id; setDetailRecord(null); verify(id) }}>Check status with Paystack</button>
-              : <>
-                <button type="button" className="btn btn-outline" onClick={() => openReject(detailRecord)}>Reject</button>
-                <button type="button" className="btn btn-green" onClick={() => openApprove(detailRecord)}>{manual ? 'Mark as paid' : 'Approve'} {naira(detailRecord.amount)}</button>
-              </>
-          ) : <button type="button" className="btn btn-outline" onClick={() => setDetailRecord(null)}>Close</button>}>
+        <Modal icon="withdraw" title={detailRecord.ref} sub={<StatusBadge s={detailRecord.status} />} onClose={() => setDetailRecord(null)} busy={verifying === detailRecord.id}
+          footer={detailActions(detailRecord)}>
+          <h3 className="dlg-sec-h">Pay to</h3>
+          <dl className="dlg-ledger">
+            <div><dt>Account number</dt><dd><span className="am-acct">{detailRecord.accountNumber ?? '—'}</span></dd></div>
+            <div><dt>Account name</dt><dd>{detailRecord.accountName ?? '—'}</dd></div>
+            <div><dt>Bank</dt><dd>{detailRecord.bankName ?? '—'}</dd></div>
+          </dl>
           <h3 className="dlg-sec-h">Withdrawal</h3>
           <dl className="dlg-ledger">
             <div><dt>Amount</dt><dd className="dlg-strong">{naira(detailRecord.amount)}</dd></div>
@@ -378,12 +383,6 @@ export default function AgentWithdrawalsPage() {
             <div><dt>Agent ID</dt><dd>{detailRecord.agentDisplayId}</dd></div>
             <div><dt>Phone</dt><dd>{detailRecord.agentPhone}</dd></div>
             <div><dt>Commission balance</dt><dd>{naira(detailRecord.agentCommissionBalance)}</dd></div>
-          </dl>
-          <h3 className="dlg-sec-h">Pay to</h3>
-          <dl className="dlg-ledger">
-            <div><dt>Account name</dt><dd>{detailRecord.accountName ?? '—'}</dd></div>
-            <div><dt>Bank</dt><dd>{detailRecord.bankName ?? '—'}</dd></div>
-            <div><dt>Account number</dt><dd className="am-mono">{detailRecord.accountNumber ?? '—'}</dd></div>
           </dl>
           {(detailRecord.decidedBy || detailRecord.decidedAt || detailRecord.adminNote || detailRecord.bankTransferStatus) && (
             <>
@@ -410,7 +409,8 @@ export default function AgentWithdrawalsPage() {
           <AmountHero label="You’re sending" amount={naira(pinModal.amount)} sub={<>to <strong>{pinModal.agentName}</strong> · {pinModal.agentDisplayId}</>} />
           <Ledger>
             <LedgerRow label="Account name">{pinModal.accountName ?? '—'}</LedgerRow>
-            <LedgerRow label="Bank">{pinModal.bankName ?? '—'} · {last4(pinModal.accountNumber)}</LedgerRow>
+            <LedgerRow label="Bank">{pinModal.bankName ?? '—'}</LedgerRow>
+            <LedgerRow label="Account number"><span className="am-acct">{pinModal.accountNumber ?? '—'}</span></LedgerRow>
           </Ledger>
           <form onSubmit={e => { e.preventDefault(); confirmApprove() }} noValidate>
             {manual && (

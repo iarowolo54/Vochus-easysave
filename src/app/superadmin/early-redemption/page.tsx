@@ -460,17 +460,14 @@ export default function RedemptionsPage() {
     toast('Export downloaded', 'success')
   }
 
-  function rowActions(r: RedemptionRecord) {
-    if (r.status === 'AwaitingOTP') {
-      return <button type="button" className="btn btn-sm btn-green" onClick={() => { setOtpValue(''); setOtpError(''); setOtpModal({ id: r.id, ref: r.ref, customerName: r.customerName, amount: r.netPayout }) }}>Enter Paystack code</button>
-    }
-    if (r.status === 'Finalizing') return <span className="bdg bdg-b">Finalising payout</span>
-    return (
-      <div className="a-row-actions">
-        <button type="button" className="btn btn-sm btn-green" onClick={() => openApprove(r)}>{manual && isBank(r.payoutMethod) ? 'Mark as paid' : 'Approve'}</button>
-        <button type="button" className="btn btn-sm btn-outline" onClick={() => openReject(r)}>Reject</button>
-      </div>
-    )
+  // Skip the open when the click ends a text selection, so details in the row can still be copied.
+  function openRow(r: RedemptionRecord) {
+    if (window.getSelection()?.toString()) return
+    setDetail(r)
+  }
+
+  function viewButton(r: RedemptionRecord) {
+    return <button type="button" className="btn btn-sm btn-outline" onClick={() => setDetail(r)} aria-label={`View request ${r.ref}`}>View</button>
   }
 
   const statVal = (v: number, tone?: string) => !data
@@ -545,17 +542,13 @@ export default function RedemptionsPage() {
                       <tr>
                         <th>Request</th><th>Customer</th><th>Agent</th><th>Type</th>
                         <th className="num">Net payout</th><th>Payout method</th><th>Reason</th><th>Requested</th>
-                        <th className="num">Status</th>
+                        <th className="num td-pin-end">Status</th>
                       </tr>
                     </thead>
                     <tbody>
                       {pending.map(r => (
-                        <tr key={r.id}>
-                          <td>
-                            <button type="button" className="cm-cell-btn" onClick={() => setDetail(r)} aria-label={`View request ${r.ref}`}>
-                              <span className="cm-ref">{r.ref}</span>
-                            </button>
-                          </td>
+                        <tr key={r.id} className="is-clickable" onClick={() => openRow(r)}>
+                          <td className="cm-nowrap"><span className="cm-ref">{r.ref}</span></td>
                           <td data-label="Customer">
                             <div className="td-name">{r.customerName}</div>
                             <div className="td-sub">{r.customerId}</div>
@@ -569,14 +562,17 @@ export default function RedemptionsPage() {
                           <td className="num cm-strong" data-label="Net payout">{nairaKobo(r.netPayout)}</td>
                           <td data-label="Payout method">
                             <div>{r.payoutMethod ?? 'Cash'}</div>
-                            {isBank(r.payoutMethod) && r.bankName && <div className="td-sub">{r.accountName} · {r.bankName} {last4(r.accountNumber)}</div>}
+                            {isBank(r.payoutMethod) && r.bankName && <>
+                              <div className="td-sub">{r.accountName}</div>
+                              <div className="td-sub">{r.bankName} <span className="am-acct-sm">{last4(r.accountNumber)}</span></div>
+                            </>}
                           </td>
                           <td data-label="Reason"><span className="cm-truncate cm-sub2" title={r.reason}>{r.reason}</span></td>
                           <td data-label="Requested" className="cm-nowrap cm-sub2">{dateTime(r.requestedAt)}</td>
-                          <td>
+                          <td className="td-pin-end">
                             <div className="cm-act">
                               <StatusBadge status={r.status} />
-                              {rowActions(r)}
+                              <div className="a-row-actions">{viewButton(r)}</div>
                             </div>
                           </td>
                         </tr>
@@ -683,17 +679,13 @@ export default function RedemptionsPage() {
                       <thead>
                         <tr>
                           <th>Request</th><th>Customer</th><th>Agent</th><th>Type</th><th className="num">Balance</th>
-                          <th className="num">Fee</th><th className="num">Net payout</th><th>Decision</th><th>Decided by</th><th>Date</th>
+                          <th className="num">Fee</th><th className="num">Net payout</th><th>Decision</th><th>Decided by</th><th>Date</th><th className="td-pin-end"><span className="sr-only">Actions</span></th>
                         </tr>
                       </thead>
                       <tbody>
                         {history.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE).map(r => (
-                          <tr key={r.id}>
-                            <td>
-                              <button type="button" className="cm-cell-btn" onClick={() => setDetail(r)} aria-label={`View request ${r.ref}`}>
-                                <span className="cm-ref">{r.ref}</span>
-                              </button>
-                            </td>
+                          <tr key={r.id} className="is-clickable" onClick={() => openRow(r)}>
+                            <td className="cm-nowrap"><span className="cm-ref">{r.ref}</span></td>
                             <td data-label="Customer"><div className="td-name">{r.customerName}</div><div className="td-sub">{r.customerId}</div></td>
                             <td data-label="Agent"><div className="td-name">{r.agentName}</div><div className="td-sub">{r.agentId}</div></td>
                             <td data-label="Type"><TypeBadge type={r.type} /></td>
@@ -703,6 +695,7 @@ export default function RedemptionsPage() {
                             <td data-label="Decision"><StatusBadge status={r.status} /></td>
                             <td data-label="Decided by" className="cm-sub2">{r.decidedBy ?? '—'}</td>
                             <td data-label="Date" className="cm-nowrap cm-sub2">{r.decidedAt ? dateTime(r.decidedAt) : '—'}</td>
+                            <td className="td-pin-end"><div className="a-row-actions">{viewButton(r)}</div></td>
                           </tr>
                         ))}
                       </tbody>
@@ -797,7 +790,8 @@ export default function RedemptionsPage() {
               <div className="dlg-hero-extra">
                 <span className="dlg-hero-lbl">{(manual && isBank(pinModal.payoutMethod)) ? 'Bank transfer (you pay)' : 'Paystack bank transfer'}</span>
                 <strong>{pinModal.accountName}</strong>
-                <span>{pinModal.bankName} {last4(pinModal.accountNumber)}</span>
+                <span>{pinModal.bankName}</span>
+                <span className="am-acct">{pinModal.accountNumber ?? '—'}</span>
               </div>
             ) : (
               <div className="dlg-hero-extra"><span className="dlg-hero-lbl">Payout method</span><strong>{pinModal.payoutMethod}</strong></div>
@@ -877,6 +871,18 @@ export default function RedemptionsPage() {
             <span className="cm-badges"><StatusBadge status={detail.status} /><TypeBadge type={detail.type} /></span>
           </div>
 
+          {isBank(detail.payoutMethod) && detail.bankName && (
+            <div className="cm-sec">
+              <h3 className="cm-sec-title">Pay to</h3>
+              <dl className="dlg-ledger">
+                <DlRow label="Account number"><span className="am-acct">{detail.accountNumber ?? '—'}</span></DlRow>
+                <DlRow label="Account name">{detail.accountName ?? '—'}</DlRow>
+                <DlRow label="Bank">{detail.bankName}</DlRow>
+                {detail.bankTransferStatus && <DlRow label="Transfer status">{detail.bankTransferStatus}</DlRow>}
+              </dl>
+            </div>
+          )}
+
           <div className="cm-sec">
             <h3 className="cm-sec-title">Customer</h3>
             <dl className="dlg-ledger">
@@ -908,18 +914,6 @@ export default function RedemptionsPage() {
               <DlRow label="Method">{detail.payoutMethod ?? 'Cash'}</DlRow>
             </dl>
           </div>
-
-          {isBank(detail.payoutMethod) && detail.bankName && (
-            <div className="cm-sec">
-              <h3 className="cm-sec-title">Bank account</h3>
-              <dl className="dlg-ledger">
-                <DlRow label="Account name">{detail.accountName ?? '—'}</DlRow>
-                <DlRow label="Bank">{detail.bankName}</DlRow>
-                <DlRow label="Account number"><span className="cm-ref">{detail.accountNumber ?? '—'}</span></DlRow>
-                {detail.bankTransferStatus && <DlRow label="Transfer status">{detail.bankTransferStatus}</DlRow>}
-              </dl>
-            </div>
-          )}
 
           {detail.customerPlans && detail.customerPlans.length > 0 && (
             <div className="cm-sec">
