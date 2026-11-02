@@ -16,11 +16,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: 'Invalid status' }, { status: 400 })
   }
 
-  const agent = await prisma.agent.update({
-    where: { id },
-    // Bumping on suspension means reinstating doesn't revive old sessions: the agent has to log in again.
-    data: { status, ...(status === 'Suspended' ? { tokenVersion: { increment: 1 } } : {}) },
-    select: { id: true, name: true, agentId: true, status: true },
+  const agent = await prisma.$transaction(async (tx) => {
+    const updated = await tx.agent.update({
+      where: { id },
+      // Bumping on suspension means reinstating doesn't revive old sessions: the agent has to log in again.
+      data: { status, ...(status === 'Suspended' ? { tokenVersion: { increment: 1 } } : {}) },
+      select: { id: true, name: true, agentId: true, status: true },
+    })
+    if (status === 'Suspended') {
+      // Same for a stored fingerprint token: reinstating must not bring it back.
+      await tx.biometricToken.updateMany({ where: { agentId: id, revokedAt: null }, data: { revokedAt: new Date() } })
+    }
+    return updated
   })
 
   logAudit({

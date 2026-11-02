@@ -167,6 +167,25 @@ test('fingerprint sign-in: works while Active, refused once suspended', async ()
   assert.equal(await authorize(creds), null)
 })
 
+test('suspending revokes stored fingerprint tokens, so reinstating does not revive them', async () => {
+  const a = await mkAgent()
+  const { token, deviceId } = await fingerprintToken(a.id)
+  const creds = { identifier: a.agentId, biometricToken: token, deviceId }
+  assert.equal(await setStatus(a.id, 'Suspended'), 200)
+  assert.ok((await prisma.biometricToken.findFirstOrThrow({ where: { agentId: a.id, deviceId } })).revokedAt)
+  assert.equal(await setStatus(a.id, 'Active'), 200)
+  assert.equal(await authorize(creds), null)
+})
+
+test('reinstating does not touch fingerprint tokens issued since', async () => {
+  const a = await mkAgent()
+  await setStatus(a.id, 'Suspended')
+  await setStatus(a.id, 'Active')
+  const { token, deviceId } = await fingerprintToken(a.id)
+  await setStatus(a.id, 'Active')
+  assert.equal((await authorize({ identifier: a.agentId, biometricToken: token, deviceId }))?.id, a.id)
+})
+
 test('fingerprint issue: Active agent gets a token; a suspended session gets 401 and no token', async () => {
   const a = await mkAgent()
   const ok = await callIssue(a, 0, `dev-${rid}-ok`)
