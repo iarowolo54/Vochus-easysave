@@ -70,10 +70,12 @@ type Props = {
   onHelp: () => void
   /** Saves the receipt as an image (History provides this). */
   onDownload?: () => void
+  /** Shares the receipt as an image; resolves false when the device can't, and the text is shared instead. */
+  onShare?: () => Promise<boolean>
 }
 
 /** Receipt for any transaction. Same layout everywhere so customers learn to read it once. */
-export default function DepositReceipt({ tx, planName, hideAmounts, onHelp, onDownload }: Props) {
+export default function DepositReceipt({ tx, planName, hideAmounts, onHelp, onDownload, onShare }: Props) {
   const [copied, setCopied] = useState(false)
   const meta = txMeta(tx.type)
   const status = txStatus(tx.status)
@@ -99,6 +101,7 @@ export default function DepositReceipt({ tx, planName, hideAmounts, onHelp, onDo
 
   async function share() {
     try {
+      if (onShare && await onShare()) return
       if (navigator.share) { await navigator.share({ title: `${meta.label} receipt`, text }); return }
       await navigator.clipboard.writeText(text)
       setCopied(true)

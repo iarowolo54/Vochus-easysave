@@ -44,7 +44,7 @@ function wrapText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number)
   return lines
 }
 
-export async function saveReceiptImage(data: ReceiptData) {
+async function drawReceipt(data: ReceiptData): Promise<{ canvas: HTMLCanvasElement; dataUrl: string; filename: string } | null> {
   try { await document.fonts.ready } catch {}
   const logo = await loadImage('/brand/logo-original.png')
 
@@ -55,7 +55,7 @@ export async function saveReceiptImage(data: ReceiptData) {
   canvas.width = W * 2
   canvas.height = H * 2
   const ctx = canvas.getContext('2d')
-  if (!ctx) return
+  if (!ctx) return null
   ctx.scale(2, 2)
   const font = (weight: number, size: number) => `${weight} ${size}px Inter, system-ui, sans-serif`
 
@@ -123,15 +123,47 @@ export async function saveReceiptImage(data: ReceiptData) {
   if (showsProofOfPayment(data.status)) ctx.fillText('Keep this receipt as proof of payment.', W / 2, H - 52)
   ctx.fillText(`${window.location.host} · Generated ${formatDate(now)}, ${formatTime(now)}`, W / 2, H - 34)
 
-  const dataUrl = canvas.toDataURL('image/png')
-  const filename = `vochus-receipt-${data.reference.slice(0, 24)}.png`
-  const w = window as unknown as { __vochusCanSaveReceipt?: boolean; VochusSaveReceipt?: { postMessage: (s: string) => void } }
-  if (w.__vochusCanSaveReceipt && w.VochusSaveReceipt) {
-    w.VochusSaveReceipt.postMessage(JSON.stringify({ data: dataUrl, filename }))
-    return
-  }
+  return { canvas, dataUrl: canvas.toDataURL('image/png'), filename: `vochus-receipt-${data.reference.slice(0, 24)}.png` }
+}
+
+type NativeWindow = { __vochusCanSaveReceipt?: boolean; VochusSaveReceipt?: { postMessage: (s: string) => void } }
+
+function postToApp(dataUrl: string, filename: string): boolean {
+  const w = window as unknown as NativeWindow
+  if (!(w.__vochusCanSaveReceipt && w.VochusSaveReceipt)) return false
+  w.VochusSaveReceipt.postMessage(JSON.stringify({ data: dataUrl, filename }))
+  return true
+}
+
+export async function saveReceiptImage(data: ReceiptData) {
+  const img = await drawReceipt(data)
+  if (!img) return
+  if (postToApp(img.dataUrl, img.filename)) return
   const link = document.createElement('a')
-  link.download = filename
-  link.href = dataUrl
+  link.download = img.filename
+  link.href = img.dataUrl
   link.click()
+}
+
+/**
+ * Shares the receipt as a picture. In the app the native side opens the phone's share sheet with the image;
+ * in a browser the Web Share API is used when it can send files. Returns false when neither is available,
+ * so the caller can fall back to sharing text.
+ */
+export async function shareReceiptImage(data: ReceiptData): Promise<boolean> {
+  const img = await drawReceipt(data)
+  if (!img) return false
+  if (postToApp(img.dataUrl, img.filename)) return true
+  const blob = await new Promise<Blob | null>(resolve => img.canvas.toBlob(resolve, 'image/png'))
+  if (!blob || !navigator.canShare || !navigator.share) return false
+  const file = new File([blob], img.filename, { type: 'image/png' })
+  if (!navigator.canShare({ files: [file] })) return false
+  try {
+    await navigator.share({ files: [file], title: data.title })
+  } catch (e) {
+    // Closing the share sheet is a choice, not a failure; don't fall back to text after it.
+    if (e instanceof DOMException && e.name === 'AbortError') return true
+    return false
+  }
+  return true
 }

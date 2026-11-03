@@ -11,7 +11,7 @@ import { Bone } from '@/components/ui/Skeleton'
 import { Icons } from '@/components/ui/icons'
 import { formatDate, formatNaira, formatTime } from '@/lib/format'
 import { getHideBalance, setHideBalance } from '@/lib/preferences'
-import { saveReceiptImage } from '@/lib/receipt-image'
+import { saveReceiptImage, shareReceiptImage } from '@/lib/receipt-image'
 
 type Tx = {
   id: string; ref: string; type: string; amount: number
@@ -107,9 +107,9 @@ export default function TransactionsPage() {
     setHide(!hide)
   }
 
-  function download(tx: Tx) {
+  function receiptData(tx: Tx) {
     const meta = txMeta(tx.type)
-    saveReceiptImage({
+    return {
       title: meta.label,
       amount: signedAmount(tx),
       status: txStatus(tx.status).label,
@@ -118,8 +118,12 @@ export default function TransactionsPage() {
         ['Date', `${formatDate(tx.createdAt)}, ${formatTime(tx.createdAt)}`],
         ...(tx.planGoal ? [[meta.planLabel, tx.planGoal] as [string, string]] : []),
         ['Method', depositMethod({ method: tx.method, recordedBy: recordedBy.get(tx.id) })],
-      ],
-    })
+      ] as [string, string][],
+    }
+  }
+
+  function download(tx: Tx) {
+    saveReceiptImage(receiptData(tx))
   }
 
   const header = (
@@ -258,6 +262,7 @@ export default function TransactionsPage() {
             hideAmounts={hide}
             onHelp={() => router.push(`/customer/chat?ref=${encodeURIComponent(selected.ref)}`)}
             onDownload={() => download(selected)}
+            onShare={() => shareReceiptImage(receiptData(selected))}
           />
         )}
       </BottomSheet>
