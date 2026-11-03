@@ -366,7 +366,7 @@ export default function CustomersPage() {
                 className="ui-input"
                 type="search"
                 enterKeyHint="search"
-                placeholder="Name or phone"
+                placeholder="Search name"
                 aria-label="Search customers"
                 autoComplete="off"
                 value={search}
@@ -408,6 +408,8 @@ export default function CustomersPage() {
                       action={<Link href="/dashboard/enrol" className="ui-btn ui-btn--primary">Enrol a customer</Link>} />}
             </section>
           ) : (
+            <>
+            {!wide && <p className="ag-tap-hint">Tap a customer to see their plans and record savings.</p>}
             <section className={`ui-card ui-card--list ag-list${loading ? ' is-loading' : ''}`} aria-busy={loading} aria-label="Customers">
               {customers.map(c => {
                 const { plan: main, others } = mainPlan(c)
@@ -456,6 +458,7 @@ export default function CustomersPage() {
                           : main && <span className={`ag-crow-tag${left <= 7 ? ' ag-crow-tag--soon' : ''}`}>{left <= 0 ? 'Ends today' : `Ends in ${left} day${left === 1 ? '' : 's'}`}</span>}
                       </span>
                     )}
+                    <Icons.next size={18} className="ag-crow-chev" aria-hidden="true" />
                   </button>
                 )
                 if (!rowCash) return row
@@ -472,6 +475,7 @@ export default function CustomersPage() {
                 )
               })}
             </section>
+            </>
           )}
 
           {totalPages > 1 && (

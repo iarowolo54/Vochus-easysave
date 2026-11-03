@@ -2625,3 +2625,9 @@ button.ui-cal-day:disabled:active { transform: none; }
   .ag-toolbar .ui-select { padding-left: var(--ui-s3); padding-right: 32px; text-overflow: ellipsis; }
   .ag-mini-bar { flex-basis: 36px; }
 }
+
+/* Customer rows read as tappable: an arrow on every row and one line saying what a tap does. */
+.ag-crow-chev { flex-shrink: 0; color: var(--ui-ink-3); }
+.ag-tap-hint { margin: 0 0 var(--ui-s2); font-size: var(--ui-fs-sm); color: var(--ui-ink-2); }
+@media (min-width: 1024px) { .ag-crow-chev, .ag-tap-hint { display: none; } }
+.ag-crow:active { background: var(--ui-brand-tint); }
