@@ -1,5 +1,5 @@
-// Select only what the response needs. approvalPin is selected solely to derive
-// the hasApprovalPin boolean and is mapped away; password is never selected.
+// Select only what the response needs. approvalPin is selected solely to derive the hasApprovalPin
+// boolean and is mapped away; password and the invite token hash are never selected.
 export const staffSelect = {
   id: true,
   name: true,
@@ -8,13 +8,10 @@ export const staffSelect = {
   lastActiveAt: true,
   createdAt: true,
   approvalPin: true,
-  roleRef: {
-    select: {
-      id: true,
-      name: true,
-      department: { select: { id: true, name: true } },
-    },
-  },
+  departmentId: true,
+  department: { select: { id: true, name: true } },
+  roleRef: { select: { id: true, name: true } },
+  ledDepartments: { select: { id: true } },
 } as const
 
 type StaffRow = {
@@ -25,7 +22,10 @@ type StaffRow = {
   lastActiveAt: Date | null
   createdAt: Date
   approvalPin: string | null
-  roleRef: { id: string; name: string; department: { id: string; name: string } } | null
+  departmentId: string | null
+  department: { id: string; name: string } | null
+  roleRef: { id: string; name: string } | null
+  ledDepartments: { id: string }[]
 }
 
 export function toStaffResponse(s: StaffRow) {
@@ -36,13 +36,9 @@ export function toStaffResponse(s: StaffRow) {
     status: s.status,
     lastActiveAt: s.lastActiveAt,
     createdAt: s.createdAt,
-    role: s.roleRef
-      ? {
-          id: s.roleRef.id,
-          name: s.roleRef.name,
-          department: { id: s.roleRef.department.id, name: s.roleRef.department.name },
-        }
-      : null,
+    department: s.department ? { id: s.department.id, name: s.department.name } : null,
+    role: s.roleRef ? { id: s.roleRef.id, name: s.roleRef.name } : null,
+    isLead: s.departmentId != null && s.ledDepartments.some((d) => d.id === s.departmentId),
     hasApprovalPin: s.approvalPin != null,
   }
 }
