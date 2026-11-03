@@ -311,3 +311,15 @@ test('a redelivered signup webhook repairs a missing mandate but never revives a
   assert.equal((await prisma.autoDebitMandate.findUniqueOrThrow({ where: { savingsPlanId: plan.id } })).status, 'cancelled')
   assert.equal(await planBalance(plan.id), 100, 'and never credited twice')
 })
+
+test('guard: the webhook must keep settling signups itself, so no signup waits on the customer coming back', async () => {
+  // A held-back change made the webhook skip 'addenroll-' charges and added a daily job that credited them later with
+  // no mandate. That would charge customers and never enrol them if they close the app after paying. If either comes
+  // back, these fail; the three signup tests above are the behavior that must hold.
+  const run = await import('../src/lib/auto-debit-run')
+  assert.equal((run as Record<string, unknown>).reconcileAbandonedEnrollments, undefined, 'no job may credit a signup without a mandate')
+  const { c, plan, r } = await enrolmentIntent()
+  assert.equal((await webhook(charge(r, 10000, { customerId: c.id, planId: plan.id }))).status, 200)
+  assert.equal(await planBalance(plan.id), 100, 'credited by the webhook alone, with no return visit')
+  assert.equal(await prisma.autoDebitMandate.count({ where: { savingsPlanId: plan.id } }), 1, 'and enrolled')
+})

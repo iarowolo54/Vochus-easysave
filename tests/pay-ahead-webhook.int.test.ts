@@ -336,11 +336,20 @@ test('a plan redeemed between the read and the credit takes no money: nothing pa
   const { c, plan } = await mk()
   const ref = await mkIntent(c, plan.id, tomorrowKeys(), 200)
   const intent = await prisma.paymentIntent.findUniqueOrThrow({ where: { ref } })
-  // settleIntentPayment reads the plan, then attempts, then credits: redeem it in between.
+  // settleIntentPayment reads the plan, then the customer's earlier savings, then credits: redeem it in between.
+  // (The charged-days read now sits inside the credit's own transaction, so it is no longer the place to hook.)
   const racing = new Proxy(prisma, {
     get(target, key) {
-      if (key !== 'autoDebitAttempt') return Reflect.get(target, key)
-      return { findMany: async () => { await prisma.savingsPlan.update({ where: { id: plan.id }, data: { status: 'Redeemed' } }); return [] } }
+      if (key !== 'transaction') return Reflect.get(target, key)
+      return new Proxy(target.transaction, {
+        get(delegate, method) {
+          if (method !== 'count') return Reflect.get(delegate, method)
+          return async (...args: Parameters<typeof delegate.count>) => {
+            await prisma.savingsPlan.update({ where: { id: plan.id }, data: { status: 'Redeemed' } })
+            return delegate.count(...args)
+          }
+        },
+      })
     },
   })
   const r = await settleIntentPayment(racing, { intent, reference: ref, amountNaira: 200, currency: 'NGN', via: 'Paystack webhook' })
