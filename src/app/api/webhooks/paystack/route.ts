@@ -8,7 +8,7 @@ import { verifyTransaction } from '@/lib/paystack'
 import { creditAutoDebitAttempt } from '@/lib/auto-debit-credit'
 import { settleIntentPayment } from '@/lib/customer-settle'
 import { REVIEW_ACTION } from '@/lib/payment-intent'
-import { CREDITABLE_PLAN_STATUSES, PlanClosedError, creditPlanBalance } from '@/lib/plan-credit'
+import { DEPOSIT_PLAN_STATUS, PlanClosedError, creditPlanBalance } from '@/lib/plan-credit'
 
 export async function POST(req: NextRequest) {
   const body = await req.text()
@@ -120,16 +120,16 @@ export async function POST(req: NextRequest) {
     // transaction, so credit the newest but flag it (initiation should pin a plan).
     const planId = meta.planId as string | undefined
     let plan = planId
-      ? await prisma.savingsPlan.findFirst({ where: { id: planId, customerId, status: { in: CREDITABLE_PLAN_STATUSES } } })
+      ? await prisma.savingsPlan.findFirst({ where: { id: planId, customerId, status: DEPOSIT_PLAN_STATUS, maturityDate: { gt: new Date() } } })
       : null
     if (!plan && !planId) {
-      const active = await prisma.savingsPlan.findMany({ where: { customerId, status: 'Active' }, orderBy: { startDate: 'desc' }, take: 2 })
+      const active = await prisma.savingsPlan.findMany({ where: { customerId, status: 'Active', maturityDate: { gt: new Date() } }, orderBy: { startDate: 'desc' }, take: 2 })
       if (active.length > 1) {
         console.warn(`[paystack webhook] no meta.planId for customer ${customerId} with multiple active plans — crediting newest`)
       }
       plan = active[0] ?? null
     }
-    if (!plan) return needsReview(`no active plan (${planId ?? 'none named'}) for customer ${customerId}, amount ₦${amount}`)
+    if (!plan) return needsReview(`no open plan (${planId ?? 'none named'}) for customer ${customerId}, amount ₦${amount}`)
 
     const agent = await prisma.agent.findUnique({ where: { id: customer.agentId } })
     if (!agent) return needsReview(`agent ${customer.agentId} not found for customer ${customerId}, amount ₦${amount}`)

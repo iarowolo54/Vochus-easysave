@@ -7,6 +7,7 @@ import { assertSufficient, insufficientResponse, InsufficientFundsError, money }
 import { debitAgentBalance } from '@/lib/wallet-debit'
 import { creditRegistrationReward } from '@/lib/reward'
 import { selectActivePlan, depositCreatedAt } from '@/lib/saving-plan'
+import { planHasEnded, PLAN_ENDED } from '@/lib/plan-credit'
 import { creditOpenPlan, hasOpenRedemption, PLAN_CLOSED, PlanClosedError, SAVING_BLOCKED } from '@/lib/redemption-balance'
 
 export async function POST(req: NextRequest) {
@@ -37,6 +38,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'This customer has more than one active plan — choose which plan to save into' }, { status: 400 })
   }
   const plan = selected.plan
+
+  const dates = await prisma.savingsPlan.findUnique({ where: { id: plan.id }, select: { maturityDate: true } })
+  if (!dates || planHasEnded(dates)) return NextResponse.json({ error: PLAN_ENDED }, { status: 409 })
 
   if (await hasOpenRedemption(prisma, plan.id)) return NextResponse.json({ error: SAVING_BLOCKED }, { status: 409 })
 

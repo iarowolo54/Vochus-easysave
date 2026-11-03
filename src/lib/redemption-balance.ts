@@ -91,10 +91,10 @@ export async function reopenPlanAfterNoTransfer(client: Client, planId: string, 
 /** Thrown inside a saving's transaction to undo its debit when the plan closed after it was loaded. */
 export class PlanClosedError extends Error {}
 
-/** Credit a saving only if the plan is still open. Run inside the transaction that debits the agent. */
+/** Credit a saving only if the plan is still open and hasn't matured. Run inside the transaction that debits the agent. */
 export async function creditOpenPlan(client: Client, planId: string, amount: number): Promise<void> {
   const credited = await client.savingsPlan.updateMany({
-    where: { id: planId, status: { not: 'Redeemed' } },
+    where: { id: planId, status: 'Active', maturityDate: { gt: new Date() } },
     data: { balance: { increment: amount } },
   })
   if (credited.count !== 1) throw new PlanClosedError()
