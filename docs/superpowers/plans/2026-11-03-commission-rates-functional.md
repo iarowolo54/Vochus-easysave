@@ -1,3 +1,5 @@
+> **SUPERSEDED 2026-11-03** for savings by `2026-11-03-commission-restructure.md`. Loans and repayments (Tasks 1 to 4) are built and live; the savings parts below were never switched on and are being replaced.
+
 # Commission rates that control real money: Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.

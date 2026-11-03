@@ -1,3 +1,5 @@
+> **SUPERSEDED 2026-11-03** for savings by `2026-11-03-commission-restructure-design.md`. Loans and repayments (Tasks 1 to 4) are built and live; the savings parts below were never switched on and are being replaced.
+
 # Commission rates that control real money (design)
 
 Date: 2026-11-03. Status: draft for owner approval. Covers task-list items 11 and 12.
