@@ -263,7 +263,7 @@ export default function CustomerRedeemPage() {
               {isEarly && <p className="ag-early"><Icons.pending size={16} aria-hidden="true" /> Your plan ends {formatDate(plan.maturityDate)}, so this is an early collection.</p>}
               <dl className="ag-breakdown">
                 <div><dt>Saved</dt><dd>{formatNaira(plan.balance)}</dd></div>
-                <div><dt>Platform fee</dt><dd className="ag-neg">−{formatNaira(savingsFee)}</dd></div>
+                {savingsFee > 0 && <div><dt>Platform fee</dt><dd className="ag-neg">−{formatNaira(savingsFee)}</dd></div>}
                 <div><dt>Interest earned</dt><dd>+{formatNaira(interest)}</dd></div>
                 <div className="ag-breakdown-total"><dt>You’ll receive</dt><dd>{formatNaira(netPayout)}</dd></div>
               </dl>
@@ -342,7 +342,7 @@ export default function CustomerRedeemPage() {
                 <span className="ui-row-sub">{plan.goal ? `${plan.goal} · ` : ''}Available to collect</span>
                 <p className="ag-status-amount">{formatNaira(plan.balance)}</p>
                 {plan.balance > 0
-                  ? <p className="ui-row-sub">You receive <strong className="ag-strong">{formatNaira(netPayout)}</strong> after the platform fee{interest > 0 ? ' and interest' : ''}</p>
+                  ? <p className="ui-row-sub">You receive <strong className="ag-strong">{formatNaira(netPayout)}</strong> {savingsFee > 0 ? ` after the platform fee${interest > 0 ? ' and interest' : ''}` : interest > 0 ? ' including interest' : ''}</p>
                   : <p className="ui-row-sub">Nothing saved in this plan yet. Save first, then you can collect.</p>}
                 {isEarly && plan.balance > 0 && <p className="ag-early"><Icons.pending size={16} aria-hidden="true" /> Ends {formatDate(plan.maturityDate)}. Collecting now is an early collection.</p>}
                 {inProgress ? (

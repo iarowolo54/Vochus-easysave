@@ -1,5 +1,6 @@
 'use client'
 
+import TransferReminder from '@/components/ui/TransferReminder'
 import { useState, useEffect, useRef, Suspense } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
@@ -204,6 +205,7 @@ function WalletContent() {
                   ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Waiting for payment…</>
                   : valid ? `Pay ${formatNaira(amt, { minor: false })}` : 'Enter an amount'}
             </button>
+            <TransferReminder />
             <p className="ui-note ui-note--center"><Icons.locked size={16} aria-hidden="true" /> Secured by Paystack · card, bank transfer or USSD</p>
           </section>
         </div>

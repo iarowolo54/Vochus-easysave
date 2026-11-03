@@ -1,4 +1,5 @@
 'use client'
+import TransferReminder from '@/components/ui/TransferReminder'
 import { useEffect, useState, Suspense, type FormEvent } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import CustomerBottomNav from '@/components/customer/CustomerBottomNav'
@@ -235,10 +236,6 @@ function SavePageInner() {
                 <dt className="ui-row-main ui-row-sub">Pay with</dt>
                 <dd className="ui-review-value">Paystack<span className="ui-row-sub ui-block">Card, transfer or USSD</span></dd>
               </div>
-              <div className="ui-row">
-                <dt className="ui-row-main ui-row-sub">Platform fee</dt>
-                <dd className="ui-review-value">Taken when your plan ends</dd>
-              </div>
             </dl>
 
             <FormError message={error} />
@@ -246,6 +243,7 @@ function SavePageInner() {
             <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={pay} disabled={paying} aria-busy={paying}>
               {paying ? 'Opening Paystack…' : `Confirm and pay ${formatNaira(periodAmount(selectedPlan), { minor: false })}`}
             </button>
+            <TransferReminder />
             <p className="ui-note ui-note--center">
               <Icons.locked size={14} aria-hidden="true" /> You’ll finish on Paystack’s secure page.
             </p>
@@ -365,8 +363,6 @@ function SavePageInner() {
                 </span>
               </section>
             )}
-
-            <p className="ui-note">A platform fee is taken when your plan ends.</p>
 
             <FormError message={error} />
 

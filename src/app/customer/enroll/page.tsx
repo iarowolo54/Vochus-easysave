@@ -959,7 +959,7 @@ function EnrollContent() {
                   onChange={(v, days) => { setCustomEnd(v); if (days) setPeriod(days / UNIT[cadence].days) }} />
               </div>
             )}
-            <p className="cu-note">The amount on the right is what you’ll have saved; a platform fee is taken when you collect.</p>
+            <p className="cu-note">The amount on the right is what you’ll have saved.</p>
             <div className="cu-actions">{cta('Continue', () => { if (startGoal && plans.length === 0 && editing < 0) savePlan(); else go('goal') }, !!customEnd && endDateInvalid)}</div>
           </>
         )}
@@ -1031,7 +1031,7 @@ function EnrollContent() {
 
             <button type="button" role="checkbox" aria-checked={terms} className={`ag-agree cu-agree${terms ? ' is-on' : ''}`} onClick={() => { setTerms(t => !t); setError('') }}>
               <span className="ag-agree-box" aria-hidden="true">{terms && <Icons.check size={16} />}</span>
-              <span>I agree to the Vochus Easy Save terms and conditions, including the platform fee taken when I collect my savings.</span>
+              <span>I agree to the Vochus Easy Save terms and conditions.</span>
             </button>
 
             <div className="cu-actions">

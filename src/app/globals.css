@@ -2643,3 +2643,6 @@ button.ui-cal-day:disabled:active { transform: none; }
 }
 .ag-crow:active .ag-crow-view { background: var(--ui-brand); color: var(--ui-brand-on); }
 @media (min-width: 1024px) { .ag-crow-view { display: none; } }
+
+/* The reminder to tap "I've sent the money" must not be missed, so it reads as a notice and not as small print. */
+.ui-transfer-reminder { margin: var(--ui-s3) 0; padding: var(--ui-s3) var(--ui-s4); border-radius: var(--ui-r-md); background: var(--ui-warn-tint); color: var(--ui-ink); font-size: var(--ui-fs-sm); text-align: left; }
