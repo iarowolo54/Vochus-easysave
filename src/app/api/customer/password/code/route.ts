@@ -39,6 +39,10 @@ export async function POST(req: NextRequest) {
 
   const customer = await prisma.customer.findUnique({ where: { id: session.id } })
   if (!customer?.password) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
+  // Same gate as sign-in: a customer an administrator has locked can't change credentials.
+  if (customer.status && customer.status.toLowerCase() !== 'active') {
+    return NextResponse.json({ error: 'Your account has been locked by the administrator. Please contact support.' }, { status: 403 })
+  }
 
   const throttle = await checkLoginThrottle({ phone: customer.phone })
   if (throttle.accountLocked) {
