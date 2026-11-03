@@ -1,6 +1,6 @@
 import type { PrismaClient } from '@prisma/client'
 import { dueMandates } from '@/lib/auto-debit'
-import { autoDebitCadence, cycleCreditAmount, nextRunAt } from '@/lib/auto-debit-schedule'
+import { autoDebitCadence, cycleCreditAmount, nextRunAfter } from '@/lib/auto-debit-schedule'
 import { grossUpForFee } from '@/lib/auto-debit-fee'
 import { chargeAuthorization, verifyTransaction } from '@/lib/paystack'
 import { creditAutoDebitAttempt } from '@/lib/auto-debit-credit'
@@ -39,7 +39,7 @@ export async function runDueAutoDebits(
       const advance = () =>
         client.autoDebitMandate.update({
           where: { id: mandate.id },
-          data: { nextRunAt: nextRunAt(now, autoDebitCadence(plan.cadence)) },
+          data: { nextRunAt: nextRunAfter(mandate.nextRunAt, now, autoDebitCadence(plan.cadence)) },
         })
 
       const creditAmount = cycleCreditAmount(plan, now)

@@ -3,6 +3,7 @@ import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
 import { loadCycleState } from '@/lib/bulk-savings'
 import { nextPaymentDate } from '@/lib/pay-ahead'
+import { cycleAmount } from '@/lib/auto-debit-schedule'
 
 export async function GET(req: NextRequest) {
   const session = await getCustomerSession()
@@ -29,5 +30,6 @@ export async function GET(req: NextRequest) {
     const { coveredKeys, plainDeposits } = await loadCycleState(prisma, plan.id)
     nextPaymentAt = nextPaymentDate({ plan, nextRunAt: mandate.nextRunAt, coveredKeys, plainDeposits, now: new Date() })
   }
-  return NextResponse.json({ ...mandate, nextPaymentAt })
+  // What the next charge will be, from the same rule the cron uses, rather than the amount stored at signup.
+  return NextResponse.json({ ...mandate, amountPerCycle: cycleAmount(plan), nextPaymentAt })
 }
