@@ -409,28 +409,24 @@ export default function CustomersPage() {
             </section>
           ) : (
             <>
-            {!wide && <p className="ag-tap-hint">Tap a customer to see their plans and record savings.</p>}
             <section className={`ui-card ui-card--list ag-list${loading ? ' is-loading' : ''}`} aria-busy={loading} aria-label="Customers">
               {customers.map(c => {
                 const { plan: main, others } = mainPlan(c)
                 const pct = main ? planProgress(main) : 0
-                const left = main ? daysLeft(main.maturityDate) : 0
                 const isSel = wide && selected?.id === c.id
-                // Cash savers who haven't paid today get a Collect button instead of the balance.
-                // The All tab mixes both kinds, so this is decided per customer.
+                // The All tab mixes both kinds, so cash vs online is decided per customer.
                 const rowCash = tabs && (kind === 'offline' || (kind === 'all' && c.type === 'offline'))
-                const collect = rowCash && !!main && daysSince(c.lastPaidAt) !== 0
-                const row = (
+                return (
                   <button
                     key={c.id}
                     type="button"
-                    className={`ag-crow${isSel ? ' is-selected' : ''}${collect ? ' ag-crow--act' : ''}`}
+                    className={`ag-crow${isSel ? ' is-selected' : ''}`}
                     aria-current={isSel ? 'true' : undefined}
                     onClick={() => viewCustomer(c, !wide)}
                   >
                     <Avatar c={c} />
                     <span className="ag-crow-main">
-                      <span className="ag-crow-name">{fullName(c)} <StatusBadge status={c.status} /></span>
+                      <span className="ag-crow-name">{fullName(c)} <StatusBadge status={c.status} />{c.activeLoan && <span className="ag-crow-tag ag-crow-tag--loan">Loan</span>}</span>
                       {rowCash ? (
                         <span className="ag-crow-sub">
                           <span className={isOverdue(c.lastPaidAt) ? 'ag-late' : daysSince(c.lastPaidAt) === 0 ? 'ag-paid' : undefined}>{lastPaidText(c.lastPaidAt)}</span>
@@ -450,28 +446,11 @@ export default function CustomersPage() {
                         <span className="ag-crow-plan ag-crow-plan--none">No active plan</span>
                       )}
                     </span>
-                    {!collect && (
-                      <span className="ag-crow-end">
-                        <span className="ag-crow-bal">{formatNaira(c.savingsBalance, { minor: false })}</span>
-                        {c.activeLoan
-                          ? <span className="ag-crow-tag ag-crow-tag--loan">Loan {formatNaira(c.activeLoan.totalAmount, { minor: false })}</span>
-                          : main && <span className={`ag-crow-tag${left <= 7 ? ' ag-crow-tag--soon' : ''}`}>{left <= 0 ? 'Ends today' : `Ends in ${left} day${left === 1 ? '' : 's'}`}</span>}
-                      </span>
-                    )}
-                    <Icons.next size={18} className="ag-crow-chev" aria-hidden="true" />
+                    <span className="ag-crow-end">
+                      <span className="ag-crow-bal">{formatNaira(c.savingsBalance, { minor: false })}</span>
+                      <span className="ag-crow-view" aria-hidden="true">View</span>
+                    </span>
                   </button>
-                )
-                if (!rowCash) return row
-                return (
-                  <div key={c.id} className="ag-crow-row">
-                    {row}
-                    {collect && (
-                      <Link href={`/dashboard/savings?cid=${encodeURIComponent(c.customerId)}`} className="ui-btn ui-btn--primary ag-crow-collect"
-                        aria-label={`Collect from ${fullName(c)}`}>
-                        Collect
-                      </Link>
-                    )}
-                  </div>
                 )
               })}
             </section>

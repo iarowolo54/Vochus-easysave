@@ -2631,3 +2631,13 @@ button.ui-cal-day:disabled:active { transform: none; }
 .ag-tap-hint { margin: 0 0 var(--ui-s2); font-size: var(--ui-fs-sm); color: var(--ui-ink-2); }
 @media (min-width: 1024px) { .ag-crow-chev, .ag-tap-hint { display: none; } }
 .ag-crow:active { background: var(--ui-brand-tint); }
+
+/* Each customer row: the amount, and a View button under it that says what a tap does. */
+.ag-crow-chev, .ag-tap-hint { display: none; }
+.ag-crow-end { align-items: flex-end; gap: 6px; }
+.ag-crow-view {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 72px; min-height: 36px; padding: 0 var(--ui-s4);
+  border-radius: var(--ui-r-pill); background: var(--ui-brand-tint); color: var(--ui-brand-ink); font-size: var(--ui-fs-sm); font-weight: 700;
+}
+.ag-crow:active .ag-crow-view { background: var(--ui-brand); color: var(--ui-brand-on); }
+@media (min-width: 1024px) { .ag-crow-view { display: none; } }
