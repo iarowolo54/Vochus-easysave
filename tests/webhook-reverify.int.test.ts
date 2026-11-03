@@ -187,6 +187,17 @@ test('a top-up paid for a different amount than was started goes to review, not 
   assert.equal((await prisma.paymentIntent.findUniqueOrThrow({ where: { ref: r } })).status, 'Review')
 })
 
+test('an agent top-up cannot be diverted to a customer plan by metadata naming a customer', async () => {
+  const { c, plan } = await mkCustomer()
+  const r = ref('WLT-')
+  await prisma.paymentIntent.create({ data: { ref: r, actorType: 'agent', agentId: agentDbId, amount: 2000 } })
+  said.set(r, { kobo: 200000 })
+  const start = await agentBalance()
+  await webhook(charge(r, 200000, { customerId: c.id, planId: plan.id }))
+  assert.equal(await planBalance(plan.id), 0, 'the customer plan is untouched')
+  assert.equal(await agentBalance(), start + 2000, 'the intent decided: the agent wallet got it')
+})
+
 // --- payout outcomes ------------------------------------------------------------------------------------------
 
 async function mkPayout(code: string | null, method = 'Bank Transfer', status = 'pending') {
@@ -201,10 +212,40 @@ async function mkPayout(code: string | null, method = 'Bank Transfer', status = 
 const transferEvent = (event: string, data: object) => send({ event, data })
 
 test('the live webhook records transfer success, failure and reversal against the payout', async () => {
-  const er = await mkPayout(`TRF_${rid}a`)
   for (const [event, expected] of [['transfer.success', 'success'], ['transfer.failed', 'failed'], ['transfer.reversed', 'reversed']] as const) {
-    assert.equal((await webhook(transferEvent(event, { transfer_code: `TRF_${rid}a`, reference: er.ref, amount: 90000, currency: 'NGN' }))).status, 200)
+    const er = await mkPayout(`TRF_${rid}-${event}`)
+    assert.equal((await webhook(transferEvent(event, { transfer_code: `TRF_${rid}-${event}`, reference: er.ref, amount: 90000, currency: 'NGN' }))).status, 200)
     assert.equal((await prisma.earlyRedemption.findUniqueOrThrow({ where: { id: er.id } })).bankTransferStatus, expected)
+  }
+})
+
+test('a success can later be reversed, and the same event twice is harmless', async () => {
+  const er = await mkPayout(`TRF_${rid}-sr`)
+  const send_ = (event: string) => webhook(transferEvent(event, { transfer_code: `TRF_${rid}-sr`, reference: er.ref }))
+  await send_('transfer.success')
+  await send_('transfer.success')
+  await send_('transfer.reversed')
+  assert.equal((await prisma.earlyRedemption.findUniqueOrThrow({ where: { id: er.id } })).bankTransferStatus, 'reversed')
+  assert.equal(await prisma.auditLog.count({ where: { action: 'paystack_transfer_status_conflict', entityId: er.id } }), 0, 'nothing was refused')
+})
+
+test('a late event never replaces a final, reversed or hand-recorded status, and the conflict is audited for staff', async () => {
+  for (const held of ['failed', 'reversed', 'manual', 'blocked']) {
+    const er = await mkPayout(`TRF_${rid}-late-${held}`, 'Bank Transfer', held)
+    await webhook(transferEvent('transfer.success', { transfer_code: `TRF_${rid}-late-${held}`, reference: er.ref }))
+    assert.equal((await prisma.earlyRedemption.findUniqueOrThrow({ where: { id: er.id } })).bankTransferStatus, held, `success must not replace ${held}`)
+    assert.equal(await prisma.auditLog.count({ where: { action: 'paystack_transfer_status_conflict', entityId: er.id } }), 1, `${held} conflict audited`)
+  }
+  const reversed = await mkPayout(`TRF_${rid}-late-failed2`, 'Bank Transfer', 'reversed')
+  await webhook(transferEvent('transfer.failed', { transfer_code: `TRF_${rid}-late-failed2`, reference: reversed.ref }))
+  assert.equal((await prisma.earlyRedemption.findUniqueOrThrow({ where: { id: reversed.id } })).bankTransferStatus, 'reversed', 'failed must not replace reversed')
+})
+
+test('a success event moves a payout still pending', async () => {
+  for (const held of ['pending', 'otp', 'received']) {
+    const er = await mkPayout(`TRF_${rid}-open-${held}`, 'Bank Transfer', held)
+    await webhook(transferEvent('transfer.success', { transfer_code: `TRF_${rid}-open-${held}`, reference: er.ref }))
+    assert.equal((await prisma.earlyRedemption.findUniqueOrThrow({ where: { id: er.id } })).bankTransferStatus, 'success', held)
   }
 })
 

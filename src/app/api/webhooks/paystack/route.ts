@@ -148,8 +148,9 @@ export async function POST(req: NextRequest) {
   // From here on the money has not been credited yet, so an already-recorded ref is done.
   if (existing) return NextResponse.json({ ok: true })
 
-  // Customer self-pay with no intent: credit savings plan
-  if (customerId) {
+  // Customer self-pay with no intent: credit savings plan. Only when no intent exists for the ref: a charge this
+  // server started for someone else (an agent's top-up) is never redirected by metadata the payer controls.
+  if (customerId && !intent) {
     const amount = confirmed.amountNaira
 
     // Money arrived that can't be credited here: never drop it silently.
