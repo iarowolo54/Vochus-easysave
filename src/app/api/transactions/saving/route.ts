@@ -9,6 +9,7 @@ import { creditRegistrationReward } from '@/lib/reward'
 import { selectActivePlan, depositCreatedAt } from '@/lib/saving-plan'
 import { planHasEnded, PLAN_ENDED } from '@/lib/plan-credit'
 import { creditOpenPlan, hasOpenRedemption, PLAN_CLOSED, PlanClosedError, SAVING_BLOCKED } from '@/lib/redemption-balance'
+import { savingsCommissionOps } from '@/lib/commission-ledger'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -85,6 +86,7 @@ export async function POST(req: NextRequest) {
         },
       })
       await creditOpenPlan(tx, plan.id, rounded)
+      await savingsCommissionOps(tx, { agentId: agent.id, customerId: customer.id, planSource: plan.source, amount: rounded, ref, at: createdAt ?? new Date() })
       return created
     })
   } catch (e) {

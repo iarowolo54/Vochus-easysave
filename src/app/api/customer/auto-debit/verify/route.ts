@@ -9,6 +9,7 @@ import { sendToReview } from '@/lib/customer-settle'
 import { PlanClosedError, creditPlanBalance } from '@/lib/plan-credit'
 import { createMandateFromAuthorization } from '@/lib/auto-debit'
 import { ensureEnrolmentMandate, isEnrolmentRef } from '@/lib/auto-debit-enrol'
+import { savingsCommissionOps } from '@/lib/commission-ledger'
 
 class RouteError extends Error {
   constructor(public code: 'ALREADY_PROCESSED' | 'NOT_SELF') {
@@ -130,6 +131,7 @@ export async function POST(req: NextRequest) {
         },
       })
       await creditPlanBalance(tx, plan.id, amount)
+      await savingsCommissionOps(tx, { agentId: customer.agentId, customerId: customer.id, planSource: plan.source, amount, ref: reference, at: new Date() })
     })
   } catch (e) {
     if (e instanceof PlanClosedError) return toReview('closed')

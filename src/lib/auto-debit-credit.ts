@@ -3,6 +3,7 @@ import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
 import { REVIEW_ACTION } from '@/lib/payment-intent'
 import { PlanClosedError, creditPlanBalance } from '@/lib/plan-credit'
+import { savingsCommissionOps } from '@/lib/commission-ledger'
 
 export type AutoDebitCreditResult = 'credited' | 'already' | 'not_found' | 'review'
 
@@ -67,6 +68,7 @@ export async function creditAutoDebitAttempt(
         },
       })
       await creditPlanBalance(tx, plan.id, amount)
+      await savingsCommissionOps(tx, { agentId: customer.agentId, customerId: customer.id, planSource: plan.source, amount, ref: reference, at: new Date() })
       await tx.autoDebitMandate.update({ where: { id: attempt.mandateId }, data: { consecutiveFailures: 0 } })
     })
   } catch (e: unknown) {

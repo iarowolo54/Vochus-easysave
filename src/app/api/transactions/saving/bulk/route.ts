@@ -10,6 +10,7 @@ import { selectActivePlan } from '@/lib/saving-plan'
 import { creditOpenPlan, hasOpenRedemption, PLAN_CLOSED, PlanClosedError, SAVING_BLOCKED } from '@/lib/redemption-balance'
 import { chargingKeys, checkBulkSelection, liveSlots } from '@/lib/bulk-savings'
 import { isEligiblePlan, perSlotAmount } from '@/lib/catchup'
+import { savingsCommissionOps } from '@/lib/commission-ledger'
 
 class DaysTakenError extends Error {}
 
@@ -118,6 +119,7 @@ export async function POST(req: NextRequest) {
           },
         })
         txns.push(created)
+        await savingsCommissionOps(tx, { agentId: agent.id, customerId: customer.id, planSource: plan.source, amount: dailyAmt, ref: created.ref, at: created.createdAt })
         if (online) {
           const coversKey = rawDates[i] as string
           const row = await tx.planDayCoverage.upsert({
