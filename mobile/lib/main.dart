@@ -17,6 +17,7 @@ import 'package:webview_flutter_android/webview_flutter_android.dart';
 import 'package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 // Local testing: `adb reverse tcp:3000 tcp:3000`, then
 // flutter run --dart-define=VOCHUS_BASE_URL=http://localhost:3000
@@ -203,6 +204,12 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
             }
           },
           onNavigationRequest: (req) {
+            // Call, email, SMS and WhatsApp links belong to other apps. The WebView can't open them and would show the error page.
+            final uri = Uri.tryParse(req.url);
+            if (uri != null && _isExternalLink(uri)) {
+              _openExternal(uri);
+              return NavigationDecision.prevent;
+            }
             if (Platform.isAndroid &&
                 (req.url.endsWith('.apk') || req.url.contains('/downloads/'))) {
               AndroidIntent(
@@ -310,6 +317,26 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
       "window.__vochusCanSaveReceipt = true;"
       "try { window.dispatchEvent(new Event('vochus:flags-ready')); } catch(e) {}",
     );
+  }
+
+  static const _webSchemes = {'http', 'https', 'about', 'data', 'blob', 'file', 'javascript'};
+  static const _externalHosts = {'wa.me', 'api.whatsapp.com', 'wa.link', 'chat.whatsapp.com'};
+
+  /// True for links that must open another app: tel:, mailto:, sms:, whatsapp:, intent: and so on, plus WhatsApp's web links.
+  bool _isExternalLink(Uri uri) {
+    final scheme = uri.scheme.toLowerCase();
+    if (scheme.isEmpty) return false;
+    if (!_webSchemes.contains(scheme)) return true;
+    return (scheme == 'http' || scheme == 'https') && _externalHosts.contains(uri.host.toLowerCase());
+  }
+
+  Future<void> _openExternal(Uri uri) async {
+    try {
+      final ok = await launchUrl(uri, mode: LaunchMode.externalApplication);
+      if (!ok) _toast('No app on this phone can open that link.');
+    } catch (_) {
+      _toast('No app on this phone can open that link.');
+    }
   }
 
   bool _isCurrentPage(Uri uri) =>
