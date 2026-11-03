@@ -62,12 +62,12 @@ const L = (p: Partial<Parameters<typeof entriesFromLedger>[0][number]>) => ({
   createdAt: p.createdAt ?? new Date('2026-11-12T10:00:00Z'), customerId: p.customerId ?? null,
 })
 
-test('entriesFromLedger maps ledger sources to the drawer\'s sources and keeps the stored amount', () => {
+test('entriesFromLedger maps the fee sources to the drawer\'s sources and keeps the stored amount', () => {
   const out = entriesFromLedger([
-    L({ id: 'a', source: 'savings' }), L({ id: 'b', source: 'savings_catchup', sourceRef: 'RED-1' }),
-    L({ id: 'c', source: 'redemption_fee', sourceRef: 'RED-2' }), L({ id: 'd', source: 'loan', sourceRef: 'DSB-1' }),
+    L({ id: 'a', source: 'daily_first' }), L({ id: 'b', source: 'periodic_fee' }), L({ id: 'c', source: 'settle_up', sourceRef: 'RED-1' }),
+    L({ id: 'd', source: 'redemption_fee', sourceRef: 'RED-2' }), L({ id: 'e', source: 'loan', sourceRef: 'DSB-1' }), L({ id: 'f', source: 'repayment', sourceRef: 'RPY-1' }),
   ], new Map())
-  assert.deepEqual(out.map(e => e.source), ['savings', 'savings', 'redemption', 'loan'])
+  assert.deepEqual(out.map(e => e.source), ['savings', 'savings', 'redemption', 'redemption', 'loan', 'repayment'])
   assert.equal(out[0].commission, 4)
   assert.equal(out[0].ref, 'TXN-1')
 })

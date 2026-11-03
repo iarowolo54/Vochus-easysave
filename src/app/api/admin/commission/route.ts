@@ -48,7 +48,7 @@ export async function GET() {
   const platformRows = await prisma.commissionLedger.groupBy({ by: ['source'], where: { party: 'platform' }, _sum: { amount: true } })
   const sumOf = (source: string) => platformRows.find(r => r.source === source)?._sum.amount ?? 0
   const systemCommission = {
-    savingsFees: money(sumOf('redemption_fee')),
+    savingsFees: money(['daily_first', 'periodic_fee', 'settle_up', 'redemption_fee'].reduce((t, k) => t + sumOf(k), 0)),
     loanShare: money(sumOf('loan')),
     total: money(platformRows.reduce((t, r) => t + (r._sum.amount ?? 0), 0)),
   }

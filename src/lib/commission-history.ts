@@ -100,7 +100,7 @@ export interface LedgerRow {
 }
 
 const LEDGER_SOURCE: Record<string, CommissionSource> = {
-  savings: 'savings', savings_catchup: 'savings', loan: 'loan', repayment: 'repayment', redemption_fee: 'redemption',
+  daily_first: 'savings', periodic_fee: 'savings', settle_up: 'redemption', loan: 'loan', repayment: 'repayment', redemption_fee: 'redemption',
 }
 
 /** Agent ledger rows as drawer entries. `customers` maps internal customer id to its display name and id. */
