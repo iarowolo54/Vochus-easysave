@@ -47,6 +47,7 @@ interface Customer {
 }
 
 type CustomerType = 'offline' | 'online'
+type KindTab = 'all' | CustomerType
 
 /** Sent with `type=offline`: whole-portfolio figures for the collection round. */
 interface Summary { overdueCount: number; expectedToday: number; saverCount: number }
@@ -131,7 +132,7 @@ export default function CustomersPage() {
   const [counts, setCounts] = useState<Partial<Record<StatusFilter, number>>>({})
   // null until the first response tells us whether the API knows customer types yet.
   const [typed, setTyped] = useState<boolean | null>(null)
-  const [kind, setKind] = useState<CustomerType>('offline')
+  const [kind, setKind] = useState<KindTab>('offline')
   const [kindCounts, setKindCounts] = useState<Partial<Record<CustomerType, number>>>({})
   const [summary, setSummary] = useState<Summary | null>(null)
   const [loading, setLoading] = useState(true)
@@ -188,7 +189,7 @@ export default function CustomersPage() {
 
   // Only ask for a type once we know the API understands it; until then it's the old single list.
   const typeParams = useCallback((): Record<string, string> => (
-    typed === false ? {} : kind === 'offline' ? { type: 'offline', sort: 'lastPaid' } : { type: 'online' }
+    typed === false || kind === 'all' ? {} : kind === 'offline' ? { type: 'offline', sort: 'lastPaid' } : { type: 'online' }
   ), [typed, kind])
 
   // Portfolio counts for the status chips (one small request per status, using the list endpoint's total).
@@ -238,7 +239,7 @@ export default function CustomersPage() {
     return () => clearTimeout(t)
   }, [load])
 
-  function switchKind(k: CustomerType) {
+  function switchKind(k: KindTab) {
     if (k === kind) return
     setKind(k); setPage(1); setStatus(''); setCounts({}); setSummary(null)
   }
@@ -333,9 +334,9 @@ export default function CustomersPage() {
         <div className="ag-cust-list">
           {tabs && (
             <div className="ui-segment ag-seg ag-kind" role="group" aria-label="Customer type">
-              {([['offline', 'Cash savers'], ['online', 'Online']] as const).map(([k, label]) => (
+              {([['all', 'All'], ['offline', 'Cash savers'], ['online', 'Online']] as const).map(([k, label]) => (
                 <button key={k} type="button" aria-pressed={kind === k} onClick={() => switchKind(k)}>
-                  {label}{kindCounts[k] !== undefined && <span className="ag-kind-count">{kindCounts[k]}</span>}
+                  {label}{(k === 'all' ? portfolio : kindCounts[k]) !== undefined && <span className="ag-kind-count">{k === 'all' ? portfolio : kindCounts[k]}</span>}
                 </button>
               ))}
             </div>
