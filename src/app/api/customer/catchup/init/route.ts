@@ -35,33 +35,44 @@ export async function POST(req: NextRequest) {
   const rand = randomBytes(9).toString('base64url').toUpperCase()
   const ref = `VCHS-CST-${customer.customerId}-${Date.now()}-${rand}`
 
-  const res = await fetch('https://api.paystack.co/transaction/initialize', {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      email,
-      amount: Math.round(amount * 100),
-      reference: ref,
-      callback_url: `${process.env.NEXTAUTH_URL}/customer/save/callback`,
-      metadata: {
-        customerId: customer.id,
-        customerCode: customer.customerId,
-        planId: plan.id,
-        amount,
-        catchup: true,
-        coversKeys: keys,
-      },
-    }),
-  })
-
-  const data = await res.json()
-  if (!data.status) return NextResponse.json({ error: data.message ?? 'Paystack init failed' }, { status: 502 })
-
-  // Bind this reference to the customer + plan + amount + covered days server-side; verify requires it.
+  // Written first, as auto-debit/init does: a payment the webhook sees must find its intent, and the chosen days are held
+  // from this moment. A charge with no intent is never credited. If Paystack refuses or can't be reached, nothing was
+  // started, so take it back.
   await createPaymentIntent({ ref, actorType: 'customer', customerId: customer.id, planId: plan.id, amount, coversKeys: keys })
+  const abandon = () => prisma.paymentIntent.deleteMany({ where: { ref } })
+
+  let data: { status?: boolean; message?: string; data?: { reference: string; authorization_url: string } }
+  try {
+    const res = await fetch('https://api.paystack.co/transaction/initialize', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${process.env.PAYSTACK_SECRET_KEY}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        email,
+        amount: Math.round(amount * 100),
+        reference: ref,
+        callback_url: `${process.env.NEXTAUTH_URL}/customer/save/callback`,
+        metadata: {
+          customerId: customer.id,
+          customerCode: customer.customerId,
+          planId: plan.id,
+          amount,
+          catchup: true,
+          coversKeys: keys,
+        },
+      }),
+    })
+    data = await res.json()
+  } catch {
+    await abandon()
+    return NextResponse.json({ error: 'We couldn’t reach Paystack. Please try again.' }, { status: 502 })
+  }
+  if (!data.status || !data.data) {
+    await abandon()
+    return NextResponse.json({ error: data.message ?? 'Paystack init failed' }, { status: 502 })
+  }
 
   logAudit({
     action: 'catchup_initiated',
