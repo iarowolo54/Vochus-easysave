@@ -47,7 +47,7 @@ before(async () => {
   ids.moved = (await mkCustomer('3', other.id)).id
   ids.hasLogin = (await mkCustomer('4', agent.id, HASH)).id
   const mkPlan = async (customerId: string, goal: string) => (await prisma.savingsPlan.create({ data: {
-    customerId, dailyAmount: 100, periodDays: 30, goal, startDate: new Date(), maturityDate: new Date(), balance: 555,
+    customerId, dailyAmount: 100, periodDays: 30, goal, startDate: new Date(), maturityDate: new Date(Date.now() + 30 * 864e5), balance: 555,
   } })).id
   ids.plan = await mkPlan(ids.custA, 'School fees')
   ids.planB = await mkPlan(ids.custA, 'Rent')

@@ -380,16 +380,8 @@ test('a plan redeemed between the read and the credit takes no money: nothing pa
   assert.ok(await auditFor('payment_needs_manual_review', ref))
 })
 
-test('a Matured plan can still be collected from, so it is credited', async () => {
-  const { c, plan } = await mk()
-  const ref = await mkIntent(c, plan.id, null, 200)
-  await prisma.savingsPlan.update({ where: { id: plan.id }, data: { status: 'Matured' } })
-  assert.equal((await sendVerify(c, ref)).status, 200)
-  assert.equal(await balanceOf(plan.id), 200)
-})
-
-test('any other status goes to review, not where nobody can collect it', async () => {
-  for (const status of ['Completed', 'SomethingNew']) {
+test('a plan that is not Active, Matured included, takes no deposit: the payment goes to review', async () => {
+  for (const status of ['Matured', 'Completed', 'SomethingNew']) {
     const viaVerify = await mk()
     const r1 = await mkIntent(viaVerify.c, viaVerify.plan.id, null, 200)
     await prisma.savingsPlan.update({ where: { id: viaVerify.plan.id }, data: { status } })
