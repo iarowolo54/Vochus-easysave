@@ -40,6 +40,12 @@ export async function POST(req: NextRequest) {
   })
   const data = await res.json()
 
+  // Not settled yet, such as a bank transfer still on its way. It hasn't failed, and the webhook credits it when it
+  // lands, so say so rather than showing a failure the customer might pay again to fix.
+  if (data.status && ['pending', 'ongoing', 'processing', 'queued'].includes(data.data?.status)) {
+    return NextResponse.json({ pending: true })
+  }
+
   if (!data.status || data.data?.status !== 'success') {
     logAudit({
       action: 'payment_verify_failed',

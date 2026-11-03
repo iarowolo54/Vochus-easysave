@@ -1186,8 +1186,10 @@ body:has(.ui-auth) { background: var(--ui-canvas) !important; }
 .ag-col { min-width: 0; }
 .ag-col > .ui-section-head:first-child { margin-top: 0; }
 /* Balance on the left, its one action on the right; the button drops below on narrow phones. */
-.ag-wallet-card { display: flex; align-items: center; justify-content: space-between; gap: var(--ui-s3); flex-wrap: wrap; padding: var(--ui-s5); margin: 0; }
-.ag-wallet-btn { min-height: 44px; font-size: var(--ui-fs-sm); flex-shrink: 0; text-decoration: none; }
+/* Label and balance on top, one wide button underneath: the same on a phone and in a narrow card. */
+.ag-wallet-card { display: flex; flex-direction: column; gap: var(--ui-s4); padding: var(--ui-s5); margin: 0; }
+.ag-wallet-label { margin: 0 0 var(--ui-s1); font-size: var(--ui-fs-sm); font-weight: 600; color: var(--ui-ink-2); }
+.ag-wallet-btn { width: 100%; min-height: 52px; justify-content: center; font-size: var(--ui-fs-md); text-decoration: none; }
 .ag-actions { justify-content: flex-start; gap: var(--ui-s5); margin: var(--ui-s5) 0; }
 .ag-actions .ui-action { text-decoration: none; font-size: var(--ui-fs-sm); }
 .ag-stats { display: grid; grid-template-columns: 1fr 1fr; gap: var(--ui-s4) var(--ui-s3); margin: var(--ui-s2) 0 0; }
@@ -2613,3 +2615,31 @@ button.ui-cal-day:disabled:active { transform: none; }
 .ui-catchup-sum strong { font-size: var(--ui-fs-xl); font-weight: 800; }
 .ui-catchup-legend { margin: var(--ui-s3) 0 0; font-size: var(--ui-fs-sm); color: var(--ui-ink-2); }
 .ui-catchup-note { margin: 0; font-size: var(--ui-fs-sm); color: var(--ui-ink-2); }
+
+/* Agent Customers on a phone: one-line controls, tabs that never wrap, a big primary action. */
+@media (max-width: 480px) {
+  .ag-head-actions { flex-wrap: nowrap; }
+  .ag-head-actions .ui-btn { white-space: nowrap; flex: 1 1 auto; justify-content: center; }
+  .ag-head-actions .ui-btn--secondary { flex: 0 0 auto; }
+  .ag-kind button { white-space: nowrap; padding: 0 var(--ui-s1); gap: 6px; font-size: var(--ui-fs-sm); }
+  .ag-toolbar { grid-template-columns: minmax(0, 1fr) 132px; gap: var(--ui-s2); }
+  .ag-toolbar .ui-input { min-height: 48px; }
+  .ag-toolbar .ui-select { padding-left: var(--ui-s3); padding-right: 32px; text-overflow: ellipsis; }
+  .ag-mini-bar { flex-basis: 36px; }
+}
+
+/* Customer rows read as tappable: an arrow on every row and one line saying what a tap does. */
+.ag-crow-chev { flex-shrink: 0; color: var(--ui-ink-3); }
+.ag-tap-hint { margin: 0 0 var(--ui-s2); font-size: var(--ui-fs-sm); color: var(--ui-ink-2); }
+@media (min-width: 1024px) { .ag-crow-chev, .ag-tap-hint { display: none; } }
+.ag-crow:active { background: var(--ui-brand-tint); }
+
+/* Each customer row: the amount, and a View button under it that says what a tap does. */
+.ag-crow-chev, .ag-tap-hint { display: none; }
+.ag-crow-end { align-items: flex-end; gap: 6px; }
+.ag-crow-view {
+  display: inline-flex; align-items: center; justify-content: center; min-width: 72px; min-height: 36px; padding: 0 var(--ui-s4);
+  border-radius: var(--ui-r-pill); background: var(--ui-brand-tint); color: var(--ui-brand-ink); font-size: var(--ui-fs-sm); font-weight: 700;
+}
+.ag-crow:active .ag-crow-view { background: var(--ui-brand); color: var(--ui-brand-on); }
+@media (min-width: 1024px) { .ag-crow-view { display: none; } }

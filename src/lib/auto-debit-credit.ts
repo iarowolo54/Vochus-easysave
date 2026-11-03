@@ -10,6 +10,18 @@ function isUniqueViolation(e: unknown): boolean {
   return typeof e === 'object' && e !== null && (e as { code?: unknown }).code === 'P2002'
 }
 
+/** The card has been charged, but this can't be credited as it stands. Staff resolve it from the audit log. */
+export async function flagAttemptForReview(client: PrismaClient, attemptId: string, reason: string): Promise<void> {
+  await client.$transaction(async (tx) => {
+    const flipped = await tx.autoDebitAttempt.updateMany({ where: { id: attemptId, status: { notIn: ['success', 'review'] } }, data: { status: 'review' } })
+    if (flipped.count === 1) {
+      await tx.auditLog.create({
+        data: { action: REVIEW_ACTION, entity: 'AutoDebitAttempt', entityId: attemptId, details: `Not credited, needs manual review: ${reason}`, actorType: 'system', actorName: 'Auto-debit' },
+      })
+    }
+  })
+}
+
 /**
  * Credit a confirmed auto-debit charge to the savings plan exactly once.
  * Shared by the Paystack webhook and the reconciliation sweep. Idempotent:
@@ -60,22 +72,7 @@ export async function creditAutoDebitAttempt(
   } catch (e: unknown) {
     if ((e instanceof Error && e.message === 'ALREADY_PROCESSED') || isUniqueViolation(e)) return 'already'
     if (e instanceof PlanClosedError) {
-      // The card has been charged, but nothing can reach a closed plan's balance. Staff resolve it from the audit log.
-      await client.$transaction(async (tx) => {
-        const flipped = await tx.autoDebitAttempt.updateMany({ where: { id: attempt.id, status: { notIn: ['success', 'review'] } }, data: { status: 'review' } })
-        if (flipped.count === 1) {
-          await tx.auditLog.create({
-            data: {
-              action: REVIEW_ACTION,
-              entity: 'AutoDebitAttempt',
-              entityId: attempt.id,
-              details: `Not credited, needs manual review: charged ₦${money(settledAmountNaira)} but plan ${plan.id} is closed — ref ${reference}`,
-              actorType: 'system',
-              actorName: 'Auto-debit',
-            },
-          })
-        }
-      })
+      await flagAttemptForReview(client, attempt.id, `charged ₦${money(settledAmountNaira)} but plan ${plan.id} is closed — ref ${reference}`)
       return 'review'
     }
     throw e

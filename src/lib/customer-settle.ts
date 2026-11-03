@@ -64,13 +64,6 @@ export async function settleIntentPayment(client: PrismaClient, input: Input): P
   const wanted = parseCoversKeys(intent.coversKeys)
   const keys = matches ? wanted : []
 
-  // Days the card has been charged for since this checkout opened aren't free, even with no coverage row.
-  const charged = await client.autoDebitAttempt.findMany({
-    where: { savingsPlanId: plan.id, status: { in: ['processing', 'success'] } },
-    select: { cycleDate: true },
-  })
-  const chargedKeys = new Set(inFlightKeys(plan, charged))
-
   const priorSavings = await client.transaction.count({ where: { customerId, type: 'saving' } })
 
   let bought = 0
@@ -96,6 +89,14 @@ export async function settleIntentPayment(client: PrismaClient, input: Input): P
       await tx.customerPayment.create({
         data: { ref: `PAY-${reference}`, customerId, planId: plan.id, amount, status: 'Done', channel: channel ?? 'card' },
       })
+
+      // Days the card has been charged for since this checkout opened aren't free, even with no coverage row. Read here,
+      // inside the write, so a charge starting just now is seen.
+      const charged = await tx.autoDebitAttempt.findMany({
+        where: { savingsPlanId: plan.id, status: { in: ['processing', 'success'] } },
+        select: { cycleDate: true },
+      })
+      const chargedKeys = new Set(inFlightKeys(plan, charged))
 
       // Only free days are written; the first payment to a day keeps it (unique savingsPlanId + coversKey).
       const lost: string[] = []

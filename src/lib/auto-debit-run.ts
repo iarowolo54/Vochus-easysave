@@ -2,8 +2,8 @@ import type { PrismaClient } from '@prisma/client'
 import { dueMandates } from '@/lib/auto-debit'
 import { autoDebitCadence, cycleCreditAmount, nextRunAfter } from '@/lib/auto-debit-schedule'
 import { grossUpForFee } from '@/lib/auto-debit-fee'
-import { chargeAuthorization, verifyTransaction } from '@/lib/paystack'
-import { creditAutoDebitAttempt } from '@/lib/auto-debit-credit'
+import { PaystackReferenceNotFound, chargeAuthorization, verifyTransaction } from '@/lib/paystack'
+import { creditAutoDebitAttempt, flagAttemptForReview } from '@/lib/auto-debit-credit'
 import { recordAutoDebitFailure } from '@/lib/auto-debit-failure'
 import { logAudit } from '@/lib/audit'
 import { hasOpenRedemption, heldKeys, loadCycleState } from '@/lib/bulk-savings'
@@ -168,6 +168,11 @@ export async function reconcileProcessingAttempts(
     try {
       const result = await verifyTransaction(attempt.reference)
       if (result.status === 'success') {
+        // Money that isn't what we charged is for staff, the same as the webhook won't credit it.
+        if (result.amountNaira > 0 && (result.currency !== 'NGN' || result.amountNaira < attempt.creditAmount)) {
+          await flagAttemptForReview(client, attempt.id, `reconcile found ${result.currency} ${result.amountNaira}, expected ₦${attempt.creditAmount} — ref ${attempt.reference}`)
+          continue
+        }
         // Test-mode verify reports amount 0: fall back to what we charged.
         const settledAmountNaira = result.amountNaira > 0 ? result.amountNaira : attempt.grossCharged
         const r = await creditAutoDebitAttempt(client, { reference: attempt.reference, settledAmountNaira })
@@ -180,6 +185,12 @@ export async function reconcileProcessingAttempts(
         failed++
       }
     } catch (err) {
+      // Past the age threshold and Paystack has never heard of it: the charge never got there. Timeouts stay processing.
+      if (err instanceof PaystackReferenceNotFound) {
+        await recordAutoDebitFailure(client, { reference: attempt.reference, gatewayResponse: 'Charge never reached Paystack' })
+        failed++
+        continue
+      }
       console.error('[auto-debit] reconcile failed', attempt.savingsPlanId, errMsg(err))
     }
   }

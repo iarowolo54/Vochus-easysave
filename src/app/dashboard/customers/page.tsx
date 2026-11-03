@@ -47,6 +47,7 @@ interface Customer {
 }
 
 type CustomerType = 'offline' | 'online'
+type KindTab = 'all' | CustomerType
 
 /** Sent with `type=offline`: whole-portfolio figures for the collection round. */
 interface Summary { overdueCount: number; expectedToday: number; saverCount: number }
@@ -57,13 +58,14 @@ interface Txn { id: string; type: string; method: string | null; amount: number;
 
 const TXN: Record<string, { label: string; icon: IconName; sign: '+' | '−' }> = {
   saving: { label: 'Saving', icon: 'deposit', sign: '+' },
-  redemption: { label: 'Collection', icon: 'withdraw', sign: '−' },
+  redemption: { label: 'Withdrawal', icon: 'withdraw', sign: '−' },
   repayment: { label: 'Loan repayment', icon: 'repay', sign: '−' },
 }
 const txnMeta = (type: string) => TXN[type] ?? { label: type.charAt(0).toUpperCase() + type.slice(1), icon: 'history' as IconName, sign: '−' as const }
 
 const STATUSES = ['', 'Active', 'Inactive', 'Flagged'] as const
 type StatusFilter = typeof STATUSES[number]
+const STATUS_LABEL: Record<string, string> = { Inactive: 'Not active', Flagged: 'Under review' }
 
 const fullName = (c: Pick<Customer, 'firstName' | 'lastName'>) => displayName(`${c.firstName} ${c.lastName}`)
 const initials = (c: Pick<Customer, 'firstName' | 'lastName'>) => `${c.firstName[0] ?? ''}${c.lastName[0] ?? ''}`.toUpperCase()
@@ -80,7 +82,7 @@ const OVERDUE_DAYS = 3
 
 function lastPaidText(iso: string | null | undefined) {
   const d = daysSince(iso)
-  if (d === null) return 'Never paid'
+  if (d === null) return 'Has not paid yet'
   if (d <= 0) return 'Paid today'
   if (d === 1) return 'Paid yesterday'
   return `Last paid ${d} days ago`
@@ -121,7 +123,7 @@ function Avatar({ c, size }: { c: Customer; size?: 'lg' }) {
 function StatusBadge({ status }: { status: string }) {
   if (status === 'Active') return null
   const tone = status === 'Flagged' ? 'danger' : 'neutral'
-  return <span className={`ui-status ui-status--sm ui-status--${tone}`}>{status}</span>
+  return <span className={`ui-status ui-status--sm ui-status--${tone}`}>{STATUS_LABEL[status] ?? status}</span>
 }
 
 
@@ -131,7 +133,7 @@ export default function CustomersPage() {
   const [counts, setCounts] = useState<Partial<Record<StatusFilter, number>>>({})
   // null until the first response tells us whether the API knows customer types yet.
   const [typed, setTyped] = useState<boolean | null>(null)
-  const [kind, setKind] = useState<CustomerType>('offline')
+  const [kind, setKind] = useState<KindTab>('all')
   const [kindCounts, setKindCounts] = useState<Partial<Record<CustomerType, number>>>({})
   const [summary, setSummary] = useState<Summary | null>(null)
   const [loading, setLoading] = useState(true)
@@ -187,9 +189,10 @@ export default function CustomersPage() {
   }
 
   // Only ask for a type once we know the API understands it; until then it's the old single list.
+  // A search looks across every tab, so a customer is found whichever tab they're on.
   const typeParams = useCallback((): Record<string, string> => (
-    typed === false ? {} : kind === 'offline' ? { type: 'offline', sort: 'lastPaid' } : { type: 'online' }
-  ), [typed, kind])
+    typed === false || kind === 'all' || search.trim() ? {} : kind === 'offline' ? { type: 'offline', sort: 'lastPaid' } : { type: 'online' }
+  ), [typed, kind, search])
 
   // Portfolio counts for the status chips (one small request per status, using the list endpoint's total).
   useEffect(() => {
@@ -238,7 +241,7 @@ export default function CustomersPage() {
     return () => clearTimeout(t)
   }, [load])
 
-  function switchKind(k: CustomerType) {
+  function switchKind(k: KindTab) {
     if (k === kind) return
     setKind(k); setPage(1); setStatus(''); setCounts({}); setSummary(null)
   }
@@ -333,9 +336,9 @@ export default function CustomersPage() {
         <div className="ag-cust-list">
           {tabs && (
             <div className="ui-segment ag-seg ag-kind" role="group" aria-label="Customer type">
-              {([['offline', 'Cash savers'], ['online', 'Online']] as const).map(([k, label]) => (
+              {([['all', 'All'], ['offline', 'Offline'], ['online', 'Online']] as const).map(([k, label]) => (
                 <button key={k} type="button" aria-pressed={kind === k} onClick={() => switchKind(k)}>
-                  {label}{kindCounts[k] !== undefined && <span className="ag-kind-count">{kindCounts[k]}</span>}
+                  {label}{(k === 'all' ? portfolio : kindCounts[k]) !== undefined && <span className="ag-kind-count">{k === 'all' ? portfolio : kindCounts[k]}</span>}
                 </button>
               ))}
             </div>
@@ -364,7 +367,7 @@ export default function CustomersPage() {
                 className="ui-input"
                 type="search"
                 enterKeyHint="search"
-                placeholder="Name, phone or customer ID"
+                placeholder="Search name"
                 aria-label="Search customers"
                 autoComplete="off"
                 value={search}
@@ -372,7 +375,7 @@ export default function CustomersPage() {
               />
             </div>
             <select className="ui-input ui-select ag-plan-filter" aria-label="Plan length" value={plan} onChange={e => { setPlan(e.target.value); setPage(1) }}>
-              <option value="">All plan lengths</option>
+              <option value="">All plans</option>
               <option value="30">30 days</option><option value="60">60 days</option>
               <option value="90">90 days</option><option value="180">180 days</option>
             </select>
@@ -381,7 +384,7 @@ export default function CustomersPage() {
           <div className="ag-chips" role="group" aria-label="Status">
             {STATUSES.map(s => (
               <button key={s || 'all'} type="button" className="ag-chip" aria-pressed={status === s} onClick={() => { setStatus(s); setPage(1) }}>
-                {s || 'All'}
+                {s ? (STATUS_LABEL[s] ?? s) : 'All'}
                 {counts[s] !== undefined && <span className="ag-chip-count">{counts[s]}</span>}
               </button>
             ))}
@@ -401,31 +404,31 @@ export default function CustomersPage() {
                 : tabs && kind === 'online'
                   ? <EmptyState icon="customers" title="No online customers yet" text="Send someone an invite link. They show here once they sign up."
                       action={<button type="button" className="ui-btn ui-btn--primary" onClick={generateInvite} disabled={inviteLoading}><Icons.share size={18} aria-hidden="true" /> Invite</button>} />
-                  : <EmptyState icon="customers" title={cash ? 'No cash savers yet' : 'No customers yet'}
+                  : <EmptyState icon="customers" title={cash ? 'No offline customers yet' : 'No customers yet'}
                       text={cash ? 'Customers you enrol and collect cash from show here.' : 'Customers you enrol will show here.'}
                       action={<Link href="/dashboard/enrol" className="ui-btn ui-btn--primary">Enrol a customer</Link>} />}
             </section>
           ) : (
+            <>
             <section className={`ui-card ui-card--list ag-list${loading ? ' is-loading' : ''}`} aria-busy={loading} aria-label="Customers">
               {customers.map(c => {
                 const { plan: main, others } = mainPlan(c)
                 const pct = main ? planProgress(main) : 0
-                const left = main ? daysLeft(main.maturityDate) : 0
                 const isSel = wide && selected?.id === c.id
-                // Cash savers who haven't paid today get a Collect button instead of the balance.
-                const collect = cash && !!main && daysSince(c.lastPaidAt) !== 0
-                const row = (
+                // The All tab mixes both kinds, so cash vs online is decided per customer.
+                const rowCash = tabs && (kind === 'offline' || (kind === 'all' && c.type === 'offline'))
+                return (
                   <button
                     key={c.id}
                     type="button"
-                    className={`ag-crow${isSel ? ' is-selected' : ''}${collect ? ' ag-crow--act' : ''}`}
+                    className={`ag-crow${isSel ? ' is-selected' : ''}`}
                     aria-current={isSel ? 'true' : undefined}
                     onClick={() => viewCustomer(c, !wide)}
                   >
                     <Avatar c={c} />
                     <span className="ag-crow-main">
-                      <span className="ag-crow-name">{fullName(c)} <StatusBadge status={c.status} /></span>
-                      {cash ? (
+                      <span className="ag-crow-name">{fullName(c)} <StatusBadge status={c.status} />{c.activeLoan && <span className="ag-crow-tag ag-crow-tag--loan">Loan</span>}</span>
+                      {rowCash ? (
                         <span className="ag-crow-sub">
                           <span className={isOverdue(c.lastPaidAt) ? 'ag-late' : daysSince(c.lastPaidAt) === 0 ? 'ag-paid' : undefined}>{lastPaidText(c.lastPaidAt)}</span>
                         </span>
@@ -437,37 +440,22 @@ export default function CustomersPage() {
                       {main ? (
                         <span className="ag-crow-plan">
                           <span className="ag-mini-bar" aria-hidden="true"><span style={{ width: `${pct}%` }} /></span>
-                          <span className="ag-crow-plan-text">{cash ? amountText(main) : `${main.goal} · ${pct}%`}{others > 0 ? ` · +${others} more` : ''}</span>
+                          <span className="ag-crow-plan-text">{rowCash ? amountText(main) : `${main.goal} · ${pct}% done`}{others > 0 ? ` · +${others} more` : ''}</span>
                           {habits[c.customerId] && isDaily(main) && <HabitDot h={habits[c.customerId]} />}
                         </span>
                       ) : (
                         <span className="ag-crow-plan ag-crow-plan--none">No active plan</span>
                       )}
                     </span>
-                    {!collect && (
-                      <span className="ag-crow-end">
-                        <span className="ag-crow-bal">{formatNaira(c.savingsBalance, { minor: false })}</span>
-                        {c.activeLoan
-                          ? <span className="ag-crow-tag ag-crow-tag--loan">Loan {formatNaira(c.activeLoan.totalAmount, { minor: false })}</span>
-                          : main && <span className={`ag-crow-tag${left <= 7 ? ' ag-crow-tag--soon' : ''}`}>{left <= 0 ? 'Ends today' : `Ends in ${left} day${left === 1 ? '' : 's'}`}</span>}
-                      </span>
-                    )}
+                    <span className="ag-crow-end">
+                      <span className="ag-crow-bal">{formatNaira(c.savingsBalance, { minor: false })}</span>
+                      <span className="ag-crow-view" aria-hidden="true">View</span>
+                    </span>
                   </button>
-                )
-                if (!cash) return row
-                return (
-                  <div key={c.id} className="ag-crow-row">
-                    {row}
-                    {collect && (
-                      <Link href={`/dashboard/savings?cid=${encodeURIComponent(c.customerId)}`} className="ui-btn ui-btn--primary ag-crow-collect"
-                        aria-label={`Collect from ${fullName(c)}`}>
-                        Collect
-                      </Link>
-                    )}
-                  </div>
                 )
               })}
             </section>
+            </>
           )}
 
           {totalPages > 1 && (
@@ -536,7 +524,7 @@ function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, g
         <div className="ag-profile-main">
           <p className="ag-profile-name">{fullName(c)} <StatusBadge status={c.status} /></p>
           <p className="ui-row-sub">
-            {c.type && <span className={`ag-type ag-type--${c.type}`}>{c.type === 'offline' ? 'Cash saver' : 'Online'}</span>}
+            {c.type && <span className={`ag-type ag-type--${c.type}`}>{c.type === 'offline' ? 'Offline' : 'Online'}</span>}
             {c.customerId} · since {formatDate(c.createdAt)}
           </p>
           <a className="ui-link ag-profile-phone" href={`tel:${c.phone}`}><Icons.phone size={16} aria-hidden="true" /> {c.phone}</a>
@@ -573,9 +561,9 @@ function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, g
         <Icons.plan size={18} aria-hidden="true" /> Record saving
       </button>
       <div className="ag-profile-actions">
-        <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/add-plan')}><Icons.add size={18} aria-hidden="true" /> Add plan</button>
-        <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/loan-request')}><Icons.loan size={18} aria-hidden="true" /> Loan</button>
-        <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/loan-repay')}><Icons.repay size={18} aria-hidden="true" /> Repay</button>
+        <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/add-plan')}><Icons.add size={18} aria-hidden="true" /> New plan</button>
+        <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/loan-request')}><Icons.loan size={18} aria-hidden="true" /> New loan</button>
+        <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/loan-repay')}><Icons.repay size={18} aria-hidden="true" /> Pay loan</button>
       </div>
 
       <h3 className="ag-profile-section">Details</h3>

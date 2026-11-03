@@ -358,7 +358,7 @@ export default function EnrolPage() {
             text="Enrolling a customer needs money in your agent wallet. Top up, then come back to enrol."
             action={
               <div className="ui-stack ag-flow-block-actions">
-                <Link href={`/dashboard/wallet?return=${encodeURIComponent('/dashboard/enrol')}`} className="ui-btn ui-btn--primary">Fund wallet</Link>
+                <Link href={`/dashboard/wallet?return=${encodeURIComponent('/dashboard/enrol')}`} className="ui-btn ui-btn--primary">Add money to wallet</Link>
                 <button type="button" className="ui-btn ui-btn--plain" onClick={() => router.back()}>Go back</button>
               </div>
             } />

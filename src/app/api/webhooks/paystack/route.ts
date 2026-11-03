@@ -11,6 +11,17 @@ import { handleTransferEvent, isTransferEvent } from '@/lib/paystack-transfer-ev
 import { reverifyCharge } from '@/lib/webhook-reverify'
 import { ensureEnrolmentMandate, isEnrolmentRef } from '@/lib/auto-debit-enrol'
 
+/**
+ * Records money that arrived and wasn't credited. A real insert, unlike logAudit (which swallows failures): this row is
+ * the only record that the money exists, so if it can't be written the request fails and Paystack redelivers.
+ */
+async function recordForReview(reason: string): Promise<void> {
+  await prisma.auditLog.create({
+    data: { action: REVIEW_ACTION, entity: 'Transaction', details: `Not credited, needs manual review: ${reason}`, actorType: 'system', actorName: 'Paystack Webhook' },
+  })
+  console.warn('[paystack webhook] needs manual review')
+}
+
 export async function POST(req: NextRequest) {
   const body = await req.text()
   const sig = req.headers.get('x-paystack-signature') ?? ''
@@ -118,7 +129,7 @@ export async function POST(req: NextRequest) {
   if (confirmed.kind === 'mismatch') {
     const reason = `${confirmed.reason} — ref ${reference}`
     if (intent?.actorType) await sendToReview(prisma, intent, reference, reason)
-    else await logAudit({ action: REVIEW_ACTION, entity: 'Transaction', details: `Not credited, needs manual review: ${reason}`, actorType: 'system', actorName: 'Paystack Webhook' })
+    else await recordForReview(reason)
     return NextResponse.json({ ok: true })
   }
 
@@ -132,6 +143,9 @@ export async function POST(req: NextRequest) {
       via: 'Paystack webhook',
     })
     // The webhook can win the race against the customer's verify callback, which is what normally saves the card.
+    // DO NOT make the webhook skip 'addenroll-' charges and leave the signup to the customer's return (or to a later
+    // reconcile job): a customer who closes the app after paying would be charged and never enrolled. The signup tests
+    // in tests/webhook-reverify.int.test.ts must keep passing.
     if (isEnrolmentRef(reference) && settled.kind !== 'review') {
       try {
         await ensureEnrolmentMandate(prisma, reference, confirmed.authorization)
@@ -150,14 +164,7 @@ export async function POST(req: NextRequest) {
   // one was not started by us (another app on the shared Paystack account, or a charge built by hand with metadata
   // naming a customer). It is never credited, and never earns the registration reward: staff decide from the audit log.
   if (customerId && !intent) {
-    await logAudit({
-      action: REVIEW_ACTION,
-      entity: 'Transaction',
-      details: `Not credited, needs manual review: a charge of ₦${confirmed.amountNaira} named customer ${customerId} but no payment was started for it — ref ${reference}`,
-      actorType: 'system',
-      actorName: 'Paystack Webhook',
-    })
-    console.warn(`[paystack webhook] charge with no intent needs manual review ref=${reference}`)
+    await recordForReview(`a charge of ₦${confirmed.amountNaira} named customer ${customerId} but no payment was started for it — ref ${reference}`)
     return NextResponse.json({ ok: true })
   }
 
@@ -165,13 +172,7 @@ export async function POST(req: NextRequest) {
   // charge's own metadata never decides that, so a charge we didn't start can't fund a wallet.
   if (intent?.actorType !== 'agent' || !intent.agentId) {
     if (agentId) {
-      await logAudit({
-        action: REVIEW_ACTION,
-        entity: 'Transaction',
-        details: `Not credited, needs manual review: a wallet charge of ₦${confirmed.amountNaira} named agent ${agentId} but no top-up was started for it — ref ${reference}`,
-        actorType: 'system',
-        actorName: 'Paystack Webhook',
-      })
+      await recordForReview(`a wallet charge of ₦${confirmed.amountNaira} named agent ${agentId} but no top-up was started for it — ref ${reference}`)
     }
     return NextResponse.json({ ok: true })
   }

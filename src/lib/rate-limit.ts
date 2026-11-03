@@ -59,12 +59,6 @@ export function createRateLimiter() {
 // (e.g. `phone-available:<ip>`) so budgets don't bleed across endpoints.
 export const enrolRateLimiter = createRateLimiter()
 
-// Limiter for the agent code-only redemption lookup (`lookup-token`). That route
-// resolves a redemption from the 6-digit code alone, so a wrong guess matches no
-// record and can't be capped per-redemption the way `verify-token` is — a soft
-// per-agent cap bounds brute-forcing the code space. Keyed by agent id.
-export const redemptionLookupRateLimiter = createRateLimiter()
-
 // Limiter for the unauthenticated agent lookup behind the login screen, which says whether an account exists
 // and what state it's in. The budget is well above what the screen uses: one call per failed sign-in.
 export const agentLookupRateLimiter = createRateLimiter()
