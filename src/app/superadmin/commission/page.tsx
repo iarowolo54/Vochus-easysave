@@ -34,17 +34,29 @@ const TERMS = [30, 60, 90, 180] as const
 type Term = typeof TERMS[number]
 const TERM_LABELS: Record<Term, string> = { 30: 'Short term', 60: 'Standard', 90: 'Medium term', 180: 'Long term' }
 const DEFAULT_RATES: Record<Term, number> = { 30: 5, 60: 8, 90: 12, 180: 18 }
-const DEFAULT_COMM = { agentSavings: 0.4, agentLoan: 1.0, agentRepay: 0.5, platformSavings: 1.6, platformLoan: 5.0, platformPenalty: 2.0 }
+const DEFAULT_COMM = { dailyFirstAgentPct: 60, periodicFeePct: 7.5, periodicAgentPct: 60, agentLoan: 1.0, agentRepay: 0.5, platformLoan: 5.0, platformPenalty: 2.0 }
 type CommRates = typeof DEFAULT_COMM
 type CommKey = keyof CommRates
+type CommGroup = 'daily' | 'periodic' | 'loan' | 'unused'
 
-const COMM_FIELDS: { key: CommKey; group: 'agent' | 'platform'; label: string; example: (v: number) => string }[] = [
-  { key: 'agentSavings', group: 'agent', label: 'Savings commission', example: v => `Per savings deposit. On ₦100,000 the agent earns ${nairaKobo(1000 * v)}.` },
-  { key: 'agentLoan', group: 'agent', label: 'Loan commission', example: v => `Per loan paid out. On a ₦50,000 loan the agent earns ${nairaKobo(500 * v)}.` },
-  { key: 'agentRepay', group: 'agent', label: 'Repayment commission', example: v => `Per repayment. On ₦33,600 repaid the agent earns ${nairaKobo(336 * v)}.` },
-  { key: 'platformSavings', group: 'platform', label: 'Savings platform fee', example: v => `Per savings deposit. On ₦100,000 the platform keeps ${nairaKobo(1000 * v)}.` },
-  { key: 'platformLoan', group: 'platform', label: 'Platform share of loan interest', example: v => `Of interest earned. On ₦3,600 of interest the platform keeps ${nairaKobo(36 * v)}.` },
-  { key: 'platformPenalty', group: 'platform', label: 'Late repayment penalty (not applied yet)', example: v => `Per day late. ₦50,000 overdue for 3 days costs ${nairaKobo(50000 * v / 100 * 3)}.` },
+const COMM_GROUPS: { key: CommGroup; title: string; sub: string; icon: 'customers' | 'treasury' | 'rate' }[] = [
+  { key: 'daily', title: 'Daily plans', sub: 'The first day’s amount of each offline daily plan is the platform fee. Set how it splits.', icon: 'customers' },
+  { key: 'periodic', title: 'Weekly and monthly plans', sub: 'A fee is taken from every deposit on offline plans. Set the fee and how it splits.', icon: 'treasury' },
+  { key: 'loan', title: 'Loans', sub: 'Paid on loans and repayments.', icon: 'rate' },
+  { key: 'unused', title: 'Not in use yet', sub: 'Saved, but nothing charges it today.', icon: 'rate' },
+]
+
+const FIRST_DAY = 500
+const SAMPLE_DEPOSIT = 10000
+
+const COMM_FIELDS: { key: CommKey; group: CommGroup; label: string; example: (v: number, all: Record<CommKey, number>) => string }[] = [
+  { key: 'dailyFirstAgentPct', group: 'daily', label: 'Agent’s share of the first day’s amount', example: v => `On a ${nairaKobo(FIRST_DAY)} a day plan, the first ${nairaKobo(FIRST_DAY)} is the fee: the agent gets ${nairaKobo(FIRST_DAY * v / 100)} and the platform ${nairaKobo(FIRST_DAY * (100 - v) / 100)}.` },
+  { key: 'periodicFeePct', group: 'periodic', label: 'Platform fee on each deposit', example: v => `On a ${nairaKobo(SAMPLE_DEPOSIT)} deposit the fee is ${nairaKobo(SAMPLE_DEPOSIT * v / 100)}. At most 25%.` },
+  { key: 'periodicAgentPct', group: 'periodic', label: 'Agent’s share of that fee', example: (v, all) => `Of a ${nairaKobo(SAMPLE_DEPOSIT * all.periodicFeePct / 100)} fee the agent gets ${nairaKobo(SAMPLE_DEPOSIT * all.periodicFeePct / 100 * v / 100)} and the platform keeps the rest.` },
+  { key: 'agentLoan', group: 'loan', label: 'Loan commission', example: v => `Per loan paid out. On a ₦50,000 loan the agent earns ${nairaKobo(500 * v)}.` },
+  { key: 'agentRepay', group: 'loan', label: 'Repayment commission', example: v => `Per repayment. On ₦33,600 repaid the agent earns ${nairaKobo(336 * v)}.` },
+  { key: 'platformLoan', group: 'loan', label: 'Platform share of loan interest', example: v => `Of interest earned. On ₦3,600 of interest the platform keeps ${nairaKobo(36 * v)}.` },
+  { key: 'platformPenalty', group: 'unused', label: 'Late repayment penalty (not applied yet)', example: v => `Per day late. ₦50,000 overdue for 3 days would cost ${nairaKobo(50000 * v / 100 * 3)}.` },
 ]
 const commLabel = (k: CommKey) => COMM_FIELDS.find(f => f.key === k)?.label ?? k
 
@@ -205,7 +217,6 @@ export default function CommissionPage() {
   const commValid = COMM_FIELDS.every(f => commParsed[f.key] !== null)
   const commChanges = COMM_FIELDS.filter(f => commParsed[f.key] !== savedComm[f.key])
   const valOr = (k: CommKey) => commParsed[k] ?? savedComm[k]
-  const totalTakeRate = (valOr('agentSavings') + valOr('platformSavings')).toFixed(1)
   const effectiveLoanCost = (valOr('agentLoan') + valOr('platformLoan')).toFixed(1)
 
   const loanParsed = Object.fromEntries(TERMS.map(t => [t, pct(loanRates[t])])) as Record<Term, number | null>
@@ -347,26 +358,27 @@ export default function CommissionPage() {
         <div className="card-hd">
           <div>
             <h3 id="comm-h">Commission rates</h3>
-            <p className="am-card-sub">Used for every new savings deposit, loan and repayment.</p>
+            <p className="am-card-sub">Used for every new savings deposit, loan and repayment on offline plans.</p>
           </div>
         </div>
         {!commLoaded ? (commFailed ? <LoadError what="commission rates" onRetry={load} /> : <TableSkeleton rows={3} cols={3} />)
           : (
             <>
               <div className="am-rate-groups">
-                {(['agent', 'platform'] as const).map(group => (
-                  <div key={group} className="am-rate-group">
+                {COMM_GROUPS.map(group => (
+                  <div key={group.key} className="am-rate-group">
                     <div className="am-rate-group-hd">
-                      <span className="row-ic" aria-hidden="true">{group === 'agent' ? <Icons.customers size={18} /> : <Icons.treasury size={18} />}</span>
+                      <span className="row-ic" aria-hidden="true">{group.icon === 'customers' ? <Icons.customers size={18} /> : group.icon === 'treasury' ? <Icons.treasury size={18} /> : <Icons.rate size={18} />}</span>
                       <div>
-                        <h4>{group === 'agent' ? 'Agent commission' : 'Platform fees'}</h4>
-                        <p>{group === 'agent' ? 'Paid to the agent on verified transactions.' : 'Kept by Vochus.'}</p>
+                        <h4>{group.title}</h4>
+                        <p>{group.sub}</p>
                       </div>
                     </div>
-                    {COMM_FIELDS.filter(f => f.group === group).map(f => {
+                    {COMM_FIELDS.filter(f => f.group === group.key).map(f => {
                       const v = commParsed[f.key]
+                      const all = Object.fromEntries(COMM_FIELDS.map(g => [g.key, valOr(g.key)])) as Record<CommKey, number>
                       return (
-                        <Field key={f.key} id={`c-${f.key}`} label={f.label} error={v === null ? 'Enter a rate from 0 to 100.' : undefined} hint={f.example(v ?? 0)}>
+                        <Field key={f.key} id={`c-${f.key}`} label={f.label} error={v === null ? 'Enter a rate from 0 to 100.' : undefined} hint={f.example(v ?? 0, all)}>
                           <PctInput id={`c-${f.key}`} value={comm[f.key]} invalid={v === null} onChange={s => setComm(c => ({ ...c, [f.key]: s }))} />
                         </Field>
                       )
@@ -376,7 +388,7 @@ export default function CommissionPage() {
               </div>
               <div className="am-foot">
                 <div className="am-foot-info">
-                  <span>Total take on savings: <strong>{totalTakeRate}%</strong></span>
+                  <span>Online customers pay no fee and earn the agent nothing.</span>
                   <span>Loan cost to customer: <strong>{effectiveLoanCost}%</strong></span>
                   {lastSavedComm && <span>{lastSavedComm}</span>}
                 </div>
