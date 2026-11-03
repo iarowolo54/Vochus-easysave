@@ -55,7 +55,7 @@ export async function resolveAccount(accountNumber: string, bankCode: string) {
   return { accountName: data.data.account_name as string, accountNumber: data.data.account_number as string }
 }
 
-function isTestMode() {
+export function isTestMode() {
   return process.env.PAYSTACK_SECRET_KEY?.startsWith('sk_test_')
 }
 

@@ -74,7 +74,7 @@ before(async () => {
   // Payouts: the row says Done whatever happened to the transfer, as redemption-complete.ts writes it.
   const payout = async (key: string, payoutMethod: string, bankTransferStatus: string | null) => {
     const ref = `ER-${key}-${RUN}`
-    const r = await prisma.earlyRedemption.create({ data: { ref, savingsPlanId: ids.plan, reason: 'x', balance: 100, netPayout: 100, payoutMethod, bankTransferStatus } })
+    const r = await prisma.earlyRedemption.create({ data: { ref, savingsPlanId: ids.plan, reason: 'x', status: 'Processing', balance: 100, netPayout: 100, payoutMethod, bankTransferStatus } })
     redemptions.push(r.id)
     await mk(key, { ref, type: 'redemption', method: payoutMethod })
     await mk(`${key}Int`, { ref: `${ref}-INT`, type: 'interest', method: 'Cash' })
