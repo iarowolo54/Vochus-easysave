@@ -4,7 +4,8 @@ import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { getCustomerSession, signCustomerToken, customerCookieOptions } from '@/lib/customer-auth'
 import { INVALID_CODE_MESSAGE, redeemResetCode, SIX_DIGITS } from '@/lib/password-reset'
-import { checkLoginThrottle, recordLoginFailure, clearLoginThrottle } from '@/lib/login-attempt'
+import { checkLoginThrottle, clearLoginThrottle, recordLoginFailure, reserveAccountAttempt } from '@/lib/login-attempt'
+import { clientIp } from '@/lib/rate-limit'
 
 // Step 2: change the password with the current one plus the emailed/SMS code from ./code. Wrong guesses
 // count against the same per-account lock as sign-in, so a hijacked session
@@ -35,15 +36,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Your account has been locked by the administrator. Please contact support.' }, { status: 403 })
   }
 
-  const throttle = await checkLoginThrottle({ phone: customer.phone })
-  if (throttle.accountLocked) {
+  const ip = clientIp(req)
+  if (ip !== 'unknown') {
+    const spray = await checkLoginThrottle({ ip })
+    if (spray.blocked) {
+      return NextResponse.json({ error: 'Too many attempts. Please wait a few minutes and try again.' }, { status: 429, headers: { 'Retry-After': String(Math.max(1, spray.retryAfterSeconds)) } })
+    }
+  }
+  // The attempt is counted before the password is checked, so parallel guesses can't outrun the lock.
+  if (!(await reserveAccountAttempt(customer.phone))) {
     return NextResponse.json({ error: 'Your account is locked after too many wrong attempts. Unlock it with a verification code.', locked: true }, { status: 423 })
   }
-
   if (!(await bcrypt.compare(currentPassword, customer.password))) {
-    await recordLoginFailure({ phone: customer.phone }).catch(() => {})
+    if (ip !== 'unknown') await recordLoginFailure({ ip })
     return NextResponse.json({ error: 'Current password is incorrect' }, { status: 400 })
   }
+  await clearLoginThrottle({ phone: customer.phone })
 
   // Last, so a wrong current password never spends the code.
   if (!(await redeemResetCode('customer', customer.id, resetId, code, Date.now(), 'password_change'))) {
@@ -57,7 +65,6 @@ export async function POST(req: NextRequest) {
     await tx.biometricToken.updateMany({ where: { customerId: customer.id, revokedAt: null }, data: { revokedAt: new Date() } })
     return c
   })
-  await clearLoginThrottle({ phone: customer.phone }).catch(() => {})
 
   const name = `${customer.firstName} ${customer.lastName}`
   logAudit({
@@ -73,7 +80,8 @@ export async function POST(req: NextRequest) {
   // Keep this device signed in with a token for the new version.
   const token = await signCustomerToken(
     { id: customer.id, customerId: customer.customerId, name, agentId: customer.agentId, tokenVersion: updated.tokenVersion },
-    { loginAt: Math.floor(Date.now() / 1000) },
+    // Keep the original sign-in time, so changing a password doesn't extend the absolute session cap.
+    { loginAt: typeof session.loginAt === 'number' ? session.loginAt : Math.floor(Date.now() / 1000) },
   )
   const res = NextResponse.json({ ok: true })
   res.cookies.set(customerCookieOptions(token))

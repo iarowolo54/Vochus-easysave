@@ -16,6 +16,8 @@ export interface CustomerSession {
   agentId: string
   /** Must match Customer.tokenVersion. A token without it counts as version 0. */
   tokenVersion?: number
+  /** Epoch seconds of the original sign-in, kept across re-issues. Absent on older tokens. */
+  loginAt?: number
 }
 
 export interface SignCustomerTokenOptions {

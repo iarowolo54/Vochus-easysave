@@ -75,6 +75,32 @@ export async function unlockAccount(phone: string): Promise<void> {
   await prisma.loginAttempt.deleteMany({ where: { key: phoneKey(phone) } })
 }
 
+/**
+ * Count a password attempt against an account BEFORE checking it, in one statement that refuses at the limit, so a
+ * parallel burst can't all pass a lock check that no failure has reached yet. False if the account is locked. A correct
+ * password clears the count with clearLoginThrottle, which is how the attempt is refunded. Throws on a database error
+ * (callers fail closed). Used by the signed-in password change; sign-in itself still uses checkLoginThrottle.
+ */
+export async function reserveAccountAttempt(phone: string, now: number = Date.now()): Promise<boolean> {
+  const key = phoneKey(phone)
+  await prisma.loginAttempt.upsert({ where: { key }, create: { key, failCount: 0 }, update: {} }).catch((e: unknown) => {
+    // Two first attempts at once: the other one created the row.
+    if ((e as { code?: unknown } | null)?.code !== 'P2002') throw e
+  })
+  // A quiet window restarts the count, but a locked account stays locked until it is unlocked.
+  await prisma.loginAttempt.updateMany({
+    where: { key, failCount: { lt: ACCOUNT_FAIL_LIMIT }, lastFailAt: { lt: toDate(now - THROTTLE.resetAfterMs)! } },
+    data: { failCount: 0 },
+  })
+  // Dates are epoch ms, which is how Prisma stores DateTime in this SQLite file.
+  const rows = await prisma.$queryRaw<unknown[]>`
+    UPDATE "LoginAttempt"
+    SET "failCount" = "failCount" + 1, "lastFailAt" = ${now}, "updatedAt" = ${now}
+    WHERE "key" = ${key} AND "failCount" < ${ACCOUNT_FAIL_LIMIT}
+    RETURNING "failCount"`
+  return rows.length > 0
+}
+
 /** Is this account currently hard-locked? (Used by the OTP-request endpoint.) */
 export async function isPhoneLocked(phone: string): Promise<boolean> {
   const s = await loadState(phoneKey(phone))

@@ -5,7 +5,7 @@ import { sendMail } from '@/lib/mail'
 import { emailLogo } from '@/lib/email-brand'
 import { sendSMS } from '@/lib/kudisms'
 import { getCustomerSession } from '@/lib/customer-auth'
-import { checkLoginThrottle, recordLoginFailure } from '@/lib/login-attempt'
+import { checkLoginThrottle, clearLoginThrottle, recordLoginFailure, reserveAccountAttempt } from '@/lib/login-attempt'
 import { deliverInBackground, issueResetCode, readBody, text } from '@/lib/password-reset'
 import { clientIp } from '@/lib/rate-limit'
 import { maskTarget, recoveryChannel } from '@/lib/unlock-otp'
@@ -44,16 +44,23 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Your account has been locked by the administrator. Please contact support.' }, { status: 403 })
   }
 
-  const throttle = await checkLoginThrottle({ phone: customer.phone })
-  if (throttle.accountLocked) {
-    return NextResponse.json({ error: 'Your account is locked after too many wrong attempts. Unlock it with a verification code.', locked: true }, { status: 423 })
+  const ip = clientIp(req)
+  const lockedResponse = () => NextResponse.json({ error: 'Your account is locked after too many wrong attempts. Unlock it with a verification code.', locked: true }, { status: 423 })
+  if (ip !== 'unknown') {
+    const spray = await checkLoginThrottle({ ip })
+    if (spray.blocked) {
+      return NextResponse.json({ error: 'Too many attempts. Please wait a few minutes and try again.' }, { status: 429, headers: { 'Retry-After': String(Math.max(1, spray.retryAfterSeconds)) } })
+    }
   }
+  // The attempt is counted before the password is checked, so parallel guesses can't outrun the lock.
+  if (!(await reserveAccountAttempt(customer.phone))) return lockedResponse()
   if (!(await bcrypt.compare(currentPassword, customer.password))) {
-    await recordLoginFailure({ phone: customer.phone }).catch(() => {})
+    if (ip !== 'unknown') await recordLoginFailure({ ip })
     return NextResponse.json({ error: 'Current password is incorrect' }, { status: 400 })
   }
+  await clearLoginThrottle({ phone: customer.phone })
 
-  const issued = await issueResetCode('customer', customer.id, Date.now(), 'password_change', clientIp(req))
+  const issued = await issueResetCode('customer', customer.id, Date.now(), 'password_change', ip)
   if (!issued) {
     return NextResponse.json({ error: 'A code was sent a moment ago. Wait a minute, then try again.' }, { status: 429 })
   }
