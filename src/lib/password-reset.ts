@@ -46,7 +46,7 @@ export function newResetId() {
 }
 
 export type ResetActor = 'customer' | 'agent'
-export type ResetPurpose = 'reset' | 'unlock' | 'admin' | 'login_unlock'
+export type ResetPurpose = 'reset' | 'unlock' | 'admin' | 'login_unlock' | 'password_change'
 
 export function generateCode(): string {
   return randomInt(0, 1_000_000).toString().padStart(6, '0')
