@@ -51,10 +51,12 @@ function CallbackContent() {
       setState({ kind: 'autoFailed', message: describeFailure(r), canRetry: !definite })
       return
     }
-    const r = await postJson<{ amount?: number; newBalance?: number; alreadyProcessed?: boolean; review?: boolean; notBought?: NotBought }>(
+    const r = await postJson<{ amount?: number; newBalance?: number; alreadyProcessed?: boolean; review?: boolean; pending?: boolean; notBought?: NotBought }>(
       '/api/customer/paystack/verify', { reference },
     )
     if (r.ok && r.data.review) { setState({ kind: 'review' }); return }
+    // Still settling, such as a bank transfer. It hasn't failed, so don't say it has.
+    if (r.ok && r.data.pending) { setState({ kind: 'unconfirmed' }); return }
     if (r.ok && (r.data.alreadyProcessed || r.data.amount)) {
       const amount = r.data.amount ?? null
       if (amount && !r.data.alreadyProcessed) setJustPaid(amount)
