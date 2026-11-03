@@ -108,7 +108,8 @@ test('a covered daily cycle is not charged, the schedule advances, and the next 
   assert.equal(await prisma.autoDebitAttempt.count({ where: { savingsPlanId: plan.id } }), 0)
   assert.equal((await prisma.savingsPlan.findUnique({ where: { id: plan.id } }))?.balance, 100)
   const m = await prisma.autoDebitMandate.findUniqueOrThrow({ where: { id: mandate.id } })
-  assert.equal(m.nextRunAt.toISOString(), new Date(now.getTime() + DAY).toISOString())
+  // One cycle on from the boundary it was due at (seeded 1s before now), not from the moment the cron ran.
+  assert.equal(m.nextRunAt.toISOString(), new Date(now.getTime() - 1000 + DAY).toISOString())
   assert.equal(m.consecutiveFailures, 2, 'a skip is neither a failure nor a success')
 
   // Next day is not covered: charged as normal.
@@ -134,7 +135,7 @@ test('a weekly cycle inside a covered week slot is skipped though its date is no
   assert.deepEqual(await runDueAutoDebits(prisma, cycle, scope), { charged: 0, skipped: 1, failed: 0, pending: 0 })
   assert.equal(await prisma.autoDebitAttempt.count({ where: { savingsPlanId: plan.id } }), 0)
   const m = await prisma.autoDebitMandate.findUniqueOrThrow({ where: { id: mandate.id } })
-  assert.equal(m.nextRunAt.toISOString(), new Date(cycle.getTime() + 7 * DAY).toISOString())
+  assert.equal(m.nextRunAt.toISOString(), new Date(now.getTime() - 1000 + 7 * DAY).toISOString(), 'a week on from the boundary it was due at')
 
   // The following week isn't covered: charged, so a covered week doesn't skip forever.
   assert.deepEqual(await runDueAutoDebits(prisma, m.nextRunAt, scope), { charged: 1, skipped: 0, failed: 0, pending: 0 })
