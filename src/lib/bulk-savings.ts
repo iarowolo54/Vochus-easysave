@@ -1,6 +1,6 @@
 // Server-side rules shared by every way of buying specific days on an online plan: the customer's
 // Bulk Savings checkout, the agent's Bulk Savings, and the auto-debit cron that has to respect both.
-import type { PrismaClient, SavingsPlan } from '@prisma/client'
+import type { Prisma, PrismaClient, SavingsPlan } from '@prisma/client'
 import { isEligiblePlan, readableKey, validateSelection } from '@/lib/catchup'
 import { INTENT_DONE, INTENT_PENDING, parseCoversKeys } from '@/lib/payment-intent'
 import { PENDING_HOLD_MS, inFlightKeys, ordinaryDeposits } from '@/lib/pay-ahead'
@@ -22,6 +22,14 @@ export async function coveringRefsByPlan(client: PrismaClient, planIds: string[]
   for (const r of rows) out.get(r.savingsPlanId)?.add(r.ref)
   for (const i of intents) if (i.planId) out.get(i.planId)?.add(i.ref)
   return new Map([...out].map(([id, refs]) => [id, [...refs]]))
+}
+
+type ReadClient = Pick<PrismaClient, 'autoDebitAttempt'> | Prisma.TransactionClient
+
+/** The slot keys auto-debit is charging on this plan right now. */
+export async function chargingKeys(client: ReadClient, plan: Pick<SavingsPlan, 'id' | 'cadence' | 'startDate'>): Promise<Set<string>> {
+  const processing = await client.autoDebitAttempt.findMany({ where: { savingsPlanId: plan.id, status: 'processing' }, select: { cycleDate: true } })
+  return new Set(inFlightKeys(plan, processing))
 }
 
 /**
@@ -97,8 +105,7 @@ export async function checkBulkSelection(client: PrismaClient, plan: SavingsPlan
   if (!result.ok) return { ok: false, status: 400, error: result.error }
 
   // A day auto-debit is charging right now would otherwise be paid for twice.
-  const processing = await client.autoDebitAttempt.findMany({ where: { savingsPlanId: plan.id, status: 'processing' }, select: { cycleDate: true } })
-  const charging = new Set(inFlightKeys(plan, processing))
+  const charging = await chargingKeys(client, plan)
   const beingCharged = keys.find(k => charging.has(k))
   if (beingCharged) return { ok: false, status: 409, error: `The card on this plan is being charged for ${readableKey(beingCharged)}. Remove it, or try again shortly` }
 

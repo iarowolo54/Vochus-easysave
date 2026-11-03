@@ -143,6 +143,9 @@ export async function POST(req: NextRequest) {
       via: 'Paystack webhook',
     })
     // The webhook can win the race against the customer's verify callback, which is what normally saves the card.
+    // DO NOT make the webhook skip 'addenroll-' charges and leave the signup to the customer's return (or to a later
+    // reconcile job): a customer who closes the app after paying would be charged and never enrolled. The signup tests
+    // in tests/webhook-reverify.int.test.ts must keep passing.
     if (isEnrolmentRef(reference) && settled.kind !== 'review') {
       try {
         await ensureEnrolmentMandate(prisma, reference, confirmed.authorization)
