@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requirePermission('agents')
+  const guard = await requirePermission('agents', 'manage')
   if (!guard.ok) return guard.response
   const session = guard.session
 

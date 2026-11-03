@@ -6,7 +6,7 @@ import { logAudit } from '@/lib/audit'
 import { isValidAmount, MAX_ADMIN_FUND } from '@/lib/wallet-guard'
 
 export async function POST(req: NextRequest) {
-  const guard = await requirePermission('money')
+  const guard = await requirePermission('treasury', 'manage')
   if (!guard.ok) return guard.response
   const session = guard.session
 

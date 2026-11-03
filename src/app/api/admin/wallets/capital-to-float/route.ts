@@ -5,7 +5,7 @@ import { logAudit } from '@/lib/audit'
 
 export async function POST(req: NextRequest) {
   try {
-    const guard = await requirePermission('money')
+    const guard = await requirePermission('treasury', 'manage')
     if (!guard.ok) return guard.response
     const session = guard.session
 

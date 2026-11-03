@@ -9,7 +9,7 @@ import { getPayoutMode } from '@/lib/payout-mode'
 import { notifyAgentPayoutPaid, notifyAgentPayoutDeclined } from '@/lib/payout-notify'
 
 export async function PATCH(req: Request, context: { params: Promise<{ id: string }> }) {
-  const guard = await requirePermission('agents')
+  const guard = await requirePermission('withdrawals', 'manage')
   if (!guard.ok) return guard.response
   const session = guard.session
 

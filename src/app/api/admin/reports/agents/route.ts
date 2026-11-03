@@ -4,7 +4,7 @@ import { agentReportCsv, buildAgentReport } from '@/lib/agent-report'
 export const dynamic = 'force-dynamic'
 
 export async function GET() {
-  const guard = await requirePermission('oversight')
+  const guard = await requirePermission('reports', 'view')
   if (!guard.ok) return guard.response
 
   const now = new Date()

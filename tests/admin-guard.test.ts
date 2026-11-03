@@ -2,7 +2,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Session } from 'next-auth'
-import { resolveAdminAccess, resolveDeptManage } from '../src/lib/admin-guard'
+import { resolveAdminAccess, resolveAnyPermission, resolveDeptManage } from '../src/lib/admin-guard'
+import type { Action, ScreenKey } from '../src/lib/permissions'
 
 type Staff = {
   id: string
@@ -103,4 +104,12 @@ test('requireDeptManage: a suspended lead, a moved lead, a non-lead and another 
 test('requireDeptManage: agent token 403, no session 401', async () => {
   await expectDeny(await resolveDeptManage('d1', deps(sess('agent')).d), 403, 'Forbidden')
   await expectDeny(await resolveDeptManage('d1', deps(null).d), 401, 'Unauthorized')
+})
+
+test('resolveAnyPermission: allowed if any option is granted, otherwise the first denial', async () => {
+  const opts: [ScreenKey, Action][] = [['agents', 'manage'], ['devices', 'manage']]
+  assert.equal((await resolveAnyPermission(opts, deps(sess('staff'), staffRec('["devices:manage"]')).d)).ok, true)
+  assert.equal((await resolveAnyPermission(opts, deps(sess('staff'), staffRec('["agents:manage"]')).d)).ok, true)
+  await expectDeny(await resolveAnyPermission(opts, deps(sess('staff'), staffRec('["devices:view","agents:view"]')).d), 403, 'Forbidden')
+  await expectDeny(await resolveAnyPermission(opts, deps(null).d), 401, 'Unauthorized')
 })

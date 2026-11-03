@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requirePermission, isNotFound } from '@/lib/admin-guard'
+import { requireAnyPermission, isNotFound } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const guard = await requirePermission('agents')
+  const guard = await requireAnyPermission([['agents', 'manage'], ['devices', 'manage']])
   if (!guard.ok) return guard.response
   const session = guard.session
 

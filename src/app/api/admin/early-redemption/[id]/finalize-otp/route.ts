@@ -8,7 +8,7 @@ import { interestPayoutOps } from '@/lib/redemption-interest-ops'
 import { BALANCE_CHANGED_AWAITING_OTP, NO_MONEY_LEFT, readyToFinalize, reopenPlanAfterNoTransfer, settlePlanAfterPayout } from '@/lib/redemption-balance'
 
 export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
-  const guard = await requirePermission('customers')
+  const guard = await requirePermission('redemptions', 'manage')
   if (!guard.ok) return guard.response
   const session = guard.session
 

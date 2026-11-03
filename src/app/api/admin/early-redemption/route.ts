@@ -24,7 +24,7 @@ function genRef() {
 }
 
 export async function GET() {
-  const guard = await requirePermission('customers')
+  const guard = await requirePermission('redemptions', 'view')
   if (!guard.ok) return guard.response
   const session = guard.session
 
@@ -126,7 +126,7 @@ export async function GET() {
 }
 
 export async function POST(req: Request) {
-  const guard = await requirePermission('customers')
+  const guard = await requirePermission('redemptions', 'manage')
   if (!guard.ok) return guard.response
   const session = guard.session
 

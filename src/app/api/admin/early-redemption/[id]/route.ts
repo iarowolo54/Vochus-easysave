@@ -53,7 +53,7 @@ async function notifyManualOutcome(
 const conflict = (error = 'Already processed') => NextResponse.json({ error }, { status: 409 })
 
 export async function PATCH(req: Request, context: { params: Promise<{ id: string }> }) {
-  const guard = await requirePermission('customers')
+  const guard = await requirePermission('redemptions', 'manage')
   if (!guard.ok) return guard.response
   const session = guard.session
 

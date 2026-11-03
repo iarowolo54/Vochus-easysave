@@ -10,7 +10,7 @@ import { findIdentityConflict } from '@/lib/identity'
 import { identityConflictResponse } from '@/lib/identity-response'
 
 export async function GET(req: NextRequest) {
-  const guard = await requirePermission('agents')
+  const guard = await requirePermission('agents', 'view')
   if (!guard.ok) return guard.response
   const session = guard.session
 
@@ -76,7 +76,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-  const guard = await requirePermission('agents')
+  const guard = await requirePermission('agents', 'manage')
   if (!guard.ok) return guard.response
   const session = guard.session
 

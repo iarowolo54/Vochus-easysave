@@ -7,7 +7,7 @@ import { createCardBatch } from '@/lib/member-card'
 const MAX_BATCH = 5000
 
 export async function POST(req: NextRequest) {
-  const guard = await requirePermission('cards')
+  const guard = await requirePermission('cards', 'manage')
   if (!guard.ok) return guard.response
 
   const body = await req.json().catch(() => null)

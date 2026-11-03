@@ -9,14 +9,14 @@ const CHANNELS: PayoutChannel[] = ['agent', 'customer']
 const VALID_MODES: PayoutMode[] = ['auto', 'manual']
 
 export async function GET() {
-  const guard = await requirePermission('money')
+  const guard = await requirePermission('payout-mode', 'view')
   if (!guard.ok) return guard.response
 
   return NextResponse.json({ mode: await getPayoutMode() })
 }
 
 export async function POST(req: NextRequest) {
-  const guard = await requirePermission('money')
+  const guard = await requirePermission('payout-mode', 'manage')
   if (!guard.ok) return guard.response
   const session = guard.session
 

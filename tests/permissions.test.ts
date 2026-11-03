@@ -24,7 +24,7 @@ test('parsePermissions normalizes manage to carry view and drops invalid tokens'
 })
 
 test('view-only screens never offer manage', () => {
-  for (const key of ['agent-wallets', 'transactions', 'audit', 'reports']) {
+  for (const key of ['agent-wallets', 'transactions', 'audit']) {
     const s = SCREENS.find((x) => x.key === key)
     assert.ok(s, key)
     assert.deepEqual(s.actions, ['view'])

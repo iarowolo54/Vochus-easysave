@@ -8,7 +8,7 @@ import { logAudit } from '@/lib/audit'
 //   PATCH { action: "unlink" }      -> clears the link
 //   PATCH { customerId: "<id>" }    -> relinks to that customer
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ serial: string }> }) {
-  const guard = await requirePermission('cards')
+  const guard = await requirePermission('cards', 'manage')
   if (!guard.ok) return guard.response
 
   const { serial } = await params

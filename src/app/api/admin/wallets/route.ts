@@ -3,7 +3,7 @@ import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 
 export async function GET(req: NextRequest) {
-  const guard = await requirePermission('money')
+  const guard = await requirePermission('agent-wallets', 'view')
   if (!guard.ok) return guard.response
   const session = guard.session
 

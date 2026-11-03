@@ -4,7 +4,7 @@ import { logAudit } from '@/lib/audit'
 import { prisma } from '@/lib/prisma'
 
 export async function PATCH(req: NextRequest, context: { params: Promise<{ id: string }> }) {
-  const guard = await requirePermission('agents')
+  const guard = await requirePermission('rewards', 'manage')
   if (!guard.ok) return guard.response
   const session = guard.session
 
@@ -65,7 +65,7 @@ export async function PATCH(req: NextRequest, context: { params: Promise<{ id: s
 }
 
 export async function DELETE(_req: NextRequest, context: { params: Promise<{ id: string }> }) {
-  const guard = await requirePermission('agents')
+  const guard = await requirePermission('rewards', 'manage')
   if (!guard.ok) return guard.response
   const session = guard.session
 

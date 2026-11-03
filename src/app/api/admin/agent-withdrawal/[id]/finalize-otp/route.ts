@@ -6,7 +6,7 @@ import { logAudit } from '@/lib/audit'
 import { AGENT_NOT_ACTIVE, NO_MONEY_LEFT } from '@/lib/redemption-balance'
 
 export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
-  const guard = await requirePermission('agents')
+  const guard = await requirePermission('withdrawals', 'manage')
   if (!guard.ok) return guard.response
   const session = guard.session
 

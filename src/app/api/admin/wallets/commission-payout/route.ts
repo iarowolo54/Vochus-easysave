@@ -12,7 +12,7 @@ class PayoutConflict extends Error {
 }
 
 export async function POST(req: NextRequest) {
-  const guard = await requirePermission('money')
+  const guard = await requirePermission('treasury', 'manage')
   if (!guard.ok) return guard.response
   const session = guard.session
 

@@ -3,7 +3,7 @@ import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 
 export async function GET() {
-  const guard = await requirePermission('agents')
+  const guard = await requirePermission('rewards', 'view')
   if (!guard.ok) return guard.response
   const session = guard.session
 
@@ -30,7 +30,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const guard = await requirePermission('agents')
+  const guard = await requirePermission('rewards', 'manage')
   if (!guard.ok) return guard.response
   const session = guard.session
 

@@ -7,7 +7,7 @@ const SETTING_KEY = 'commissionRates'
 const DEFAULTS = { agentSavings: 0.4, agentLoan: 1.0, agentRepay: 0.5, platformSavings: 1.6, platformLoan: 5.0, platformPenalty: 2.0 }
 
 export async function GET() {
-  const guard = await requirePermission('agents')
+  const guard = await requirePermission('commission', 'view')
   if (!guard.ok) return guard.response
   const session = guard.session
 
@@ -17,7 +17,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const guard = await requirePermission('agents')
+  const guard = await requirePermission('commission', 'manage')
   if (!guard.ok) return guard.response
   const session = guard.session
 

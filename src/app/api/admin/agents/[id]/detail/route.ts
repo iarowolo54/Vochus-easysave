@@ -8,7 +8,7 @@ const txSelect = {
 } as const
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requirePermission('agents')
+  const guard = await requirePermission('agents', 'view')
   if (!guard.ok) return guard.response
 
   const { id } = await params

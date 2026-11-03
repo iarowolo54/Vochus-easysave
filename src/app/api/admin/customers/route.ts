@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { customerType } from '@/lib/customer-type'
 
 export async function GET(req: NextRequest) {
-  const guard = await requirePermission('customers')
+  const guard = await requirePermission('customers', 'view')
   if (!guard.ok) return guard.response
   const session = guard.session
 

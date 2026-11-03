@@ -20,14 +20,14 @@ async function snapshot() {
 }
 
 export async function GET() {
-  const guard = await requirePermission('customers')
+  const guard = await requirePermission('savings', 'view')
   if (!guard.ok) return guard.response
   return NextResponse.json(await snapshot())
 }
 
 // Forward-only: appends a new effective-now entry; past accrual is never restated.
 export async function POST(req: NextRequest) {
-  const guard = await requirePermission('customers')
+  const guard = await requirePermission('savings', 'manage')
   if (!guard.ok) return guard.response
 
   let body: unknown

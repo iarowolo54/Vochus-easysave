@@ -5,7 +5,7 @@ import { sendMail } from '@/lib/mail'
 import { logAudit } from '@/lib/audit'
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requirePermission('agents')
+  const guard = await requirePermission('agents', 'manage')
   if (!guard.ok) return guard.response
   const session = guard.session
 

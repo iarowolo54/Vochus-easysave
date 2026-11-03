@@ -36,7 +36,7 @@ export const SCREENS = [
   { key: 'cards', label: 'Cards', group: 'Cards', actions: VM, manageNote: 'Generate cards, gift-card design' },
   { key: 'devices', label: 'Devices', group: 'Oversight', actions: VM, manageNote: 'Reset a device' },
   { key: 'audit', label: 'Audit log', group: 'Oversight', actions: V },
-  { key: 'reports', label: 'Reports', group: 'Oversight', actions: V },
+  { key: 'reports', label: 'Reports', group: 'Oversight', actions: VM, manageNote: 'Update the status of a report' },
 ] as const satisfies readonly ScreenDef[]
 
 export type ScreenKey = (typeof SCREENS)[number]['key']

@@ -108,6 +108,25 @@ export function requirePermission(screen: ScreenKey, action: Action): Promise<Ad
   return resolveAdminAccess(screen, action)
 }
 
+/** Exported for tests. Allowed if ANY option is granted; otherwise the first option's denial. */
+export async function resolveAnyPermission(
+  options: readonly (readonly [ScreenKey, Action])[],
+  deps: AdminGuardDeps = realDeps,
+): Promise<AdminGuard> {
+  let first: AdminGuard | null = null
+  for (const [screen, action] of options) {
+    const g = await resolveAdminAccess(screen, action, deps)
+    if (g.ok) return g
+    first ??= g
+  }
+  return first ?? deny(403)
+}
+
+/** For a handler that two screens may legitimately own (e.g. reset-device: agents or devices). */
+export function requireAnyPermission(options: readonly (readonly [ScreenKey, Action])[]): Promise<AdminGuard> {
+  return resolveAnyPermission(options)
+}
+
 /** Superadmin or any active staff (baseline admin-area access, no specific screen). */
 export function requireAdminArea(): Promise<AdminGuard> {
   return resolveAdminAccess(null, 'view')

@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 
 export async function GET() {
-  const guard = await requirePermission('customers')
+  const guard = await requirePermission('savings', 'view')
   if (!guard.ok) return guard.response
   const session = guard.session
   const rates = await prisma.interestRate.findMany({ orderBy: { durationDays: 'asc' } })
@@ -12,7 +12,7 @@ export async function GET() {
 }
 
 export async function POST(req: NextRequest) {
-  const guard = await requirePermission('customers')
+  const guard = await requirePermission('savings', 'manage')
   if (!guard.ok) return guard.response
   const session = guard.session
 

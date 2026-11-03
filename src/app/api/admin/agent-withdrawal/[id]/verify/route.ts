@@ -12,7 +12,7 @@ const IN_FLIGHT = ['Processing', 'AwaitingOTP', 'Finalizing']
 const NOT_FOUND_AFTER_MS = 30 * 60 * 1000
 
 export async function POST(_req: Request, context: { params: Promise<{ id: string }> }) {
-  const guard = await requirePermission('agents')
+  const guard = await requirePermission('withdrawals', 'manage')
   if (!guard.ok) return guard.response
   const session = guard.session
 

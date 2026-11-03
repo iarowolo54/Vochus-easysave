@@ -22,7 +22,7 @@ export async function POST(req: NextRequest) {
   const actor = isStaff
     ? await prisma.staffUser.findFirst({ where, select: { id: true, name: true, email: true, password: true } })
     : await prisma.superAdmin.findFirst({ where, select: { id: true, name: true, email: true, password: true } })
-  if (!actor) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
+  if (!actor?.password) return NextResponse.json({ error: 'Account not found' }, { status: 404 })
 
   const validPassword = await bcrypt.compare(currentPassword, actor.password)
   if (!validPassword) return NextResponse.json({ error: 'Incorrect password' }, { status: 403 })

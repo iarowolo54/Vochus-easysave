@@ -5,7 +5,7 @@ import { logAudit } from '@/lib/audit'
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
-  const guard = await requirePermission('agents')
+  const guard = await requirePermission('agents', 'manage')
   if (!guard.ok) return guard.response
   const session = guard.session
 

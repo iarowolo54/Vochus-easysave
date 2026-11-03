@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { parsePaging } from '@/lib/paging'
 
 export async function GET(req: NextRequest) {
-  const guard = await requirePermission('oversight')
+  const guard = await requirePermission('audit', 'view')
   if (!guard.ok) return guard.response
   const session = guard.session
 
