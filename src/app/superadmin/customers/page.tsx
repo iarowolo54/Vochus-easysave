@@ -9,6 +9,8 @@ import { ClearSignInLockModal, SendResetCodeModal } from '../_components/send-re
 
 interface Customer {
   id: string
+  /** True while the account is locked to one phone. */
+  deviceBound?: boolean
   customerId: string
   name: string
   phone: string
@@ -99,6 +101,9 @@ export default function CustomersPage() {
   const [lockTarget, setLockTarget] = useState<Customer | null>(null)
   const [sendCodeFor, setSendCodeFor] = useState<Customer | null>(null)
   const [clearLockFor, setClearLockFor] = useState<Customer | null>(null)
+  const [resetDeviceFor, setResetDeviceFor] = useState<Customer | null>(null)
+  const [resetBusy, setResetBusy] = useState(false)
+  const [resetError, setResetError] = useState('')
   const [lockBusy, setLockBusy] = useState(false)
   const [lockError, setLockError] = useState('')
 
@@ -121,6 +126,23 @@ export default function CustomersPage() {
 
   function askLock(c: Customer) {
     setLockError(''); setLockTarget(c)
+  }
+
+  async function resetDevice() {
+    const c = resetDeviceFor
+    if (!c) return
+    setResetBusy(true); setResetError('')
+    try {
+      const res = await fetch(`/api/admin/customers/${c.id}/reset-device`, { method: 'POST' })
+      if (!res.ok) { setResetError(await errorOf(res, 'The device wasn’t reset. Try again.')); return }
+      setCustomers(prev => prev.map(x => x.id === c.id ? { ...x, deviceBound: false } : x))
+      toast(`${c.name} can now sign in on a new phone`, 'success')
+      setResetDeviceFor(null)
+    } catch {
+      setResetError('No connection. Check your internet and try again.')
+    } finally {
+      setResetBusy(false)
+    }
   }
 
   async function toggleLock() {
@@ -259,6 +281,7 @@ export default function CustomersPage() {
             <button type="button" className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>
             <button type="button" className="btn btn-outline" onClick={() => { setSendCodeFor(detail); setDetail(null) }}>Send reset code</button>
             <button type="button" className="btn btn-outline" onClick={() => { setClearLockFor(detail); setDetail(null) }}>Clear sign-in lock</button>
+            {detail.deviceBound && <button type="button" className="btn btn-outline" onClick={() => { setResetError(''); setResetDeviceFor(detail); setDetail(null) }}>Reset device</button>}
             {(detail.status === 'Active' || detail.status === 'Locked') && (
               <button type="button" className={`btn ${detail.status === 'Active' ? 'btn-danger' : 'btn-green'}`} onClick={() => { const c = detail; setDetail(null); askLock(c) }}>
                 {detail.status === 'Active' ? 'Lock account' : 'Unlock account'}
@@ -330,6 +353,12 @@ export default function CustomersPage() {
         />
       )}
 
+      {resetDeviceFor && (
+        <ConfirmModal icon="locked" title={`Reset ${resetDeviceFor.name}’s device?`}
+          body={<>{resetDeviceFor.name} ({resetDeviceFor.customerId}) is locked to one phone. After you reset it they can sign in on a new phone, and the next phone they sign in on becomes their device. Their savings and password stay as they are.</>}
+          confirmLabel="Reset device" busy={resetBusy} error={resetError}
+          onConfirm={resetDevice} onClose={() => setResetDeviceFor(null)} />
+      )}
       {toastNode}
       {clearLockFor && (
         <ClearSignInLockModal id={clearLockFor.id} name={clearLockFor.name} onClose={() => setClearLockFor(null)}

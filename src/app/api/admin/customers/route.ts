@@ -49,6 +49,8 @@ export async function GET(req: NextRequest) {
       email: c.email,
       address: c.address,
       status: c.status,
+      // Whether the account is locked to a phone; the device id itself is never sent.
+      deviceBound: c.boundDeviceId != null,
       createdAt: c.createdAt,
       agentName: c.agent.name,
       agentId: c.agent.agentId,
