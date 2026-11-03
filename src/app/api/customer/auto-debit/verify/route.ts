@@ -8,6 +8,7 @@ import { findOwnedPendingIntent, consumePaymentIntent, INTENT_REVIEW } from '@/l
 import { sendToReview } from '@/lib/customer-settle'
 import { PlanClosedError, creditPlanBalance } from '@/lib/plan-credit'
 import { createMandateFromAuthorization } from '@/lib/auto-debit'
+import { ensureEnrolmentMandate, isEnrolmentRef } from '@/lib/auto-debit-enrol'
 
 class RouteError extends Error {
   constructor(public code: 'ALREADY_PROCESSED' | 'NOT_SELF') {
@@ -16,7 +17,16 @@ class RouteError extends Error {
 }
 
 // A replayed enrollment ref: active only if a mandate exists (a non-reusable card was saved instead).
-async function replayResponse(planId: string | null) {
+async function replayResponse(planId: string | null, reference?: string) {
+  // The webhook can credit the charge first, and used to leave the money saved with no mandate. Finish it here.
+  if (reference && isEnrolmentRef(reference)) {
+    try {
+      const again = await verifyTransaction(reference)
+      if (again.status === 'success') await ensureEnrolmentMandate(prisma, reference, again.authorization)
+    } catch {
+      // Paystack is out of reach: the webhook's redelivery or the next visit finishes it. Report what exists now.
+    }
+  }
   const mandate = planId
     ? await prisma.autoDebitMandate.findUnique({ where: { savingsPlanId: planId }, select: { id: true } })
     : null
@@ -44,7 +54,7 @@ export async function POST(req: NextRequest) {
   const prior = await prisma.transaction.findUnique({ where: { ref: reference }, select: { customerId: true, planId: true } })
   if (prior) {
     if (prior.customerId !== customer.id) return NextResponse.json({ error: 'Reference mismatch' }, { status: 403 })
-    return replayResponse(prior.planId)
+    return replayResponse(prior.planId, reference)
   }
 
   const anyIntent = await prisma.paymentIntent.findFirst({ where: { ref: reference, customerId: customer.id }, select: { status: true } })
@@ -124,11 +134,11 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     if (e instanceof PlanClosedError) return toReview('closed')
     if (e instanceof RouteError) {
-      if (e.code === 'ALREADY_PROCESSED') return replayResponse(plan.id)
+      if (e.code === 'ALREADY_PROCESSED') return replayResponse(plan.id, reference)
       return NextResponse.json({ error: 'Auto-debit is only available on online plans' }, { status: 400 })
     }
     if (typeof e === 'object' && e !== null && (e as { code?: unknown }).code === 'P2002') {
-      return replayResponse(plan.id)
+      return replayResponse(plan.id, reference)
     }
     throw e
   }

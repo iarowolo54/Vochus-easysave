@@ -127,6 +127,13 @@ test('payoutOutcome: bank payouts follow the stored transfer status', () => {
   for (const status of ['pending', 'otp', null]) assert.equal(bank(status), 'processing')
 })
 
+test('payoutOutcome: statuses Paystack documents as final and not paid read Failed, in-flight ones stay Processing', () => {
+  const bank = (bankTransferStatus: string) => payoutOutcome({ type: 'redemption', method: 'Bank Transfer' }, { payoutMethod: 'BankTransfer', bankTransferStatus })
+  for (const status of ['abandoned', 'blocked', 'rejected']) assert.equal(bank(status), 'failed', status)
+  for (const status of ['pending', 'otp', 'received']) assert.equal(bank(status), 'processing', status)
+  assert.equal(canSendReceipt(bank('blocked')), false, 'no receipt goes out for a payout that was never made')
+})
+
 test('payoutOutcome: an interest row follows its redemption, not its own Cash method', () => {
   const row = { type: 'interest', method: 'Cash' }
   assert.equal(payoutOutcome(row, { payoutMethod: 'BankTransfer', bankTransferStatus: 'failed' }), 'failed')

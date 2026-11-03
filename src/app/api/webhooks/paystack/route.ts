@@ -6,9 +6,12 @@ import { money } from '@/lib/wallet-guard'
 import { creditRegistrationReward } from '@/lib/reward'
 import { verifyTransaction } from '@/lib/paystack'
 import { creditAutoDebitAttempt } from '@/lib/auto-debit-credit'
-import { settleIntentPayment } from '@/lib/customer-settle'
-import { REVIEW_ACTION } from '@/lib/payment-intent'
+import { sendToReview, settleIntentPayment } from '@/lib/customer-settle'
+import { INTENT_PENDING, INTENT_REVIEW, REVIEW_ACTION, consumePaymentIntent } from '@/lib/payment-intent'
 import { DEPOSIT_PLAN_STATUS, PlanClosedError, creditPlanBalance } from '@/lib/plan-credit'
+import { handleTransferEvent, isTransferEvent } from '@/lib/paystack-transfer-event'
+import { reverifyCharge } from '@/lib/webhook-reverify'
+import { ensureEnrolmentMandate, isEnrolmentRef } from '@/lib/auto-debit-enrol'
 
 export async function POST(req: NextRequest) {
   const body = await req.text()
@@ -33,6 +36,18 @@ export async function POST(req: NextRequest) {
     actorType: 'system',
     actorName: 'Paystack Webhook',
   })
+
+  // Payout outcomes. Without this a bank payout never leaves "pending", and a failure goes unrecorded.
+  if (isTransferEvent(event.event)) {
+    try {
+      await handleTransferEvent(prisma, event.event, event.data)
+    } catch (e: unknown) {
+      // Not swallowed: a 5xx makes Paystack redeliver, and recording the status is safe to repeat.
+      console.error('[paystack webhook] transfer event failed:', e instanceof Error ? e.message : 'unknown error')
+      return NextResponse.json({ error: 'Could not record the transfer' }, { status: 500 })
+    }
+    return NextResponse.json({ ok: true })
+  }
 
   if (event.event !== 'charge.success') return NextResponse.json({ ok: true })
 
@@ -76,26 +91,67 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true })
   }
 
+  // Already credited. An auto-funding signup carries on, because the money can be saved with no mandate yet.
   const existing = await prisma.transaction.findUnique({ where: { ref: reference } })
-  if (existing) return NextResponse.json({ ok: true })
+  if (existing && !isEnrolmentRef(reference)) return NextResponse.json({ ok: true })
 
   // The server-side intent is the authority on who and which plan, over Paystack metadata.
   const intent = await prisma.paymentIntent.findUnique({ where: { ref: reference } })
-  if (intent?.actorType === 'customer') {
-    await settleIntentPayment(prisma, {
-      intent,
-      reference,
-      amountNaira: txData.amount / 100,
-      currency: txData.currency,
-      channel: txData.channel,
-      via: 'Paystack webhook',
+
+  // Never credit on the signed body alone: Paystack must confirm the charge is successful, in naira, for this amount.
+  let confirmed: Awaited<ReturnType<typeof reverifyCharge>>
+  try {
+    confirmed = await reverifyCharge(reference, { amountNaira: money(txData.amount / 100), currency: txData.currency })
+  } catch (e: unknown) {
+    // Not swallowed: a 5xx makes Paystack redeliver once it can be reached again.
+    console.error('[paystack webhook] could not re-verify with Paystack:', e instanceof Error ? e.message : 'unknown error')
+    return NextResponse.json({ error: 'Could not verify the payment' }, { status: 502 })
+  }
+  if (confirmed.kind === 'not-successful') {
+    logAudit({
+      action: 'paystack_webhook_unconfirmed',
+      entity: 'Transaction',
+      details: `Not credited: the webhook said success but Paystack says ${confirmed.status} — ref ${reference}`,
+      actorType: 'system',
+      actorName: 'Paystack Webhook',
     })
     return NextResponse.json({ ok: true })
   }
+  if (confirmed.kind === 'mismatch') {
+    const reason = `${confirmed.reason} — ref ${reference}`
+    if (intent?.actorType) await sendToReview(prisma, intent, reference, reason)
+    else await logAudit({ action: REVIEW_ACTION, entity: 'Transaction', details: `Not credited, needs manual review: ${reason}`, actorType: 'system', actorName: 'Paystack Webhook' })
+    return NextResponse.json({ ok: true })
+  }
 
-  // Customer self-pay with no intent: credit savings plan
-  if (customerId) {
-    const amount = money(txData.amount / 100)
+  if (intent?.actorType === 'customer') {
+    const settled = await settleIntentPayment(prisma, {
+      intent,
+      reference,
+      amountNaira: confirmed.amountNaira,
+      currency: confirmed.currency,
+      channel: txData.channel,
+      via: 'Paystack webhook',
+    })
+    // The webhook can win the race against the customer's verify callback, which is what normally saves the card.
+    if (isEnrolmentRef(reference) && settled.kind !== 'review') {
+      try {
+        await ensureEnrolmentMandate(prisma, reference, confirmed.authorization)
+      } catch (e: unknown) {
+        console.error('[paystack webhook] could not create the auto-funding mandate:', e instanceof Error ? e.message : 'unknown error')
+        return NextResponse.json({ error: 'Could not finish the signup' }, { status: 500 })
+      }
+    }
+    return NextResponse.json({ ok: true })
+  }
+
+  // From here on the money has not been credited yet, so an already-recorded ref is done.
+  if (existing) return NextResponse.json({ ok: true })
+
+  // Customer self-pay with no intent: credit savings plan. Only when no intent exists for the ref: a charge this
+  // server started for someone else (an agent's top-up) is never redirected by metadata the payer controls.
+  if (customerId && !intent) {
+    const amount = confirmed.amountNaira
 
     // Money arrived that can't be credited here: never drop it silently.
     const needsReview = async (reason: string) => {
@@ -185,33 +241,65 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ ok: true })
   }
 
-  // Agent wallet funding
-  if (!agentId) return NextResponse.json({ ok: true })
+  // Agent wallet funding. The intent made when the top-up was started says whose wallet and how much; the
+  // charge's own metadata never decides that, so a charge we didn't start can't fund a wallet.
+  if (intent?.actorType !== 'agent' || !intent.agentId) {
+    if (agentId) {
+      await logAudit({
+        action: REVIEW_ACTION,
+        entity: 'Transaction',
+        details: `Not credited, needs manual review: a wallet charge of ₦${confirmed.amountNaira} named agent ${agentId} but no top-up was started for it — ref ${reference}`,
+        actorType: 'system',
+        actorName: 'Paystack Webhook',
+      })
+    }
+    return NextResponse.json({ ok: true })
+  }
+  if (intent.status === INTENT_REVIEW) return NextResponse.json({ ok: true })
+  if (intent.status !== INTENT_PENDING) return NextResponse.json({ ok: true })
 
-  const agent = await prisma.agent.findUnique({ where: { id: agentId } })
-  if (!agent) return NextResponse.json({ ok: true })
+  const agent = await prisma.agent.findUnique({ where: { id: intent.agentId } })
+  if (!agent) {
+    await sendToReview(prisma, intent, reference, `agent ${intent.agentId} not found, amount ₦${confirmed.amountNaira}`)
+    return NextResponse.json({ ok: true })
+  }
+  if (confirmed.currency !== intent.currency || money(confirmed.amountNaira) !== money(intent.amount)) {
+    await sendToReview(prisma, intent, reference, `paid ${confirmed.currency} ${confirmed.amountNaira}, the top-up was for ${intent.currency} ${intent.amount}`)
+    return NextResponse.json({ ok: true })
+  }
 
-  const amount = txData.amount / 100
-  const walletAfter = agent.walletBalance + amount
-
-  await prisma.$transaction([
-    prisma.transaction.create({
-      data: {
-        ref: reference,
-        agentId: agent.id,
-        type: 'wallet_funding',
-        amount,
-        method: 'Paystack',
-        status: 'Done',
-        note: `Paystack webhook — ${txData.channel ?? 'card'}`,
-        walletAfter,
-      },
-    }),
-    prisma.agent.update({
-      where: { id: agent.id },
-      data: { walletBalance: { increment: amount } },
-    }),
-  ])
+  const amount = money(intent.amount)
+  const agentDbId = agent.id
+  try {
+    await prisma.$transaction(async (tx) => {
+      // Atomically consume the intent; a losing or replayed delivery must not credit.
+      if (!await consumePaymentIntent(tx, reference, { agentId: agentDbId })) throw new Error('ALREADY_PROCESSED')
+      const updated = await tx.agent.update({
+        where: { id: agentDbId },
+        data: { walletBalance: { increment: amount } },
+        select: { walletBalance: true },
+      })
+      await tx.transaction.create({
+        data: {
+          ref: reference,
+          agentId: agentDbId,
+          type: 'wallet_funding',
+          amount,
+          method: 'Paystack',
+          status: 'Done',
+          note: `Paystack webhook — ${txData.channel ?? 'card'}`,
+          walletAfter: updated.walletBalance,
+        },
+      })
+    })
+  } catch (e: unknown) {
+    if (e instanceof Error && e.message === 'ALREADY_PROCESSED') return NextResponse.json({ ok: true })
+    // The verify route credited this ref first.
+    if ((e as { code?: unknown } | null)?.code === 'P2002' && await prisma.transaction.findUnique({ where: { ref: reference }, select: { id: true } })) {
+      return NextResponse.json({ ok: true })
+    }
+    throw e
+  }
 
   logAudit({
     action: 'agent_wallet_funded_webhook',

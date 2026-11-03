@@ -74,7 +74,11 @@ export function payoutOutcome(
   if (record.payoutMethod !== 'Bank Transfer' && record.payoutMethod !== 'BankTransfer') return 'paid'
   const status = record.bankTransferStatus
   if (status === 'success' || status === 'manual') return 'paid'
-  return status === 'failed' || status === 'reversed' ? status : 'processing'
+  if (status === 'reversed') return 'reversed'
+  // Paystack's docs: abandoned (approval never given), blocked and rejected (our server didn't approve) are final,
+  // and the transfer is not processed afterwards. Only pending, otp and received are still on their way.
+  if (status === 'failed' || status === 'abandoned' || status === 'blocked' || status === 'rejected') return 'failed'
+  return 'processing'
 }
 
 /** Same test as customer login: no password, or an account it would refuse, means the chat can't be opened. */

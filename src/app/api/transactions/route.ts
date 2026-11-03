@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { listedStatuses } from '@/lib/receipt-payout'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -51,6 +52,8 @@ export async function GET(req: NextRequest) {
   const todayRepaymentsCount = todayTxns.filter(t => t.type === 'repayment').length
   const totalVolume = todayTxns.reduce((s, t) => s + t.amount, 0)
 
+  const statuses = await listedStatuses(transactions)
+
   return NextResponse.json({
     transactions: transactions.map(t => ({
       id: t.id,
@@ -58,7 +61,7 @@ export async function GET(req: NextRequest) {
       type: t.type,
       amount: t.amount,
       method: t.method,
-      status: t.status,
+      status: statuses.get(t.id) ?? t.status,
       note: t.note,
       planId: t.planId,
       createdAt: t.createdAt,
