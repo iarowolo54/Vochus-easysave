@@ -1,24 +1,4 @@
-export interface CommissionRates {
-  agentSavings: number   // % of balance
-  agentLoan: number      // % of loan amount
-  agentRepay: number     // % of repayment
-  platformSavings: number
-  platformLoan: number
-  platformPenalty: number
-}
-
-const DEFAULT_COMMISSION_RATES: CommissionRates = {
-  agentSavings: 0.4, agentLoan: 1.0, agentRepay: 0.5,
-  platformSavings: 1.6, platformLoan: 5.0, platformPenalty: 2.0,
-}
-
-export async function getStoredCommissionRates(prismaClient: any): Promise<CommissionRates> {
-  try {
-    const s = await prismaClient.platformSetting.findUnique({ where: { key: 'commissionRates' } })
-    if (s) return { ...DEFAULT_COMMISSION_RATES, ...JSON.parse(s.value) }
-  } catch {}
-  return DEFAULT_COMMISSION_RATES
-}
+import type { CommissionRates } from '@/lib/commission-rates'
 
 export const CASH_DAILY_RATE = 1 / 31
 export const CASH_WEEKLY_RATE = 0.075

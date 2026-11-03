@@ -2,18 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
-
-const SETTING_KEY = 'commissionRates'
-const DEFAULTS = { agentSavings: 0.4, agentLoan: 1.0, agentRepay: 0.5, platformSavings: 1.6, platformLoan: 5.0, platformPenalty: 2.0 }
+import { getCommissionRates, SETTING_KEY, validateRates } from '@/lib/commission-rates'
 
 export async function GET() {
   const guard = await requirePermission('commission', 'view')
   if (!guard.ok) return guard.response
   const session = guard.session
 
-  const setting = await prisma.platformSetting.findUnique({ where: { key: SETTING_KEY } })
-  const rates = setting ? JSON.parse(setting.value) : DEFAULTS
-  return NextResponse.json({ rates })
+  return NextResponse.json({ rates: await getCommissionRates(prisma) })
 }
 
 export async function POST(req: NextRequest) {
@@ -21,16 +17,10 @@ export async function POST(req: NextRequest) {
   if (!guard.ok) return guard.response
   const session = guard.session
 
-  const { rates } = await req.json()
-  if (!rates || typeof rates !== 'object') return NextResponse.json({ error: 'Invalid payload' }, { status: 400 })
-
-  const keys = ['agentSavings', 'agentLoan', 'agentRepay', 'platformSavings', 'platformLoan', 'platformPenalty']
-  for (const k of keys) {
-    const v = rates[k]
-    if (typeof v !== 'number' || !isFinite(v) || v < 0 || v > 100) {
-      return NextResponse.json({ error: `Invalid value for ${k}` }, { status: 400 })
-    }
-  }
+  const body = await req.json().catch(() => null)
+  const checked = validateRates(body?.rates)
+  if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: 400 })
+  const rates = checked.rates
 
   await prisma.platformSetting.upsert({
     where: { key: SETTING_KEY },
