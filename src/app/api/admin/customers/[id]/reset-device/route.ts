@@ -17,9 +17,19 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
   if (!customer.boundDeviceId) return NextResponse.json({ ok: true, reset: false })
 
-  // Only clear the binding we just looked at, so a second admin click or a fresh sign-in is not undone by mistake.
-  const cleared = await prisma.customer.updateMany({ where: { id, boundDeviceId: customer.boundDeviceId }, data: { boundDeviceId: null } })
-  if (cleared.count === 0) return NextResponse.json({ ok: true, reset: false })
+  // Only clear the binding we just looked at, so a second admin click or a fresh sign-in is not undone by mistake. In the same
+  // step the old phone is signed out and its fingerprint sign-in revoked: a reset usually means the phone was lost or replaced,
+  // so it must not stay signed in. The customer signs in again with their password on the new phone.
+  const reset = await prisma.$transaction(async (tx) => {
+    const cleared = await tx.customer.updateMany({
+      where: { id, boundDeviceId: customer.boundDeviceId },
+      data: { boundDeviceId: null, tokenVersion: { increment: 1 } },
+    })
+    if (cleared.count === 0) return false
+    await tx.biometricToken.updateMany({ where: { customerId: id, revokedAt: null }, data: { revokedAt: new Date() } })
+    return true
+  })
+  if (!reset) return NextResponse.json({ ok: true, reset: false })
 
   logAudit({
     action: 'customer_reset_device',

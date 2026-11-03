@@ -9,8 +9,13 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (!guard.ok) return guard.response
   const session = guard.session
 
-  const agent = await prisma.agent.update({ where: { id }, data: { boundDeviceId: null } })
-    .catch((e: unknown) => { if (isNotFound(e)) return null; throw e })
+  // The old phone is signed out and its fingerprint sign-in revoked in the same step: a reset usually means the phone was lost
+  // or replaced. The agent signs in again with their password on the new phone.
+  const agent = await prisma.$transaction(async (tx) => {
+    const updated = await tx.agent.update({ where: { id }, data: { boundDeviceId: null, tokenVersion: { increment: 1 } } })
+    await tx.biometricToken.updateMany({ where: { agentId: id, revokedAt: null }, data: { revokedAt: new Date() } })
+    return updated
+  }).catch((e: unknown) => { if (isNotFound(e)) return null; throw e })
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
 
   logAudit({
