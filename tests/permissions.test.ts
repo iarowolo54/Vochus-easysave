@@ -79,12 +79,11 @@ test('isAdminAreaRole', () => {
 
 test('decideAdminAccess', () => {
   assert.equal(decideAdminAccess({ role: 'superadmin', screen: 'treasury', action: 'manage' }), 'allow')
-  assert.equal(decideAdminAccess({ role: undefined, screen: 'treasury' }), 'deny-401')
+  assert.equal(decideAdminAccess({ role: undefined, screen: 'treasury', action: 'view' }), 'deny-401')
   const staff = { role: 'staff', staffStatus: 'Active', roleStatus: 'Active' }
   assert.equal(decideAdminAccess({ ...staff, screen: 'redemptions', action: 'manage', rolePerms: ['redemptions:view'] }), 'deny-403')
   assert.equal(decideAdminAccess({ ...staff, screen: 'redemptions', action: 'view', rolePerms: ['redemptions:manage'] }), 'allow')
-  assert.equal(decideAdminAccess({ ...staff, screen: 'redemptions', rolePerms: ['redemptions:view'] }), 'allow') // action defaults to view
-  assert.equal(decideAdminAccess({ role: 'staff', screen: null, staffStatus: 'Active' }), 'allow')
+  assert.equal(decideAdminAccess({ role: 'staff', screen: null, action: 'view', staffStatus: 'Active' }), 'allow')
   assert.equal(decideAdminAccess({ role: 'staff', screen: 'agents', action: 'view', staffStatus: 'Suspended', roleStatus: 'Active', rolePerms: ['agents:view'] }), 'deny-403')
   assert.equal(decideAdminAccess({ role: 'staff', screen: 'agents', action: 'view', staffStatus: 'Invited', roleStatus: 'Active', rolePerms: ['agents:view'] }), 'deny-403')
   assert.equal(decideAdminAccess({ ...staff, roleStatus: 'Archived', screen: 'agents', action: 'view', rolePerms: ['agents:view'] }), 'deny-403')

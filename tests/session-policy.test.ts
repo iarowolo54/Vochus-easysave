@@ -37,6 +37,10 @@ for (const actor of ['admin', 'agent', 'customer'] as Actor[]) {
   })
 }
 
+test('actorForPage: the admin accept-invite page is public', () => {
+  assert.equal(actorForPage('/superadmin/accept-invite'), null)
+})
+
 test('actorForPage: guarded pages', () => {
   assert.deepEqual(actorForPage('/dashboard/x'), { actor: 'agent', loginUrl: '/login' })
   assert.deepEqual(actorForPage('/dashboard'), { actor: 'agent', loginUrl: '/login' })

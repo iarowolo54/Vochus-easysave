@@ -116,7 +116,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
   const [modal, setModal] = useState<'password' | 'pin' | null>(null)
   const [toastNode, toast] = useToast()
 
-  const isLoginPage = pathname === '/superadmin/login'
+  const isLoginPage = pathname === '/superadmin/login' || pathname === '/superadmin/accept-invite'
 
   const { state: me, reload: reloadMe } = useMyAccess(status === 'authenticated' && !isLoginPage)
 

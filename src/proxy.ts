@@ -149,6 +149,7 @@ export async function proxy(request: NextRequest) {
   if (
     pathname.startsWith('/superadmin') &&
     !pathname.startsWith('/superadmin/login') &&
+    !pathname.startsWith('/superadmin/accept-invite') &&
     adminValid &&
     !adminIsAdminArea
   ) {

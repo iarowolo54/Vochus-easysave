@@ -122,7 +122,7 @@ export function isAdminAreaRole(role: unknown): boolean {
 export function decideAdminAccess(input: {
   role: unknown
   screen: ScreenKey | null
-  action?: Action
+  action: Action
   staffStatus?: string | null
   roleStatus?: string | null
   rolePerms?: readonly Perm[] | null
@@ -133,7 +133,7 @@ export function decideAdminAccess(input: {
   if (role === 'staff') {
     if (staffStatus !== 'Active') return 'deny-403'
     if (screen === null) return 'allow'
-    if (roleStatus === 'Active' && hasPermission(rolePerms ?? [], screen, action ?? 'view')) return 'allow'
+    if (roleStatus === 'Active' && hasPermission(rolePerms ?? [], screen, action)) return 'allow'
     return 'deny-403'
   }
   return 'deny-403'

@@ -61,7 +61,7 @@ export function actorForPage(pathname: string): { actor: Actor; loginUrl: string
   const [root, second] = segs
   if (root === 'dashboard') return { actor: 'agent', loginUrl: '/login' }
   if (root === 'superadmin') {
-    return second === 'login' ? null : { actor: 'admin', loginUrl: '/superadmin/login' }
+    return second === 'login' || second === 'accept-invite' ? null : { actor: 'admin', loginUrl: '/superadmin/login' }
   }
   if (root === 'customer') {
     return second !== undefined && CUSTOMER_PUBLIC.has(second)
