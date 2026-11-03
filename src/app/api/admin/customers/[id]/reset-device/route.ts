@@ -3,8 +3,9 @@ import { requireAnyPermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 
-// Frees a customer's account from the phone it is locked to, so they can sign in on a new one (the next sign-in binds again).
-// Same permissions as resetting an agent's device. A customer who isn't bound to a phone changes nothing and writes no audit entry.
+// Frees a customer's account from the phone it is locked to, so they can sign in on a new one (the next sign-in binds again), and
+// signs out their current phone and revokes its fingerprint sign-in. That happens whether or not a lock was set, the same as for
+// agents, because the usual reason is a lost or replaced phone. The customer signs in again with their password.
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const guard = await requireAnyPermission([['customers', 'manage'], ['devices', 'manage']])
   if (!guard.ok) return guard.response
@@ -12,34 +13,24 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   const { id } = await params
   const customer = await prisma.customer.findUnique({
     where: { id },
-    select: { id: true, firstName: true, lastName: true, customerId: true, boundDeviceId: true },
+    select: { id: true, firstName: true, lastName: true, customerId: true },
   })
   if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
-  if (!customer.boundDeviceId) return NextResponse.json({ ok: true, reset: false })
-
-  // Only clear the binding we just looked at, so a second admin click or a fresh sign-in is not undone by mistake. In the same
-  // step the old phone is signed out and its fingerprint sign-in revoked: a reset usually means the phone was lost or replaced,
-  // so it must not stay signed in. The customer signs in again with their password on the new phone.
-  const reset = await prisma.$transaction(async (tx) => {
-    const cleared = await tx.customer.updateMany({
-      where: { id, boundDeviceId: customer.boundDeviceId },
-      data: { boundDeviceId: null, tokenVersion: { increment: 1 } },
-    })
-    if (cleared.count === 0) return false
-    await tx.biometricToken.updateMany({ where: { customerId: id, revokedAt: null }, data: { revokedAt: new Date() } })
-    return true
+  const revoked = await prisma.$transaction(async (tx) => {
+    await tx.customer.update({ where: { id }, data: { boundDeviceId: null, tokenVersion: { increment: 1 } } })
+    const tokens = await tx.biometricToken.updateMany({ where: { customerId: id, revokedAt: null }, data: { revokedAt: new Date() } })
+    return tokens.count
   })
-  if (!reset) return NextResponse.json({ ok: true, reset: false })
 
   logAudit({
     action: 'customer_reset_device',
     entity: 'Customer',
     entityId: customer.id,
-    details: `Reset bound device for ${customer.firstName} ${customer.lastName} (${customer.customerId})`,
+    details: `Reset device for ${customer.firstName} ${customer.lastName} (${customer.customerId}): lock cleared, signed out, ${revoked} fingerprint sign-in${revoked === 1 ? '' : 's'} revoked`,
     actorType: guard.actor.type,
     actorId: guard.actor.id,
     actorName: guard.actor.name,
   })
 
-  return NextResponse.json({ ok: true, reset: true })
+  return NextResponse.json({ ok: true })
 }

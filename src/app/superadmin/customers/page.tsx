@@ -281,7 +281,7 @@ export default function CustomersPage() {
             <button type="button" className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>
             <button type="button" className="btn btn-outline" onClick={() => { setSendCodeFor(detail); setDetail(null) }}>Send reset code</button>
             <button type="button" className="btn btn-outline" onClick={() => { setClearLockFor(detail); setDetail(null) }}>Clear sign-in lock</button>
-            {detail.deviceBound && <button type="button" className="btn btn-outline" onClick={() => { setResetError(''); setResetDeviceFor(detail); setDetail(null) }}>Reset device</button>}
+            <button type="button" className="btn btn-outline" onClick={() => { setResetError(''); setResetDeviceFor(detail); setDetail(null) }}>Reset device</button>
             {(detail.status === 'Active' || detail.status === 'Locked') && (
               <button type="button" className={`btn ${detail.status === 'Active' ? 'btn-danger' : 'btn-green'}`} onClick={() => { const c = detail; setDetail(null); askLock(c) }}>
                 {detail.status === 'Active' ? 'Lock account' : 'Unlock account'}
@@ -355,7 +355,7 @@ export default function CustomersPage() {
 
       {resetDeviceFor && (
         <ConfirmModal icon="locked" title={`Reset ${resetDeviceFor.name}’s device?`}
-          body={<>{resetDeviceFor.name} ({resetDeviceFor.customerId}) is locked to one phone. After you reset it they can sign in on a new phone, and the next phone they sign in on becomes their device. Their savings and password stay as they are.</>}
+          body={<>{resetDeviceFor.name} ({resetDeviceFor.customerId}) will be signed out on their current phone, and any fingerprint sign-in there stops working. They can then sign in with their password on a new phone, and that phone becomes their device. Their savings and password stay as they are.</>}
           confirmLabel="Reset device" busy={resetBusy} error={resetError}
           onConfirm={resetDevice} onClose={() => setResetDeviceFor(null)} />
       )}
