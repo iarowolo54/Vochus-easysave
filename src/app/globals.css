@@ -1186,8 +1186,10 @@ body:has(.ui-auth) { background: var(--ui-canvas) !important; }
 .ag-col { min-width: 0; }
 .ag-col > .ui-section-head:first-child { margin-top: 0; }
 /* Balance on the left, its one action on the right; the button drops below on narrow phones. */
-.ag-wallet-card { display: flex; align-items: center; justify-content: space-between; gap: var(--ui-s3); flex-wrap: wrap; padding: var(--ui-s5); margin: 0; }
-.ag-wallet-btn { min-height: 44px; font-size: var(--ui-fs-sm); flex-shrink: 0; text-decoration: none; }
+/* Label and balance on top, one wide button underneath: the same on a phone and in a narrow card. */
+.ag-wallet-card { display: flex; flex-direction: column; gap: var(--ui-s4); padding: var(--ui-s5); margin: 0; }
+.ag-wallet-label { margin: 0 0 var(--ui-s1); font-size: var(--ui-fs-sm); font-weight: 600; color: var(--ui-ink-2); }
+.ag-wallet-btn { width: 100%; min-height: 52px; justify-content: center; font-size: var(--ui-fs-md); text-decoration: none; }
 .ag-actions { justify-content: flex-start; gap: var(--ui-s5); margin: var(--ui-s5) 0; }
 .ag-actions .ui-action { text-decoration: none; font-size: var(--ui-fs-sm); }
 .ag-stats { display: grid; grid-template-columns: 1fr 1fr; gap: var(--ui-s4) var(--ui-s3); margin: var(--ui-s2) 0 0; }
