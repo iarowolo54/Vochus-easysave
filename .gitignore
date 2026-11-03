@@ -63,3 +63,6 @@ next-env.d.ts
 
 # shared agent board, one copy across worktrees
 /.claude/board.md
+
+# Temporary admin redesign previews (no sign-in): never commit or deploy
+src/app/dev-preview/
