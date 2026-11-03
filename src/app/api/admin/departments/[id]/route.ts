@@ -15,7 +15,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const body: unknown = await req.json().catch(() => null)
   const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>
-  const data: { name?: string; description?: string | null; status?: string } = {}
+  const data: { name?: string; description?: string | null; status?: string; leadId?: string | null } = {}
 
   if (b.name !== undefined) {
     const name = typeof b.name === 'string' ? b.name.trim() : ''
@@ -38,6 +38,22 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json({ error: "status must be 'Active' or 'Archived'" }, { status: 400 })
     }
     data.status = b.status
+  }
+
+  // Owner-only (this route is requireSuperAdmin). The lead must be an Active member of this department.
+  if (b.leadId !== undefined) {
+    if (b.leadId === null) {
+      data.leadId = null
+    } else if (typeof b.leadId === 'string' && b.leadId) {
+      const lead = await prisma.staffUser.findFirst({
+        where: { id: b.leadId, departmentId: id, status: 'Active' },
+        select: { id: true },
+      })
+      if (!lead) return NextResponse.json({ error: 'The lead must be an active member of this department' }, { status: 400 })
+      data.leadId = lead.id
+    } else {
+      return NextResponse.json({ error: 'leadId must be a staff id or null' }, { status: 400 })
+    }
   }
 
   let department

@@ -1,18 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requireSuperAdmin, adminActor } from '@/lib/admin-guard'
+import { requireDeptManage, actorPermissions } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
-import { parsePermissions, validateRolePermissions } from '@/lib/permissions'
+import { canEditRole, canGrant, parsePermissions, validateRolePermissions } from '@/lib/permissions'
 
 const STATUSES = ['Active', 'Archived']
 
 export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const guard = await requireSuperAdmin()
-  if (!guard.ok) return guard.response
   const { id } = await params
 
   const existing = await prisma.role.findUnique({ where: { id } })
+  // Owner, or the lead of the role's own department (re-checked fresh). A foreign id looks the same as a missing one to a lead.
+  const guard = await requireDeptManage(existing?.departmentId ?? '')
+  if (!guard.ok) return guard.response
   if (!existing) return NextResponse.json({ error: 'Role not found' }, { status: 404 })
+  const leadCeiling = guard.actor.type === 'staff' ? await actorPermissions(guard.actor) : null
 
   const body: unknown = await req.json().catch(() => null)
   const b = (body && typeof body === 'object' ? body : {}) as Record<string, unknown>
@@ -37,20 +39,29 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       return NextResponse.json(
         {
           error: perms.unknown.length
-            ? `Unknown permission keys: ${perms.unknown.join(', ')}`
-            : 'permissions must be an array of area keys',
+            ? `Unknown permissions: ${perms.unknown.join(', ')}`
+            : 'permissions must be an array of screen:action tokens',
           unknown: perms.unknown,
         },
         { status: 400 },
       )
     }
-    data.permissions = JSON.stringify(perms.areas)
+    // A lead may edit only a role whose current AND resulting access are within their own.
+    if (leadCeiling && !canEditRole(leadCeiling, parsePermissions(existing.permissions), perms.perms)) {
+      return NextResponse.json({ error: 'You can only grant access you hold yourself' }, { status: 403 })
+    }
+    data.permissions = JSON.stringify(perms.perms)
   }
   if (b.status !== undefined) {
     if (typeof b.status !== 'string' || !STATUSES.includes(b.status)) {
       return NextResponse.json({ error: "status must be 'Active' or 'Archived'" }, { status: 400 })
     }
     data.status = b.status
+  }
+
+  // Renaming or archiving a role above the lead's ceiling is just as off-limits.
+  if (leadCeiling && !canGrant(leadCeiling, parsePermissions(existing.permissions))) {
+    return NextResponse.json({ error: 'You can only change roles within your own access' }, { status: 403 })
   }
 
   let role
@@ -70,8 +81,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     entity: 'Role',
     entityId: id,
     details: `Updated role "${existing.name}": ${Object.keys(data).join(', ') || 'no changes'}`,
-    actorType: 'admin',
-    ...adminActor(guard.session),
+    actorType: guard.actor.type,
+    actorId: guard.actor.id,
+    actorName: guard.actor.name,
   })
 
   return NextResponse.json({ role: { ...role, permissions: parsePermissions(role.permissions) } })
