@@ -188,9 +188,10 @@ export default function CustomersPage() {
   }
 
   // Only ask for a type once we know the API understands it; until then it's the old single list.
+  // A search looks across every tab, so a customer is found whichever tab they're on.
   const typeParams = useCallback((): Record<string, string> => (
-    typed === false || kind === 'all' ? {} : kind === 'offline' ? { type: 'offline', sort: 'lastPaid' } : { type: 'online' }
-  ), [typed, kind])
+    typed === false || kind === 'all' || search.trim() ? {} : kind === 'offline' ? { type: 'offline', sort: 'lastPaid' } : { type: 'online' }
+  ), [typed, kind, search])
 
   // Portfolio counts for the status chips (one small request per status, using the list endpoint's total).
   useEffect(() => {

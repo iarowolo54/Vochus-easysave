@@ -1,3 +1,4 @@
+import { matchesCustomer } from '@/lib/fuzzy-search'
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
@@ -31,21 +32,25 @@ export async function GET(req: NextRequest) {
   const sortLastPaid = searchParams.get('sort') === 'lastPaid'
   const planDays = planFilter ? parseInt(planFilter) : NaN
 
+  const searchTerms = search.trim().split(/\s+/).filter(Boolean).slice(0, 5)
+
+  // Typo-tolerant search: match in memory over this agent's own customers (names and phone only,
+  // no blobs), then filter the real query by the matching ids.
+  let matchedIds: string[] | null = null
+  if (searchTerms.length) {
+    const pool = await prisma.customer.findMany({
+      where: { agentId: agent.id },
+      select: { id: true, firstName: true, lastName: true, phone: true, customerId: true },
+    })
+    matchedIds = pool.filter(c => matchesCustomer(searchTerms, c)).map(c => c.id)
+  }
+
   const where: Prisma.CustomerWhereInput = {
     agentId: agent.id,
+    ...(matchedIds ? { id: { in: matchedIds } } : {}),
     ...(status ? { status } : {}),
     ...(typeFilter === 'online' ? { savingsPlans: { some: { source: 'self' } } } : {}),
     ...(typeFilter === 'offline' ? { savingsPlans: { none: { source: 'self' } } } : {}),
-    ...(search
-      ? {
-          OR: [
-            { firstName: { contains: search } },
-            { lastName: { contains: search } },
-            { phone: { contains: search } },
-            { customerId: { contains: search } },
-          ],
-        }
-      : {}),
   }
   // Plan-length filter lives in the where (before paging) so pages and total are right.
   // It is a second savingsPlans condition, so combine with AND rather than overwrite the type clause.
