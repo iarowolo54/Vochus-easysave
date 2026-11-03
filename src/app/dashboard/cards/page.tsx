@@ -30,6 +30,8 @@ function serialFrom(raw: string) {
   } catch { return s }
 }
 
+const PAGE_SIZE = 30
+
 export default function CardsPage() {
   const router = useRouter()
   const [cards, setCards] = useState<LinkedCard[] | null>(null)
@@ -37,6 +39,7 @@ export default function CardsPage() {
   const [serial, setSerial] = useState('')
   const [serialError, setSerialError] = useState('')
   const [query, setQuery] = useState('')
+  const [limit, setLimit] = useState(PAGE_SIZE)
 
   const [scanning, setScanning] = useState(false)
   const [streamReady, setStreamReady] = useState(false)
@@ -108,6 +111,8 @@ export default function CardsPage() {
 
   useEffect(() => () => { streamRef.current?.getTracks().forEach(t => t.stop()) }, [])
 
+  useEffect(() => { setLimit(PAGE_SIZE) }, [query])
+
   const q = query.trim().toLowerCase()
   const shown = (cards ?? []).filter(c => !q || c.serial.toLowerCase().includes(q)
     || (c.customer && (`${c.customer.firstName} ${c.customer.lastName}`.toLowerCase().includes(q) || c.customer.customerId.toLowerCase().includes(q))))
@@ -156,8 +161,9 @@ export default function CardsPage() {
           ) : shown.length === 0 ? (
             <section className="ui-card"><EmptyState icon="search" title="No cards match" text="Try another serial or name." /></section>
           ) : (
+            <>
             <section className="ui-card ui-card--list" aria-label="Linked cards">
-              {shown.map(c => {
+              {shown.slice(0, limit).map(c => {
                 const isExpired = expired(c.expiryDate)
                 const tag = c.status === 'Blocked' ? ['Blocked', 'ag-crow-tag--due'] : isExpired ? ['Expired', 'ag-crow-tag--due'] : c.status === 'Linked' ? ['Linked', 'ag-crow-tag--ok'] : [c.status, '']
                 return (
@@ -173,6 +179,10 @@ export default function CardsPage() {
                 )
               })}
             </section>
+            {shown.length > limit && <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => setLimit(n => n + PAGE_SIZE)}>
+                Show more ({shown.length - limit} older)
+              </button>}
+            </>
           )}
         </div>
       </div>

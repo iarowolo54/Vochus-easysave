@@ -40,6 +40,8 @@ function dayLabel(iso: string) {
   return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
 }
 
+const PAGE_SIZE = 30
+
 export default function TransactionsPage() {
   const router = useRouter()
   // /me is used for who recorded each deposit (agent names), and handles the logged-out redirect.
@@ -51,6 +53,7 @@ export default function TransactionsPage() {
   const [planSheet, setPlanSheet] = useState(false)
   const [selected, setSelected] = useState<Tx | null>(null)
   const [hide, setHide] = useState(false)
+  const [shown, setShown] = useState(PAGE_SIZE)
 
   useEffect(() => { setHide(getHideBalance()) }, [])
 
@@ -68,6 +71,7 @@ export default function TransactionsPage() {
   }, [router])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => { setShown(PAGE_SIZE) }, [group, plan])
 
   const recordedBy = useMemo(
     () => new Map((me.data?.transactions ?? []).map(t => [t.id, t.recordedBy])),
@@ -82,14 +86,14 @@ export default function TransactionsPage() {
   )
   const sections = useMemo(() => {
     const out: { label: string; items: Tx[] }[] = []
-    for (const t of filtered) {
+    for (const t of filtered.slice(0, shown)) {
       const label = dayLabel(t.createdAt)
       const last = out[out.length - 1]
       if (last && last.label === label) last.items.push(t)
       else out.push({ label, items: [t] })
     }
     return out
-  }, [filtered])
+  }, [filtered, shown])
 
   const now = new Date()
   const savedThisMonth = all
@@ -219,6 +223,11 @@ export default function TransactionsPage() {
                   </div>
                 </section>
               ))
+            )}
+            {filtered.length > shown && (
+              <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => setShown(n => n + PAGE_SIZE)}>
+                Show more ({filtered.length - shown} older)
+              </button>
             )}
           </>
         )}

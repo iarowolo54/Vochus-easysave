@@ -3,7 +3,7 @@
 import { Fragment, useState, useEffect, useCallback } from 'react'
 import { Icons } from '@/components/ui/icons'
 import {
-  Avatar, Empty, LoadError, PageHeader, Segmented, TableSkeleton, shortDate, useToast,
+  Avatar, Empty, LoadError, PageHeader, Pager, Segmented, TableSkeleton, shortDate, useToast,
 } from '../_components/admin-ui'
 
 interface Report {
@@ -43,6 +43,8 @@ async function errorOf(res: Response, fallback: string) {
   return d.error ?? fallback
 }
 
+const PAGE_SIZE = 25
+
 const EMPTY: Record<Tab, { title: string; text: string }> = {
   All: { title: 'No reports yet', text: 'When an agent reports a problem from their app, it shows here.' },
   Open: { title: 'No open reports', text: 'Nothing is waiting for someone to pick it up.' },
@@ -54,6 +56,8 @@ export default function ReportsPage() {
   const [reports, setReports] = useState<Report[]>([])
   const [stats, setStats] = useState<Counts>({ openCount: 0, inReviewCount: 0, resolvedCount: 0 })
   const [tab, setTab] = useState<Tab>('All')
+  const [page, setPage] = useState(1)
+  const [matching, setMatching] = useState(0)
   const [expanded, setExpanded] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [loaded, setLoaded] = useState(false)
@@ -66,10 +70,13 @@ export default function ReportsPage() {
     try {
       const params = new URLSearchParams()
       if (tab !== 'All') params.set('status', tab)
+      params.set('page', String(page))
+      params.set('pageSize', String(PAGE_SIZE))
       const res = await fetch(`/api/admin/reports?${params}`)
       if (!res.ok) throw new Error()
-      const d = await res.json() as Partial<Counts> & { reports?: Report[] }
+      const d = await res.json() as Partial<Counts> & { reports?: Report[]; total?: number }
       setReports(d.reports ?? [])
+      setMatching(d.total ?? 0)
       setStats({ openCount: d.openCount ?? 0, inReviewCount: d.inReviewCount ?? 0, resolvedCount: d.resolvedCount ?? 0 })
       setLoaded(true)
     } catch {
@@ -77,9 +84,14 @@ export default function ReportsPage() {
     } finally {
       setLoading(false)
     }
-  }, [tab])
+  }, [tab, page])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => { setPage(1) }, [tab])
+  useEffect(() => {
+    const last = Math.max(1, Math.ceil(matching / PAGE_SIZE))
+    if (loaded && page > last) setPage(last)
+  }, [matching, page, loaded])
 
   async function updateStatus(r: Report, status: Status) {
     setBusyId(r.id)
@@ -140,6 +152,7 @@ export default function ReportsPage() {
           : failed ? <LoadError what="issue reports" onRetry={load} />
           : reports.length === 0 ? <Empty icon={tab === 'All' ? 'report' : 'check'} title={EMPTY[tab].title} text={EMPTY[tab].text} />
           : (
+            <>
             <div className="tbl-wrap tbl-stack">
               <table>
                 <thead>
@@ -202,7 +215,9 @@ export default function ReportsPage() {
                   })}
                 </tbody>
               </table>
-            </div>
+              </div>
+              <Pager page={page} pageSize={PAGE_SIZE} total={matching} onPage={p => { setPage(p); setExpanded(null) }} />
+            </>
           )}
       </section>
 

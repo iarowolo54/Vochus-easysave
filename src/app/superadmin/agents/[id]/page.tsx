@@ -5,7 +5,7 @@ import { useParams } from 'next/navigation'
 import Link from 'next/link'
 import { Icons } from '@/components/ui/icons'
 import {
-  Avatar, ConfirmModal, Empty, LoadError, Segmented, TableSkeleton, nairaKobo, shortDate, useToast,
+  Avatar, ConfirmModal, Empty, LoadError, Pager, Segmented, TableSkeleton, nairaKobo, shortDate, useToast,
 } from '../../_components/admin-ui'
 import { SendResetCodeModal } from '../../_components/send-reset-code'
 
@@ -49,6 +49,7 @@ type Tab = 'customers' | 'transactions' | 'loans' | 'cards'
 type CustTab = 'plans' | 'loans' | 'cards'
 
 const PLAN_TX_LIMIT = 20
+const PAGE_SIZE = 25
 
 const BADGE: Record<string, [cls: string, label: string]> = {
   Active: ['bdg-g', 'Active'], Suspended: ['bdg-r', 'Suspended'], PendingActivation: ['bdg-a', 'Waiting to activate'],
@@ -89,6 +90,10 @@ export default function AgentDetailPage() {
   const [failed, setFailed] = useState(false)
   const [notFound, setNotFound] = useState(false)
   const [tab, setTab] = useState<Tab>('customers')
+  const [custPage, setCustPage] = useState(1)
+  const [txPage, setTxPage] = useState(1)
+  const [loanPage, setLoanPage] = useState(1)
+  const [cardPage, setCardPage] = useState(1)
   const [expandedCustomer, setExpandedCustomer] = useState<string | null>(null)
   const [customerTab, setCustomerTab] = useState<Record<string, CustTab>>({})
   const [toastNode, toast] = useToast()
@@ -115,6 +120,7 @@ export default function AgentDetailPage() {
   }, [id])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => { setCustPage(1); setTxPage(1); setLoanPage(1); setCardPage(1) }, [id])
 
   async function resetDevice() {
     setResetting(true); setResetError('')
@@ -179,6 +185,8 @@ export default function AgentDetailPage() {
   const totalSavings = agent.customers.reduce((s, c) => s + c.savingsPlans.reduce((a, p) => a + p.balance, 0), 0)
   const totalLoans = agent.customers.reduce((s, c) => s + c.loans.filter(l => l.status === 'Approved').reduce((a, l) => a + l.principal, 0), 0)
   const allLoans = agent.customers.flatMap(c => c.loans.map(l => ({ ...l, customerName: fullName(c), customerId: c.customerId })))
+
+  const pageOf = <T,>(rows: T[], n: number) => rows.slice((n - 1) * PAGE_SIZE, n * PAGE_SIZE)
 
   const custTabOf = (cid: string) => customerTab[cid] ?? 'plans'
   const setCustTab = (cid: string, t: CustTab) => setCustomerTab(prev => ({ ...prev, [cid]: t }))
@@ -253,8 +261,9 @@ export default function AgentDetailPage() {
           agent.customers.length === 0 ? (
             <section className="card"><Empty icon="customers" title="No customers yet" text="Customers this agent registers will show here." /></section>
           ) : (
+            <>
             <div className="am-custs">
-              {agent.customers.map(c => {
+              {pageOf(agent.customers, custPage).map(c => {
                 const expanded = expandedCustomer === c.id
                 const ct = custTabOf(c.id)
                 const bal = c.savingsPlans.reduce((s, p) => s + p.balance, 0)
@@ -367,6 +376,8 @@ export default function AgentDetailPage() {
                 )
               })}
             </div>
+            <Pager page={custPage} pageSize={PAGE_SIZE} total={agent.customers.length} onPage={p => { setCustPage(p); setExpandedCustomer(null) }} />
+            </>
           )
         )}
 
@@ -378,7 +389,7 @@ export default function AgentDetailPage() {
                   <table>
                     <thead><tr><th>Reference</th><th>Type</th><th className="num">Amount</th><th>Method</th><th>Status</th><th>Note</th><th>Date</th></tr></thead>
                     <tbody>
-                      {agent.transactions.map(tx => (
+                      {pageOf(agent.transactions, txPage).map(tx => (
                         <tr key={tx.id}>
                           <td className="am-mono am-muted">{tx.ref}</td>
                           <td><TxType t={tx.type} /></td>
@@ -392,6 +403,7 @@ export default function AgentDetailPage() {
                     </tbody>
                   </table>
                 </div>
+                <Pager page={txPage} pageSize={PAGE_SIZE} total={agent.transactions.length} onPage={setTxPage} />
                 {agent.transactions.length >= 200 && <p className="am-more">Showing the latest 200 transactions.</p>}
               </>
             )}
@@ -401,11 +413,12 @@ export default function AgentDetailPage() {
         {tab === 'loans' && (
           <section className="card" aria-label="Loans">
             {allLoans.length === 0 ? <Empty icon="loan" title="No loans yet" text="Loans for this agent’s customers will show here." /> : (
+              <>
               <div className="tbl-wrap tbl-stack">
                 <table>
                   <thead><tr><th>Customer</th><th>Reference</th><th className="num">Principal</th><th className="num">Total to repay</th><th className="num">Rate</th><th>Due</th><th className="num">Repaid</th><th>Status</th></tr></thead>
                   <tbody>
-                    {allLoans.map(l => (
+                    {pageOf(allLoans, loanPage).map(l => (
                       <tr key={l.id}>
                         <td>
                           <span className="td-name ui-block">{l.customerName}</span>
@@ -423,6 +436,8 @@ export default function AgentDetailPage() {
                   </tbody>
                 </table>
               </div>
+              <Pager page={loanPage} pageSize={PAGE_SIZE} total={allLoans.length} onPage={setLoanPage} />
+              </>
             )}
           </section>
         )}
@@ -430,11 +445,12 @@ export default function AgentDetailPage() {
         {tab === 'cards' && (
           <section className="card" aria-label="Cards">
             {agent.memberCards.length === 0 ? <Empty icon="card" title="No cards issued" text="Member cards given to this agent will show here." /> : (
+              <>
               <div className="tbl-wrap tbl-stack">
                 <table>
                   <thead><tr><th>Serial</th><th>Status</th></tr></thead>
                   <tbody>
-                    {agent.memberCards.map(card => (
+                    {pageOf(agent.memberCards, cardPage).map(card => (
                       <tr key={card.serial}>
                         <td className="am-mono am-strong">{card.serial}</td>
                         <td data-label="Status"><StatusBadge s={card.status} /></td>
@@ -443,6 +459,8 @@ export default function AgentDetailPage() {
                   </tbody>
                 </table>
               </div>
+              <Pager page={cardPage} pageSize={PAGE_SIZE} total={agent.memberCards.length} onPage={setCardPage} />
+              </>
             )}
           </section>
         )}
