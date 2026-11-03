@@ -291,27 +291,33 @@ model AuditLog {
 }
 
 model StaffUser {
-  id           String    @id @default(cuid())
-  name         String
-  email        String    @unique
-  password     String
-  role         String    @default("Support")
-  permissions  String    @default("[]")
-  status       String    @default("Active")
-  lastActiveAt DateTime?
-  createdAt    DateTime  @default(now())
-  roleId       String?
-  roleRef      Role?     @relation(fields: [roleId], references: [id])
-  approvalPin  String?
+  id              String      @id @default(cuid())
+  name            String
+  email           String      @unique
+  password        String?
+  status          String      @default("Invited")
+  lastActiveAt    DateTime?
+  createdAt       DateTime    @default(now())
+  roleId          String?
+  roleRef         Role?       @relation(fields: [roleId], references: [id])
+  departmentId    String?
+  department      Department? @relation("DeptMembers", fields: [departmentId], references: [id])
+  ledDepartments  Department[] @relation("DeptLead")
+  approvalPin     String?
+  inviteTokenHash String?
+  inviteExpiresAt DateTime?
 }
 
 model Department {
-  id          String   @id @default(cuid())
-  name        String   @unique
+  id          String      @id @default(cuid())
+  name        String      @unique
   description String?
-  status      String   @default("Active")
-  createdAt   DateTime @default(now())
+  status      String      @default("Active")
+  createdAt   DateTime    @default(now())
   roles       Role[]
+  members     StaffUser[] @relation("DeptMembers")
+  leadId      String?
+  lead        StaffUser?  @relation("DeptLead", fields: [leadId], references: [id], onDelete: SetNull)
 }
 
 model Role {
