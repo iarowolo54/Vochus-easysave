@@ -115,3 +115,24 @@ export function initialView(opts: { today: Date; selectedIso?: string | null; mi
   if (max && d > max) d = max
   return { year: d.getFullYear(), month: d.getMonth() }
 }
+
+/** The years a picker can jump to, newest first. Bounded by min/max; unbounded sides default to 100 years back and 5 ahead. */
+export function yearOptions(today: Date, minIso?: string | null, maxIso?: string | null): number[] {
+  const min = minIso ? parseDateInput(minIso) : null
+  const max = maxIso ? parseDateInput(maxIso) : null
+  const last = max ? max.getFullYear() : today.getFullYear() + 5
+  const first = min ? min.getFullYear() : today.getFullYear() - 100
+  const out: number[] = []
+  for (let y = last; y >= first; y--) out.push(y)
+  return out
+}
+
+/** Moves a view to `year`, keeping the month when that month has an allowed day, else the nearest month that does. */
+export function viewForYear(year: number, month: number, minIso?: string | null, maxIso?: string | null): { year: number; month: number } {
+  const min = minIso ? parseDateInput(minIso) : null
+  const max = maxIso ? parseDateInput(maxIso) : null
+  let m = month
+  if (min && min.getFullYear() === year && m < min.getMonth()) m = min.getMonth()
+  if (max && max.getFullYear() === year && m > max.getMonth()) m = max.getMonth()
+  return { year, month: m }
+}

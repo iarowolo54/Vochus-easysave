@@ -772,9 +772,12 @@ function EnrollContent() {
                 </select>
               </Field>
             </div>
-            <Field id="dob" label="Date of birth (optional)" error={err('dob')}>
-              <input id="dob" className="ag-tf-input" type="date" value={dob} {...v('dob')} max={new Date().toISOString().slice(0, 10)} onChange={e => setDob(e.target.value)} />
-            </Field>
+            <div className="ui-field">
+              <label className="ui-label" htmlFor="dob">Date of birth (optional)</label>
+              <DatePicker id="dob" ariaLabel="Date of birth" sheetTitle="Pick your date of birth" allowEmpty yearPicker
+                emptyViewIso={`${new Date().getFullYear() - 30}-01-01`} maxIso={isoDate(today())} value={dob} onChange={setDob} />
+              {err('dob') && <FieldError id="dob-error" message={err('dob')} />}
+            </div>
             <p className="cu-label" id="gd-label">Gender</p>
             <Choices labelledBy="gd-label" options={['Female', 'Male']} value={gender} onChange={v => { setGender(v); setTouched(t => ({ ...t, gd: true })) }} />
             {err('gd') && <FieldError id="gd-error" message={err('gd')} />}

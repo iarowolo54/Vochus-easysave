@@ -3,7 +3,7 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import {
   monthView, leadingBlanks, daysInMonth, canGoPrev, canGoNext, stepMonth, initialView, isSelectable,
-  MONTH_NAMES, WEEKDAYS,
+  MONTH_NAMES, WEEKDAYS, yearOptions, viewForYear,
 } from '../src/lib/calendar'
 
 const d = (y: number, m: number, day: number) => new Date(y, m, day)
@@ -90,4 +90,24 @@ test('exports sane headers', () => {
   assert.equal(WEEKDAYS.length, 7)
   assert.equal(WEEKDAYS[0], 'Mo')
   assert.equal(MONTH_NAMES.length, 12)
+})
+
+test('yearOptions runs from the latest allowed year back to the earliest, newest first', () => {
+  const today = new Date(2026, 10, 3)
+  assert.deepEqual(yearOptions(today, '2024-05-10', '2026-11-03'), [2026, 2025, 2024])
+  const open = yearOptions(today, null, '2026-11-03')
+  assert.equal(open[0], 2026)
+  assert.equal(open[open.length - 1], 1926)
+})
+
+test('yearOptions with only a minimum looks ahead a few years from today', () => {
+  const out = yearOptions(new Date(2026, 10, 3), '2026-11-03', null)
+  assert.equal(out[out.length - 1], 2026)
+  assert.ok(out[0] > 2026)
+})
+
+test('viewForYear keeps the month when the year allows it and otherwise lands on the nearest allowed month', () => {
+  assert.deepEqual(viewForYear(1990, 5, null, '2026-11-03'), { year: 1990, month: 5 })
+  assert.deepEqual(viewForYear(2026, 11, null, '2026-11-03'), { year: 2026, month: 10 })
+  assert.deepEqual(viewForYear(2024, 1, '2024-05-10', null), { year: 2024, month: 4 })
 })

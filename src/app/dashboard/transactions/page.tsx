@@ -1,5 +1,7 @@
 'use client'
 
+import DatePicker from '@/components/ui/DatePicker'
+import { isoDate, today } from '@/lib/plan-dates'
 import { useEffect, useState, useCallback, useMemo } from 'react'
 import Link from 'next/link'
 import EmptyState from '@/components/ui/EmptyState'
@@ -135,11 +137,14 @@ export default function TransactionsPage() {
             <button key={f.v || 'all'} type="button" className="ag-chip" aria-pressed={type === f.v} onClick={() => { setType(f.v); setPage(1) }}>{f.l}</button>
           ))}
         </div>
-        <label className={`ag-date-chip${date ? ' is-set' : ''}`}>
-          <Icons.calendar size={18} aria-hidden="true" />
-          <span>{date ? new Date(date + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : 'Any date'}</span>
-          <input type="date" aria-label="Show one day" value={date} onChange={e => { setDate(e.target.value); setPage(1) }} />
-        </label>
+        <DatePicker ariaLabel="Show one day" sheetTitle="Show one day" allowEmpty maxIso={isoDate(today())}
+          value={date} onChange={iso => { setDate(iso); setPage(1) }}
+          renderTrigger={({ id, open, expanded, hasValue }) => (
+            <button type="button" id={id} className={`ag-date-chip${hasValue ? ' is-set' : ''}`} aria-haspopup="dialog" aria-expanded={expanded} aria-label="Show one day" onClick={open}>
+              <Icons.calendar size={18} aria-hidden="true" />
+              <span>{date ? new Date(date + 'T12:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }) : 'Any date'}</span>
+            </button>
+          )} />
         {date && (
           <button type="button" className="ui-icon-btn ui-icon-btn--soft ag-date-clear" aria-label="Clear date" onClick={() => { setDate(''); setPage(1) }}>
             <Icons.close size={16} aria-hidden="true" />

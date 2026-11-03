@@ -1,9 +1,9 @@
 'use client'
-import { useEffect, useId, useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import BottomSheet from './BottomSheet'
 import { today, isoDate, parseDateInput } from '@/lib/plan-dates'
 import { formatDate } from '@/lib/format'
-import { monthView, canGoPrev, canGoNext, stepMonth, initialView, isSelectable, WEEKDAYS } from '@/lib/calendar'
+import { monthView, canGoPrev, canGoNext, stepMonth, initialView, isSelectable, yearOptions, viewForYear, MONTH_NAMES, WEEKDAYS } from '@/lib/calendar'
 
 /**
  * In-page date picker that replaces the native <input type="date"> (poor UX in the app WebViews).
@@ -14,6 +14,7 @@ import { monthView, canGoPrev, canGoNext, stepMonth, initialView, isSelectable, 
 export default function DatePicker({
   id, value, onChange, minIso = null, maxIso = null,
   ariaLabel = 'Pick a date', sheetTitle = 'Pick a date', todayPrefix = false,
+  allowEmpty = false, placeholder = 'Not set', yearPicker = false, emptyViewIso = null, renderTrigger,
 }: {
   id?: string
   value: string
@@ -24,6 +25,15 @@ export default function DatePicker({
   sheetTitle?: string
   /** Show "Today · …" in the field when the value is today (used by plan start). */
   todayPrefix?: boolean
+  /** For optional dates and filters: an empty value shows `placeholder`, and the sheet gets a Clear button. */
+  allowEmpty?: boolean
+  placeholder?: string
+  /** Month and year drop-downs in the header, for dates far from today such as a date of birth. */
+  yearPicker?: boolean
+  /** The date the calendar opens on while nothing is chosen (e.g. 30 years ago for a date of birth). */
+  emptyViewIso?: string | null
+  /** Replace the default field button, e.g. with a filter chip. */
+  renderTrigger?: (t: { id?: string; open: () => void; expanded: boolean; text: string; hasValue: boolean }) => ReactNode
 }) {
   const t = today()
   const todayIso = isoDate(t)
@@ -31,7 +41,7 @@ export default function DatePicker({
   const gridRef = useRef<HTMLDivElement>(null)
   const [open, setOpen] = useState(false)
   const [pending, setPending] = useState(value)
-  const [view, setView] = useState(() => initialView({ today: t, selectedIso: value, minIso, maxIso }))
+  const [view, setView] = useState(() => initialView({ today: t, selectedIso: value || emptyViewIso, minIso, maxIso }))
 
   // When the sheet opens, move focus to the selected day (native showModal lands on Close otherwise).
   useEffect(() => {
@@ -43,15 +53,17 @@ export default function DatePicker({
   }, [open])
 
   const selDate = parseDateInput(value) ?? t
-  const fieldText = (todayPrefix && value === todayIso ? 'Today · ' : '') + formatDate(selDate)
+  const fieldText = !value && allowEmpty ? placeholder : (todayPrefix && value === todayIso ? 'Today · ' : '') + formatDate(selDate)
 
   function openSheet() {
     setPending(value)
-    setView(initialView({ today: t, selectedIso: value, minIso, maxIso }))
+    setView(initialView({ today: t, selectedIso: value || emptyViewIso, minIso, maxIso }))
     setOpen(true)
   }
   const pendingOk = isSelectable(pending, minIso, maxIso)
   function confirm() { if (!pendingOk) return; onChange(pending); setOpen(false) }
+  function clear() { onChange(''); setOpen(false) }
+  const years = yearPicker ? yearOptions(t, minIso, maxIso) : []
 
   const mv = monthView(view.year, view.month, { today: t, selectedIso: pending, minIso, maxIso })
   const prevOk = canGoPrev(view.year, view.month, minIso)
@@ -66,17 +78,28 @@ export default function DatePicker({
 
   return (
     <>
+      {renderTrigger ? renderTrigger({ id, open: openSheet, expanded: open, text: fieldText, hasValue: !!value }) : (
       <button type="button" id={id} className="ui-dp-field" aria-haspopup="dialog" aria-expanded={open}
         aria-label={`${ariaLabel}: ${fieldText}`} onClick={openSheet}>
         <svg className="ui-dp-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><rect x="3" y="4.5" width="18" height="16" rx="3" /><path d="M3 9h18M8 2.5v4M16 2.5v4" /></svg>
         <span className="ui-dp-val">{fieldText}</span>
         <svg className="ui-dp-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
       </button>
+      )}
 
       <BottomSheet open={open} onClose={() => setOpen(false)} title={sheetTitle}>
         <div className="ui-dp-cal">
           <div className="ui-dp-head">
-            <strong className="ui-dp-month" id={monthId} aria-live="polite">{mv.title}</strong>
+            {yearPicker ? (
+              <div className="ui-dp-month ui-dp-selects" id={monthId}>
+                <select aria-label="Month" value={view.month} onChange={e => setView(v => ({ ...v, month: Number(e.target.value) }))}>
+                  {MONTH_NAMES.map((m, i) => <option key={m} value={i}>{m}</option>)}
+                </select>
+                <select aria-label="Year" value={view.year} onChange={e => setView(v => viewForYear(Number(e.target.value), v.month, minIso, maxIso))}>
+                  {years.map(y => <option key={y} value={y}>{y}</option>)}
+                </select>
+              </div>
+            ) : <strong className="ui-dp-month" id={monthId} aria-live="polite">{mv.title}</strong>}
             <div className="ui-dp-nav">
               <button type="button" aria-label="Previous month" disabled={!prevOk}
                 onClick={() => prevOk && setView(stepMonth(view.year, view.month, -1))}>
@@ -100,8 +123,9 @@ export default function DatePicker({
             ))}
           </div>
           <div className="ui-dp-actions">
-            {todayInRange && <button type="button" className="ui-dp-chip" aria-pressed={pending === todayIso}
+            {todayInRange && !yearPicker && <button type="button" className="ui-dp-chip" aria-pressed={pending === todayIso}
               onClick={() => { setPending(todayIso); setView({ year: t.getFullYear(), month: t.getMonth() }) }}>Today</button>}
+            {allowEmpty && !!value && <button type="button" className="ui-dp-chip" onClick={clear}>Clear</button>}
             <button type="button" className="ui-dp-use" disabled={!pendingOk} onClick={confirm}>Use this date</button>
           </div>
         </div>

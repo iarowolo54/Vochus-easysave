@@ -517,9 +517,11 @@ export default function EnrolPage() {
                 <details className="ag-more" open={!!(form.dob || form.email || form.bvn)}>
                   <summary>More details <span>Optional</span><Icons.expand size={18} aria-hidden="true" /></summary>
                   <div className="ag-grid-2">
-                    <Field id="dob" label="Date of birth">
-                      <input id="dob" className="ag-tf-input" type="date" value={form.dob} onChange={e => set('dob', e.target.value)} />
-                    </Field>
+                    <div className="ui-field">
+                      <label className="ui-label" htmlFor="dob">Date of birth</label>
+                      <DatePicker id="dob" ariaLabel="Date of birth" sheetTitle="Pick their date of birth" allowEmpty yearPicker
+                        emptyViewIso={`${new Date().getFullYear() - 30}-01-01`} maxIso={isoDate(today())} value={form.dob} onChange={iso => set('dob', iso)} />
+                    </div>
                     <Field id="em" label="Email">
                       <input id="em" className="ag-tf-input" type="email" inputMode="email" value={form.email} onChange={e => set('email', e.target.value)} />
                     </Field>
