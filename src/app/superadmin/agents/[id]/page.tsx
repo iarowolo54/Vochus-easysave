@@ -310,17 +310,17 @@ export default function AgentDetailPage() {
                               {plan.transactions.length > 0 && (
                                 <div className="am-plan-body">
                                   <h4 className="am-sub-h">Transactions ({plan.transactions.length})</h4>
-                                  <div className="am-tbl-wrap">
+                                  <div className="am-tbl-wrap tbl-stack">
                                     <table>
                                       <thead><tr><th>Reference</th><th>Type</th><th className="num">Amount</th><th>Method</th><th>Date</th></tr></thead>
                                       <tbody>
                                         {plan.transactions.slice(0, PLAN_TX_LIMIT).map(tx => (
                                           <tr key={tx.id}>
-                                            <td className="am-mono am-muted">{tx.ref}</td>
-                                            <td><TxType t={tx.type} /></td>
-                                            <td className="num am-strong">{nairaKobo(tx.amount)}</td>
-                                            <td className="am-muted">{tx.method ?? '—'}</td>
-                                            <td className="am-muted am-nowrap">{shortDate(tx.createdAt)}</td>
+                                            <td className="am-mono am-muted" data-label="Reference">{tx.ref}</td>
+                                            <td data-label="Type"><TxType t={tx.type} /></td>
+                                            <td className="num am-strong" data-label="Amount">{nairaKobo(tx.amount)}</td>
+                                            <td className="am-muted" data-label="Method">{tx.method ?? '—'}</td>
+                                            <td className="am-muted am-nowrap" data-label="Date">{shortDate(tx.createdAt)}</td>
                                           </tr>
                                         ))}
                                       </tbody>
@@ -337,19 +337,19 @@ export default function AgentDetailPage() {
                         {ct === 'loans' && (c.loans.length === 0
                           ? <p className="am-inline-empty">No loans.</p>
                           : (
-                            <div className="am-tbl-wrap">
+                            <div className="am-tbl-wrap tbl-stack">
                               <table>
                                 <thead><tr><th>Reference</th><th className="num">Principal</th><th className="num">Total to repay</th><th className="num">Rate</th><th>Due</th><th className="num">Repaid</th><th>Status</th></tr></thead>
                                 <tbody>
                                   {c.loans.map(l => (
                                     <tr key={l.id}>
-                                      <td className="am-mono am-muted">{l.ref}</td>
-                                      <td className="num am-strong">{nairaKobo(l.principal)}</td>
-                                      <td className="num">{nairaKobo(l.totalAmount)}</td>
-                                      <td className="num am-muted">{l.interestRate}%</td>
-                                      <td className="am-muted am-nowrap">{shortDate(l.dueDate)}</td>
-                                      <td className="num am-pos">{nairaKobo(repaidOf(l))}</td>
-                                      <td><StatusBadge s={l.status} /></td>
+                                      <td className="am-mono am-muted" data-label="Reference">{l.ref}</td>
+                                      <td className="num am-strong" data-label="Principal">{nairaKobo(l.principal)}</td>
+                                      <td className="num" data-label="Total to repay">{nairaKobo(l.totalAmount)}</td>
+                                      <td className="num am-muted" data-label="Rate">{l.interestRate}%</td>
+                                      <td className="am-muted am-nowrap" data-label="Due">{shortDate(l.dueDate)}</td>
+                                      <td className="num am-pos" data-label="Repaid">{nairaKobo(repaidOf(l))}</td>
+                                      <td data-label="Status"><StatusBadge s={l.status} /></td>
                                     </tr>
                                   ))}
                                 </tbody>
