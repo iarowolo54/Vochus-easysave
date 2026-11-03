@@ -106,7 +106,7 @@ export async function POST(req: NextRequest) {
         const walletAfter = money(agent.walletBalance - dailyAmt * (i + 1))
         const ref = `TXN-${String(9000 + txnCount + i + 1)}`
         // The platform fee comes out of the earliest days first, one deposit at a time, so a daily plan's first day is taken once.
-        const fee = await depositFeeOps(tx, { planId: plan.id, agentId: agent.id, customerId: customer.id, amount: dailyAmt, ref, at: online ? new Date() : dates[i] })
+        const fee = await depositFeeOps(tx, { planId: plan.id, agentId: agent.id, customerId: customer.id, amount: dailyAmt, ref })
         feeSum += fee
         const created = await tx.transaction.create({
           data: {

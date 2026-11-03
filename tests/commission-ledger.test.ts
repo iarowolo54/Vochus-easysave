@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Prisma, PrismaClient } from '@prisma/client'
-import { collectionFee, completionCredits, depositFeeOps, buildPlanFees, loanCommissionAmounts, recordCommission, repaymentCommissionAmount } from '../src/lib/commission-ledger'
+import { collectionFee, completionCredits, depositFeeOps, buildPlanFees, legacyPlatformShare, loanCommissionAmounts, recordCommission, repaymentCommissionAmount } from '../src/lib/commission-ledger'
 import { DEFAULT_COMMISSION_RATES } from '../src/lib/commission-rates'
 
 type Row = Record<string, unknown>
@@ -33,10 +33,11 @@ function stubTx(opts: { goLive?: string; rates?: Record<string, number>; existin
   return { tx: tx as unknown as Prisma.TransactionClient, calls, client: tx as unknown as Pick<PrismaClient, 'platformSetting' | 'transaction'> }
 }
 
-const LIVE = '2026-11-10T00:00:00.000Z'
+const LIVE = '2026-01-01T00:00:00.000Z' // already past, so "now" is after go-live
+const NOT_YET = '2099-01-01T00:00:00.000Z'
 const DAILY: Plan = { cadence: 'daily', dailyAmount: 500, source: 'agent', feeCollected: 0 }
 const dep = (over: Partial<Parameters<typeof depositFeeOps>[1]> = {}) => ({
-  planId: 'p1', agentId: 'ag1', customerId: 'c1', amount: 500, ref: 'TXN-1', at: new Date('2026-11-12T10:00:00Z'), ...over,
+  planId: 'p1', agentId: 'ag1', customerId: 'c1', amount: 500, ref: 'TXN-1', ...over,
 })
 const rows = (calls: { ledger: Row[] }) => calls.ledger.map(r => [r.party, r.source, r.amount])
 
@@ -67,9 +68,9 @@ test('uses the saved settings, not fixed ones', async () => {
   assert.equal(await depositFeeOps(tx, dep({ amount: 1000 })), 100)
 })
 
-test('no fee before go-live, when it is not set, or for a deposit dated before it', async () => {
+test('no fee when go-live is not set or has not arrived yet', async () => {
   assert.equal(await depositFeeOps(stubTx({ plan: DAILY }).tx, dep()), 0)
-  assert.equal(await depositFeeOps(stubTx({ goLive: LIVE, plan: DAILY }).tx, dep({ at: new Date('2026-11-09T23:59:00Z') })), 0)
+  assert.equal(await depositFeeOps(stubTx({ goLive: NOT_YET, plan: DAILY }).tx, dep()), 0)
 })
 
 test('online self plans take no fee', async () => {
@@ -103,25 +104,25 @@ test('recordCommission skips zero amounts and reports whether it wrote', async (
 })
 
 test('collectionFee is v1 when not live', async () => {
-  assert.deepEqual(await collectionFee(stubTx().client, { id: 'p1', ...DAILY }, 5000, new Date('2026-11-12')), { feeRule: 'v1' })
+  assert.deepEqual(await collectionFee(stubTx().client, { id: 'p1', ...DAILY }, 5000, new Date()), { feeRule: 'v1' })
 })
 
 test('a live daily plan with nothing collected owes one day, split 60/40', async () => {
   const { client } = stubTx({ goLive: LIVE })
-  assert.deepEqual(await collectionFee(client, { id: 'p1', ...DAILY }, 5000, new Date('2026-11-12')), { feeRule: 'v2', penalty: 500, feeAgent: 300 })
+  assert.deepEqual(await collectionFee(client, { id: 'p1', ...DAILY }, 5000, new Date()), { feeRule: 'v2', penalty: 500, feeAgent: 300 })
 })
 
 test('a live weekly plan owes the percentage on its older deposits', async () => {
   const { client } = stubTx({ goLive: LIVE, preDeposits: 40000 })
   assert.deepEqual(
-    await collectionFee(client, { id: 'p1', cadence: 'weekly', dailyAmount: 1000, source: 'agent', feeCollected: 0 }, 30000, new Date('2026-11-12')),
+    await collectionFee(client, { id: 'p1', cadence: 'weekly', dailyAmount: 1000, source: 'agent', feeCollected: 0 }, 30000, new Date()),
     { feeRule: 'v2', penalty: 2250, feeAgent: 1350 },
   )
 })
 
 test('a self plan owes nothing at collection', async () => {
   const { client } = stubTx({ goLive: LIVE })
-  assert.deepEqual(await collectionFee(client, { id: 'p1', ...DAILY, source: 'self' }, 5000, new Date('2026-11-12')), { feeRule: 'v2', penalty: 0, feeAgent: 0 })
+  assert.deepEqual(await collectionFee(client, { id: 'p1', ...DAILY, source: 'self' }, 5000, new Date()), { feeRule: 'v2', penalty: 0, feeAgent: 0 })
 })
 
 const rec = (over: Record<string, unknown> = {}) => ({ ref: 'RED-1', savingsPlanId: 'p1', balance: 3000, penalty: 500, feeAgent: 300, feeRule: 'v2', ...over })
@@ -151,4 +152,11 @@ test('repayment commission follows the agent repay rate', () => {
 test('buildPlanFees reports whether the model is live and the weekly/monthly percentage', () => {
   assert.deepEqual(buildPlanFees(true, { ...DEFAULT_COMMISSION_RATES, periodicFeePct: 9 }), { live: true, periodicFeePct: 9 })
   assert.deepEqual(buildPlanFees(false, DEFAULT_COMMISSION_RATES), { live: false, periodicFeePct: 7.5 })
+})
+
+test('legacyPlatformShare counts the platform part (2/5) of earlier approved fees and skips ones already in the ledger', () => {
+  const rows = [{ ref: 'RED-1', penalty: 1000 }, { ref: 'RED-2', penalty: 500 }, { ref: 'RED-3', penalty: 0 }]
+  assert.equal(legacyPlatformShare(rows, new Set()), 600)
+  assert.equal(legacyPlatformShare(rows, new Set(['RED-1'])), 200)
+  assert.equal(legacyPlatformShare([], new Set()), 0)
 })

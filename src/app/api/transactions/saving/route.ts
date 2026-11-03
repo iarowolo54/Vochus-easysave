@@ -71,7 +71,7 @@ export async function POST(req: NextRequest) {
       // Atomically debit the agent's wallet; concurrent savings can't overdraw.
       const debited = await debitAgentBalance(tx, agent.id, 'walletBalance', rounded)
       if (!debited) throw new InsufficientFundsError('Agent wallet', agent.walletBalance, rounded)
-      const fee = await depositFeeOps(tx, { planId: plan.id, agentId: agent.id, customerId: customer.id, amount: rounded, ref, at: createdAt ?? new Date() })
+      const fee = await depositFeeOps(tx, { planId: plan.id, agentId: agent.id, customerId: customer.id, amount: rounded, ref })
       const created = await tx.transaction.create({
         data: {
           ref,

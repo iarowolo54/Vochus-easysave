@@ -50,13 +50,14 @@ async function creditRevenue(tx: LedgerClient, amount: number): Promise<void> {
 /**
  * Takes the platform fee out of one deposit to an offline plan, inside the deposit's own transaction, and pays the agent
  * their share at once. Returns the fee taken; the caller credits the plan balance with the deposit minus that fee.
- * Nothing happens before go-live, for a deposit dated before it, on online (self) plans, or for a deposit already processed.
+ * Nothing happens before go-live, on online (self) plans, or for a deposit already processed.
  */
 export async function depositFeeOps(
   tx: LedgerClient,
-  i: { planId: string; agentId: string | null; customerId: string; amount: number; ref: string; at: Date },
+  i: { planId: string; agentId: string | null; customerId: string; amount: number; ref: string },
 ): Promise<number> {
-  if (!(await isNewModelLive(tx, i.at))) return 0
+  // Judged by when the deposit is recorded, not the date the agent chose: a catch-up for an earlier day still pays its fee now.
+  if (!(await isNewModelLive(tx, new Date()))) return 0
   const plan = await tx.savingsPlan.findUnique({ where: { id: i.planId }, select: { cadence: true, dailyAmount: true, source: true, feeCollected: true } })
   if (!plan || plan.source === 'self') return 0
   const rates = await getCommissionRates(tx)
@@ -97,7 +98,7 @@ export async function collectionFee(
   const goLive = await getGoLive(client)
   if (!goLive || at.getTime() < goLive.getTime()) return { feeRule: 'v1' }
   if (plan.source === 'self') return { feeRule: 'v2', penalty: 0, feeAgent: 0 }
-  const sum = await client.transaction.aggregate({ where: { planId: plan.id, type: 'saving', createdAt: { lt: goLive } }, _sum: { amount: true } })
+  const sum = await client.transaction.aggregate({ where: { planId: plan.id, type: 'saving', feeTaken: 0, createdAt: { lt: goLive } }, _sum: { amount: true } })
   const rates = await getCommissionRates(client)
   const out = settleUpFee({ cadence: plan.cadence, dailyAmount: plan.dailyAmount, feeCollected: plan.feeCollected, balance, preGoLiveDeposits: sum._sum.amount ?? 0 }, feeRulesOf(rates))
   return { feeRule: 'v2', penalty: out.fee, feeAgent: out.agent }
@@ -134,4 +135,12 @@ export function repaymentCommissionAmount(rates: CommissionRates, amount: number
 /** What the plan screens need to describe the fee: whether the new model is on, and the weekly/monthly percentage. */
 export function buildPlanFees(live: boolean, rates: CommissionRates): { live: boolean; periodicFeePct: number } {
   return { live, periodicFeePct: rates.periodicFeePct }
+}
+
+/**
+ * The platform's part (2/5) of collection fees approved before the ledger existed. A collection that already has a ledger row
+ * is skipped, so nothing is counted twice.
+ */
+export function legacyPlatformShare(rows: { ref: string; penalty: number }[], covered: Set<string>): number {
+  return money(rows.filter(r => r.penalty > 0 && !covered.has(r.ref)).reduce((t, r) => t + r.penalty * (2 / 5), 0))
 }

@@ -73,7 +73,7 @@ export async function settleIntentPayment(client: PrismaClient, input: Input): P
       // Atomically consume the intent; a losing/replayed call must not credit.
       const consumed = await consumePaymentIntent(tx, reference, { customerId })
       if (!consumed) throw new Error('ALREADY_PROCESSED')
-      const fee = await depositFeeOps(tx, { planId: plan.id, agentId: customer.agentId, customerId: customerId, amount, ref: reference, at: new Date() })
+      const fee = await depositFeeOps(tx, { planId: plan.id, agentId: customer.agentId, customerId: customerId, amount, ref: reference })
       await tx.transaction.create({
         data: {
           ref: reference,
