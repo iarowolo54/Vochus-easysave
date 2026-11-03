@@ -2,7 +2,7 @@ import { getServerSession, type Session } from 'next-auth'
 import { NextResponse } from 'next/server'
 import { adminAuthOptions } from './auth-admin'
 import { prisma } from './prisma'
-import { decideAdminAccess, parsePermissions, type Area } from './permissions'
+import { decideAdminAccess, parsePermissions, type Action, type ScreenKey } from './permissions'
 
 type Guard = { ok: true; session: Session } | { ok: false; response: NextResponse }
 
@@ -36,12 +36,14 @@ type StaffRecord = {
   id: string
   name: string | null
   status: string
+  departmentId: string | null
   roleRef: { status: string; permissions: string } | null
 }
 
 export type AdminGuardDeps = {
   getSession: () => Promise<Session | null>
   loadStaff: (id: string) => Promise<StaffRecord | null>
+  loadDepartmentLead: (departmentId: string) => Promise<string | null>
 }
 
 const realDeps: AdminGuardDeps = {
@@ -50,13 +52,21 @@ const realDeps: AdminGuardDeps = {
   loadStaff: (id) =>
     prisma.staffUser.findUnique({
       where: { id },
-      select: { id: true, name: true, status: true, roleRef: { select: { status: true, permissions: true } } },
+      select: { id: true, name: true, status: true, departmentId: true, roleRef: { select: { status: true, permissions: true } } },
     }),
+  loadDepartmentLead: async (departmentId) =>
+    (await prisma.department.findUnique({ where: { id: departmentId }, select: { leadId: true } }))?.leadId ?? null,
 }
+
+const deny = (status: 401 | 403): { ok: false; response: NextResponse } => ({
+  ok: false,
+  response: NextResponse.json({ error: status === 401 ? 'Unauthorized' : 'Forbidden' }, { status }),
+})
 
 /** Exported for tests (inject deps); routes use requirePermission / requireAdminArea. */
 export async function resolveAdminAccess(
-  area: Area | null,
+  screen: ScreenKey | null,
+  action: Action,
   deps: AdminGuardDeps = realDeps,
 ): Promise<AdminGuard> {
   const session = await deps.getSession()
@@ -70,7 +80,8 @@ export async function resolveAdminAccess(
     const staff = id ? await deps.loadStaff(id) : null
     decision = decideAdminAccess({
       role,
-      area,
+      screen,
+      action,
       staffStatus: staff?.status,
       roleStatus: staff?.roleRef?.status,
       rolePerms: staff?.roleRef ? parsePermissions(staff.roleRef.permissions) : null,
@@ -80,15 +91,11 @@ export async function resolveAdminAccess(
       name = staff.name ?? name
     }
   } else {
-    decision = decideAdminAccess({ role, area })
+    decision = decideAdminAccess({ role, screen, action })
   }
 
-  if (decision === 'deny-401') {
-    return { ok: false, response: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
-  }
-  if (decision === 'deny-403') {
-    return { ok: false, response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
-  }
+  if (decision === 'deny-401') return deny(401)
+  if (decision === 'deny-403') return deny(403)
   return {
     ok: true,
     session: session as Session,
@@ -96,12 +103,38 @@ export async function resolveAdminAccess(
   }
 }
 
-/** Superadmin, or active staff whose active role grants `area`. */
-export function requirePermission(area: Area): Promise<AdminGuard> {
-  return resolveAdminAccess(area)
+/** Superadmin, or active staff whose active role grants `screen:action` (manage implies view). */
+export function requirePermission(screen: ScreenKey, action: Action): Promise<AdminGuard> {
+  return resolveAdminAccess(screen, action)
 }
 
-/** Superadmin or any active staff (baseline admin-area access, no specific area). */
+/** Superadmin or any active staff (baseline admin-area access, no specific screen). */
 export function requireAdminArea(): Promise<AdminGuard> {
-  return resolveAdminAccess(null)
+  return resolveAdminAccess(null, 'view')
+}
+
+/**
+ * Exported for tests. Superadmin, or the Active lead of exactly this department.
+ * `leadId` alone is never trusted: the lead's status and membership are re-read, so a
+ * suspended or moved lead loses lead powers immediately.
+ */
+export async function resolveDeptManage(departmentId: string, deps: AdminGuardDeps = realDeps): Promise<AdminGuard> {
+  const session = await deps.getSession()
+  const role = (session?.user as any)?.role
+  const id = (session?.user as any)?.id as string | undefined
+  if (!role) return deny(401)
+  if (role === 'superadmin') {
+    return { ok: true, session: session as Session, actor: { id, name: session?.user?.name ?? 'Super Admin', type: 'superadmin' } }
+  }
+  if (role !== 'staff' || !id) return deny(403)
+
+  const staff = await deps.loadStaff(id)
+  if (!staff || staff.status !== 'Active' || staff.departmentId !== departmentId) return deny(403)
+  if ((await deps.loadDepartmentLead(departmentId)) !== staff.id) return deny(403)
+  return { ok: true, session: session as Session, actor: { id: staff.id, name: staff.name ?? session?.user?.name ?? 'Admin', type: 'staff' } }
+}
+
+/** Owner, or the Active lead of `departmentId` (see resolveDeptManage). */
+export function requireDeptManage(departmentId: string): Promise<AdminGuard> {
+  return resolveDeptManage(departmentId)
 }
