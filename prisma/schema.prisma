@@ -129,6 +129,8 @@ model SavingsPlan {
   status            String             @default("Active")
   maturityNotified  Boolean            @default(false)
   interestAccrued   Float              @default(0)
+  /// New model: fee already taken from this plan (a daily plan stops at one day's amount).
+  feeCollected      Float              @default(0)
   notes             String?
   transactions      Transaction[]
   earlyRedemptions  EarlyRedemption[]
@@ -162,6 +164,8 @@ model Transaction {
   status      String       @default("Done")
   note        String?
   walletAfter Float?
+  /// New model: platform fee taken out of this deposit before it reached the plan balance.
+  feeTaken    Float    @default(0)
   createdAt   DateTime     @default(now())
 }
 
@@ -365,6 +369,8 @@ model EarlyRedemption {
   adminNote              String?
   /// 'v1' = fee split 3/5 agent, 2/5 platform (before go-live); 'v2' = fee is all platform, agent gets the catch-up.
   feeRule                String    @default("v1")
+  /// The agent's part of `penalty` under feeRule v2, stored at request time.
+  feeAgent               Float     @default(0)
 }
 
 model MemberCard {
