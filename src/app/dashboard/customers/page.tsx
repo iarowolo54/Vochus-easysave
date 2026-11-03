@@ -58,13 +58,14 @@ interface Txn { id: string; type: string; method: string | null; amount: number;
 
 const TXN: Record<string, { label: string; icon: IconName; sign: '+' | '−' }> = {
   saving: { label: 'Saving', icon: 'deposit', sign: '+' },
-  redemption: { label: 'Collection', icon: 'withdraw', sign: '−' },
+  redemption: { label: 'Withdrawal', icon: 'withdraw', sign: '−' },
   repayment: { label: 'Loan repayment', icon: 'repay', sign: '−' },
 }
 const txnMeta = (type: string) => TXN[type] ?? { label: type.charAt(0).toUpperCase() + type.slice(1), icon: 'history' as IconName, sign: '−' as const }
 
 const STATUSES = ['', 'Active', 'Inactive', 'Flagged'] as const
 type StatusFilter = typeof STATUSES[number]
+const STATUS_LABEL: Record<string, string> = { Inactive: 'Not active' }
 
 const fullName = (c: Pick<Customer, 'firstName' | 'lastName'>) => displayName(`${c.firstName} ${c.lastName}`)
 const initials = (c: Pick<Customer, 'firstName' | 'lastName'>) => `${c.firstName[0] ?? ''}${c.lastName[0] ?? ''}`.toUpperCase()
@@ -81,7 +82,7 @@ const OVERDUE_DAYS = 3
 
 function lastPaidText(iso: string | null | undefined) {
   const d = daysSince(iso)
-  if (d === null) return 'Never paid'
+  if (d === null) return 'Has not paid yet'
   if (d <= 0) return 'Paid today'
   if (d === 1) return 'Paid yesterday'
   return `Last paid ${d} days ago`
@@ -122,7 +123,7 @@ function Avatar({ c, size }: { c: Customer; size?: 'lg' }) {
 function StatusBadge({ status }: { status: string }) {
   if (status === 'Active') return null
   const tone = status === 'Flagged' ? 'danger' : 'neutral'
-  return <span className={`ui-status ui-status--sm ui-status--${tone}`}>{status}</span>
+  return <span className={`ui-status ui-status--sm ui-status--${tone}`}>{STATUS_LABEL[status] ?? status}</span>
 }
 
 
@@ -374,7 +375,7 @@ export default function CustomersPage() {
               />
             </div>
             <select className="ui-input ui-select ag-plan-filter" aria-label="Plan length" value={plan} onChange={e => { setPlan(e.target.value); setPage(1) }}>
-              <option value="">Any length</option>
+              <option value="">All plans</option>
               <option value="30">30 days</option><option value="60">60 days</option>
               <option value="90">90 days</option><option value="180">180 days</option>
             </select>
@@ -383,7 +384,7 @@ export default function CustomersPage() {
           <div className="ag-chips" role="group" aria-label="Status">
             {STATUSES.map(s => (
               <button key={s || 'all'} type="button" className="ag-chip" aria-pressed={status === s} onClick={() => { setStatus(s); setPage(1) }}>
-                {s || 'All'}
+                {s ? (STATUS_LABEL[s] ?? s) : 'All'}
                 {counts[s] !== undefined && <span className="ag-chip-count">{counts[s]}</span>}
               </button>
             ))}
@@ -439,7 +440,7 @@ export default function CustomersPage() {
                       {main ? (
                         <span className="ag-crow-plan">
                           <span className="ag-mini-bar" aria-hidden="true"><span style={{ width: `${pct}%` }} /></span>
-                          <span className="ag-crow-plan-text">{rowCash ? amountText(main) : `${main.goal} · ${pct}%`}{others > 0 ? ` · +${others} more` : ''}</span>
+                          <span className="ag-crow-plan-text">{rowCash ? amountText(main) : `${main.goal} · ${pct}% done`}{others > 0 ? ` · +${others} more` : ''}</span>
                           {habits[c.customerId] && isDaily(main) && <HabitDot h={habits[c.customerId]} />}
                         </span>
                       ) : (
@@ -560,9 +561,9 @@ function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, g
         <Icons.plan size={18} aria-hidden="true" /> Record saving
       </button>
       <div className="ag-profile-actions">
-        <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/add-plan')}><Icons.add size={18} aria-hidden="true" /> Add plan</button>
-        <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/loan-request')}><Icons.loan size={18} aria-hidden="true" /> Loan</button>
-        <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/loan-repay')}><Icons.repay size={18} aria-hidden="true" /> Repay</button>
+        <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/add-plan')}><Icons.add size={18} aria-hidden="true" /> New plan</button>
+        <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/loan-request')}><Icons.loan size={18} aria-hidden="true" /> New loan</button>
+        <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/loan-repay')}><Icons.repay size={18} aria-hidden="true" /> Pay loan</button>
       </div>
 
       <h3 className="ag-profile-section">Details</h3>
