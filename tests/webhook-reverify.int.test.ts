@@ -138,18 +138,15 @@ test('when Paystack cannot be reached the webhook answers 5xx, credits nothing, 
   assert.equal(await planBalance(plan.id), 100, 'credited once')
 })
 
-test('a charge with no intent is still credited, but only after Paystack confirms it', async () => {
+test('a customer charge with no intent is never credited, even when Paystack confirms it, and earns no reward', async () => {
   const { c, plan } = await mkCustomer()
-  const r = ref('LEGACY-')
+  const r = ref('NOINTENT-')
   said.set(r, { kobo: 5000 })
   assert.equal((await webhook(charge(r, 5000, { customerId: c.id, planId: plan.id }))).status, 200)
-  assert.equal(await planBalance(plan.id), 50)
-
-  const { c: c2, plan: plan2 } = await mkCustomer()
-  const r2 = ref('LEGACY-')
-  said.set(r2, { status: 'failed', kobo: 5000 })
-  await webhook(charge(r2, 5000, { customerId: c2.id, planId: plan2.id }))
-  assert.equal(await planBalance(plan2.id), 0)
+  assert.equal(await planBalance(plan.id), 0)
+  assert.equal(await prisma.transaction.count({ where: { ref: r } }), 0)
+  assert.equal(await prisma.agentReward.count({ where: { customerId: c.id } }), 0, 'no registration reward')
+  assert.equal(await audits(`ref ${r}`), 1, 'recorded for staff to review')
 })
 
 // --- agent wallet funding -------------------------------------------------------------------------------------

@@ -3,12 +3,10 @@ import crypto from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { money } from '@/lib/wallet-guard'
-import { creditRegistrationReward } from '@/lib/reward'
 import { verifyTransaction } from '@/lib/paystack'
 import { creditAutoDebitAttempt } from '@/lib/auto-debit-credit'
 import { sendToReview, settleIntentPayment } from '@/lib/customer-settle'
 import { INTENT_PENDING, INTENT_REVIEW, REVIEW_ACTION, consumePaymentIntent } from '@/lib/payment-intent'
-import { DEPOSIT_PLAN_STATUS, PlanClosedError, creditPlanBalance } from '@/lib/plan-credit'
 import { handleTransferEvent, isTransferEvent } from '@/lib/paystack-transfer-event'
 import { reverifyCharge } from '@/lib/webhook-reverify'
 import { ensureEnrolmentMandate, isEnrolmentRef } from '@/lib/auto-debit-enrol'
@@ -148,96 +146,18 @@ export async function POST(req: NextRequest) {
   // From here on the money has not been credited yet, so an already-recorded ref is done.
   if (existing) return NextResponse.json({ ok: true })
 
-  // Customer self-pay with no intent: credit savings plan. Only when no intent exists for the ref: a charge this
-  // server started for someone else (an agent's top-up) is never redirected by metadata the payer controls.
+  // A customer charge with no intent. Every payment this app starts for a customer creates an intent first, so this
+  // one was not started by us (another app on the shared Paystack account, or a charge built by hand with metadata
+  // naming a customer). It is never credited, and never earns the registration reward: staff decide from the audit log.
   if (customerId && !intent) {
-    const amount = confirmed.amountNaira
-
-    // Money arrived that can't be credited here: never drop it silently.
-    const needsReview = async (reason: string) => {
-      await logAudit({
-        action: REVIEW_ACTION,
-        entity: 'Transaction',
-        details: `Not credited, needs manual review: ${reason} — ref ${reference}`,
-        actorType: 'system',
-        actorName: 'Paystack Webhook',
-      })
-      console.warn(`[paystack webhook] needs manual review ref=${reference}`)
-      return NextResponse.json({ ok: true })
-    }
-
-    if (txData.currency && txData.currency !== 'NGN') return needsReview(`paid in ${txData.currency}, amount ${txData.amount / 100}`)
-
-    const customer = await prisma.customer.findUnique({ where: { id: customerId } })
-    if (!customer) return needsReview(`customer ${customerId} not found, amount ₦${amount}`)
-
-    // Prefer the plan pinned at initiation (meta.planId). With no planId, credit
-    // the sole Active plan; if there are several, we can't reject an already-paid
-    // transaction, so credit the newest but flag it (initiation should pin a plan).
-    const planId = meta.planId as string | undefined
-    let plan = planId
-      ? await prisma.savingsPlan.findFirst({ where: { id: planId, customerId, status: DEPOSIT_PLAN_STATUS, maturityDate: { gt: new Date() } } })
-      : null
-    if (!plan && !planId) {
-      const active = await prisma.savingsPlan.findMany({ where: { customerId, status: 'Active', maturityDate: { gt: new Date() } }, orderBy: { startDate: 'desc' }, take: 2 })
-      if (active.length > 1) {
-        console.warn(`[paystack webhook] no meta.planId for customer ${customerId} with multiple active plans — crediting newest`)
-      }
-      plan = active[0] ?? null
-    }
-    if (!plan) return needsReview(`no open plan (${planId ?? 'none named'}) for customer ${customerId}, amount ₦${amount}`)
-
-    const agent = await prisma.agent.findUnique({ where: { id: customer.agentId } })
-    if (!agent) return needsReview(`agent ${customer.agentId} not found for customer ${customerId}, amount ₦${amount}`)
-
-    const priorSavings = await prisma.transaction.count({ where: { customerId, type: 'saving' } })
-
-    try {
-      const creditPlanId = plan.id
-      await prisma.$transaction(async (tx) => {
-        await creditPlanBalance(tx, creditPlanId, amount)
-        await tx.transaction.create({
-          data: {
-            ref: reference,
-            agentId: agent.id,
-            customerId,
-            planId: creditPlanId,
-            type: 'saving',
-            amount,
-            method: 'Paystack',
-            status: 'Done',
-            note: `Customer self-pay via Paystack webhook — ${txData.channel ?? 'card'}`,
-          },
-        })
-        await tx.customerPayment.create({
-          data: {
-            ref: `PAY-${reference}`,
-            customerId,
-            planId: creditPlanId,
-            amount,
-            status: 'Done',
-            channel: txData.channel ?? 'card',
-          },
-        })
-      })
-    } catch (e: unknown) {
-      if (e instanceof PlanClosedError) return needsReview(`plan ${plan.id} is closed, amount ₦${amount}`)
-      if ((e as { code?: unknown } | null)?.code !== 'P2002') throw e
-      // Another delivery credited this ref. If it didn't, this is a different collision: let Paystack retry.
-      if (!await prisma.transaction.findUnique({ where: { ref: reference }, select: { id: true } })) throw e
-      return NextResponse.json({ ok: true })
-    }
-
-    logAudit({
-      action: 'customer_paystack_payment',
+    await logAudit({
+      action: REVIEW_ACTION,
       entity: 'Transaction',
-      details: `${customer.firstName} ${customer.lastName} (${customer.customerId}) paid ₦${amount.toLocaleString()} via Paystack webhook — ref ${reference}`,
+      details: `Not credited, needs manual review: a charge of ₦${confirmed.amountNaira} named customer ${customerId} but no payment was started for it — ref ${reference}`,
       actorType: 'system',
       actorName: 'Paystack Webhook',
     })
-
-    if (priorSavings === 0) creditRegistrationReward(customer).catch(() => {})
-
+    console.warn(`[paystack webhook] charge with no intent needs manual review ref=${reference}`)
     return NextResponse.json({ ok: true })
   }
 
