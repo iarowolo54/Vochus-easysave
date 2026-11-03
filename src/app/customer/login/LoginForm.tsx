@@ -104,6 +104,17 @@ export default function LoginForm() {
     setError('')
   }
 
+  // The unlock page needs to know which account, so it takes the number typed here.
+  function accountLocked() {
+    const p = phone.trim()
+    if (!p) {
+      setFieldErrors(f => ({ ...f, phone: 'Enter your phone number to unlock your account.' }))
+      document.getElementById('login-phone')?.focus()
+      return
+    }
+    router.push(`/customer/unlock?phone=${encodeURIComponent(p)}`)
+  }
+
   function editPassword(value: string) {
     setPassword(value)
     setFieldErrors(f => ({ ...f, password: '' }))
@@ -114,7 +125,7 @@ export default function LoginForm() {
     <AuthShell
       title="Welcome back"
       lead="Sign in to see your savings."
-      footer={<><Icons.locked size={14} aria-hidden="true" /> Your details are sent securely.</>}
+      footer={<span><Icons.locked size={14} aria-hidden="true" /> Secure sign-in · CBN compliant<br />© 2026 Zipwaves Technologies Limited</span>}
     >
       <form onSubmit={login} noValidate>
         {notice && !error && (
@@ -153,9 +164,10 @@ export default function LoginForm() {
             aria-describedby={fieldErrors.password.trim() ? 'login-password-error' : undefined}
           />
           <FieldError id="login-password-error" message={fieldErrors.password.trim()} />
-          <button type="button" className="ui-link ui-field-link" onClick={() => router.push('/customer/forgot-password')}>
-            Forgot password?
-          </button>
+          <div className="ui-field-links">
+            <button type="button" className="ui-link" onClick={() => router.push('/customer/forgot-password')}>Forgot password?</button>
+            <button type="button" className="ui-link ui-link--muted" onClick={accountLocked}>Account locked?</button>
+          </div>
         </div>
 
         <FormError message={error} />

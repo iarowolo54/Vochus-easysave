@@ -203,7 +203,7 @@ export default function UnlockPage() {
         <div className="login-foot" style={{ color: 'rgba(255,255,255,.8)' }}>
           <strong>Vochus Easy Save Agent Portal</strong>
           <br />
-          © 2026 Vochus Global Services Ltd.
+          © 2026 Zipwaves Technologies Limited
         </div>
       </div>
     </div>

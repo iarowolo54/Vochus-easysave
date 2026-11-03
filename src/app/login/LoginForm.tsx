@@ -163,7 +163,7 @@ function LoginPageInner() {
       title="Agent sign in"
       lead="Enter your agent ID or phone number."
       audience="Agent"
-      footer={<span><Icons.locked size={14} aria-hidden="true" /> Secure sign-in · CBN compliant<br />© 2026 Vochus Global Services Ltd.</span>}
+      footer={<span><Icons.locked size={14} aria-hidden="true" /> Secure sign-in · CBN compliant<br />© 2026 Zipwaves Technologies Limited</span>}
     >
       <form onSubmit={login} noValidate>
         <div className="ui-field">
