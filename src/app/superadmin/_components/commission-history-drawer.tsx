@@ -1,7 +1,9 @@
 'use client'
 
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { Modal, SearchField, Empty, LoadError, TableSkeleton, nairaKobo, shortDate, useDebounced } from './admin-ui'
+import { Modal, Pager, SearchField, Empty, LoadError, TableSkeleton, nairaKobo, shortDate, useDebounced } from './admin-ui'
+
+const PAGE_SIZE = 25
 
 type Source = 'loan' | 'repayment' | 'redemption' | 'reward'
 const SOURCE_LABELS: Record<Source, string> = { loan: 'Loans', repayment: 'Repayments', redemption: 'Redemptions', reward: 'Rewards' }
@@ -32,6 +34,7 @@ export function CommissionHistoryDrawer({ agent, onClose }: { agent: { id: strin
   const [sources, setSources] = useState<Source[]>([])
   const [q, setQ] = useState('')
   const [status, setStatus] = useState('')
+  const [page, setPage] = useState(1)
   const [data, setData] = useState<Resp | null>(null)
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
@@ -69,6 +72,8 @@ export function CommissionHistoryDrawer({ agent, onClose }: { agent: { id: strin
       return true
     })
   }, [data, dq, status])
+  useEffect(() => { setPage(1) }, [from, to, sources, dq, status])
+  const paginated = useMemo(() => visible.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE), [visible, page])
   const shownTotal = useMemo(() => Math.round(visible.reduce((s, e) => s + e.commission, 0) * 100) / 100, [visible])
 
   return (
@@ -106,11 +111,12 @@ export function CommissionHistoryDrawer({ agent, onClose }: { agent: { id: strin
         : failed ? <LoadError what="commission history" onRetry={load} />
         : visible.length === 0 ? <Empty icon="commission" title="No commission in this view" text="Try a wider date range or clear the filters. Savings and enrolments don’t earn commission in the current model, so they won’t appear here." />
         : (
+          <>
           <div className="tbl-wrap tbl-stack">
             <table>
               <thead><tr><th>Date</th><th>Source</th><th>Customer</th><th className="num">From</th><th className="num">Commission</th></tr></thead>
               <tbody>
-                {visible.map(e => (
+                {paginated.map(e => (
                   <tr key={e.id}>
                     <td data-label="Date">{shortDate(e.date)}</td>
                     <td data-label="Source"><span className="bdg bdg-grey">{SOURCE_LABELS[e.source]}</span></td>
@@ -125,6 +131,8 @@ export function CommissionHistoryDrawer({ agent, onClose }: { agent: { id: strin
               </tbody>
             </table>
           </div>
+          <Pager page={page} pageSize={PAGE_SIZE} total={visible.length} onPage={setPage} />
+          </>
         )}
     </Modal>
   )

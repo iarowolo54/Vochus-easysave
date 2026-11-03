@@ -10,14 +10,22 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const status = searchParams.get('status') ?? ''
 
+  const pageSize = Math.min(100, Math.max(1, Math.floor(Number(searchParams.get('pageSize'))) || 25))
+  const page = Math.max(1, Math.floor(Number(searchParams.get('page'))) || 1)
+
   const where: Record<string, unknown> = {}
   if (status) where.status = status
 
-  const reports = await prisma.issueReport.findMany({
-    where,
-    include: { agent: { select: { name: true, agentId: true } } },
-    orderBy: { createdAt: 'desc' },
-  })
+  const [reports, total] = await Promise.all([
+    prisma.issueReport.findMany({
+      where,
+      include: { agent: { select: { name: true, agentId: true } } },
+      orderBy: { createdAt: 'desc' },
+      skip: (page - 1) * pageSize,
+      take: pageSize,
+    }),
+    prisma.issueReport.count({ where }),
+  ])
 
   const [openCount, inReviewCount, resolvedCount] = await Promise.all([
     prisma.issueReport.count({ where: { status: 'Open' } }),
@@ -36,6 +44,7 @@ export async function GET(req: NextRequest) {
       status: r.status,
       createdAt: r.createdAt,
     })),
+    total,
     openCount,
     inReviewCount,
     resolvedCount,

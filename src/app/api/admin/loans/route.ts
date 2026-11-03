@@ -10,6 +10,10 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const status = searchParams.get('status') ?? ''
 
+  // Optional cap for callers that only need the newest few (the overview). No limit = full list.
+  const limitRaw = searchParams.get('limit') ?? ''
+  const limit = /^\d+$/.test(limitRaw) && Number(limitRaw) > 0 ? Math.min(Number(limitRaw), 200) : undefined
+
   const where: any = {}
   if (status) {
     const statuses = status.split(',').map(s => s.trim())
@@ -23,6 +27,7 @@ export async function GET(req: NextRequest) {
       agent: { select: { name: true, agentId: true } },
     },
     orderBy: { createdAt: 'desc' },
+    ...(limit && { take: limit }),
   })
 
   return NextResponse.json({
