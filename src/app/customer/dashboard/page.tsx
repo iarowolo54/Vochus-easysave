@@ -1,8 +1,7 @@
 'use client'
 import { useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import BottomNav from '@/components/BottomNav'
-import { CUSTOMER_NAV } from '@/components/nav-items'
+import CustomerBottomNav from '@/components/customer/CustomerBottomNav'
 import CollectionTracker from '@/components/customer/CollectionTracker'
 import PlanEnded, { PlanSummary } from '@/components/customer/PlanEnded'
 import DepositReceipt, { depositIcon, depositMethod } from '@/components/customer/DepositReceipt'
@@ -450,7 +449,7 @@ export default function CustomerDashboard() {
 
       {toast && <Toast message={toast} onDone={() => setToast('')} />}
 
-      <BottomNav items={CUSTOMER_NAV} />
+      <CustomerBottomNav />
     </div>
   )
 }

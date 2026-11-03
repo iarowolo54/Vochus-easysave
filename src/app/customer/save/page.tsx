@@ -1,8 +1,7 @@
 'use client'
 import { useEffect, useState, Suspense, type FormEvent } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import BottomNav from '@/components/BottomNav'
-import { CUSTOMER_NAV } from '@/components/nav-items'
+import CustomerBottomNav from '@/components/customer/CustomerBottomNav'
 import { useCustomerMe } from '@/components/customer/useCustomerMe'
 import Amount from '@/components/ui/Amount'
 import BottomSheet from '@/components/ui/BottomSheet'
@@ -404,7 +403,7 @@ function SavePageInner() {
         </div>
       </BottomSheet>
 
-      <BottomNav items={CUSTOMER_NAV} />
+      <CustomerBottomNav />
     </div>
   )
 }

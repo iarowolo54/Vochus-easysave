@@ -1,8 +1,7 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import BottomNav from '@/components/BottomNav'
-import { CUSTOMER_NAV } from '@/components/nav-items'
+import CustomerBottomNav from '@/components/customer/CustomerBottomNav'
 import BankSelect from '@/components/ui/BankSelect'
 import CodeBoxes from '@/components/ui/CodeBoxes'
 import EmptyState from '@/components/ui/EmptyState'
@@ -390,7 +389,7 @@ export default function CustomerRedeemPage() {
         )}
       </main>
 
-      <BottomNav items={CUSTOMER_NAV} />
+      <CustomerBottomNav />
     </div>
   )
 }
