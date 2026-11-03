@@ -3,35 +3,42 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Icons } from '@/components/ui/icons'
 import { ConfirmModal, Empty, Field, LoadError, Modal, TableSkeleton } from '../../_components/admin-ui'
-import { AREA_KEYS, AREA_LABELS, AREA_UNLOCKS, MONEY_AREAS, type Area } from '@/lib/permissions'
-import { type Department, type RoleRow, sendJson } from './shared'
+import { SCREENS, MONEY_SCREENS, canEditRole, canGrant, type Perm, type ScreenKey } from '@/lib/permissions'
+import PermissionMatrix from './PermissionMatrix'
+import { type RoleRow, sendJson } from './shared'
 
-export function AreaChips({ areas }: { areas: string[] }) {
-  if (areas.length === 0) return <span className="cs-muted">No areas</span>
+const LABELS = new Map<string, string>(SCREENS.map(s => [s.key, s.label]))
+
+/** Compact summary of a role's access: one chip per screen, "Manage" marked, money screens amber. */
+export function PermChips({ perms }: { perms: string[] }) {
+  const screens = [...new Set(perms.map(p => p.split(':')[0]))]
+  if (screens.length === 0) return <span className="cs-muted">No access</span>
   return (
     <span className="cs-chips">
-      {areas.map(a => {
-        const k = a as Area
-        const money = MONEY_AREAS.includes(k)
-        return <span key={a} className={`cs-chip${money ? ' cs-chip-money' : ''}`}>{AREA_LABELS[k] ?? a}</span>
+      {screens.map(k => {
+        const manage = perms.includes(`${k}:manage`)
+        const money = manage && MONEY_SCREENS.includes(k as ScreenKey)
+        return <span key={k} className={`cs-chip${money ? ' cs-chip-money' : ''}`}>{LABELS.get(k) ?? k}{manage ? ' · Manage' : ''}</span>
       })}
     </span>
   )
 }
 
-export default function RolesView({ toast }: { toast: (m: string, t?: 'success' | 'error') => void }) {
-  const [depts, setDepts] = useState<Department[]>([])
-  const [deptId, setDeptId] = useState('')
-  const [deptLoading, setDeptLoading] = useState(true)
-  const [deptFailed, setDeptFailed] = useState(false)
-
+export default function RolesView({ departmentId, departmentName, ceiling, toast, onChanged }: {
+  departmentId: string
+  departmentName: string
+  /** null for the owner (unbounded); a lead's own permissions otherwise. */
+  ceiling: Perm[] | null
+  toast: (m: string, t?: 'success' | 'error') => void
+  onChanged?: () => void
+}) {
   const [roles, setRoles] = useState<RoleRow[]>([])
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
 
   const [editing, setEditing] = useState<RoleRow | 'new' | null>(null)
   const [name, setName] = useState('')
-  const [areas, setAreas] = useState<Area[]>([])
+  const [perms, setPerms] = useState<Perm[]>([])
   const [nameError, setNameError] = useState('')
   const [formError, setFormError] = useState('')
   const [busy, setBusy] = useState(false)
@@ -39,50 +46,40 @@ export default function RolesView({ toast }: { toast: (m: string, t?: 'success' 
   const [statusTarget, setStatusTarget] = useState<RoleRow | null>(null)
   const [actionError, setActionError] = useState('')
 
-  const loadDepts = useCallback(async () => {
-    setDeptLoading(true); setDeptFailed(false)
-    try {
-      const res = await fetch('/api/admin/departments')
-      if (!res.ok) throw new Error()
-      const d = await res.json()
-      const list: Department[] = d.departments ?? []
-      setDepts(list)
-      setDeptId(cur => (cur && list.some(x => x.id === cur)) ? cur : (list.find(x => x.status === 'Active') ?? list[0])?.id ?? '')
-    } catch { setDeptFailed(true) } finally { setDeptLoading(false) }
-  }, [])
-  useEffect(() => { loadDepts() }, [loadDepts])
-
-  const loadRoles = useCallback(async () => {
-    if (!deptId) return
+  const load = useCallback(async () => {
     setLoading(true); setFailed(false)
     try {
-      const res = await fetch(`/api/admin/roles?departmentId=${encodeURIComponent(deptId)}`)
+      const res = await fetch(`/api/admin/roles?departmentId=${encodeURIComponent(departmentId)}`)
       if (!res.ok) throw new Error()
       const d = await res.json()
       setRoles(d.roles ?? [])
     } catch { setFailed(true) } finally { setLoading(false) }
-  }, [deptId])
-  useEffect(() => { setRoles([]); loadRoles() }, [loadRoles])
+  }, [departmentId])
+  useEffect(() => { setRoles([]); load() }, [load])
 
-  const dept = depts.find(d => d.id === deptId)
+  // A lead can only touch roles whose access is within their own.
+  const editable = (r: RoleRow) => !ceiling || canGrant(ceiling, r.permissions as Perm[])
 
   function open(r: RoleRow | 'new') {
     setEditing(r); setNameError(''); setFormError('')
     setName(r === 'new' ? '' : r.name)
-    setAreas(r === 'new' ? [] : r.permissions.filter((p): p is Area => (AREA_KEYS as readonly string[]).includes(p)))
+    setPerms(r === 'new' ? [] : (r.permissions as Perm[]))
   }
 
   async function save() {
     if (!editing) return
     if (!name.trim()) { setNameError('Enter a role name.'); return }
+    if (ceiling && editing !== 'new' && !canEditRole(ceiling, editing.permissions as Perm[], perms)) {
+      setFormError('You can only give a role access you hold yourself.'); return
+    }
     setBusy(true); setFormError('')
     const r = editing === 'new'
-      ? await sendJson('/api/admin/roles', 'POST', { name: name.trim(), departmentId: deptId, permissions: areas })
-      : await sendJson(`/api/admin/roles/${editing.id}`, 'PATCH', { name: name.trim(), permissions: areas })
+      ? await sendJson('/api/admin/roles', 'POST', { name: name.trim(), departmentId, permissions: perms })
+      : await sendJson(`/api/admin/roles/${editing.id}`, 'PATCH', { name: name.trim(), permissions: perms })
     setBusy(false)
     if (!r.ok) { setFormError(r.error); return }
     toast(editing === 'new' ? `${name.trim()} role created` : 'Role updated', 'success')
-    setEditing(null); loadRoles(); loadDepts()
+    setEditing(null); load(); onChanged?.()
   }
 
   async function toggleStatus() {
@@ -94,53 +91,43 @@ export default function RolesView({ toast }: { toast: (m: string, t?: 'success' 
     setBusy(false)
     if (!r.ok) { setActionError(r.error); return }
     toast(`${r0.name} ${next === 'Active' ? 'reactivated' : 'archived'}`, 'success')
-    setStatusTarget(null); loadRoles()
-  }
-
-  if (deptLoading && !depts.length) return <section className="card"><TableSkeleton rows={4} cols={4} /></section>
-  if (deptFailed) return <section className="card"><LoadError what="departments" onRetry={loadDepts} /></section>
-  if (depts.length === 0) {
-    return <section className="card"><Empty icon="staff" title="Create a department first" text="Roles belong to a department. Add one in the Departments tab." /></section>
+    setStatusTarget(null); load(); onChanged?.()
   }
 
   return (
     <>
       <div className="toolbar">
-        <div className="cs-select">
-          <label className="sr-only" htmlFor="rl-dept">Department</label>
-          <select id="rl-dept" className="a-input" value={deptId} onChange={e => setDeptId(e.target.value)}>
-            {depts.map(d => <option key={d.id} value={d.id}>{d.name}{d.status !== 'Active' ? ' (archived)' : ''}</option>)}
-          </select>
-        </div>
         <button type="button" className="btn btn-green" onClick={() => open('new')}><Icons.add size={18} aria-hidden="true" /> Add role</button>
       </div>
 
-      <section className="card" aria-label="Roles">
-        {loading && !roles.length ? <TableSkeleton rows={4} cols={5} />
-          : failed ? <LoadError what="roles" onRetry={loadRoles} />
+      <section className="card" aria-label={`${departmentName} roles`}>
+        {loading && !roles.length ? <TableSkeleton rows={3} cols={4} />
+          : failed ? <LoadError what="roles" onRetry={load} />
           : roles.length === 0 ? (
-            <Empty icon="staff" title={`No roles in ${dept?.name ?? 'this department'} yet`} text="A role decides which areas its people can work in."
+            <Empty icon="staff" title={`No roles in ${departmentName} yet`} text="A role decides which screens its people can view and manage."
               action={<button type="button" className="btn btn-green" onClick={() => open('new')}>Add role</button>} />
           ) : (
             <div className="tbl-wrap tbl-stack">
               <table>
                 <thead>
-                  <tr><th>Role</th><th>Areas</th><th>People</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr>
+                  <tr><th>Role</th><th>Access</th><th>People</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr>
                 </thead>
                 <tbody>
                   {roles.map(r => (
                     <tr key={r.id}>
                       <td><span className="td-name ui-block">{r.name}</span></td>
-                      <td data-label="Areas"><AreaChips areas={r.permissions} /></td>
+                      <td data-label="Access"><PermChips perms={r.permissions} /></td>
                       <td data-label="People">{r.staffCount}</td>
                       <td data-label="Status">{r.status === 'Active' ? <span className="bdg bdg-g">Active</span> : <span className="bdg bdg-grey">Archived</span>}</td>
                       <td>
-                        <div className="a-row-actions">
-                          <button type="button" className="btn btn-sm btn-outline" onClick={() => open(r)}>Edit</button>
-                          <button type="button" className="btn btn-sm btn-outline" onClick={() => { setActionError(''); setStatusTarget(r) }}>
-                            {r.status === 'Active' ? 'Archive' : 'Reactivate'}
-                          </button>
-                        </div>
+                        {editable(r) ? (
+                          <div className="a-row-actions">
+                            <button type="button" className="btn btn-sm btn-outline" onClick={() => open(r)}>Edit</button>
+                            <button type="button" className="btn btn-sm btn-outline" onClick={() => { setActionError(''); setStatusTarget(r) }}>
+                              {r.status === 'Active' ? 'Archive' : 'Reactivate'}
+                            </button>
+                          </div>
+                        ) : <span className="cs-muted">Above your access</span>}
                       </td>
                     </tr>
                   ))}
@@ -151,8 +138,8 @@ export default function RolesView({ toast }: { toast: (m: string, t?: 'success' 
       </section>
 
       {editing && (
-        <Modal error={formError || undefined} icon="staff" title={editing === 'new' ? `Add a role to ${dept?.name ?? 'department'}` : 'Edit role'} busy={busy}
-          sub="Choose the areas this role can work in." onClose={() => { if (!busy) setEditing(null) }}
+        <Modal error={formError || undefined} icon="staff" title={editing === 'new' ? `Add a role to ${departmentName}` : 'Edit role'} busy={busy} size="lg"
+          sub={ceiling ? 'You can only give access you hold yourself.' : 'Choose what this role can view and manage.'} onClose={() => { if (!busy) setEditing(null) }}
           footer={<>
             <button type="button" className="btn btn-outline" onClick={() => setEditing(null)} disabled={busy}>Cancel</button>
             <button type="button" className="btn btn-green" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save role'}</button>
@@ -162,24 +149,7 @@ export default function RolesView({ toast }: { toast: (m: string, t?: 'success' 
               <input id="rl-name" className="a-input" autoComplete="off" placeholder="Payout approver" value={name} aria-invalid={!!nameError}
                 onChange={e => { setName(e.target.value); setNameError('') }} />
             </Field>
-            <fieldset className="cs-perms">
-              <legend className="a-label">Areas this role can use</legend>
-              <div className="cs-area-list">
-                {AREA_KEYS.map(a => (
-                  <label key={a} className="cs-perm cs-area" htmlFor={`rl-area-${a}`}>
-                    <input id={`rl-area-${a}`} type="checkbox" checked={areas.includes(a)}
-                      onChange={() => setAreas(areas.includes(a) ? areas.filter(x => x !== a) : [...areas, a])} />
-                    <span className="cs-area-text">
-                      <span className="cs-area-name">
-                        {AREA_LABELS[a]}
-                        {MONEY_AREAS.includes(a) && <span className="cs-chip cs-chip-money">Handles money</span>}
-                      </span>
-                      <span className="cs-area-help">{AREA_UNLOCKS[a]}</span>
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
+            <PermissionMatrix idPrefix="rl" value={perms} onChange={setPerms} ceiling={ceiling} />
           </form>
         </Modal>
       )}
@@ -188,8 +158,8 @@ export default function RolesView({ toast }: { toast: (m: string, t?: 'success' 
         <ConfirmModal
           title={statusTarget.status === 'Active' ? `Archive ${statusTarget.name}?` : `Reactivate ${statusTarget.name}?`}
           body={statusTarget.status === 'Active'
-            ? <>People with this role lose access to its areas until it is reactivated{statusTarget.staffCount ? ` (${statusTarget.staffCount} affected)` : ''}.</>
-            : <>People with this role get its areas back.</>}
+            ? <>People with this role lose access to its screens until it is reactivated{statusTarget.staffCount ? ` (${statusTarget.staffCount} affected)` : ''}.</>
+            : <>People with this role get its access back.</>}
           confirmLabel={statusTarget.status === 'Active' ? 'Archive' : 'Reactivate'}
           danger={statusTarget.status === 'Active'}
           busy={busy} error={actionError}
