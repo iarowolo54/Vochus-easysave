@@ -15,6 +15,8 @@ test('typos match', () => {
   assert.ok(hit('Adaaeze'))  // extra letter
   assert.ok(hit('Okonkow'))  // swapped end
   assert.ok(hit('Okonqwo'))  // wrong letter
+  assert.ok(hit('Okonq'))    // half-typed with a wrong letter
+  assert.ok(!hit('a'.repeat(5000)))  // oversized word is skipped, not computed
 })
 test('phone with spaces or dashes matches', () => {
   assert.ok(hit('0803 123')); assert.ok(hit('0803-123-4567'))
