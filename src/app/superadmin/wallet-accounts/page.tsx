@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Icons, type IconName } from '@/components/ui/icons'
 import {
-  Avatar, Empty, LoadError, PageHeader, SearchField, Segmented, TableSkeleton, naira, shortDate,
+  Avatar, Empty, LoadError, PageHeader, Pager, SearchField, Segmented, TableSkeleton, naira, shortDate,
 } from '../_components/admin-ui'
 
 interface PlatformWallet {
@@ -51,6 +51,7 @@ interface AgentsData {
 type View = 'platform' | 'agents'
 
 const EMPTY_TODAY: Today = { savings: 0, redemptions: 0, registrations: 0, walletFunding: 0, disbursements: 0, repayments: 0 }
+const PAGE_SIZE = 25
 const LOW_BALANCE = 10000 // same threshold the wallets API uses for lowBalanceCount
 // Display-only estimate of today's platform fee. Mirrors the 1.6% default platform savings rate in
 // wallet-rates.ts; the real figure depends on each plan's cadence and deposit method.
@@ -71,6 +72,7 @@ export default function WalletAccountsPage() {
   const [platformFailed, setPlatformFailed] = useState(false)
   const [agentsFailed, setAgentsFailed] = useState(false)
   const [search, setSearch] = useState('')
+  const [page, setPage] = useState(1)
   const [view, setView] = useState<View>('platform')
 
   const load = useCallback(async () => {
@@ -113,10 +115,13 @@ export default function WalletAccountsPage() {
   const totalAll = platform ? totalPlatform + platform.totalAgentFloat + platform.totalAgentCommission : 0
   const net = platform ? platform.totalAgentFloat - platform.totalCustomerSavings : 0
 
+  useEffect(() => { setPage(1) }, [search])
+
   const term = search.trim().toLowerCase()
   const agents = agentsData?.agents ?? []
   const filteredAgents = agents.filter(a => !term ||
     a.name.toLowerCase().includes(term) || a.agentId.toLowerCase().includes(term) || (a.location ?? '').toLowerCase().includes(term))
+  const paginated = filteredAgents.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE)
 
   const statVal = (v: string) => loading && !platform ? <span className="skel stat-val cm-stat-skel" aria-hidden="true" /> : <div className="stat-val">{platform ? v : '—'}</div>
 
@@ -247,7 +252,7 @@ export default function WalletAccountsPage() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filteredAgents.map(a => {
+                      {paginated.map(a => {
                         const isLow = a.walletBalance < LOW_BALANCE
                         return (
                           <tr key={a.id}>
@@ -274,6 +279,7 @@ export default function WalletAccountsPage() {
                     </tbody>
                   </table>
                 </div>
+                <Pager page={page} pageSize={PAGE_SIZE} total={filteredAgents.length} onPage={setPage} />
                 <p className="cm-foot">Low balance means under {naira(LOW_BALANCE)}. {agentsData && `${naira(agentsData.totalWalletBalance)} across all agent wallets.`}</p>
               </>
             )}

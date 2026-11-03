@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { handleTransferEvent, isTransferEvent } from '@/lib/paystack-transfer-event'
 
 export async function POST(req: NextRequest) {
   const body = await req.text()
@@ -28,25 +29,7 @@ export async function POST(req: NextRequest) {
     actorName: 'Paystack Webhook',
   })
 
-  if (['transfer.success', 'transfer.failed', 'transfer.reversed'].includes(type)) {
-    const transferCode = data.transfer_code as string
-    const statusMap: Record<string, string> = {
-      'transfer.success': 'success',
-      'transfer.failed': 'failed',
-      'transfer.reversed': 'reversed',
-    }
-    await prisma.earlyRedemption.updateMany({
-      where: { paystackTransferCode: transferCode },
-      data: { bankTransferStatus: statusMap[type] },
-    })
-    logAudit({
-      action: 'paystack_transfer_status_update',
-      entity: 'EarlyRedemption',
-      details: `Paystack webhook: transfer ${transferCode} → ${statusMap[type]}`,
-      actorType: 'system',
-      actorName: 'Paystack Webhook',
-    })
-  }
+  if (isTransferEvent(type)) await handleTransferEvent(prisma, type, data)
 
   return NextResponse.json({ ok: true })
 }

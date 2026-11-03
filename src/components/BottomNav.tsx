@@ -43,7 +43,7 @@ export default function BottomNav({ items, onMore, badges }: BottomNavProps) {
           )
         }
         return (
-          <Link key={item.key} href={item.href} className={cls} aria-current={isActive ? 'page' : undefined}>
+          <Link key={item.key} href={item.href} className={cls} aria-current={isActive ? 'page' : undefined} aria-label={badge > 0 ? `${item.label}, ${badge} unread messages` : undefined}>
             {content}
           </Link>
         )

@@ -91,9 +91,9 @@ export default function SuperAdminDashboard() {
     try {
       const [sRes, tRes, lRes, aRes, mRes] = await Promise.all([
         fetch('/api/admin/stats'),
-        fetch('/api/admin/transactions'),
-        fetch('/api/admin/loans?status=Pending'),
-        fetch('/api/admin/agents'),
+        fetch('/api/admin/transactions?limit=8'),
+        fetch('/api/admin/loans?status=Pending&limit=5'),
+        fetch('/api/admin/agents?top=5'),
         fetch('/api/admin/me').catch(() => null),
       ])
       if (!sRes.ok) throw new Error()

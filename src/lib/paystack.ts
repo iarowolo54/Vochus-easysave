@@ -18,14 +18,25 @@ export class PaystackRejected extends Error {
   }
 }
 
-async function call(method: string, path: string, body?: object) {
+async function request(method: string, path: string, body?: object) {
   const res = await fetch(`${BASE}${path}`, {
     method,
     headers: headers(),
     body: body ? JSON.stringify(body) : undefined,
     signal: AbortSignal.timeout(15000),
   })
-  return res.json()
+  return { httpStatus: res.status, data: await res.json() }
+}
+
+async function call(method: string, path: string, body?: object) {
+  return (await request(method, path, body)).data
+}
+
+/** A status:false from a transfer call. Only a plain 4xx refusal proves nothing was sent. A 5xx, a rate limit or
+ *  a timeout tells us nothing, and a duplicate reference means a transfer may already exist. */
+function transferRefusal(httpStatus: number, message: string): Error {
+  const refused = httpStatus >= 400 && httpStatus < 500 && httpStatus !== 408 && httpStatus !== 429 && !/duplicate|already/i.test(message)
+  return refused ? new PaystackRejected(message) : new Error(message)
 }
 
 export async function listBanks(): Promise<{ code: string; name: string }[]> {
@@ -38,12 +49,13 @@ export async function resolveAccount(accountNumber: string, bankCode: string) {
   if (bankCode === '001') {
     return { accountName: 'Test Account', accountNumber }
   }
-  const data = await call('GET', `/bank/resolve?account_number=${accountNumber}&bank_code=${bankCode}`)
-  if (!data.status) throw new Error(data.message ?? 'Could not resolve account')
+  const { httpStatus, data } = await request('GET', `/bank/resolve?account_number=${encodeURIComponent(accountNumber)}&bank_code=${encodeURIComponent(bankCode)}`)
+  // A PaystackRejected means this account was refused; anything else means Paystack didn't really answer.
+  if (!data.status) throw transferRefusal(httpStatus, data.message ?? 'Could not resolve account')
   return { accountName: data.data.account_name as string, accountNumber: data.data.account_number as string }
 }
 
-function isTestMode() {
+export function isTestMode() {
   return process.env.PAYSTACK_SECRET_KEY?.startsWith('sk_test_')
 }
 
@@ -70,13 +82,21 @@ export interface BvnResolution {
   gender?: string | null
 }
 
+/** Keeps the HTTP status, so a wrong key (401) can be told from an unknown BVN without logging anything from the reply. */
+export class BvnLookupFailed extends Error {
+  constructor(public httpStatus: number, message: string) {
+    super(message)
+    this.name = 'BvnLookupFailed'
+  }
+}
+
 export async function resolveBvn(bvn: string): Promise<BvnResolution> {
   if (isTestMode()) {
     // Paystack test mode doesn't validate real BVNs — return a deterministic dummy
     return { bvn, firstName: 'TEST', lastName: 'CUSTOMER', dob: '1990-01-01', phone: null, gender: 'M' }
   }
-  const data = await call('GET', `/bank/resolve_bvn/${bvn}`)
-  if (!data.status) throw new Error(data.message ?? 'Could not verify BVN')
+  const { httpStatus, data } = await request('GET', `/bank/resolve_bvn/${bvn}`)
+  if (!data.status) throw new BvnLookupFailed(httpStatus, data.message ?? 'Could not verify BVN')
   const d = data.data ?? {}
   return {
     bvn: d.bvn ?? bvn,
@@ -93,14 +113,14 @@ export async function initiateTransfer(amountNaira: number, recipientCode: strin
   if (isTestMode()) {
     return { transferCode: `TRF_test_${Date.now()}`, status: 'success' as string, raw: null as any }
   }
-  const data = await call('POST', '/transfer', {
+  const { httpStatus, data } = await request('POST', '/transfer', {
     source: 'balance',
     reason,
     amount: Math.round(amountNaira * 100),
     recipient: recipientCode,
     reference,
   })
-  if (!data.status) throw new Error(data.message ?? 'Transfer initiation failed')
+  if (!data.status) throw transferRefusal(httpStatus, data.message ?? 'Transfer initiation failed')
   return {
     transferCode: data.data.transfer_code as string,
     status: data.data.status as string, // 'success' | 'pending' | 'otp' | 'reversed' | 'failed'
@@ -110,19 +130,26 @@ export async function initiateTransfer(amountNaira: number, recipientCode: strin
 
 export async function verifyTransfer(reference: string) {
   if (isTestMode()) return { status: 'success' as string, raw: null as any }
-  const data = await call('GET', `/transfer/verify/${reference}`)
-  if (!data.status) throw new Error(data.message ?? 'Transfer verification failed')
+  const { httpStatus, data } = await request('GET', `/transfer/verify/${reference}`)
+  if (!data.status) throw transferRefusal(httpStatus, data.message ?? 'Transfer verification failed')
   return { status: data.data.status as string, raw: data.data }
 }
 
 export async function finalizeTransfer(transferCode: string, otp: string) {
   if (isTestMode()) return { status: 'success' as string }
-  const data = await call('POST', '/transfer/finalize_transfer', {
+  const { httpStatus, data } = await request('POST', '/transfer/finalize_transfer', {
     transfer_code: transferCode,
     otp,
   })
-  if (!data.status) throw new PaystackRejected(data.message ?? 'OTP finalization failed')
-  return { status: (data.data?.status ?? 'success') as string }
+  if (!data.status) {
+    const message: string = data.message ?? 'OTP finalization failed'
+    // Handing the claim back allows another try, so only a refusal that's clearly about the code does that.
+    // Anything else is unknown: the record stays Finalizing and verify decides.
+    const wrongCode = /\b(otp|code)\b/i.test(message) && httpStatus < 500 && httpStatus !== 408 && httpStatus !== 429
+    throw wrongCode ? new PaystackRejected(message) : new Error(message)
+  }
+  // No status isn't a success: callers only book a payout on an explicit one.
+  return { status: (data.data?.status ?? 'unknown') as string }
 }
 
 export interface PaystackAuthorization {

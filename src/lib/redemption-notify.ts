@@ -13,7 +13,7 @@ type Client = Pick<PrismaClient, 'superAdmin'>
  */
 export async function notifySuperAdminsRedemptionPending(
   client: Client,
-  input: { customerName: string; amountNaira: number; planGoal?: string; ref: string },
+  input: { customerName: string; amountNaira: number; planGoal?: string; ref: string; warning?: string },
 ): Promise<void> {
   try {
     if (process.env.NODE_ENV !== 'production') return
@@ -27,6 +27,7 @@ export async function notifySuperAdminsRedemptionPending(
       `Amount: <strong>${escapeHtml(formatNaira(input.amountNaira))}</strong><br/>` +
       (input.planGoal ? `Plan: ${escapeHtml(input.planGoal)}<br/>` : '') +
       `Reference: <code>${escapeHtml(input.ref)}</code></p>` +
+      (input.warning ? `<p><strong>${escapeHtml(input.warning)}</strong></p>` : '') +
       `<p>Open the admin dashboard to review and approve it.</p>`
     for (const a of admins) {
       if (!a.email) continue
@@ -38,5 +39,24 @@ export async function notifySuperAdminsRedemptionPending(
     }
   } catch {
     // best-effort: a failed notification must never affect the redemption flow
+  }
+}
+
+/** Email every super admin about a payout that needs a person to look at it. Best-effort, like the one above. */
+export async function notifySuperAdminsPayoutReview(client: Client, input: { ref: string; message: string }): Promise<void> {
+  try {
+    if (process.env.NODE_ENV !== 'production') return
+    const admins = await client.superAdmin.findMany({ where: { email: { not: '' } }, select: { email: true } })
+    const html = `<p><strong>A payout needs manual review.</strong></p><p>${escapeHtml(input.message)}</p><p>Reference: <code>${escapeHtml(input.ref)}</code></p>`
+    for (const a of admins) {
+      if (!a.email) continue
+      try {
+        await sendMail({ to: a.email, subject: 'Payout needs manual review', html })
+      } catch {
+        // one failed recipient must not stop the others
+      }
+    }
+  } catch {
+    // best-effort: a failed notification must never affect the payout flow
   }
 }

@@ -1,43 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { randomInt } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { sendMail } from '@/lib/mail'
 import { emailLogo } from '@/lib/email-brand'
+import { clientIp } from '@/lib/rate-limit'
+import { deliverInBackground, issueResetCode, limitByIp, newResetId, readBody, text } from '@/lib/password-reset'
 
-function genOtp() {
-  return randomInt(100000, 1000000).toString()
-}
-
-export async function POST(req: NextRequest) {
-  const { identifier } = await req.json()
-  if (!identifier) return NextResponse.json({ error: 'Agent ID or phone required' }, { status: 400 })
-
-  const id = identifier.trim()
-  const agent = await prisma.agent.findFirst({
-    where: {
-      OR: [
-        { agentId: id.toUpperCase() },
-        { agentId: id },
-        { phone: id },
-      ],
-    },
-  })
-
-  if (!agent || !agent.email) {
-    return NextResponse.json({ error: 'No account found, or no email on file' }, { status: 404 })
-  }
-
-  const code = genOtp()
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000)
-  const email = agent.email
-
-  await prisma.emailOTP.deleteMany({ where: { email } })
-  await prisma.emailOTP.create({ data: { email, code, expiresAt } })
-
-  await sendMail({
-    to: email,
-    subject: 'Vochus Easy Save — Agent Password Reset Code',
-    html: `
+function resetEmailHtml(code: string) {
+  return `
       <div style="font-family:sans-serif;max-width:420px;margin:0 auto;padding:28px 20px;background:#f3f6f3">
         <div style="background:#fff;border-radius:16px;padding:28px;border:1px solid #d8e8dd">
           <div style="text-align:center;margin-bottom:20px">
@@ -51,9 +20,40 @@ export async function POST(req: NextRequest) {
           <p style="font-size:12.5px;color:#888;margin:0">This code expires in <strong>10 minutes</strong>. If you did not request this, ignore this email.</p>
         </div>
       </div>
-    `,
-  })
+    `
+}
 
-  const masked = email.replace(/^(.{2}).*(@.*)$/, '$1***$2')
-  return NextResponse.json({ sent: true, maskedEmail: masked })
+export async function POST(req: NextRequest) {
+  const limited = limitByIp(req, 'request')
+  if (limited) return limited
+
+  const id = text((await readBody(req)).identifier)
+  if (!id) return NextResponse.json({ error: 'Agent ID or phone required' }, { status: 400 })
+
+  // Unknown accounts, accounts with no email and accounts in their cooldown get a random resetId, so every answer looks the same.
+  let resetId = newResetId()
+  try {
+    const agent = await prisma.agent.findFirst({
+      where: {
+        OR: [
+          { agentId: id.toUpperCase() },
+          { agentId: id },
+          { phone: id },
+        ],
+      },
+    })
+    const email = agent?.email
+    const issued = agent && email ? await issueResetCode('agent', agent.id, Date.now(), 'reset', clientIp(req)) : null
+    if (email && issued) {
+      resetId = issued.resetId
+      deliverInBackground(issued.id, async () => {
+        await sendMail({ to: email, subject: 'Vochus Easy Save — Agent Password Reset Code', html: resetEmailHtml(issued.code) })
+        return true
+      })
+    }
+  } catch {
+    console.error('Password reset request failed')
+  }
+
+  return NextResponse.json({ sent: true, resetId })
 }

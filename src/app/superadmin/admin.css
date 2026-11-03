@@ -277,6 +277,12 @@
 .admin-root tbody tr:last-child td { border-bottom: none; }
 .admin-root tbody tr.is-clickable { cursor: pointer; }
 .admin-root tbody tr.is-clickable:hover td { background: var(--surface2); }
+/* Keeps a wide table's last column (status, View) in sight. ::after covers .tbl-wrap's side padding, where scrolled cells would otherwise show; ::before is the divider. */
+@media (min-width: 641px) {
+  .admin-root thead th.td-pin-end, .admin-root tbody td.td-pin-end { position: sticky; right: 24px; z-index: 1; background: var(--surface); padding-left: 12px; }
+  .admin-root .td-pin-end::after { content: ''; position: absolute; top: 0; bottom: 0; left: 100%; width: 24px; background: var(--surface); }
+  .admin-root .td-pin-end::before { content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 1px; background: var(--border); }
+}
 .admin-root .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .admin-root .td-name { font-weight: 600; white-space: nowrap; }
 .admin-root .td-sub { white-space: nowrap; }
@@ -774,6 +780,23 @@
 .admin-root .cm-pos { color: var(--accent2); }
 .admin-root .cm-strong { font-weight: 700; }
 .admin-root .cm-nowrap { white-space: nowrap; }
+
+/* ═══ Commission history drawer ═══ */
+.admin-root .ch-sum { display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; margin-bottom: 14px; }
+.admin-root .ch-sum-lbl { display: block; font-size: 13px; color: var(--text2); }
+.admin-root .ch-sum-val { display: block; font-size: 24px; font-weight: 800; color: var(--text); }
+.admin-root .ch-sum-count { font-size: 13px; color: var(--text3); white-space: nowrap; }
+.admin-root .ch-filters { display: flex; flex-direction: column; gap: 10px; margin-bottom: 14px; }
+.admin-root .ch-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.admin-root .ch-chips .chip {
+  padding: 6px 12px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface);
+  color: var(--text2); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; min-height: 34px;
+}
+.admin-root .ch-chips .chip.is-on { background: var(--accent-soft, var(--surface3)); border-color: var(--accent); color: var(--accent2); }
+.admin-root .ch-row2 { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.admin-root .ch-row2 > :first-child { flex: 1 1 200px; }
+.admin-root .ch-status { max-width: 180px; }
+.admin-root .ch-note { margin: -4px 0 14px; font-size: 12px; color: var(--text3); line-height: 1.4; }
 .admin-root .cm-truncate { display: inline-block; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 .admin-root .cm-badges { display: inline-flex; gap: 6px; flex-wrap: wrap; align-items: center; }
 .admin-root .cm-count { font-size: 13px; color: var(--text2); margin-bottom: 12px; }
@@ -877,6 +900,8 @@
 .admin-root .am-muted { color: var(--text2); }
 .admin-root .am-nowrap { white-space: nowrap; }
 .admin-root .am-strong { font-weight: 700; }
+.admin-root .am-acct { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 20px; font-weight: 700; letter-spacing: 0.02em; color: var(--text); }
+.admin-root .am-acct-sm { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; font-weight: 600; color: var(--text); }
 .admin-root .am-pos { color: var(--accent2); font-weight: 600; }
 .admin-root .am-neg { color: var(--red); font-weight: 600; }
 .admin-root .am-warn { color: var(--amber); font-weight: 700; }
@@ -957,7 +982,6 @@
 .admin-root .am-act { display: flex; align-items: center; justify-content: flex-end; gap: 6px; }
 
 /* WITHDRAWALS */
-.admin-root .am-ref-btn { background: none; border: none; padding: 0; font: inherit; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; font-weight: 600; color: var(--accent2); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; min-height: 32px; text-align: left; }
 .admin-root .am-state { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .admin-root .am-detail-hd { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .admin-root .am-pin { text-align: center; letter-spacing: 8px; font-size: 22px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }

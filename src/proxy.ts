@@ -24,7 +24,7 @@ import type { NextRequest } from 'next/server'
 import { decode, encode } from 'next-auth/jwt'
 import { requireEnv } from '@/lib/env'
 import { isAdminAreaRole } from '@/lib/permissions'
-import { verifyCustomerToken, signCustomerToken, type CustomerSession } from '@/lib/customer-auth'
+import { verifyCustomerToken, signCustomerToken, type CustomerSession } from '@/lib/customer-token'
 import { IDLE_SECONDS, type Actor } from '@/lib/session-policy'
 import {
   decideForRequest,
@@ -215,6 +215,7 @@ async function reissueCustomer(claims: Record<string, unknown>, loginAt: number)
     customerId: String(claims.customerId ?? ''),
     name: String(claims.name ?? ''),
     agentId: String(claims.agentId ?? ''),
+    ...(typeof claims.tokenVersion === 'number' ? { tokenVersion: claims.tokenVersion } : {}),
   }
   return signCustomerToken(session, { loginAt, expSeconds: IDLE_SECONDS.customer })
 }

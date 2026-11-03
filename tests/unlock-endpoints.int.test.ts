@@ -6,7 +6,7 @@ import { prisma } from '../src/lib/prisma'
 import { POST as requestUnlock } from '../src/app/api/customer/auth/unlock/request/route'
 import { POST as verifyUnlock } from '../src/app/api/customer/auth/unlock/verify/route'
 import { recordLoginFailure, isPhoneLocked } from '../src/lib/login-attempt'
-import { createUnlockOtp } from '../src/lib/unlock-otp'
+import { issueResetCode, RESEND_COOLDOWN_MS } from '../src/lib/password-reset'
 
 const rid = Math.random().toString(36).slice(2, 10)
 const phone = `0803${Math.floor(1000000 + Math.random() * 8999999)}`
@@ -32,7 +32,7 @@ before(async () => {
 })
 
 after(async () => {
-  await prisma.accountUnlockOtp.deleteMany({ where: { customerId: custPk } })
+  await prisma.passwordResetOtp.deleteMany({ where: { actorId: custPk } })
   await prisma.loginAttempt.deleteMany({ where: { key: `phone:${phone}` } })
   await prisma.auditLog.deleteMany({ where: { entityId: custPk } })
   await prisma.customer.deleteMany({ where: { id: custPk } })
@@ -48,25 +48,31 @@ test('request on a NOT-locked account is neutral (no channel leaked)', async () 
   assert.equal(body.channel, undefined)
 })
 
-test('once locked, request sends on the SMS channel with a masked target', async () => {
+test('once locked, request sends a code and answers the same neutral way', async () => {
   for (let i = 0; i < 4; i++) await recordLoginFailure({ phone })
   assert.equal(await isPhoneLocked(phone), true)
 
   const res = await requestUnlock(req({ phone }))
   assert.equal(res.status, 200)
-  const body = (await res.json()) as { ok: boolean; channel?: string; sentTo?: string }
-  assert.equal(body.channel, 'sms')
-  assert.match(body.sentTo ?? '', /\*+\d{4}$/)
+  const body = (await res.json()) as { ok: boolean; resetId: string }
+  assert.equal(body.ok, true)
+  assert.equal(await prisma.passwordResetOtp.count({ where: { actorId: custPk, purpose: 'login_unlock', resetId: body.resetId } }), 1)
 })
 
 test('verify: wrong code 400, correct code unlocks the account', async () => {
-  await createUnlockOtp(custPk, 'sms', '424242')
+  await prisma.passwordResetOtp.updateMany({ where: { attempts: { gt: 0 } }, data: { attempts: 0 } })
+  const { code, resetId } = (await issueResetCode('customer', custPk, Date.now() + RESEND_COOLDOWN_MS, 'login_unlock'))!
+  await prisma.passwordResetOtp.updateMany({ where: { resetId }, data: { createdAt: new Date() } })
+  const wrong = code === '000000' ? '000001' : '000000'
 
-  const bad = await verifyUnlock(req({ phone, code: '000000' }))
+  const missing = await verifyUnlock(req({ phone, code }))
+  assert.equal(missing.status, 400, 'needs the resetId')
+
+  const bad = await verifyUnlock(req({ phone, code: wrong, resetId }))
   assert.equal(bad.status, 400)
   assert.equal(await isPhoneLocked(phone), true) // still locked
 
-  const good = await verifyUnlock(req({ phone, code: '424242' }))
+  const good = await verifyUnlock(req({ phone, code, resetId }))
   assert.equal(good.status, 200)
   assert.equal(await isPhoneLocked(phone), false) // unlocked
 })

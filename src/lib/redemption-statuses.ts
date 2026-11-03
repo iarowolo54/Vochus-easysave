@@ -5,5 +5,16 @@
  *  record re-opens a double-pay window. */
 export const IN_FLIGHT_REDEMPTION_STATUSES = ['Pending', 'TokenValidated', 'AgentApproved', 'AwaitingOTP', 'Finalizing', 'Approved']
 
+/** The one definition of an abandoned request: its code ran out before it was confirmed. Nothing changes its
+ *  stored status, which stays honest for admins, but it no longer holds the customer back. Requests an admin
+ *  made have no code, so they never expire. */
+export const isExpiredPending = (r: { status: string; tokenExpiry: Date | string | null }, now = new Date()) =>
+  r.status === 'Pending' && r.tokenExpiry != null && new Date(r.tokenExpiry) < now
+
+/** The same rule as a Prisma filter: spread into a where that lists statuses. */
+export const excludeExpiredPending = (now = new Date()) => ({
+  OR: [{ status: { not: 'Pending' } }, { tokenExpiry: null }, { tokenExpiry: { gte: now } }],
+})
+
 /** Agent-withdrawal statuses that are still in progress (no new request allowed, shown as pending). */
 export const IN_FLIGHT_WITHDRAWAL_STATUSES = ['Pending', 'AwaitingOTP', 'Processing', 'Finalizing']

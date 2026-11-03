@@ -1,7 +1,46 @@
+import { spawnSync } from 'node:child_process';
+import { lstatSync } from 'node:fs';
+import path from 'node:path';
 import { block, readInput } from './lib.mjs';
 
-const cmd = String(readInput().tool_input?.command ?? '');
+const input = readInput();
+const cmd = String(input.tool_input?.command ?? '');
 const isCommit = /\bgit\b[^|;&]*\bcommit\b/.test(cmd);
+
+// A worktree's symlinked node_modules shares the Prisma client with the main repo, so generating
+// there silently moves every server using it onto that worktree's dev.db. See agents-and-resources.md.
+const generate = cmd.search(/\bprisma\s+generate\b/);
+if (generate !== -1) {
+  const cds = [...cmd.slice(0, generate).matchAll(/\bcd\s+("[^"]+"|'[^']+'|[^\s;&|]+)/g)];
+  const target = cds.length ? cds[cds.length - 1][1].replace(/^["']|["']$/g, '') : '.';
+  const dir = path.resolve(String(input.cwd ?? process.cwd()), target);
+  let symlinked = false;
+  try { symlinked = lstatSync(path.join(dir, 'node_modules')).isSymbolicLink(); } catch {}
+  if (symlinked) {
+    block('Blocked: node_modules here is a symlink, so `prisma generate` would repoint the shared Prisma client at this worktree\'s dev.db. Clone it first: rm node_modules && cp -cR ../../node_modules ./node_modules');
+  }
+}
+
+// One dev server at a time on this 8 GB Mac: a second one stalls the machine and every session on it.
+if (/(^|[\s;&|(])(next\s+dev|npm\s+run\s+dev)\b/.test(cmd)) {
+  const running = runningServer();
+  if (running) {
+    block(`Blocked: a server for this project is already running (pid ${running.pid}, ${running.cwd}). Use it, or ask the user before stopping it. See .claude/rules/agents-and-resources.md.`);
+  }
+}
+
+/** A node process listening on a TCP port from this project or one of its worktrees. Fails open. */
+function runningServer() {
+  try {
+    const lsof = (args) => spawnSync('lsof', args, { encoding: 'utf8', timeout: 5000 }).stdout ?? '';
+    const pids = lsof(['-nP', '-a', '-iTCP', '-sTCP:LISTEN', '-c', 'node', '-Fp']).split('\n').filter(l => l.startsWith('p')).map(l => l.slice(1));
+    for (const pid of pids) {
+      const cwd = lsof(['-a', '-p', pid, '-d', 'cwd', '-Fn']).split('\n').find(l => l.startsWith('n'))?.slice(1) ?? '';
+      if (/\/vochus-easysave/.test(cwd)) return { pid, cwd };
+    }
+  } catch {}
+  return null;
+}
 
 const rules = [
   [

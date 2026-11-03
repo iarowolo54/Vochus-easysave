@@ -324,7 +324,7 @@ export default function SettingsPage() {
           <input id="bk-acct" className="ag-tf-input ag-tf-num" type="tel" inputMode="numeric" maxLength={10} placeholder="10 digits"
             value={accountNumber} onKeyDown={blockNonDigit} onChange={e => { setAccountNumber(digitsOnly(e.target.value).slice(0, 10)); setBankError('') }} />
         </Field>
-        {resolving && <p className="ag-fineprint"><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Checking with the bank…</p>}
+        {resolving && <p className="ag-fineprint"><span className="ui-spinner ui-spinner--sm ag-spin-dark ag-inline-spin" aria-hidden="true" /> Checking with the bank…</p>}
         {resolved && (
           <div className="ag-verified ag-verified--sm">
             <span className="ag-verified-icon" aria-hidden="true"><Icons.check size={18} /></span>

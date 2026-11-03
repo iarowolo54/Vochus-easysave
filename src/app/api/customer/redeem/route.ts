@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
-import { IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
+import { excludeExpiredPending, IN_FLIGHT_REDEMPTION_STATUSES, isExpiredPending } from '@/lib/redemption-statuses'
 import { logAudit } from '@/lib/audit'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
@@ -34,7 +34,7 @@ export async function GET() {
   })
   // Never expose the confirmation code (or its expiry) via a read path — it is
   // delivered out-of-band (SMS/email) and only ever submitted back via PATCH.
-  const safeRedemptions = redemptions.map(({ token, tokenExpiry, ...r }) => r)
+  const safeRedemptions = redemptions.map(({ token, tokenExpiry, ...r }) => ({ ...r, expired: isExpiredPending({ status: r.status, tokenExpiry }) }))
 
   const hasCashDeposit = await planHasCashDeposit(prisma, plan.id)
   return NextResponse.json({ plan: { ...plan, hasCashDeposit }, redemptions: safeRedemptions })
@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
   if (plan.balance <= 0) return NextResponse.json({ error: 'No balance to redeem' }, { status: 400 })
 
   const pending = await prisma.earlyRedemption.findFirst({
-    where: { savingsPlanId: plan.id, status: { in: IN_FLIGHT_REDEMPTION_STATUSES } },
+    where: { savingsPlanId: plan.id, status: { in: IN_FLIGHT_REDEMPTION_STATUSES }, ...excludeExpiredPending() },
   })
   if (pending) return NextResponse.json({ error: 'You already have a pending redemption request' }, { status: 409 })
 
@@ -67,6 +67,12 @@ export async function POST(req: NextRequest) {
   const now = new Date()
   const isEarly = now < plan.maturityDate
   const payoutMethod = accountNumber ? 'BankTransfer' : 'Cash'
+  if (payoutMethod === 'Cash') {
+    const agent = await prisma.agent.findUnique({ where: { id: customer.agentId }, select: { status: true } })
+    if (agent?.status !== 'Active') {
+      return NextResponse.json({ error: 'Cash collection isn’t available on your account right now. Please choose a bank account instead.' }, { status: 400 })
+    }
+  }
 
   // Verify the bank account server-side and store the RESOLVED name, so a payout
   // can't be redirected via a spoofed account name (finding #5).

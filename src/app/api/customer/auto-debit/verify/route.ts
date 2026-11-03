@@ -4,8 +4,11 @@ import { prisma } from '@/lib/prisma'
 import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
 import { verifyTransaction } from '@/lib/paystack'
-import { findOwnedPendingIntent, consumePaymentIntent } from '@/lib/payment-intent'
+import { findOwnedPendingIntent, consumePaymentIntent, INTENT_REVIEW } from '@/lib/payment-intent'
+import { sendToReview } from '@/lib/customer-settle'
+import { PlanClosedError, creditPlanBalance } from '@/lib/plan-credit'
 import { createMandateFromAuthorization } from '@/lib/auto-debit'
+import { ensureEnrolmentMandate, isEnrolmentRef } from '@/lib/auto-debit-enrol'
 
 class RouteError extends Error {
   constructor(public code: 'ALREADY_PROCESSED' | 'NOT_SELF') {
@@ -14,7 +17,16 @@ class RouteError extends Error {
 }
 
 // A replayed enrollment ref: active only if a mandate exists (a non-reusable card was saved instead).
-async function replayResponse(planId: string | null) {
+async function replayResponse(planId: string | null, reference?: string) {
+  // The webhook can credit the charge first, and used to leave the money saved with no mandate. Finish it here.
+  if (reference && isEnrolmentRef(reference)) {
+    try {
+      const again = await verifyTransaction(reference)
+      if (again.status === 'success') await ensureEnrolmentMandate(prisma, reference, again.authorization)
+    } catch {
+      // Paystack is out of reach: the webhook's redelivery or the next visit finishes it. Report what exists now.
+    }
+  }
   const mandate = planId
     ? await prisma.autoDebitMandate.findUnique({ where: { savingsPlanId: planId }, select: { id: true } })
     : null
@@ -42,8 +54,11 @@ export async function POST(req: NextRequest) {
   const prior = await prisma.transaction.findUnique({ where: { ref: reference }, select: { customerId: true, planId: true } })
   if (prior) {
     if (prior.customerId !== customer.id) return NextResponse.json({ error: 'Reference mismatch' }, { status: 403 })
-    return replayResponse(prior.planId)
+    return replayResponse(prior.planId, reference)
   }
+
+  const anyIntent = await prisma.paymentIntent.findFirst({ where: { ref: reference, customerId: customer.id }, select: { status: true } })
+  if (anyIntent?.status === INTENT_REVIEW) return NextResponse.json({ review: true })
 
   const intent = await findOwnedPendingIntent(reference, { customerId: customer.id })
   if (!intent) return NextResponse.json({ error: 'Reference mismatch' }, { status: 403 })
@@ -69,11 +84,14 @@ export async function POST(req: NextRequest) {
   const amount = money(intent.amount)
 
   const plan = intent.planId
-    ? await prisma.savingsPlan.findFirst({
-        where: { id: intent.planId, customerId: customer.id, status: 'Active', source: 'self' },
-      })
+    ? await prisma.savingsPlan.findFirst({ where: { id: intent.planId, customerId: customer.id, source: 'self' } })
     : null
-  if (!plan) return NextResponse.json({ error: 'No active plan' }, { status: 400 })
+  // The first payment has been taken, but nothing can reach a missing or closed plan: never drop it silently.
+  const toReview = async (state: string) => {
+    await sendToReview(prisma, intent, reference, `auto-funding first payment of ₦${amount}, plan ${intent.planId ?? 'none'} is ${state}`)
+    return NextResponse.json({ review: true })
+  }
+  if (!plan) return toReview('missing')
 
   const reusable = verified.authorization?.reusable === true
   const email = customer.email ?? `${customer.customerId.toLowerCase()}@vochus.ng`
@@ -111,15 +129,16 @@ export async function POST(req: NextRequest) {
           note: reusable ? 'Auto-debit enrollment first charge' : 'Auto-debit enrollment charge saved (no reusable card authorization)',
         },
       })
-      await tx.savingsPlan.update({ where: { id: plan.id }, data: { balance: { increment: amount } } })
+      await creditPlanBalance(tx, plan.id, amount)
     })
   } catch (e) {
+    if (e instanceof PlanClosedError) return toReview('closed')
     if (e instanceof RouteError) {
-      if (e.code === 'ALREADY_PROCESSED') return replayResponse(plan.id)
+      if (e.code === 'ALREADY_PROCESSED') return replayResponse(plan.id, reference)
       return NextResponse.json({ error: 'Auto-debit is only available on online plans' }, { status: 400 })
     }
     if (typeof e === 'object' && e !== null && (e as { code?: unknown }).code === 'P2002') {
-      return replayResponse(plan.id)
+      return replayResponse(plan.id, reference)
     }
     throw e
   }

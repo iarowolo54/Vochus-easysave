@@ -31,9 +31,12 @@ const DESC_MAX = 1000
 const statusTag = (s: string) => s === 'Resolved' ? 'ag-crow-tag--ok' : s === 'In Review' ? 'ag-crow-tag--soon' : 'ag-crow-tag--due'
 const statusIcon = (s: string) => s === 'Resolved' ? Icons.check : s === 'In Review' ? Icons.pending : Icons.report
 
+const PAGE_SIZE = 30
+
 export default function ReportPage() {
   const [reports, setReports] = useState<Report[] | null>(null)
   const [failed, setFailed] = useState(false)
+  const [limit, setLimit] = useState(PAGE_SIZE)
   const [category, setCategory] = useState(CATEGORIES[0])
   const [title, setTitle] = useState('')
   const [description, setDescription] = useState('')
@@ -142,7 +145,7 @@ export default function ReportPage() {
           {reports && reports.length > 0 && (
             <div className="ag-tx-chips ag-report-filters" role="group" aria-label="Filter reports">
               {FILTERS.map(f => (
-                <button key={f} type="button" className="ag-chip" aria-pressed={filter === f} onClick={() => setFilter(f)}>
+                <button key={f} type="button" className="ag-chip" aria-pressed={filter === f} onClick={() => { setFilter(f); setLimit(PAGE_SIZE) }}>
                   {f === 'In Review' ? 'In review' : f} <span className="ag-chip-count">{counts[f]}</span>
                 </button>
               ))}
@@ -157,8 +160,9 @@ export default function ReportPage() {
             <section className="ui-card"><EmptyState icon="report" title={reports.length === 0 ? 'No reports yet' : `Nothing ${filter === 'In Review' ? 'in review' : filter.toLowerCase()}`}
               text={reports.length === 0 ? 'Problems you report show here, with their status.' : 'Try another filter.'} /></section>
           ) : (
+            <>
             <section className="ui-card ui-card--list">
-              {shown.map(r => {
+              {shown.slice(0, limit).map(r => {
                 const Icon = statusIcon(r.status)
                 return (
                   <button key={r.id} type="button" className="ag-crow" onClick={() => setOpen(r)}>
@@ -172,6 +176,10 @@ export default function ReportPage() {
                 )
               })}
             </section>
+            {shown.length > limit && <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => setLimit(n => n + PAGE_SIZE)}>
+                Show more ({shown.length - limit} older)
+              </button>}
+            </>
           )}
         </div>
       </div>

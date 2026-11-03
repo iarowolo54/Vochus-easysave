@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { validateUpload } from '@/lib/upload-safety'
 
 const DOC_META: Record<string, { icon: string; label: string; sub: string; required: boolean }> = {
   id:    { icon: '🪪', label: 'Government-Issued ID',  sub: "NIN slip, Passport, Driver's Licence or Voter's Card", required: true },
@@ -49,6 +50,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Missing fields' }, { status: 400 })
   }
 
+  const upload = validateUpload(fileName, fileData)
+  if (!upload.ok) return NextResponse.json({ error: upload.error }, { status: 400 })
+
   const agent = await prisma.agent.findFirst({ where: { agentId } })
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
 
@@ -59,8 +63,8 @@ export async function POST(req: Request) {
 
   await prisma.agentDocument.upsert({
     where: { agentId_docType: { agentId: agent.id, docType } },
-    update: { fileName, fileData, uploadedAt: new Date(), docApprovalStatus: 'pending', docRejectionReason: null },
-    create: { agentId: agent.id, docType, fileName, fileData },
+    update: { fileName: upload.fileName, fileData: upload.fileData, uploadedAt: new Date(), docApprovalStatus: 'pending', docRejectionReason: null },
+    create: { agentId: agent.id, docType, fileName: upload.fileName, fileData: upload.fileData },
   })
 
   return NextResponse.json({ ok: true })

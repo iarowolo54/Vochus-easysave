@@ -27,6 +27,8 @@ function dueText(iso: string) {
   return { text: `Due in ${days} day${days === 1 ? '' : 's'}`, overdue: false }
 }
 
+const PAGE_SIZE = 30
+
 export default function LoanRepayPage() {
   return <Suspense><LoanRepayContent /></Suspense>
 }
@@ -42,11 +44,12 @@ function LoanRepayContent() {
   const [toast, setToast] = useState('')
   const [error, setError] = useState('')
   const [query, setQuery] = useState('')
+  const [limit, setLimit] = useState(PAGE_SIZE)
   const [refreshKey, setRefreshKey] = useState(0)
 
   const loadLoans = useCallback(async () => {
     try {
-      const res = await fetch('/api/loans?status=Disbursed,Approved')
+      const res = await fetch('/api/loans?status=Disbursed')
       const data = await res.json()
       setLoans(data.loans ?? [])
     } catch {
@@ -55,6 +58,7 @@ function LoanRepayContent() {
   }, [])
 
   useEffect(() => { loadLoans() }, [loadLoans, refreshKey])
+  useEffect(() => { setLimit(PAGE_SIZE) }, [query])
 
   useEffect(() => {
     const cid = searchParams.get('cid')
@@ -116,8 +120,9 @@ function LoanRepayContent() {
               ) : filtered.length === 0 ? (
                 <section className="ui-card"><EmptyState icon="repay" title={q ? 'No loans match' : 'No loans to repay'} text={q ? 'Try another name or reference.' : 'Loans you pay out show here until they’re fully repaid.'} /></section>
               ) : (
+                <>
                 <section className="ui-card ui-card--list">
-                  {filtered.map(l => {
+                  {filtered.slice(0, limit).map(l => {
                     const out = l.totalAmount - l.repaid
                     const pct = l.totalAmount > 0 ? Math.round((l.repaid / l.totalAmount) * 100) : 0
                     const due = dueText(l.dueDate)
@@ -140,6 +145,10 @@ function LoanRepayContent() {
                     )
                   })}
                 </section>
+                {filtered.length > limit && <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => setLimit(n => n + PAGE_SIZE)}>
+                Show more ({filtered.length - limit} older)
+              </button>}
+                </>
               )}
             </>
           ) : (

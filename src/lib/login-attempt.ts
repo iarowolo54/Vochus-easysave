@@ -3,7 +3,7 @@
 //
 // Two key kinds:
 //  - "phone:<phone>"  — per-account HARD LOCK. Locked once failCount reaches the
-//    limit; cleared only by unlockAccount() (OTP) or a successful login. No time
+//    limit; cleared only by unlockAccount() (OTP, password reset, admin) or a successful login. No time
 //    expiry. lockedUntil is unused for these rows.
 //  - "ip:<addr>"      — per-IP spray rule, a loose TIME lock via lockedUntil.
 import { prisma } from './prisma'
@@ -75,6 +75,32 @@ export async function unlockAccount(phone: string): Promise<void> {
   await prisma.loginAttempt.deleteMany({ where: { key: phoneKey(phone) } })
 }
 
+/**
+ * Count a password attempt against an account BEFORE checking it, in one statement that refuses at the limit, so a
+ * parallel burst can't all pass a lock check that no failure has reached yet. False if the account is locked. A correct
+ * password clears the count with clearLoginThrottle, which is how the attempt is refunded. Throws on a database error
+ * (callers fail closed). Used by the signed-in password change; sign-in itself still uses checkLoginThrottle.
+ */
+export async function reserveAccountAttempt(phone: string, now: number = Date.now()): Promise<boolean> {
+  const key = phoneKey(phone)
+  await prisma.loginAttempt.upsert({ where: { key }, create: { key, failCount: 0 }, update: {} }).catch((e: unknown) => {
+    // Two first attempts at once: the other one created the row.
+    if ((e as { code?: unknown } | null)?.code !== 'P2002') throw e
+  })
+  // A quiet window restarts the count, but a locked account stays locked until it is unlocked.
+  await prisma.loginAttempt.updateMany({
+    where: { key, failCount: { lt: ACCOUNT_FAIL_LIMIT }, lastFailAt: { lt: toDate(now - THROTTLE.resetAfterMs)! } },
+    data: { failCount: 0 },
+  })
+  // Dates are epoch ms, which is how Prisma stores DateTime in this SQLite file.
+  const rows = await prisma.$queryRaw<unknown[]>`
+    UPDATE "LoginAttempt"
+    SET "failCount" = "failCount" + 1, "lastFailAt" = ${now}, "updatedAt" = ${now}
+    WHERE "key" = ${key} AND "failCount" < ${ACCOUNT_FAIL_LIMIT}
+    RETURNING "failCount"`
+  return rows.length > 0
+}
+
 /** Is this account currently hard-locked? (Used by the OTP-request endpoint.) */
 export async function isPhoneLocked(phone: string): Promise<boolean> {
   const s = await loadState(phoneKey(phone))
@@ -106,6 +132,108 @@ async function ipBump(key: string, now: number): Promise<void> {
   await prisma.loginAttempt
     .update({ where: { key }, data: { lockedUntil: dur > 0 ? toDate(now + dur) : null } })
     .catch(() => {})
+}
+
+// -------- Reserved attempts with a time lock (agent and admin sign-in) --------
+
+const RESERVE_RETRY_MS = 150
+
+/** How long admin counts survive with no attempts. Longer than the longest lock, so waiting one out doesn't reset the steps. */
+export const ADMIN_QUIET_MS = 24 * 60 * 60_000
+
+export type ReservedAttempt = { allowed: boolean; startedLock: boolean; firstLock: boolean }
+
+/**
+ * Count an attempt BEFORE checking the password, so a parallel burst can't all pass a lock check that no failure has
+ * reached yet: at most `limit` attempts ever get to the password check per lock. Repeat locks take the next of
+ * `lockStepsMs`, and stay on the last. Refund the attempt if it turns out to be a success.
+ */
+export async function reserveAttempt(
+  key: string, limit: number, lockStepsMs: number[], quietMs: number = THROTTLE.resetAfterMs, now: number = Date.now(),
+): Promise<ReservedAttempt> {
+  // Once more on a brief "database is locked" (2 PM2 instances share this file), or if the sweep removed the row.
+  try {
+    const first = await reserveOnce(key, limit, lockStepsMs, quietMs, now)
+    if (first) return first
+  } catch {
+    await new Promise(resolve => setTimeout(resolve, RESERVE_RETRY_MS))
+  }
+  const second = await reserveOnce(key, limit, lockStepsMs, quietMs, now)
+  if (!second) throw new Error('attempt row keeps disappearing')
+  return second
+}
+
+async function reserveOnce(
+  key: string, limit: number, lockStepsMs: number[], quietMs: number, now: number,
+): Promise<ReservedAttempt | null> {
+  const nowDate = toDate(now)!
+  await prisma.loginAttempt.upsert({ where: { key }, create: { key, failCount: 0 }, update: {} }).catch((e: unknown) => {
+    // Two first attempts at once: the other one created the row.
+    if ((e as { code?: unknown } | null)?.code !== 'P2002') throw e
+  })
+  // A lock that has ended keeps its count, which is how the next lock knows it's a repeat. Only a quiet window restarts it.
+  await prisma.loginAttempt.updateMany({ where: { key, lockedUntil: { lte: nowDate } }, data: { lockedUntil: null } })
+  await prisma.loginAttempt.updateMany({
+    where: { key, lockedUntil: null, lastFailAt: { lt: toDate(now - quietMs)! } },
+    data: { failCount: 0 },
+  })
+  // One statement, so it holds across PM2 instances: each attempt gets its own count, and every limit-th sets the lock in
+  // the same write. Separate steps let a burst count past the limit before any of them read it, so none ran and no lock
+  // was ever set. Dates are epoch ms, which is how Prisma stores DateTime in this SQLite file.
+  const step = (i: number) => now + lockStepsMs[Math.min(i, lockStepsMs.length - 1)]
+  const rows = await prisma.$queryRaw<{ failCount: number | bigint }[]>`
+    UPDATE "LoginAttempt"
+    SET "failCount" = "failCount" + 1,
+        "lastFailAt" = ${now},
+        "updatedAt" = ${now},
+        "lockedUntil" = CASE
+          WHEN ("failCount" + 1) % ${limit} != 0 THEN "lockedUntil"
+          WHEN "failCount" + 1 = ${limit} THEN ${step(0)}
+          WHEN "failCount" + 1 = ${limit * 2} THEN ${step(1)}
+          ELSE ${step(2)}
+        END
+    WHERE "key" = ${key} AND "lockedUntil" IS NULL
+    RETURNING "failCount"`
+  if (rows.length === 0) {
+    // No row matched: it's locked, or it's gone. Only a row that's there is a lock.
+    const row = await prisma.loginAttempt.findUnique({ where: { key }, select: { id: true } })
+    return row ? { allowed: false, startedLock: false, firstLock: false } : null
+  }
+  const count = Number(rows[0].failCount)
+  return { allowed: true, startedLock: count % limit === 0, firstLock: count === limit }
+}
+
+/** Give back a reserved attempt, and any lock it started. */
+export async function refundAttempt(key: string, startedLock: boolean): Promise<void> {
+  await prisma.loginAttempt.updateMany({
+    where: { key, failCount: { gt: 0 } },
+    data: { failCount: { decrement: 1 }, ...(startedLock ? { lockedUntil: null } : {}) },
+  })
+}
+
+// -------- Agent account lock --------
+
+export const AGENT_ACCOUNT_FAIL_LIMIT = 3
+
+/**
+ * Count a password attempt against an agent BEFORE checking it, in one statement that also sets the lock at the limit,
+ * so a parallel burst can't all get past `lockedAt`. False if the account is locked. Once more on a brief database lock.
+ */
+export async function reserveAgentAttempt(agentDbId: string, now: number = Date.now()): Promise<boolean> {
+  const attempt = () => prisma.$queryRaw<unknown[]>`
+    UPDATE "Agent"
+    SET "loginAttempts" = "loginAttempts" + 1,
+        "lockedAt" = CASE WHEN "loginAttempts" + 1 >= ${AGENT_ACCOUNT_FAIL_LIMIT} THEN ${now} ELSE "lockedAt" END
+    WHERE "id" = ${agentDbId} AND "lockedAt" IS NULL
+    RETURNING "id"`
+  let rows: unknown[]
+  try {
+    rows = await attempt()
+  } catch {
+    await new Promise(resolve => setTimeout(resolve, RESERVE_RETRY_MS))
+    rows = await attempt()
+  }
+  return rows.length === 1
 }
 
 // -------- Public API --------
@@ -152,7 +280,10 @@ export async function sweepStaleLoginAttempts(now: number = Date.now()): Promise
     where: {
       AND: [
         { OR: [{ lockedUntil: null }, { lockedUntil: { lt: toDate(now)! } }] },
-        { OR: [{ lastFailAt: null }, { lastFailAt: { lt: toDate(now - THROTTLE.resetAfterMs)! } }] },
+        // A row with no failure yet is left alone until it's old: it may be an attempt being counted this moment.
+        { OR: [{ lastFailAt: { lt: toDate(now - THROTTLE.resetAfterMs)! } }, { lastFailAt: null, updatedAt: { lt: toDate(now - THROTTLE.resetAfterMs)! } }] },
+        // Admin keys keep their count for longer, or a repeat lock would forget it's a repeat.
+        { NOT: { AND: [{ OR: [{ key: { startsWith: 'admin:' } }, { key: { startsWith: 'ip:admin:' } }] }, { lastFailAt: { gte: toDate(now - ADMIN_QUIET_MS)! } }] } },
         // never sweep a hard-locked account
         { NOT: { AND: [{ key: { startsWith: 'phone:' } }, { failCount: { gte: ACCOUNT_FAIL_LIMIT } }] } },
       ],

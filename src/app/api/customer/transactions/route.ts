@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
+import { listedStatuses } from '@/lib/receipt-payout'
 
 export async function GET() {
   const session = await getCustomerSession()
@@ -13,6 +14,8 @@ export async function GET() {
     include: { plan: { select: { goal: true, cadence: true } } },
   })
 
+  const statuses = await listedStatuses(transactions)
+
   return NextResponse.json({
     transactions: transactions.map(t => ({
       id: t.id,
@@ -20,7 +23,7 @@ export async function GET() {
       type: t.type,
       amount: t.amount,
       method: t.method,
-      status: t.status,
+      status: statuses.get(t.id) ?? t.status,
       createdAt: t.createdAt,
       planGoal: t.plan?.goal ?? null,
       cadence: t.plan?.cadence ?? null,

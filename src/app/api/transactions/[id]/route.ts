@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { canSendReceipt, receiptStatus } from '@/lib/receipt-message'
+import { loadPayoutOutcome } from '@/lib/receipt-payout'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const session = await getServerSession(authOptions)
@@ -17,6 +19,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   })
   if (!txn) return NextResponse.json({ error: 'Transaction not found' }, { status: 404 })
 
+  const payout = await loadPayoutOutcome(txn)
+
   return NextResponse.json({
     id: txn.id,
     ref: txn.ref,
@@ -24,6 +28,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     amount: txn.amount,
     method: txn.method,
     status: txn.status,
+    receiptStatus: receiptStatus({ status: txn.status, payout }),
+    canSendReceipt: canSendReceipt(payout),
     note: txn.note,
     createdAt: txn.createdAt,
     agent: { name: agent.name, agentId: agent.agentId },

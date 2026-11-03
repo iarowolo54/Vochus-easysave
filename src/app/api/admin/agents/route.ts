@@ -16,6 +16,9 @@ export async function GET(req: NextRequest) {
 
   const { searchParams } = new URL(req.url)
   const search = searchParams.get('search') ?? ''
+  // Optional: only the N agents with the most customers (the overview). No top = full list, newest first.
+  const topRaw = searchParams.get('top') ?? ''
+  const top = /^\d+$/.test(topRaw) && Number(topRaw) > 0 ? Math.min(Number(topRaw), 50) : undefined
 
   const now = new Date()
   const month = now.getMonth() + 1
@@ -36,7 +39,8 @@ export async function GET(req: NextRequest) {
       commissions: { where: { month, year }, select: { amount: true } },
       documents: { select: { docType: true, fileName: true, docApprovalStatus: true } },
     },
-    orderBy: { createdAt: 'desc' },
+    orderBy: top ? { customers: { _count: 'desc' } } : { createdAt: 'desc' },
+    ...(top && { take: top }),
   })
 
   return NextResponse.json({

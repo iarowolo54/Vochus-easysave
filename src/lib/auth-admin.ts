@@ -1,49 +1,10 @@
 import { NextAuthOptions } from 'next-auth'
 import { requireEnv } from '@/lib/env'
-import CredentialsProvider from 'next-auth/providers/credentials'
-import bcrypt from 'bcryptjs'
-import { prisma } from './prisma'
-import { pickIdentity } from '@/lib/admin-identity'
 import { isPastAbsoluteCap, IDLE_SECONDS } from '@/lib/session-policy'
 
 export const adminAuthOptions: NextAuthOptions = {
-  providers: [
-    CredentialsProvider({
-      id: 'superadmin-credentials',
-      name: 'Super Admin',
-      credentials: {
-        email: { label: 'Email', type: 'email' },
-        password: { label: 'Password', type: 'password' },
-      },
-      async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) return null
-
-        const email = credentials.email.trim().toLowerCase()
-        const admin = await prisma.superAdmin.findUnique({ where: { email } })
-        // Only consult StaffUser when no SuperAdmin owns this email (never shadowed).
-        const staff = admin ? null : await prisma.staffUser.findUnique({ where: { email } })
-
-        const identity = pickIdentity({ superAdmin: admin, staff })
-        const hash = identity.kind === 'superadmin' ? admin?.password : identity.kind === 'staff' ? staff?.password : undefined
-        if (identity.kind === 'none' || !hash) return null
-
-        const valid = await bcrypt.compare(credentials.password, hash)
-        if (!valid) return null
-
-        if (identity.kind === 'staff') {
-          // Best-effort: a locked SQLite write must never fail a valid login.
-          try {
-            await prisma.staffUser.update({ where: { id: identity.id }, data: { lastActiveAt: new Date() } })
-          } catch (err) {
-            console.error('auth-admin authorize: failed to update lastActiveAt', err instanceof Error ? err.message : err)
-          }
-          return { id: identity.id!, name: identity.name, email: identity.email, role: 'staff' }
-        }
-
-        return { id: identity.id!, name: identity.name, email: identity.email, role: 'superadmin' }
-      },
-    }),
-  ],
+  // Admins sign in only through /api/admin-auth/login, which applies the sign-in limit. This config just reads the session.
+  providers: [],
   session: { strategy: 'jwt', maxAge: IDLE_SECONDS.admin },
   cookies: {
     sessionToken: {

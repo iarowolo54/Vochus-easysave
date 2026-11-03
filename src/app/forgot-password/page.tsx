@@ -2,6 +2,8 @@
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import Logo from '@/components/Logo'
+import { Icons } from '@/components/ui/icons'
+import { RESENT_MESSAGE, useResendCooldown, useResetId, waitMessage } from '@/components/useResendCooldown'
 
 type Stage = 'identifier' | 'reset' | 'done'
 
@@ -9,15 +11,24 @@ export default function AgentForgotPasswordPage() {
   const router = useRouter()
   const [stage, setStage] = useState<Stage>('identifier')
   const [identifier, setIdentifier] = useState('')
-  const [maskedEmail, setMaskedEmail] = useState('')
   const [code, setCode] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [showPass, setShowPass] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
+  const { secondsLeft, start: startCooldown } = useResendCooldown()
+  const { remember, idFor, forget, changeAccount, fromLink } = useResetId('agent', (account, cooldownLeft) => {
+    setIdentifier(account)
+    setStage('reset')
+    startCooldown(cooldownLeft)
+  })
+  const [notice, setNotice] = useState('')
+
   async function sendCode() {
     if (!identifier.trim()) { setError('Enter your Agent ID or phone number'); return }
+    if (stage === 'reset' && secondsLeft > 0) { setError(''); setNotice(waitMessage(secondsLeft)); return }
+    if (fromLink) { setError(''); setStage('reset'); return }
     setError(''); setLoading(true)
     try {
       const res = await fetch('/api/agent/forgot-password', {
@@ -27,7 +38,9 @@ export default function AgentForgotPasswordPage() {
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? 'Failed to send code'); return }
-      setMaskedEmail(data.maskedEmail)
+      remember(data.resetId, identifier.trim())
+      startCooldown()
+      setNotice(stage === 'reset' ? RESENT_MESSAGE : '')
       setStage('reset')
     } finally { setLoading(false) }
   }
@@ -40,23 +53,24 @@ export default function AgentForgotPasswordPage() {
       const res = await fetch('/api/agent/forgot-password/reset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ identifier: identifier.trim(), code, newPassword }),
+        body: JSON.stringify({ identifier: identifier.trim(), code, newPassword, resetId: idFor(identifier.trim()) }),
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? 'Reset failed'); return }
+      forget()
       setStage('done')
     } finally { setLoading(false) }
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg,#051810 0%,#0A3520 50%,#0C4824 100%)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+    <div style={{ minHeight: '100dvh', background: 'linear-gradient(135deg,#051810 0%,#0A3520 50%,#0C4824 100%)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
       <div style={{ width: '100%', maxWidth: 420 }}>
         <div style={{ textAlign: 'center', marginBottom: 24 }}>
           <Logo size={56} tile style={{ marginBottom: 12 }} />
           <div style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 'clamp(20px, 5vw, 26px)', fontWeight: 900, color: '#fff' }}>Reset Password</div>
           <div style={{ fontSize: 12, color: 'rgba(255,255,255,.6)', marginTop: 4 }}>
             {stage === 'identifier' && 'Enter your Agent ID or phone to receive a reset code'}
-            {stage === 'reset' && `Code sent to ${maskedEmail} — enter it below with your new password`}
+            {stage === 'reset' && 'If this account has an email on file, we’ve sent a 6-digit code to it. It can take a minute to arrive. Enter it below with your new password. No email on file? Contact your administrator.'}
             {stage === 'done' && 'Password reset successfully'}
           </div>
         </div>
@@ -92,22 +106,24 @@ export default function AgentForgotPasswordPage() {
                   type={showPass ? 'text' : 'password'} placeholder="Min 6 characters"
                   style={{ ...inputStyle, paddingRight: 44 }}
                   onKeyDown={e => e.key === 'Enter' && resetPassword()} autoComplete="new-password" />
-                <button type="button" onClick={() => setShowPass(p => !p)}
-                  style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-72%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#fff' }}>
-                  {showPass ? '🙈' : '👁'}
+                <button type="button" aria-label={showPass ? 'Hide password' : 'Show password'} onClick={() => setShowPass(p => !p)}
+                  style={{ position: 'absolute', right: 2, top: '50%', transform: 'translateY(calc(-50% - 5px))', minWidth: 44, minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#fff' }}>
+                  {showPass ? <Icons.hide size={20} aria-hidden="true" /> : <Icons.show size={20} aria-hidden="true" />}
                 </button>
               </div>
               <button onClick={resetPassword} disabled={loading} style={btnStyle}>
                 {loading ? 'Resetting…' : 'Reset Password'}
               </button>
-              <button onClick={sendCode} disabled={loading} style={linkBtnStyle}>Resend code</button>
+              {!fromLink && <button onClick={sendCode} disabled={loading} style={linkBtnStyle}>{secondsLeft > 0 ? `Resend code in ${secondsLeft}s` : 'Resend code'}</button>}
+              <button type="button" disabled={loading} style={linkBtnStyle} onClick={() => { changeAccount(); setCode(''); setError(''); setNotice(''); setStage('identifier') }}>Use a different Agent ID</button>
+              {notice && <p role="status" style={{ marginTop: 8, fontSize: 13, textAlign: 'center', color: 'rgba(255,255,255,.8)' }}>{notice}</p>}
             </>
           )}
 
           {stage === 'done' && (
             <>
               <div style={{ textAlign: 'center', padding: '16px 0', color: '#fff' }}>
-                <div style={{ fontSize: 48, marginBottom: 10 }}>✅</div>
+                <div style={{ marginBottom: 10, color: '#1DC96A' }}><Icons.check size={48} aria-hidden="true" /></div>
                 <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Password Updated!</div>
                 <div style={{ fontSize: 13, color: 'rgba(255,255,255,.6)' }}>You can now sign in with your new password.</div>
               </div>
@@ -119,7 +135,7 @@ export default function AgentForgotPasswordPage() {
         {stage === 'identifier' && (
           <div style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: 'rgba(255,255,255,.6)' }}>
             Remember your password?{' '}
-            <span style={{ color: '#1DC96A', fontWeight: 700, cursor: 'pointer' }} onClick={() => router.push('/login')}>Sign In</span>
+            <span style={{ color: '#1DC96A', fontWeight: 700, cursor: 'pointer', display: 'inline-block', lineHeight: '44px' }} onClick={() => router.push('/login')}>Sign In</span>
           </div>
         )}
       </div>
@@ -140,5 +156,5 @@ const btnStyle: React.CSSProperties = {
 }
 const linkBtnStyle: React.CSSProperties = {
   width: '100%', marginTop: 10, background: 'none', border: 'none', cursor: 'pointer',
-  fontSize: 13, color: '#1DC96A', fontWeight: 700, padding: 4,
+  fontSize: 13, color: '#1DC96A', fontWeight: 700, padding: 4, minHeight: 44,
 }

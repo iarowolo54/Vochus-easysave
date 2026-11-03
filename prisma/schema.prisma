@@ -84,6 +84,7 @@ model Customer {
   lastName     String
   phone        String
   email        String?
+  emailVerifiedAt DateTime? // set only when the customer proved the address; agent-entered emails stay null
   dob          DateTime?
   address      String
   language     String       @default("English")
@@ -99,6 +100,7 @@ model Customer {
   walletBalance Float       @default(0)
   password     String?
   inviteToken  String?      @unique
+  tokenVersion Int          @default(0)
   boundDeviceId String?
   createdAt    DateTime     @default(now())
   savingsPlans SavingsPlan[]
@@ -598,6 +600,25 @@ model AccountUnlockOtp {
   createdAt  DateTime  @default(now())
 
   @@index([customerId])
+}
+
+// Password-reset and agent-unlock codes. Only the hash is stored, and rows are
+// consumed rather than deleted so the send cooldown and daily cap keep counting.
+model PasswordResetOtp {
+  id         String    @id @default(cuid())
+  actorType  String // 'customer' | 'agent'
+  actorId    String
+  purpose    String    @default("reset") // 'reset' | 'unlock' | 'admin'
+  resetId    String? // given only to whoever requested this code; guesses must present it
+  requestIpHash String? // keyed hash of the requester's IP, for the per-account-and-IP send limits
+  codeHash   String
+  expiresAt  DateTime
+  attempts   Int       @default(0)
+  consumedAt DateTime?
+  createdAt  DateTime  @default(now())
+
+  @@index([actorType, actorId, createdAt])
+  @@index([resetId])
 }
 
 // Server-side payment intent created at Paystack init, consumed at verify. Binds

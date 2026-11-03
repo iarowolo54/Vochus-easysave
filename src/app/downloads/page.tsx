@@ -29,7 +29,7 @@ const APPS: App[] = [
 
 export default function DownloadsPage() {
   return (
-    <div style={{ minHeight: '100vh', background: '#f3f6f3', padding: '40px 20px', fontFamily: 'Inter, sans-serif' }}>
+    <div style={{ minHeight: '100dvh', background: '#f3f6f3', padding: '40px 20px', fontFamily: 'Inter, sans-serif' }}>
       <div style={{ maxWidth: 720, margin: '0 auto' }}>
         <div style={{ textAlign: 'center', marginBottom: 36 }}>
           <div style={{ fontFamily: 'Plus Jakarta Sans, sans-serif', fontSize: 28, fontWeight: 900, color: '#111a14' }}>

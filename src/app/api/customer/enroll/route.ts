@@ -5,6 +5,7 @@ import { signCustomerToken, customerCookieOptions } from '@/lib/customer-auth'
 import { sendMail } from '@/lib/mail'
 import { logAudit } from '@/lib/audit'
 import { resolveBvn } from '@/lib/paystack'
+import { bvnNameMatches, logBvnFailure, refuseBvnLookup } from '@/lib/bvn-lookup'
 import { normalizeEmail } from '@/lib/email'
 import { normalizePhone } from '@/lib/phone'
 import { findIdentityConflict } from '@/lib/identity'
@@ -70,31 +71,15 @@ export async function POST(req: NextRequest) {
     if (!isFinite(pd) || pd <= 0) return NextResponse.json({ error: 'Period days must be a positive number' }, { status: 400 })
   }
 
-  // If BVN was supplied, verify it matches the name with Paystack Identity.
-  // Optional — empty BVN is allowed and silently skipped.
-  if (bvn) {
-    if (!/^\d{11}$/.test(String(bvn))) {
-      return NextResponse.json({ error: 'BVN must be 11 digits' }, { status: 400 })
-    }
-    try {
-      const r = await resolveBvn(String(bvn))
-      const bvnFirst = (r.firstName ?? '').trim().toLowerCase()
-      const bvnLast  = (r.lastName  ?? '').trim().toLowerCase()
-      const formFirst = String(firstName).trim().toLowerCase()
-      const formLast  = String(lastName).trim().toLowerCase()
-      if (bvnFirst !== formFirst || bvnLast !== formLast) {
-        return NextResponse.json({ error: `BVN belongs to ${r.firstName} ${r.lastName}. Your form name does not match — update or remove the BVN.` }, { status: 400 })
-      }
-    } catch (e: any) {
-      return NextResponse.json({ error: e?.message ?? 'BVN could not be verified — try again or leave it blank' }, { status: 400 })
-    }
+  if (bvn && !/^\d{11}$/.test(String(bvn))) {
+    return NextResponse.json({ error: 'BVN must be 11 digits' }, { status: 400 })
   }
 
-  const invite = ref ? await prisma.customerInvite.findUnique({ where: { token: ref } }) : null
+  const invite = typeof ref === 'string' && ref ? await prisma.customerInvite.findUnique({ where: { token: ref } }) : null
 
   const agent = invite
     ? await prisma.agent.findUnique({ where: { id: invite.agentId } })
-    : aid
+    : typeof aid === 'string' && aid
       ? await prisma.agent.findFirst({ where: { agentId: aid } })
       : null
 
@@ -103,6 +88,8 @@ export async function POST(req: NextRequest) {
   if (!agent || !agentDbId) {
     return NextResponse.json({ error: 'Invalid invite link — ask your agent for a new link' }, { status: 400 })
   }
+  // An old link must not sign anyone up under an agent who has been suspended.
+  if (agent.status !== 'Active') return NextResponse.json({ error: 'This invite link is no longer active. Please contact Vochus for help.' }, { status: 400 })
 
   // Email must have been verified via the email-OTP flow, recently. This is the
   // server-side gate — the browser check alone is not enough. The row is
@@ -120,6 +107,22 @@ export async function POST(req: NextRequest) {
   // One identity, one account: the phone/email must not belong to any account.
   const conflict = await findIdentityConflict(prisma, { phone: String(phone), email: String(email) })
   if (conflict) return identityConflictResponse(conflict)
+
+  // If BVN was supplied, verify it matches the name with Paystack Identity. Optional: empty is skipped.
+  // After the email gate and on the same budget as /api/identity/bvn, and it never names the BVN's owner.
+  if (bvn) {
+    const refused = await refuseBvnLookup(normEmail, clientIp(req))
+    if (refused) return NextResponse.json({ error: refused.error, code: refused.code }, { status: refused.status })
+    try {
+      const r = await resolveBvn(String(bvn))
+      if (!bvnNameMatches(r, { firstName: String(firstName), lastName: String(lastName) })) {
+        return NextResponse.json({ error: 'This BVN doesn’t match the name you entered. Check your name, or remove the BVN to carry on without it.' }, { status: 400 })
+      }
+    } catch (e) {
+      logBvnFailure(e)
+      return NextResponse.json({ error: 'BVN could not be verified — try again or leave it blank' }, { status: 400 })
+    }
+  }
 
   const hashed = await bcrypt.hash(password, 10)
 
@@ -145,6 +148,7 @@ export async function POST(req: NextRequest) {
       lastName,
       phone: normalizePhone(String(phone)),
       email: email ? normalizeEmail(String(email)) : null,
+      emailVerifiedAt: new Date(), // the email-OTP check above is required to get here
       dob: dob ? new Date(dob) : null,
       address,
       gender: genderCheck.value,
@@ -175,7 +179,8 @@ export async function POST(req: NextRequest) {
   })
 
   // Consume the email verification (all rows for this email) so it can't be reused.
-  await prisma.emailOTP.deleteMany({ where: { email: normEmail } })
+  // Only the verified row, so the daily send count onboarding shares isn't reset.
+  await prisma.emailOTP.deleteMany({ where: { email: normEmail, verified: true } })
 
   if (Array.isArray(plans) && plans.length > 1) {
     for (let i = 0; i < plans.length - 1; i++) {
@@ -222,6 +227,7 @@ export async function POST(req: NextRequest) {
       customerId: customer.customerId,
       name: `${customer.firstName} ${customer.lastName}`,
       agentId: agentDbId,
+      tokenVersion: customer.tokenVersion,
     },
     { loginAt: Math.floor(Date.now() / 1000) },
   )

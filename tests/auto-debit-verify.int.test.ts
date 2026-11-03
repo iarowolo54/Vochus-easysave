@@ -151,3 +151,17 @@ test('success but no authorization returned: N50 still credited as saving, saved
   assert.equal((await prisma.savingsPlan.findUnique({ where: { id: plan.id } }))?.balance, 50)
   assert.equal(await prisma.transaction.count({ where: { ref } }), 1)
 })
+
+test('a first payment for a closed plan: not credited, no mandate, manual review, and the customer is told', async () => {
+  const { c, plan, ref } = await mk(90)
+  await prisma.savingsPlan.update({ where: { id: plan.id }, data: { status: 'Redeemed' } })
+  const r = await call(c, ref)
+  assert.equal(r.status, 200)
+  assert.equal(r.body.review, true)
+  assert.equal(await prisma.transaction.count({ where: { ref } }), 0)
+  assert.equal(await prisma.autoDebitMandate.count({ where: { savingsPlanId: plan.id } }), 0)
+  assert.ok(await prisma.auditLog.findFirst({ where: { action: 'payment_needs_manual_review', details: { contains: ref } } }))
+  const replay = await call(c, ref)
+  assert.equal(replay.body.review, true)
+  assert.equal(await prisma.auditLog.count({ where: { action: 'payment_needs_manual_review', details: { contains: ref } } }), 1)
+})

@@ -3,6 +3,8 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { blockNonDigit, digitsOnly } from '@/lib/numeric'
 import Logo from '@/components/Logo'
+import { Icons } from '@/components/ui/icons'
+import { RESENT_MESSAGE, useResendCooldown, useResetId, waitMessage } from '@/components/useResendCooldown'
 
 type Stage = 'phone' | 'reset' | 'done'
 
@@ -10,16 +12,24 @@ export default function ForgotPasswordPage() {
   const router = useRouter()
   const [stage, setStage] = useState<Stage>('phone')
   const [phone, setPhone] = useState('')
-  const [maskedTarget, setMaskedTarget] = useState('')
-  const [channel, setChannel] = useState<'email' | 'sms'>('email')
   const [code, setCode] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [showPass, setShowPass] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
+  const { secondsLeft, start: startCooldown } = useResendCooldown()
+  const { remember, idFor, forget, changeAccount, fromLink } = useResetId('customer', (account, cooldownLeft) => {
+    setPhone(account)
+    setStage('reset')
+    startCooldown(cooldownLeft)
+  })
+  const [notice, setNotice] = useState('')
+
   async function sendCode() {
     if (!phone.trim()) { setError('Enter your phone number'); return }
+    if (stage === 'reset' && secondsLeft > 0) { setError(''); setNotice(waitMessage(secondsLeft)); return }
+    if (fromLink) { setError(''); setStage('reset'); return }
     setError(''); setLoading(true)
     try {
       const res = await fetch('/api/customer/forgot-password', {
@@ -29,8 +39,9 @@ export default function ForgotPasswordPage() {
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? 'Failed to send code'); return }
-      setMaskedTarget(data.maskedTarget ?? data.maskedEmail ?? '')
-      setChannel(data.channel === 'sms' ? 'sms' : 'email')
+      remember(data.resetId, phone.trim())
+      startCooldown()
+      setNotice(stage === 'reset' ? RESENT_MESSAGE : '')
       setStage('reset')
     } finally { setLoading(false) }
   }
@@ -43,23 +54,24 @@ export default function ForgotPasswordPage() {
       const res = await fetch('/api/customer/forgot-password/reset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: phone.trim(), code, newPassword }),
+        body: JSON.stringify({ phone: phone.trim(), code, newPassword, resetId: idFor(phone.trim()) }),
       })
       const data = await res.json()
       if (!res.ok) { setError(data.error ?? 'Reset failed'); return }
+      forget()
       setStage('done')
     } finally { setLoading(false) }
   }
 
   return (
-    <div style={{ minHeight: '100vh', background: 'var(--bg)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
+    <div style={{ minHeight: '100dvh', background: 'var(--bg)', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', padding: 20 }}>
       <div style={{ width: '100%', maxWidth: 400 }}>
         <div style={{ textAlign: 'center', marginBottom: 28 }}>
           <Logo size={56} style={{ marginBottom: 12 }} />
           <div style={{ fontFamily: 'Plus Jakarta Sans', fontSize: 22, fontWeight: 900 }}>Forgot Password</div>
           <div style={{ fontSize: 13, color: 'var(--mu)', marginTop: 4 }}>
             {stage === 'phone' && 'Enter your phone number to receive a reset code'}
-            {stage === 'reset' && `Code sent via ${channel === 'sms' ? 'SMS' : 'email'} to ${maskedTarget} — enter it below with your new password`}
+            {stage === 'reset' && 'If this number has an account, we’ve sent a 6-digit code by SMS or email. It can take a minute to arrive. Enter it below with your new password.'}
             {stage === 'done' && 'Password reset successfully'}
           </div>
         </div>
@@ -95,22 +107,24 @@ export default function ForgotPasswordPage() {
                   type={showPass ? 'text' : 'password'} placeholder="Min 6 characters"
                   style={{ paddingRight: 44 }}
                   onKeyDown={e => e.key === 'Enter' && resetPassword()} autoComplete="new-password" />
-                <button type="button" onClick={() => setShowPass(p => !p)}
-                  style={{ position: 'absolute', right: 14, top: '50%', transform: 'translateY(-72%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 18 }}>
-                  {showPass ? '🙈' : '👁'}
+                <button type="button" aria-label={showPass ? 'Hide password' : 'Show password'} onClick={() => setShowPass(p => !p)}
+                  style={{ position: 'absolute', right: 2, top: '50%', transform: 'translateY(calc(-50% - 5px))', minWidth: 44, minHeight: 44, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 0, background: 'none', border: 'none', cursor: 'pointer', fontSize: 18 }}>
+                  {showPass ? <Icons.hide size={20} aria-hidden="true" /> : <Icons.show size={20} aria-hidden="true" />}
                 </button>
               </div>
               <button onClick={resetPassword} disabled={loading} style={btnStyle}>
                 {loading ? 'Resetting…' : 'Reset Password'}
               </button>
-              <button onClick={sendCode} disabled={loading} style={linkBtnStyle}>Resend code</button>
+              {!fromLink && <button onClick={sendCode} disabled={loading} style={linkBtnStyle}>{secondsLeft > 0 ? `Resend code in ${secondsLeft}s` : 'Resend code'}</button>}
+              <button type="button" disabled={loading} style={linkBtnStyle} onClick={() => { changeAccount(); setCode(''); setError(''); setNotice(''); setStage('phone') }}>Use a different number</button>
+              {notice && <p role="status" style={{ marginTop: 8, fontSize: 13, textAlign: 'center', color: 'var(--mu)' }}>{notice}</p>}
             </>
           )}
 
           {stage === 'done' && (
             <>
               <div style={{ textAlign: 'center', padding: '16px 0' }}>
-                <div style={{ fontSize: 48, marginBottom: 10 }}>✅</div>
+                <div style={{ marginBottom: 10, color: '#1DC96A' }}><Icons.check size={48} aria-hidden="true" /></div>
                 <div style={{ fontSize: 15, fontWeight: 700, marginBottom: 6 }}>Password Updated!</div>
                 <div style={{ fontSize: 13, color: 'var(--mu)' }}>You can now sign in with your new password.</div>
               </div>
@@ -122,7 +136,7 @@ export default function ForgotPasswordPage() {
         {stage === 'phone' && (
           <div style={{ textAlign: 'center', marginTop: 20, fontSize: 13, color: 'var(--mu)' }}>
             Remember your password?{' '}
-            <span style={{ color: 'var(--g)', fontWeight: 700, cursor: 'pointer' }} onClick={() => router.push('/customer/login')}>Sign In</span>
+            <span style={{ color: 'var(--g)', fontWeight: 700, cursor: 'pointer', display: 'inline-block', lineHeight: '44px' }} onClick={() => router.push('/customer/login')}>Sign In</span>
           </div>
         )}
       </div>
@@ -139,5 +153,5 @@ const btnStyle: React.CSSProperties = {
 }
 const linkBtnStyle: React.CSSProperties = {
   width: '100%', marginTop: 10, background: 'none', border: 'none', cursor: 'pointer',
-  fontSize: 13, color: 'var(--g)', fontWeight: 700, padding: 4,
+  fontSize: 13, color: 'var(--g)', fontWeight: 700, padding: 4, minHeight: 44,
 }

@@ -1,4 +1,5 @@
 'use client'
+import { isChatImage } from '@/lib/chat-image'
 import { Suspense, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useCustomerMe } from '@/components/customer/useCustomerMe'
@@ -174,7 +175,7 @@ function ChatInner() {
 
         {messages && messages.length === 0 && (
           <div className="ui-chat-empty">
-            <EmptyState icon="chat" title={`Message ${firstName}`} text="Ask about a deposit, collecting your money or your plan. Tap a question to start." />
+            <EmptyState icon="chat" title={`Message ${firstName}`} text="Ask about a deposit, collecting your money or your plan." />
             <div className="ui-chat-prompts">
               {PROMPTS.map(p => (
                 <button key={p} type="button" className="ui-chip" onClick={() => { setText(p); inputRef.current?.focus() }}>{p}</button>
@@ -191,7 +192,7 @@ function ChatInner() {
               {showDay && <p className="ui-chat-day">{dayLabel(msg.createdAt)}</p>}
               <div className={`ui-bubble-row${mine ? ' ui-bubble-row--mine' : ''}`}>
                 <div className={`ui-bubble${mine ? ' ui-bubble--mine' : ''}`}>
-                  {msg.imageUrl && (
+                  {isChatImage(msg.imageUrl) && (
                     <a href={msg.imageUrl} target="_blank" rel="noreferrer" className="ui-bubble-img">
                       <img src={msg.imageUrl} alt={mine ? 'Photo you sent' : `Photo from ${firstName}`} />
                     </a>

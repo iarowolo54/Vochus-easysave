@@ -64,3 +64,53 @@ test('credits once, then is idempotent; unknown ref is not_found', async () => {
 
   assert.equal(await creditAutoDebitAttempt(prisma, { reference: `nope-${rid}`, settledAmountNaira: 1 }), 'not_found')
 })
+
+test('a charge landing on a closed plan is not credited and goes to manual review, once', async () => {
+  const closedRef = `autodebit-closed-${rid}`
+  const closed = await prisma.savingsPlan.create({
+    data: { customerId, dailyAmount: 700, periodDays: 30, goal: 'x', startDate: new Date(), maturityDate: new Date(Date.now() + 30 * 864e5), balance: 100, status: 'Redeemed', source: 'self' },
+  })
+  const at = await prisma.autoDebitAttempt.create({
+    data: { mandateId, savingsPlanId: closed.id, reference: closedRef, cycleDate: new Date(), creditAmount: 700, grossCharged: 710, feeEstimate: 10, status: 'processing' },
+  })
+  try {
+    assert.equal(await creditAutoDebitAttempt(prisma, { reference: closedRef, settledAmountNaira: 710 }), 'review')
+    assert.equal(await creditAutoDebitAttempt(prisma, { reference: closedRef, settledAmountNaira: 710 }), 'review')
+    assert.equal((await prisma.savingsPlan.findUniqueOrThrow({ where: { id: closed.id } })).balance, 100)
+    assert.equal(await prisma.transaction.count({ where: { ref: closedRef } }), 0)
+    assert.equal((await prisma.autoDebitAttempt.findUniqueOrThrow({ where: { id: at.id } })).status, 'review')
+    assert.equal(await prisma.auditLog.count({ where: { action: 'payment_needs_manual_review', entityId: at.id } }), 1)
+  } finally {
+    await prisma.autoDebitAttempt.deleteMany({ where: { id: at.id } })
+    await prisma.savingsPlan.deleteMany({ where: { id: closed.id } })
+  }
+})
+
+test('a plan redeemed between the read and the credit takes no money, and nothing partial is left', async () => {
+  const racingRef = `autodebit-race-${rid}`
+  const open = await prisma.savingsPlan.create({
+    data: { customerId, dailyAmount: 700, periodDays: 30, goal: 'x', startDate: new Date(), maturityDate: new Date(Date.now() + 30 * 864e5), balance: 100, status: 'Active', source: 'self' },
+  })
+  const at = await prisma.autoDebitAttempt.create({
+    data: { mandateId, savingsPlanId: open.id, reference: racingRef, cycleDate: new Date(), creditAmount: 700, grossCharged: 710, feeEstimate: 10, status: 'processing' },
+  })
+  // The credit reads the plan, then the customer, then credits: redeem it in between.
+  const racing = new Proxy(prisma, {
+    get(target, key) {
+      if (key !== 'customer') return Reflect.get(target, key)
+      return { findUnique: async (a: Parameters<typeof prisma.customer.findUnique>[0]) => {
+        await prisma.savingsPlan.update({ where: { id: open.id }, data: { status: 'Redeemed' } })
+        return prisma.customer.findUnique(a)
+      } }
+    },
+  })
+  try {
+    assert.equal(await creditAutoDebitAttempt(racing, { reference: racingRef, settledAmountNaira: 710 }), 'review')
+    assert.equal((await prisma.savingsPlan.findUniqueOrThrow({ where: { id: open.id } })).balance, 100)
+    assert.equal(await prisma.transaction.count({ where: { ref: racingRef } }), 0)
+    assert.equal((await prisma.autoDebitAttempt.findUniqueOrThrow({ where: { id: at.id } })).status, 'review')
+  } finally {
+    await prisma.autoDebitAttempt.deleteMany({ where: { id: at.id } })
+    await prisma.savingsPlan.deleteMany({ where: { id: open.id } })
+  }
+})

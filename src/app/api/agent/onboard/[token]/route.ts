@@ -31,6 +31,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   const photoCheck = validatePhoto(photoUrl)
   if (!photoCheck.ok) return NextResponse.json({ error: photoCheck.error }, { status: 400 })
 
+  // Email must have been verified recently. The browser check alone is not enough.
+  const verifiedOtp = await prisma.emailOTP.findFirst({
+    where: { email: invite.email, verified: true, createdAt: { gte: new Date(Date.now() - 60 * 60_000) } },
+    orderBy: { createdAt: 'desc' },
+  })
+  if (!verifiedOtp) return NextResponse.json({ error: 'Confirm your email first' }, { status: 400 })
+
   const conflict = await findIdentityConflict(prisma, { phone, email: invite.email })
   if (conflict) return identityConflictResponse(conflict)
 
@@ -76,6 +83,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
     where: { token },
     data: { status: 'Completed' },
   })
+  await prisma.emailOTP.deleteMany({ where: { id: verifiedOtp.id } })
 
   logAudit({
     action: 'agent_registered',

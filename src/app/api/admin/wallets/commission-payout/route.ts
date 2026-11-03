@@ -17,9 +17,9 @@ export async function POST(req: NextRequest) {
   const session = guard.session
 
   const body = await req.json()
-  const { agentId } = body as { agentId: string }
+  const agentId: unknown = body?.agentId
 
-  if (!agentId) return NextResponse.json({ error: 'agentId required' }, { status: 400 })
+  if (typeof agentId !== 'string' || !agentId) return NextResponse.json({ error: 'agentId required' }, { status: 400 })
 
   const agent = await prisma.agent.findUnique({ where: { id: agentId } })
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })

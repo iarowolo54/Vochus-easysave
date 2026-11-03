@@ -76,10 +76,11 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const customerName = `${redemption.savingsPlan.customer.firstName} ${redemption.savingsPlan.customer.lastName}`
 
   if (action === 'reject') {
-    await prisma.earlyRedemption.update({
-      where: { id },
+    const declined = await prisma.earlyRedemption.updateMany({
+      where: { id, status: 'TokenValidated' },
       data: { status: 'Rejected', decidedAt: new Date(), decidedBy: agent.agentId },
     })
+    if (declined.count === 0) return NextResponse.json({ error: 'Not ready for agent approval' }, { status: 409 })
     logAudit({
       action: 'agent_redemption_rejected',
       entity: 'EarlyRedemption',
@@ -106,14 +107,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ ok: true, status: 'Rejected' })
   }
 
-  await prisma.earlyRedemption.update({
-    where: { id },
+  const approved = await prisma.earlyRedemption.updateMany({
+    where: { id, status: 'TokenValidated' },
     data: {
       status: 'AgentApproved',
       agentApprovedAt: new Date(),
       agentApprovedBy: agent.agentId,
     },
   })
+  if (approved.count === 0) return NextResponse.json({ error: 'Not ready for agent approval' }, { status: 409 })
 
   logAudit({
     action: 'agent_redemption_approved',

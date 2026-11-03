@@ -9,7 +9,7 @@ export type AutoFundingPlan = { id: string; source?: string; status: string; cad
 
 type Mandate =
   | { status: 'none' }
-  | { status: 'active' | 'paused' | 'cancelled'; amountPerCycle: number; nextRunAt: string | null; last4: string | null; bankName: string | null }
+  | { status: 'active' | 'paused' | 'cancelled'; amountPerCycle: number; nextPaymentAt: string | null; last4: string | null; bankName: string | null }
 
 export function canAutoFund(plan: AutoFundingPlan) {
   return plan.status === 'Active' && plan.source === 'self'
@@ -122,12 +122,10 @@ export default function AutoFunding({ plan, hideAmounts }: { plan: AutoFundingPl
             <dt className="ui-row-main ui-row-sub ui-summary-key">We save</dt>
             <dd className="ui-row-value">{amount(mandate.amountPerCycle)} {perCycle(plan.cadence)}</dd>
           </div>
-          {mandate.nextRunAt && (
-            <div className="ui-row">
-              <dt className="ui-row-main ui-row-sub ui-summary-key">Next payment</dt>
-              <dd className="ui-row-value">{formatDate(mandate.nextRunAt)}</dd>
-            </div>
-          )}
+          <div className="ui-row">
+            <dt className="ui-row-main ui-row-sub ui-summary-key">Next payment</dt>
+            <dd className="ui-row-value">{mandate.nextPaymentAt ? formatDate(mandate.nextPaymentAt) : 'Nothing left to charge'}</dd>
+          </div>
           {card && (
             <div className="ui-row">
               <dt className="ui-row-main ui-row-sub ui-summary-key">Card</dt>

@@ -342,10 +342,10 @@ export default function CustomersPage() {
           )}
 
           {cash && summary && summary.saverCount > 0 && (
-            <section className={`ag-round${summary.overdueCount > 0 ? ' is-overdue' : ''}`} aria-label="Today’s collection">
+            <section className={`ag-collect-note${summary.overdueCount > 0 ? ' is-overdue' : ''}`} aria-label="Today’s collection">
               <Icons.calendar size={20} aria-hidden="true" />
               <div>
-                <p className="ag-round-title">
+                <p className="ag-collect-note-title">
                   {summary.overdueCount > 0
                     ? `${summary.overdueCount} haven’t paid in ${OVERDUE_DAYS}+ days`
                     : `Everyone has paid in the last ${OVERDUE_DAYS} days`}

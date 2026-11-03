@@ -28,6 +28,14 @@ export const ABSOLUTE_SECONDS: Record<Actor, number> = {
   customer: 604800,
 }
 
+/**
+ * Stricter idle limit inside the mobile apps (agent + customer), enforced on
+ * the client: IdleTimeout warns and signs out while the app is open, and the
+ * Flutter shells (`kIdleTimeout` in mobile/lib/main.dart and mobile-agent/lib/main.dart) sign out on return
+ * from the background after this long. Keep those in step with this value.
+ */
+export const IN_APP_IDLE_SECONDS = 300
+
 export type SessionDecision = { action: 'slide'; newExp: number } | { action: 'expire' }
 
 /**

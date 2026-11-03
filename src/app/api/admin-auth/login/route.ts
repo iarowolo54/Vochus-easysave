@@ -1,9 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { encode } from 'next-auth/jwt'
-import bcrypt from 'bcryptjs'
-import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
-import { pickIdentity } from '@/lib/admin-identity'
+import { prisma } from '@/lib/prisma'
+import { verifyAdminLogin } from '@/lib/admin-login-guard'
+import { rightmostForwardedIp } from '@/lib/rate-limit'
 import { requireEnv } from '@/lib/env'
 import { IDLE_SECONDS } from '@/lib/session-policy'
 
@@ -13,23 +13,23 @@ const SECRET = requireEnv('NEXTAUTH_SECRET')
 export async function POST(req: NextRequest) {
   const { email, password } = await req.json()
 
-  if (!email || !password) {
+  if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) {
     return NextResponse.json({ error: 'Missing credentials' }, { status: 400 })
   }
 
-  const normalizedEmail = email.trim().toLowerCase()
-  const admin = await prisma.superAdmin.findUnique({ where: { email: normalizedEmail } })
-  // Only consult StaffUser when no SuperAdmin owns this email (never shadowed).
-  const staff = admin ? null : await prisma.staffUser.findUnique({ where: { email: normalizedEmail } })
-
-  const identity = pickIdentity({ superAdmin: admin, staff })
-  const hash = identity.kind === 'superadmin' ? admin?.password : identity.kind === 'staff' ? staff?.password : undefined
-
-  if (identity.kind === 'none' || !hash || !(await bcrypt.compare(password, hash))) {
+  const result = await verifyAdminLogin(email, password, rightmostForwardedIp(req.headers.get('x-forwarded-for')))
+  if (result.kind === 'locked') {
+    return NextResponse.json({ error: 'Too many attempts. Please wait a few minutes and try again.' }, { status: 429 })
+  }
+  if (result.kind === 'invalid') {
     return NextResponse.json({ error: 'Invalid email or password' }, { status: 401 })
   }
+  const identity = result.kind === 'ok-staff'
+    ? { kind: 'staff' as const, id: result.staff.id, name: result.staff.name, email: result.staff.email }
+    : { kind: 'superadmin' as const, id: result.admin.id, name: result.admin.name, email: result.admin.email }
+  const admin = result.kind === 'ok' ? result.admin : null
 
-  const role = identity.kind === 'staff' ? 'staff' : 'superadmin'
+  const role = identity.kind
   const token = await encode({
     token: { sub: identity.id, email: identity.email, name: identity.name, role, loginAt: Math.floor(Date.now() / 1000) },
     secret: SECRET,

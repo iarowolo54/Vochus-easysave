@@ -10,13 +10,16 @@ import { setJustPaid } from '@/lib/payment-flash'
 
 type State =
   | { kind: 'confirming' }
-  | { kind: 'success'; amount: number | null; newBalance: number | null; already: boolean }
+  | { kind: 'success'; amount: number | null; newBalance: number | null; already: boolean; notBought: NotBought }
+  | { kind: 'review' }         // money arrived but can't be credited as it stands; staff are looking at it
   | { kind: 'failed' }        // Paystack says the payment did not succeed
   | { kind: 'unconfirmed' }   // we couldn't reach a verdict (network, server, timeout)
   // Auto-funding set-up (refs from /api/customer/auto-debit/init start with `addenroll-`)
   | { kind: 'autoOn'; already: boolean }
   | { kind: 'autoSavedInstead' } // the card can't be reused, but the first payment was saved
   | { kind: 'autoFailed'; message: string; canRetry: boolean }
+
+type NotBought = { count: number; weekly: boolean } | null
 
 const ENROLL_PREFIX = 'addenroll-'
 /** Server reasons arrive without a full stop ("Card cannot be used for auto-debit"). */
@@ -35,9 +38,10 @@ function CallbackContent() {
     if (!reference) { setState({ kind: 'unconfirmed' }); return }
     setState({ kind: 'confirming' })
     if (reference.startsWith(ENROLL_PREFIX)) {
-      const r = await postJson<{ active?: boolean; alreadyProcessed?: boolean; savedInstead?: boolean }>(
+      const r = await postJson<{ active?: boolean; alreadyProcessed?: boolean; savedInstead?: boolean; review?: boolean }>(
         '/api/customer/auto-debit/verify', { reference },
       )
+      if (r.ok && r.data.review) { setState({ kind: 'review' }); return }
       if (r.ok) {
         setState(r.data.active ? { kind: 'autoOn', already: !!r.data.alreadyProcessed } : { kind: 'autoSavedInstead' })
         return
@@ -47,13 +51,14 @@ function CallbackContent() {
       setState({ kind: 'autoFailed', message: describeFailure(r), canRetry: !definite })
       return
     }
-    const r = await postJson<{ amount?: number; newBalance?: number; alreadyProcessed?: boolean }>(
+    const r = await postJson<{ amount?: number; newBalance?: number; alreadyProcessed?: boolean; review?: boolean; notBought?: NotBought }>(
       '/api/customer/paystack/verify', { reference },
     )
+    if (r.ok && r.data.review) { setState({ kind: 'review' }); return }
     if (r.ok && (r.data.alreadyProcessed || r.data.amount)) {
       const amount = r.data.amount ?? null
       if (amount && !r.data.alreadyProcessed) setJustPaid(amount)
-      setState({ kind: 'success', amount, newBalance: r.data.newBalance ?? null, already: !!r.data.alreadyProcessed })
+      setState({ kind: 'success', amount, newBalance: r.data.newBalance ?? null, already: !!r.data.alreadyProcessed, notBought: r.data.notBought?.count ? r.data.notBought : null })
       return
     }
     if (!r.ok && r.kind === 'http' && r.status === 400 && /not successful/i.test(r.serverMessage)) {
@@ -131,6 +136,38 @@ function CallbackContent() {
       />
     </div>
   )
+
+  if (state.kind === 'review') return (
+    <div className="ui-screen ui-screen--center">
+      <EmptyState
+        icon="pending"
+        title="We’re reviewing this payment"
+        text="Your money arrived, but it couldn’t be added to this plan automatically. Our team is checking it. Please don’t pay again; contact support with the reference below if you need to."
+        action={
+          <div className="ui-stack">
+            {home}
+            <button type="button" className="ui-btn ui-btn--plain ui-btn--block" onClick={() => router.push('/customer/chat')}>Get help</button>
+            {refLine}
+          </div>
+        }
+      />
+    </div>
+  )
+
+  if (state.kind === 'success' && state.notBought) {
+    const unit = state.notBought.weekly ? 'week' : 'day'
+    const many = state.notBought.count !== 1
+    return (
+      <div className="ui-screen ui-screen--center">
+        <EmptyState
+          icon="pending"
+          title={`${state.notBought.count} ${unit}${many ? 's' : ''} not paid for`}
+          text={`${state.amount ? formatNaira(state.amount) : 'Your money'} is in your savings, but this payment wasn’t applied to ${state.notBought.count} of the ${unit}s you picked. Check your savings card to see what’s paid.`}
+          action={<div className="ui-stack">{home}{refLine}</div>}
+        />
+      </div>
+    )
+  }
 
   if (state.kind === 'success') return (
     <div className="ui-screen ui-screen--center">

@@ -2,7 +2,7 @@
 // unauthenticated enrolment endpoints (phone-available, email-otp, invite).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { createRateLimiter } from '../src/lib/rate-limit'
+import { clientIp, createRateLimiter, rightmostForwardedIp } from '../src/lib/rate-limit'
 
 test('allows up to the limit within the window, then blocks', () => {
   const rl = createRateLimiter()
@@ -40,4 +40,38 @@ test('retryAfterMs reflects when the oldest hit leaves the window', () => {
   assert.equal(blocked.allowed, false)
   // oldest hit at t0 leaves the window at t0+10000, i.e. 7000ms from now
   assert.equal(blocked.retryAfterMs, 7_000)
+})
+
+test('expired keys are removed, so the map cannot grow without limit', () => {
+  const rl = createRateLimiter()
+  const t0 = 1_000_000
+  for (let i = 0; i < 500; i++) rl.check(`ip:${i}`, 3, 60_000, t0)
+  assert.equal(rl.size(), 500)
+  rl.check('ip:new', 3, 60_000, t0 + 120_000)
+  assert.equal(rl.size(), 1)
+})
+
+test('a key still inside its own longer window is kept', () => {
+  const rl = createRateLimiter()
+  const t0 = 1_000_000
+  rl.check('short', 3, 60_000, t0)
+  rl.check('long', 3, 3_600_000, t0)
+  rl.check('new', 3, 60_000, t0 + 120_000)
+  assert.equal(rl.size(), 2)
+  assert.equal(rl.check('long', 1, 3_600_000, t0 + 130_000).allowed, false)
+})
+
+test('rightmostForwardedIp: only a real address counts', () => {
+  assert.equal(rightmostForwardedIp('1.2.3.4, 5.6.7.8'), '5.6.7.8')
+  assert.equal(rightmostForwardedIp('::1'), '::1')
+  assert.equal(rightmostForwardedIp('1.2.3.4, not-an-ip'), null)
+  assert.equal(rightmostForwardedIp(null), null)
+})
+
+test('clientIp: a forged or malformed value never becomes a key', () => {
+  const req = (h: Record<string, string>) => new Request('http://x', { headers: h })
+  assert.equal(clientIp(req({ 'x-forwarded-for': '9.9.9.9, 5.6.7.8' })), '5.6.7.8')
+  assert.equal(clientIp(req({ 'x-forwarded-for': `x${'y'.repeat(500)}` })), 'unknown')
+  assert.equal(clientIp(req({ 'x-real-ip': '5.6.7.8' })), '5.6.7.8')
+  assert.equal(clientIp(req({ 'x-real-ip': 'nonsense' })), 'unknown')
 })

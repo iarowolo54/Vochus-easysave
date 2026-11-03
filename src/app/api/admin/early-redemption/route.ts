@@ -4,10 +4,20 @@ import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { money } from '@/lib/wallet-guard'
-import { IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
+import { excludeExpiredPending, IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
+import { balanceUnchanged, readyToFinalize } from '@/lib/redemption-balance'
+import { heldForNameCheck } from '@/lib/payout-account'
 
-// Awaiting admin action = in flight but not yet Approved (incl. AwaitingOTP / Finalizing).
-const AWAITING_ACTION_STATUSES = IN_FLIGHT_REDEMPTION_STATUSES.filter(s => s !== 'Approved')
+// Awaiting admin action = in flight but not yet Approved (incl. AwaitingOTP / Finalizing), or a transfer
+// whose outcome the admin needs to check (Processing).
+const AWAITING_ACTION_STATUSES = [...IN_FLIGHT_REDEMPTION_STATUSES.filter(s => s !== 'Approved'), 'Processing']
+const DECIDABLE_STATUSES = ['Pending', 'TokenValidated', 'AgentApproved']
+
+/** Whether approving, or entering the Paystack code, would now be refused because money moved. */
+function balanceChanged(r: { status: string; balance: number; savingsPlan: { status: string; balance: number } }) {
+  if (r.status === 'AwaitingOTP') return !readyToFinalize(r.savingsPlan, r.balance)
+  return DECIDABLE_STATUSES.includes(r.status) && !balanceUnchanged(r.savingsPlan.balance, r.balance)
+}
 
 function genRef() {
   return `ER-${Date.now().toString(36).toUpperCase()}-${randomBytes(4).toString('hex').toUpperCase()}`
@@ -25,7 +35,7 @@ export async function GET() {
           customer: {
             select: {
               id: true, customerId: true, firstName: true, lastName: true, phone: true,
-              agent: { select: { name: true, agentId: true } },
+              agent: { select: { name: true, agentId: true, status: true } },
             },
           },
         },
@@ -77,6 +87,10 @@ export async function GET() {
       note: r.note,
       status: r.status,
       balance: r.balance,
+      currentBalance: r.savingsPlan.balance,
+      balanceChanged: balanceChanged(r),
+      // Paid, but money that arrived during the payout is still on the closed plan.
+      needsReview: r.status === 'Approved' && r.savingsPlan.status === 'Redeemed' && r.savingsPlan.balance > 0.005,
       penalty: r.penalty,
       netPayout: r.netPayout,
       // token intentionally omitted: it is a hash of a 6-digit code (low
@@ -96,6 +110,8 @@ export async function GET() {
       customerPhone: r.savingsPlan.customer.phone,
       agentName: r.savingsPlan.customer.agent.name,
       agentId: r.savingsPlan.customer.agent.agentId,
+      agentActive: r.savingsPlan.customer.agent.status === 'Active',
+      nameMismatch: heldForNameCheck(r, r.savingsPlan.customer),
       savingsPlanId: r.savingsPlanId,
       planStatus: r.savingsPlan.status,
       // The plan being redeemed.
@@ -119,6 +135,12 @@ export async function POST(req: Request) {
 
   const plan = await prisma.savingsPlan.findUnique({ where: { id: savingsPlanId } })
   if (!plan) return NextResponse.json({ error: 'Savings plan not found' }, { status: 404 })
+
+  const existing = await prisma.earlyRedemption.findFirst({
+    where: { savingsPlanId, status: { in: [...IN_FLIGHT_REDEMPTION_STATUSES, 'Processing'] }, ...excludeExpiredPending() },
+    select: { id: true },
+  })
+  if (existing) return NextResponse.json({ error: 'This plan already has a request in progress' }, { status: 409 })
 
   const isEarly = type === 'early' || plan.status === 'Active'
   const gross = money(plan.balance)

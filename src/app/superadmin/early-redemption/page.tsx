@@ -20,6 +20,11 @@ interface RedemptionRecord {
   note: string | null
   status: string
   balance: number
+  currentBalance: number
+  balanceChanged: boolean
+  needsReview: boolean
+  agentActive: boolean
+  nameMismatch: boolean
   penalty: number
   netPayout: number
   token: string | null
@@ -77,7 +82,7 @@ interface ActivePlan {
   id: string; customerName: string; customerId: string; balance: number; status: string; periodDays: number; dailyAmount: number; cadence: string
 }
 
-interface PinTarget {
+interface PinTarget { nameMismatch: boolean;
   id: string; ref: string; customerName: string; customerId: string; amount: number
   payoutMethod: string; accountName: string | null; bankName: string | null; accountNumber: string | null
 }
@@ -97,10 +102,16 @@ const REASONS = [
 
 const PAGE_SIZE = 25
 const PLAN_LIMIT = 100 // the plan picker asks the savings API for up to this many active plans
-const PENDING_STATUSES = IN_FLIGHT_REDEMPTION_STATUSES.filter(s => s !== 'Approved')
+const PENDING_STATUSES = [...IN_FLIGHT_REDEMPTION_STATUSES.filter(s => s !== 'Approved'), 'Processing']
 const DECIDABLE = ['Pending', 'TokenValidated', 'AgentApproved']
 const NO_CONNECTION = 'No connection. Check your internet and try again.'
 
+/** Sent a code that hasn't been confirmed yet. Only a request an admin made (no code) can be approved from Pending. */
+const needsCode = (r: { status: string; tokenExpiry: string | null }) => r.status === 'Pending' && !!r.tokenExpiry
+/** Paystack's final statuses that don't say whether money moved, so a person has to look. */
+const UNCLEAR_FINAL = ['blocked', 'rejected']
+const CHECKABLE = ['Processing', 'AwaitingOTP', 'Finalizing']
+const cashBlocked = (r: { agentActive: boolean; payoutMethod: string | null }) => !r.agentActive && !isBank(r.payoutMethod)
 const isBank = (method: string | null | undefined) => method === 'Bank Transfer' || method === 'BankTransfer'
 const last4 = (acct: string | null) => acct ? `••••${acct.slice(-4)}` : ''
 const typeLabel = (t: string) => t === 'early' ? 'Early exit' : 'After maturity'
@@ -116,6 +127,7 @@ function StatusBadge({ status }: { status: string }) {
     case 'TokenValidated': return <span className="bdg bdg-a">Waiting for agent</span>
     case 'AgentApproved': return <span className="bdg bdg-b">Agent approved</span>
     case 'AwaitingOTP': return <span className="bdg bdg-a">Waiting for Paystack code</span>
+    case 'Processing': return <span className="bdg bdg-a">Check with Paystack</span>
     case 'Finalizing': return <span className="bdg bdg-b">Finalising payout</span>
     case 'Approved': return <span className="bdg bdg-g">Approved</span>
     case 'Rejected': return <span className="bdg bdg-r">Rejected</span>
@@ -179,6 +191,7 @@ export default function RedemptionsPage() {
   const [rejectTarget, setRejectTarget] = useState<RedemptionRecord | null>(null)
   const [rejectBusy, setRejectBusy] = useState(false)
   const [rejectError, setRejectError] = useState('')
+  const [checking, setChecking] = useState(false)
 
   const [detail, setDetail] = useState<RedemptionRecord | null>(null)
 
@@ -314,7 +327,7 @@ export default function RedemptionsPage() {
   // ── Approve / reject ──
   function openApprove(r: RedemptionRecord) {
     setPinModal({
-      id: r.id, ref: r.ref, customerName: r.customerName, customerId: r.customerId, amount: r.netPayout,
+      id: r.id, ref: r.ref, customerName: r.customerName, customerId: r.customerId, amount: r.netPayout, nameMismatch: r.nameMismatch,
       payoutMethod: r.payoutMethod ?? 'Cash', accountName: r.accountName ?? null, bankName: r.bankName ?? null, accountNumber: r.accountNumber ?? null,
     })
     setPinValue(''); setPinError(''); setApproveError(''); setTransferRef('')
@@ -332,6 +345,13 @@ export default function RedemptionsPage() {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'reject' }),
       })
+      if (res.status === 409) {
+        // It has moved on, so rejecting again can't work.
+        toast(await errorOf(res, 'This request has already been decided.'))
+        setRejectTarget(null)
+        load()
+        return
+      }
       if (!res.ok) { setRejectError(await errorOf(res, 'The request wasn’t rejected. Try again.')); return }
       toast(`${rejectTarget.ref} rejected. ${rejectTarget.customerName}’s plan is active again.`, 'success')
       setRejectTarget(null)
@@ -352,18 +372,33 @@ export default function RedemptionsPage() {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(
           manual && isBank(pinModal.payoutMethod) && transferRef.trim()
-            ? { action: 'approve', pin: pinValue, adminNote: transferRef.trim() }
-            : { action: 'approve', pin: pinValue },
+            ? { action: 'approve', pin: pinValue, adminNote: transferRef.trim(), overrideNameMismatch: pinModal.nameMismatch }
+            : { action: 'approve', pin: pinValue, overrideNameMismatch: pinModal.nameMismatch },
         ),
       })
+      if (res.status === 409) {
+        // The request has moved on, so approving again can't work: show its current state and the way out.
+        const msg = await errorOf(res, 'This request has changed. Nothing was paid.')
+        const current = records.find(r => r.id === pinModal.id)
+        setPinModal(null); setPinValue(''); setApproveError('')
+        toast(msg)
+        if (current) setDetail(current)
+        load()
+        return
+      }
       if (!res.ok) {
         const msg = await errorOf(res, 'The payout wasn’t approved. Nothing was paid. Try again.')
         if (/pin/i.test(msg)) setPinError(msg); else setApproveError(msg)
         return
       }
-      const d = await res.json().catch(() => ({})) as { status?: string; bankTransferStatus?: string | null }
+      const d = await res.json().catch(() => ({})) as { status?: string; bankTransferStatus?: string | null; reviewNeeded?: boolean }
       const target = pinModal
       setPinModal(null); setPinValue('')
+      if (d.status === 'Processing') {
+        toast(`Paystack says “${d.bankTransferStatus ?? 'unknown'}”, so this isn’t recorded as paid. Use Check with Paystack on the request.`)
+        load()
+        return
+      }
       if (d.status === 'AwaitingOTP') {
         setOtpValue(''); setOtpError('')
         setOtpModal({ id: target.id, ref: target.ref, customerName: target.customerName, amount: target.amount })
@@ -375,6 +410,7 @@ export default function RedemptionsPage() {
         { label: 'Customer', value: `${target.customerName} · ${target.customerId}` },
         { label: 'Reference', value: target.ref },
       ]
+      if (d.reviewNeeded) toast('Money arrived on this plan during the payout and was left on it. This needs a manual review.')
       if (isBank(target.payoutMethod)) {
         const wasManual = d.bankTransferStatus === 'manual'
         const sent = d.bankTransferStatus === 'success' || wasManual
@@ -413,11 +449,33 @@ export default function RedemptionsPage() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ otp: otpValue.trim() }),
       })
+      if (res.status === 409) {
+        const msg = await errorOf(res, 'This request has changed. Nothing was paid.')
+        const current = records.find(r => r.id === otpModal.id)
+        setOtpModal(null); setOtpValue('')
+        toast(msg)
+        if (current) setDetail(current)
+        load()
+        return
+      }
+      if (res.status === 502) {
+        // Not a wrong code: the outcome is settled or unknown, so there's nothing to retry here.
+        toast(await errorOf(res, 'We couldn’t confirm this with Paystack.'))
+        setOtpModal(null); setOtpValue('')
+        load()
+        return
+      }
       if (!res.ok) { setOtpError(await errorOf(res, 'Paystack didn’t accept that code. Check it and try again.')); return }
+      const done = await res.json().catch(() => ({})) as { reviewNeeded?: boolean; status?: string; bankTransferStatus?: string }
       setOtpModal(null); setOtpValue('')
+      if (done.status === 'Finalizing') {
+        toast(`Paystack says “${done.bankTransferStatus ?? 'unknown'}”, so this isn’t recorded as paid yet. Use Check with Paystack on the request.`)
+        load()
+        return
+      }
       setResult({
         heading: 'Payout sent', title: `${nairaKobo(otpModal.amount)} sent`,
-        text: <>Paystack accepted the code and completed the transfer to {otpModal.customerName}.</>,
+        text: <>Paystack accepted the code and completed the transfer to {otpModal.customerName}.{done.reviewNeeded && <> Money arrived on this plan during the payout and was left on it. This needs a manual review; it’s flagged in the audit log.</>}</>,
         rows: [{ label: 'Customer', value: otpModal.customerName }, { label: 'Reference', value: otpModal.ref }, { label: 'Net payout', value: nairaKobo(otpModal.amount), total: true }],
       })
       load()
@@ -428,8 +486,38 @@ export default function RedemptionsPage() {
     }
   }
 
+  async function checkWithPaystack(r: RedemptionRecord) {
+    setChecking(true)
+    try {
+      const res = await fetch(`/api/admin/early-redemption/${r.id}/verify`, { method: 'POST' })
+      if (!res.ok) { toast(await errorOf(res, 'We couldn’t get an answer from Paystack. Nothing has changed. Try again shortly.')); return }
+      const d = await res.json().catch(() => ({})) as { status?: string; bankTransferStatus?: string | null; reviewNeeded?: boolean }
+      if (d.status && CHECKABLE.includes(d.status) && d.status !== 'AwaitingOTP') {
+        toast(`${r.ref}: Paystack says “${d.bankTransferStatus ?? 'unknown'}”. ${UNCLEAR_FINAL.includes(d.bankTransferStatus ?? '') ? 'That’s final, but it doesn’t say if money moved. Check the Paystack dashboard.' : 'It isn’t finished, so nothing has changed. Check again later.'}`)
+        load()
+        return
+      }
+      const released = d.bankTransferStatus ? `Paystack says it ${d.bankTransferStatus === 'reversed' ? 'was reversed' : d.bankTransferStatus === 'abandoned' ? 'was abandoned (the code expired)' : 'failed'}` : 'Paystack has no record of it'
+      toast(d.status === 'Approved'
+        ? `${r.ref}: Paystack confirms the transfer, so the payout is recorded.${d.reviewNeeded ? ' Money arrived on the plan during the payout and was left on it. This needs a manual review.' : ''}`
+        : d.status === 'AwaitingOTP' ? `${r.ref}: Paystack needs a code. Enter it from the list.`
+        : `${r.ref}: ${released}, so no money went out. It’s back on the plan, so you can approve or reject the request.`, d.reviewNeeded ? undefined : 'success')
+      setDetail(null)
+      load()
+    } catch {
+      toast(NO_CONNECTION)
+    } finally {
+      setChecking(false)
+    }
+  }
+
   // ── Derived lists ──
   const records = data?.records ?? []
+
+  // An open detail shows the latest figures after the list reloads.
+  useEffect(() => {
+    setDetail(d => (d ? data?.records.find(r => r.id === d.id) ?? d : d))
+  }, [data])
   const pending = records.filter(r => PENDING_STATUSES.includes(r.status))
   const awaitingOtp = pending.filter(r => r.status === 'AwaitingOTP').length
   const hq = historySearch.trim().toLowerCase()
@@ -460,17 +548,14 @@ export default function RedemptionsPage() {
     toast('Export downloaded', 'success')
   }
 
-  function rowActions(r: RedemptionRecord) {
-    if (r.status === 'AwaitingOTP') {
-      return <button type="button" className="btn btn-sm btn-green" onClick={() => { setOtpValue(''); setOtpError(''); setOtpModal({ id: r.id, ref: r.ref, customerName: r.customerName, amount: r.netPayout }) }}>Enter Paystack code</button>
-    }
-    if (r.status === 'Finalizing') return <span className="bdg bdg-b">Finalising payout</span>
-    return (
-      <div className="a-row-actions">
-        <button type="button" className="btn btn-sm btn-green" onClick={() => openApprove(r)}>{manual && isBank(r.payoutMethod) ? 'Mark as paid' : 'Approve'}</button>
-        <button type="button" className="btn btn-sm btn-outline" onClick={() => openReject(r)}>Reject</button>
-      </div>
-    )
+  // Skip the open when the click ends a text selection, so details in the row can still be copied.
+  function openRow(r: RedemptionRecord) {
+    if (window.getSelection()?.toString()) return
+    setDetail(r)
+  }
+
+  function viewButton(r: RedemptionRecord) {
+    return <button type="button" className="btn btn-sm btn-outline" onClick={() => setDetail(r)} aria-label={`View request ${r.ref}`}>View</button>
   }
 
   const statVal = (v: number, tone?: string) => !data
@@ -545,17 +630,13 @@ export default function RedemptionsPage() {
                       <tr>
                         <th>Request</th><th>Customer</th><th>Agent</th><th>Type</th>
                         <th className="num">Net payout</th><th>Payout method</th><th>Reason</th><th>Requested</th>
-                        <th className="num">Status</th>
+                        <th className="num td-pin-end">Status</th>
                       </tr>
                     </thead>
                     <tbody>
                       {pending.map(r => (
-                        <tr key={r.id}>
-                          <td>
-                            <button type="button" className="cm-cell-btn" onClick={() => setDetail(r)} aria-label={`View request ${r.ref}`}>
-                              <span className="cm-ref">{r.ref}</span>
-                            </button>
-                          </td>
+                        <tr key={r.id} className="is-clickable" onClick={() => openRow(r)}>
+                          <td className="cm-nowrap"><span className="cm-ref">{r.ref}</span></td>
                           <td data-label="Customer">
                             <div className="td-name">{r.customerName}</div>
                             <div className="td-sub">{r.customerId}</div>
@@ -569,14 +650,17 @@ export default function RedemptionsPage() {
                           <td className="num cm-strong" data-label="Net payout">{nairaKobo(r.netPayout)}</td>
                           <td data-label="Payout method">
                             <div>{r.payoutMethod ?? 'Cash'}</div>
-                            {isBank(r.payoutMethod) && r.bankName && <div className="td-sub">{r.accountName} · {r.bankName} {last4(r.accountNumber)}</div>}
+                            {isBank(r.payoutMethod) && r.bankName && <>
+                              <div className="td-sub">{r.accountName}</div>
+                              <div className="td-sub">{r.bankName} <span className="am-acct-sm">{last4(r.accountNumber)}</span></div>
+                            </>}
                           </td>
                           <td data-label="Reason"><span className="cm-truncate cm-sub2" title={r.reason}>{r.reason}</span></td>
                           <td data-label="Requested" className="cm-nowrap cm-sub2">{dateTime(r.requestedAt)}</td>
-                          <td>
+                          <td className="td-pin-end">
                             <div className="cm-act">
-                              <StatusBadge status={r.status} />
-                              {rowActions(r)}
+                              <StatusBadge status={r.status} />{r.needsReview && <> <span className="bdg bdg-r">Needs review</span></>}
+                              <div className="a-row-actions">{viewButton(r)}</div>
                             </div>
                           </td>
                         </tr>
@@ -683,26 +767,23 @@ export default function RedemptionsPage() {
                       <thead>
                         <tr>
                           <th>Request</th><th>Customer</th><th>Agent</th><th>Type</th><th className="num">Balance</th>
-                          <th className="num">Fee</th><th className="num">Net payout</th><th>Decision</th><th>Decided by</th><th>Date</th>
+                          <th className="num">Fee</th><th className="num">Net payout</th><th>Decision</th><th>Decided by</th><th>Date</th><th className="td-pin-end"><span className="sr-only">Actions</span></th>
                         </tr>
                       </thead>
                       <tbody>
                         {history.slice((historyPage - 1) * PAGE_SIZE, historyPage * PAGE_SIZE).map(r => (
-                          <tr key={r.id}>
-                            <td>
-                              <button type="button" className="cm-cell-btn" onClick={() => setDetail(r)} aria-label={`View request ${r.ref}`}>
-                                <span className="cm-ref">{r.ref}</span>
-                              </button>
-                            </td>
+                          <tr key={r.id} className="is-clickable" onClick={() => openRow(r)}>
+                            <td className="cm-nowrap"><span className="cm-ref">{r.ref}</span></td>
                             <td data-label="Customer"><div className="td-name">{r.customerName}</div><div className="td-sub">{r.customerId}</div></td>
                             <td data-label="Agent"><div className="td-name">{r.agentName}</div><div className="td-sub">{r.agentId}</div></td>
                             <td data-label="Type"><TypeBadge type={r.type} /></td>
                             <td className="num" data-label="Balance">{nairaKobo(r.balance)}</td>
                             <td className="num cm-sub2" data-label="Fee">{r.penalty > 0 ? nairaKobo(r.penalty) : '—'}</td>
                             <td className="num cm-strong" data-label="Net payout">{nairaKobo(r.netPayout)}</td>
-                            <td data-label="Decision"><StatusBadge status={r.status} /></td>
+                            <td data-label="Decision"><StatusBadge status={r.status} />{r.needsReview && <> <span className="bdg bdg-r">Needs review</span></>}</td>
                             <td data-label="Decided by" className="cm-sub2">{r.decidedBy ?? '—'}</td>
                             <td data-label="Date" className="cm-nowrap cm-sub2">{r.decidedAt ? dateTime(r.decidedAt) : '—'}</td>
+                            <td className="td-pin-end"><div className="a-row-actions">{viewButton(r)}</div></td>
                           </tr>
                         ))}
                       </tbody>
@@ -797,12 +878,14 @@ export default function RedemptionsPage() {
               <div className="dlg-hero-extra">
                 <span className="dlg-hero-lbl">{(manual && isBank(pinModal.payoutMethod)) ? 'Bank transfer (you pay)' : 'Paystack bank transfer'}</span>
                 <strong>{pinModal.accountName}</strong>
-                <span>{pinModal.bankName} {last4(pinModal.accountNumber)}</span>
+                <span>{pinModal.bankName}</span>
+                <span className="am-acct">{pinModal.accountNumber ?? '—'}</span>
               </div>
             ) : (
               <div className="dlg-hero-extra"><span className="dlg-hero-lbl">Payout method</span><strong>{pinModal.payoutMethod}</strong></div>
             )}
           </div>
+          {pinModal.nameMismatch && <p className="a-alert a-alert-r cm-gap" role="alert">The names don’t match. Customer: <strong>{pinModal.customerName}</strong>. Name on the account: <strong>{pinModal.accountName ?? '—'}</strong>. Your PIN confirms you’ve checked this, and it’s recorded.</p>}
           <p className="a-hint cm-gap">
             {(manual && isBank(pinModal.payoutMethod))
               ? 'Paystack is bypassed. Only confirm after you have paid this customer’s bank account yourself. The plan closes when you confirm.'
@@ -853,7 +936,7 @@ export default function RedemptionsPage() {
           title={`Reject ${rejectTarget.ref}?`}
           body={<>
             {rejectTarget.customerName} ({rejectTarget.customerId}) won’t receive the {nairaKobo(rejectTarget.netPayout)} payout.
-            Their plan goes back to active with its {nairaKobo(rejectTarget.balance)} balance. No money moves.
+            Their plan goes back to active with its {nairaKobo(rejectTarget.status === 'AwaitingOTP' && rejectTarget.planStatus === 'Redeemed' ? rejectTarget.currentBalance + rejectTarget.balance : rejectTarget.currentBalance)} balance. No money moves.
           </>}
           confirmLabel="Reject request" danger
           busy={rejectBusy} error={rejectError}
@@ -866,16 +949,50 @@ export default function RedemptionsPage() {
         <Modal icon="redeem" title={detail.ref} sub="Redemption request" onClose={() => setDetail(null)}
           footer={DECIDABLE.includes(detail.status) ? <>
             <button type="button" className="btn btn-outline" onClick={() => { const r = detail; setDetail(null); openReject(r) }}>Reject</button>
-            <button type="button" className="btn btn-green" onClick={() => { const r = detail; setDetail(null); openApprove(r) }}>{manual && isBank(detail.payoutMethod) ? 'Mark as paid' : 'Approve'}</button>
+            {!needsCode(detail) && !detail.balanceChanged && !cashBlocked(detail) && <button type="button" className="btn btn-green" onClick={() => { const r = detail; setDetail(null); openApprove(r) }}>{detail.nameMismatch ? 'Review and approve anyway' : manual && isBank(detail.payoutMethod) ? 'Mark as paid' : 'Approve'}</button>}
           </> : detail.status === 'AwaitingOTP' ? <>
-            <button type="button" className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>
-            <button type="button" className="btn btn-green" onClick={() => { const r = detail; setDetail(null); setOtpValue(''); setOtpError(''); setOtpModal({ id: r.id, ref: r.ref, customerName: r.customerName, amount: r.netPayout }) }}>Enter Paystack code</button>
+            <button type="button" className="btn btn-outline" onClick={() => { const r = detail; setDetail(null); openReject(r) }}>Reject</button>
+            <button type="button" className="btn btn-outline" disabled={checking} onClick={() => checkWithPaystack(detail)}>{checking ? 'Checking…' : 'Check with Paystack'}</button>
+            {!detail.balanceChanged && <button type="button" className="btn btn-green" onClick={() => { const r = detail; setDetail(null); setOtpValue(''); setOtpError(''); setOtpModal({ id: r.id, ref: r.ref, customerName: r.customerName, amount: r.netPayout }) }}>Enter Paystack code</button>}
+          </> : detail.status === 'Processing' || detail.status === 'Finalizing' ? <>
+            <button type="button" className="btn btn-outline" disabled={checking} onClick={() => setDetail(null)}>Close</button>
+            <button type="button" className="btn btn-green" disabled={checking} onClick={() => checkWithPaystack(detail)}>{checking ? 'Checking…' : 'Check with Paystack'}</button>
           </> : <button type="button" className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>}>
+          {detail.balanceChanged && (detail.status === 'AwaitingOTP'
+            ? <p className="a-alert a-alert-r cm-gap" role="alert">This plan now holds {nairaKobo(detail.currentBalance)}, which arrived while this payout was waiting for its code. Nothing has been paid. Don’t enter the code. Once it expires, about 30 minutes after it was sent, use Check with Paystack and ask them to request again.</p>
+            : <p className="a-alert a-alert-r cm-gap" role="alert">The balance has changed. They asked to collect from {nairaKobo(detail.balance)}, and the plan now holds {nairaKobo(detail.currentBalance)}. Reject this request and ask them to request again.</p>)}
+          {cashBlocked(detail) && DECIDABLE.includes(detail.status) && <p className="a-alert a-alert-r cm-gap" role="alert">This customer’s agent isn’t active, so cash can’t be paid through them. Reject this request and ask the customer to request again with a bank account.</p>}
+          {detail.nameMismatch && DECIDABLE.includes(detail.status) && (
+            <div className="a-alert a-alert-r cm-gap" role="alert">
+              <strong>Held: the names don’t match.</strong> An agent asked to pay this to an account in another name.
+              <dl className="dlg-ledger">
+                <DlRow label="Customer">{detail.customerName}</DlRow>
+                <DlRow label="Name on the account">{detail.accountName ?? '—'}</DlRow>
+              </dl>
+            </div>
+          )}
+          {needsCode(detail) && <p className="a-alert a-alert-a cm-gap" role="status">The customer hasn’t confirmed this request with their code, so it can’t be approved yet. You can reject it.</p>}
+          {(detail.status === 'Processing' || detail.status === 'Finalizing') && (UNCLEAR_FINAL.includes(detail.bankTransferStatus ?? '')
+            ? <p className="a-alert a-alert-r cm-gap" role="alert">Paystack says “{detail.bankTransferStatus}”. That’s final, but it doesn’t say whether money moved, so this hasn’t been recorded or released. Check the Paystack dashboard.</p>
+            : <p className="a-alert a-alert-a cm-gap" role="status">{detail.bankTransferStatus ? `Paystack last said “${detail.bankTransferStatus}”. ` : 'We lost contact with Paystack during this transfer. '}It may or may not have gone out, so check before doing anything else.</p>)}
+          {detail.needsReview && <p className="a-alert a-alert-r cm-gap" role="alert">Needs review. This was paid, but the closed plan still holds {nairaKobo(detail.currentBalance)} that arrived during the payout.</p>}
           <div className="dlg-hero">
             <div className="dlg-hero-lbl">Amount to collect</div>
             <div className="dlg-hero-amt">{nairaKobo(detail.netPayout)}</div>
             <span className="cm-badges"><StatusBadge status={detail.status} /><TypeBadge type={detail.type} /></span>
           </div>
+
+          {isBank(detail.payoutMethod) && detail.bankName && (
+            <div className="cm-sec">
+              <h3 className="cm-sec-title">Pay to</h3>
+              <dl className="dlg-ledger">
+                <DlRow label="Account number"><span className="am-acct">{detail.accountNumber ?? '—'}</span></DlRow>
+                <DlRow label="Account name">{detail.accountName ?? '—'}</DlRow>
+                <DlRow label="Bank">{detail.bankName}</DlRow>
+                {detail.bankTransferStatus && <DlRow label="Transfer status">{detail.bankTransferStatus}</DlRow>}
+              </dl>
+            </div>
+          )}
 
           <div className="cm-sec">
             <h3 className="cm-sec-title">Customer</h3>
@@ -908,18 +1025,6 @@ export default function RedemptionsPage() {
               <DlRow label="Method">{detail.payoutMethod ?? 'Cash'}</DlRow>
             </dl>
           </div>
-
-          {isBank(detail.payoutMethod) && detail.bankName && (
-            <div className="cm-sec">
-              <h3 className="cm-sec-title">Bank account</h3>
-              <dl className="dlg-ledger">
-                <DlRow label="Account name">{detail.accountName ?? '—'}</DlRow>
-                <DlRow label="Bank">{detail.bankName}</DlRow>
-                <DlRow label="Account number"><span className="cm-ref">{detail.accountNumber ?? '—'}</span></DlRow>
-                {detail.bankTransferStatus && <DlRow label="Transfer status">{detail.bankTransferStatus}</DlRow>}
-              </dl>
-            </div>
-          )}
 
           {detail.customerPlans && detail.customerPlans.length > 0 && (
             <div className="cm-sec">

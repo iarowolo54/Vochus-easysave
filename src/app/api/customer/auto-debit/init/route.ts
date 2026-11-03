@@ -4,6 +4,7 @@ import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
 import { createPaymentIntent } from '@/lib/payment-intent'
 import { initCardAuthorization } from '@/lib/paystack'
+import { hasOpenRedemption } from '@/lib/redemption-balance'
 
 // First charge that authorizes the card for future auto-debits (applied to the plan on success).
 const FIRST_CHARGE_NAIRA = 50
@@ -30,6 +31,10 @@ export async function POST(req: NextRequest) {
     where: { id: planId, customerId: customer.id, status: 'Active', source: 'self' },
   })
   if (!plan) return NextResponse.json({ error: 'Auto-debit is only available on active online plans' }, { status: 400 })
+
+  if (await hasOpenRedemption(prisma, plan.id)) {
+    return NextResponse.json({ error: 'You’ve asked to collect from this plan. You can’t set up auto-debit until that request is finished.' }, { status: 409 })
+  }
 
   const existing = await prisma.autoDebitMandate.findFirst({
     where: { savingsPlanId: plan.id, status: 'active' },

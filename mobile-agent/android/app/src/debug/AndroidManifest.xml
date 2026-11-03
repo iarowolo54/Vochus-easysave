@@ -4,4 +4,8 @@
          to allow setting breakpoints, to provide hot reload, etc.
     -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- Debug builds only: allow plain http so the app can load a local dev
+         server (dart-define VOCHUS_BASE_URL=http://localhost:3000).
+         Release builds stay https-only. -->
+    <application android:usesCleartextTraffic="true"/>
 </manifest>

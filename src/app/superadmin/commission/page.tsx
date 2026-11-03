@@ -7,6 +7,7 @@ import { Icons } from '@/components/ui/icons'
 import {
   Avatar, ConfirmModal, Empty, Field, LoadError, Modal, PageHeader, Pager, TableSkeleton, naira, nairaKobo, shortDate, useToast,
 } from '../_components/admin-ui'
+import { CommissionHistoryDrawer } from '../_components/commission-history-drawer'
 
 interface LeaderboardEntry {
   rank: number
@@ -88,6 +89,7 @@ function PctInput({ id, value, invalid, onChange, label }: { id: string; value: 
 export default function CommissionPage() {
   const [data, setData] = useState<PageData>({ totalPending: 0, totalDisbursed: 0, leaderboard: [] })
   const [lbPage, setLbPage] = useState(1)
+  const [historyAgent, setHistoryAgent] = useState<LeaderboardEntry | null>(null)
   const [loading, setLoading] = useState(true)
   const [boardFailed, setBoardFailed] = useState(false)
   const [commFailed, setCommFailed] = useState(false)
@@ -520,14 +522,15 @@ export default function CommissionPage() {
                       return (
                         <tr key={a.id}>
                           <td>
-                            <Link href={`/superadmin/agents/${a.id}`} className="td-av am-link">
+                            <button type="button" className="cm-cell-btn" onClick={() => setHistoryAgent(a)}
+                              aria-label={`View commission history for ${a.name}`} title="View commission history">
                               <span className="am-rank" aria-label={`Rank ${a.rank}`}>{a.rank}</span>
                               <Avatar name={a.name} photoUrl={a.photoUrl} tone={hasPending ? 'amber' : 'green'} />
                               <span>
                                 <span className="td-name ui-block">{a.name}</span>
                                 <span className="td-sub ui-block">{a.agentId}</span>
                               </span>
-                            </Link>
+                            </button>
                           </td>
                           <td className="num" data-label="Customers">{a.customerCount.toLocaleString('en-NG')}</td>
                           <td className="num" data-label="Savings volume">{naira(a.savingsVolume)}</td>
@@ -551,6 +554,10 @@ export default function CommissionPage() {
             </>
           )}
       </section>
+
+      {historyAgent && (
+        <CommissionHistoryDrawer agent={{ id: historyAgent.id, name: historyAgent.name, agentId: historyAgent.agentId }} onClose={() => setHistoryAgent(null)} />
+      )}
 
       {confirm?.kind === 'comm' && (
         <ConfirmModal icon="rate" title="Save commission rates?" confirmLabel="Save rates" busy={busy} error={confirmError}

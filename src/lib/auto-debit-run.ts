@@ -1,10 +1,13 @@
 import type { PrismaClient } from '@prisma/client'
 import { dueMandates } from '@/lib/auto-debit'
-import { autoDebitCadence, cycleCreditAmount, nextRunAt } from '@/lib/auto-debit-schedule'
+import { autoDebitCadence, cycleCreditAmount, nextRunAfter } from '@/lib/auto-debit-schedule'
 import { grossUpForFee } from '@/lib/auto-debit-fee'
 import { chargeAuthorization, verifyTransaction } from '@/lib/paystack'
 import { creditAutoDebitAttempt } from '@/lib/auto-debit-credit'
 import { recordAutoDebitFailure } from '@/lib/auto-debit-failure'
+import { logAudit } from '@/lib/audit'
+import { hasOpenRedemption, heldKeys, loadCycleState } from '@/lib/bulk-savings'
+import { isCycleCovered, isCycleInPlan, isSlotFunded } from '@/lib/pay-ahead'
 
 const DEFAULT_RECONCILE_AGE_MS = 2 * 60 * 60 * 1000
 
@@ -36,11 +39,30 @@ export async function runDueAutoDebits(
       const advance = () =>
         client.autoDebitMandate.update({
           where: { id: mandate.id },
-          data: { nextRunAt: nextRunAt(now, autoDebitCadence(plan.cadence)) },
+          data: { nextRunAt: nextRunAfter(mandate.nextRunAt, now, autoDebitCadence(plan.cadence)) },
         })
 
       const creditAmount = cycleCreditAmount(plan, now)
       if (creditAmount <= 0) {
+        await advance()
+        skipped++
+        continue
+      }
+
+      // Nothing is due outside the plan's own days: before a future start, or on the maturity day.
+      if (!isCycleInPlan(plan, now) || await hasOpenRedemption(client, plan.id, now)) {
+        await advance()
+        skipped++
+        continue
+      }
+
+      // Already paid for, through Bulk Savings or plain deposits: charge nothing for this cycle and move on. Not an
+      // attempt, so consecutiveFailures stays as it is.
+      const paidFor = async () => {
+        const { coveredKeys, plainDeposits } = await loadCycleState(client, plan.id)
+        return isCycleCovered(plan, coveredKeys, now) || isSlotFunded(plan, plainDeposits, now)
+      }
+      if (await paidFor()) {
         await advance()
         skipped++
         continue
@@ -55,6 +77,22 @@ export async function runDueAutoDebits(
       ])
       if (tx || att) {
         await advance()
+        skipped++
+        continue
+      }
+
+      // The customer is in checkout for this day. Leave nextRunAt alone so the mandate stays due and can't stick; the
+      // hold goes stale after PENDING_HOLD_MS. On a daily cron the next run is tomorrow, so if they abandon checkout
+      // this one day goes uncharged: nobody is overcharged, and it shows as missed, payable through Bulk Savings.
+      if (isCycleCovered(plan, await heldKeys(client, plan.id, now), now)) {
+        await logAudit({
+          action: 'auto_debit_deferred',
+          entity: 'SavingsPlan',
+          entityId: plan.id,
+          details: `Auto-debit deferred: a checkout is open for this cycle (${yyyymmdd(now)})`,
+          actorType: 'system',
+          actorName: 'Auto-debit cron',
+        })
         skipped++
         continue
       }
@@ -74,6 +112,13 @@ export async function runDueAutoDebits(
       // Advance before charging so a crash mid-charge cannot re-fire the same cycle.
       await advance()
 
+      // A payment may have settled since the first check. Init refuses this day from here on, so this is the last gap.
+      if (await paidFor()) {
+        await client.autoDebitAttempt.update({ where: { reference }, data: { status: 'skipped' } })
+        skipped++
+        continue
+      }
+
       const result = await chargeAuthorization({
         authorizationCode: mandate.authorizationCode,
         email: mandate.authEmail,
@@ -83,8 +128,9 @@ export async function runDueAutoDebits(
       })
 
       if (result.status === 'success') {
-        await creditAutoDebitAttempt(client, { reference, settledAmountNaira: grossCharged })
-        charged++
+        const credit = await creditAutoDebitAttempt(client, { reference, settledAmountNaira: grossCharged })
+        if (credit === 'review') skipped++
+        else charged++
       } else if (result.status === 'failed' || result.status === 'abandoned' || result.status === 'reversed') {
         await recordAutoDebitFailure(client, { reference, gatewayResponse: result.gatewayResponse ?? 'charge failed' })
         failed++

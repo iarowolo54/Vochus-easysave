@@ -1,8 +1,7 @@
 'use client'
 import { useEffect, useState, Suspense, type FormEvent } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import BottomNav from '@/components/BottomNav'
-import { CUSTOMER_NAV } from '@/components/nav-items'
+import CustomerBottomNav from '@/components/customer/CustomerBottomNav'
 import { useCustomerMe } from '@/components/customer/useCustomerMe'
 import Amount from '@/components/ui/Amount'
 import BottomSheet from '@/components/ui/BottomSheet'
@@ -117,8 +116,8 @@ function SavePageInner() {
   }
 
   function goBack() {
-    if (mode === 'new' && plans.length > 0) { setMode('pay'); setError(''); return }
-    router.push('/customer/dashboard')
+    setMode('pay')
+    setError('')
   }
 
   async function pay() {
@@ -181,11 +180,13 @@ function SavePageInner() {
   return (
     <div className="ui-screen">
       <header className="ui-topbar">
-        <button type="button" className="ui-icon-btn" onClick={goBack} aria-label={mode === 'new' && plans.length > 0 ? 'Back to saving' : 'Back to home'}>
-          <Icons.back size={22} aria-hidden="true" />
-        </button>
+        {mode === 'new' && plans.length > 0 && (
+          <button type="button" className="ui-icon-btn" onClick={goBack} aria-label="Back to saving">
+            <Icons.back size={22} aria-hidden="true" />
+          </button>
+        )}
         <div className="ui-topbar-main">
-          <h1 className="ui-topbar-title">{mode === 'new' ? 'New savings plan' : 'Save'}</h1>
+          <h1 className={mode === 'new' && plans.length > 0 ? 'ui-topbar-title' : 'ui-page-title'}>{mode === 'new' ? 'New savings plan' : 'Save'}</h1>
         </div>
       </header>
 
@@ -342,7 +343,7 @@ function SavePageInner() {
               </div>
               {customEnd && (
                 <div className="cu-enddate">
-                  <EndDateField start={startDay} cadence={cadence} value={customEnd}
+                  <EndDateField picker start={startDay} cadence={cadence} value={customEnd}
                     onChange={(v, days) => { setCustomEnd(v); if (days) setPeriodDays(days) }} />
                 </div>
               )}
@@ -402,7 +403,7 @@ function SavePageInner() {
         </div>
       </BottomSheet>
 
-      <BottomNav items={CUSTOMER_NAV} />
+      <CustomerBottomNav />
     </div>
   )
 }

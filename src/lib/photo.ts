@@ -6,6 +6,8 @@
 // can: reject a direct API call that attaches something that isn't a reasonable
 // image (wrong type, not a data URL, malformed base64, or oversized). Photos are
 // optional, so a missing value passes.
+import { detectType } from '@/lib/upload-safety'
+
 const ALLOWED = /^data:image\/(png|jpe?g|webp);base64,/i
 const MAX_BYTES = 5 * 1024 * 1024 // 5 MB decoded
 
@@ -20,6 +22,10 @@ export function validatePhoto(input: unknown): { ok: true } | { ok: false; error
   const approxBytes = Math.floor((b64.length * 3) / 4)
   if (approxBytes > MAX_BYTES) return { ok: false, error: 'Photo is too large (max 5 MB)' }
   if (!b64 || !/^[A-Za-z0-9+/]+={0,2}$/.test(b64)) return { ok: false, error: 'Photo is not valid image data' }
+
+  // The label is the sender's word; the first bytes are what it really is.
+  const claimed = input.slice(5, input.indexOf(';')).toLowerCase().replace('image/jpg', 'image/jpeg')
+  if (detectType(Buffer.from(b64.slice(0, 32), 'base64')) !== claimed) return { ok: false, error: 'Photo must be a JPEG, PNG or WebP image' }
 
   return { ok: true }
 }

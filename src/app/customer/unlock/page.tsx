@@ -5,11 +5,12 @@ import AuthShell from '@/components/auth/AuthShell'
 import CodeBoxes from '@/components/ui/CodeBoxes'
 import { FieldError, FormError } from '@/components/ui/FormErrors'
 import { Icons } from '@/components/ui/icons'
+import { RESENT_MESSAGE, useResetId } from '@/components/useResendCooldown'
 
 /**
  * Reopens a customer account that was hard-locked after 4 wrong passwords. The code goes to the customer's
  * registration channel (email or SMS); after verifying, they sign in with their password again.
- * API: POST /api/customer/auth/unlock/request { phone } and /verify { phone, code }.
+ * API: POST /api/customer/auth/unlock/request { phone } and /verify { phone, code, resetId }.
  */
 export default function UnlockPage() {
   const router = useRouter()
@@ -17,14 +18,12 @@ export default function UnlockPage() {
   const [code, setCode] = useState('')
   const [sending, setSending] = useState(false)
   const [verifying, setVerifying] = useState(false)
-  /** Where the code went, masked by the server, e.g. "j***@example.com". */
-  const [sentTo, setSentTo] = useState('')
-  /** True once a request returned without a destination (the server doesn't say whether the account exists). */
-  const [neutral, setNeutral] = useState(false)
+  const [resent, setResent] = useState(false)
   const [error, setError] = useState('')
   const [codeError, setCodeError] = useState('')
   const [cooldown, setCooldown] = useState(0)
   const requestedOnce = useRef(false)
+  const { remember, idFor, forget } = useResetId('customer-unlock', (_account, left) => setCooldown(left))
 
   async function sendCode(p: string) {
     setError('')
@@ -43,7 +42,8 @@ export default function UnlockPage() {
         return
       }
       if (!res.ok) { setError(data.error ?? 'We couldn’t send a code. Please try again.'); return }
-      if (data.sentTo) { setSentTo(data.sentTo); setNeutral(false) } else setNeutral(true)
+      setResent(requestedOnce.current && !!idFor(p))
+      remember(data.resetId, p)
       setCooldown(60)
     } catch {
       setError('No connection. Check your internet and try again.')
@@ -56,10 +56,9 @@ export default function UnlockPage() {
   useEffect(() => {
     const p = new URLSearchParams(window.location.search).get('phone')?.trim() ?? ''
     setPhone(p)
-    if (p && !requestedOnce.current) {
-      requestedOnce.current = true
-      sendCode(p)
-    }
+    // A reload keeps the code already on its way rather than asking for another.
+    if (p && !requestedOnce.current && !idFor(p)) sendCode(p)
+    requestedOnce.current = true
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -79,7 +78,7 @@ export default function UnlockPage() {
       const res = await fetch('/api/customer/auth/unlock/verify', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone, code: value }),
+        body: JSON.stringify({ phone, code: value, resetId: idFor(phone) }),
       })
       const data = await res.json().catch(() => ({}))
       if (!res.ok) {
@@ -88,6 +87,7 @@ export default function UnlockPage() {
           : data.error)
         return
       }
+      forget()
       router.push('/customer/login?unlocked=1')
     } catch {
       setError('No connection. Check your internet and try again.')
@@ -130,11 +130,9 @@ export default function UnlockPage() {
         {sending
           ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /><div>Sending your code…</div></>
           : <><Icons.send size={18} aria-hidden="true" /><div>
-              {sentTo
-                ? <>We sent a 6-digit code to <strong>{sentTo}</strong>. It can take a minute; check spam too.</>
-                : neutral
-                  ? 'If this number has a locked account, we’ve sent a code to the email or phone it was registered with.'
-                  : 'Ask for a code to unlock your account.'}
+              {resent
+                ? RESENT_MESSAGE
+                : 'If this number has a locked account, we’ve sent a code to the email or phone it was registered with. It can take a minute; check spam too.'}
             </div></>}
       </div>
 

@@ -152,7 +152,7 @@ test('withdrawal verify: failed transfer refund is applied at most once (concurr
   const realFetch = globalThis.fetch
   // Non-test key so verifyTransfer hits fetch; fake a failed transfer.
   process.env.PAYSTACK_SECRET_KEY = 'live_like_key'
-  globalThis.fetch = (async () => new Response(JSON.stringify({ status: true, data: { status: 'failed' } }))) as typeof fetch
+  globalThis.fetch = (async () => new Response(JSON.stringify({ status: true, data: { status: 'failed', reference: w.ref } }))) as typeof fetch
   try {
     const [a, b] = await Promise.all([verify(w.id), verify(w.id)])
     assert.deepEqual([a.status, b.status].sort(), [200, 409])

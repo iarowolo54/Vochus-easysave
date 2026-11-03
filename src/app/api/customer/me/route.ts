@@ -2,7 +2,8 @@ import { NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
 import { accruedInterestForPlan, interestProjectionForPlan } from '@/lib/savings-interest-plan'
-import { IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
+import { excludeExpiredPending, IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
+import { coveringRefsByPlan } from '@/lib/bulk-savings'
 
 // A redemption is "pending" for the customer home until it is actually paid: everything in flight
 // except Approved (handoff #30 — mid-payout AwaitingOTP/Finalizing must keep the tracker up and
@@ -61,7 +62,7 @@ export async function GET() {
   )
   const planIds = plansBase.map(p => p.id)
 
-  // Days covered by catch-up payments, per plan (scoped to this customer's plan ids).
+  // Days covered by Bulk Savings payments and the deposits that paid for them, per plan (scoped to this customer's plan ids).
   const coverageRows = planIds.length
     ? await prisma.planDayCoverage.findMany({
         where: { savingsPlanId: { in: planIds } },
@@ -69,9 +70,11 @@ export async function GET() {
         orderBy: { coversKey: 'asc' },
       })
     : []
+  const coveringRefs = await coveringRefsByPlan(prisma, planIds)
   const plans = plansBase.map(p => ({
     ...p,
     coveredKeys: coverageRows.filter(r => r.savingsPlanId === p.id).map(r => r.coversKey),
+    coveredRefs: coveringRefs.get(p.id) ?? [],
   }))
   const plan = plans[0] ?? null
 
@@ -91,7 +94,7 @@ export async function GET() {
       : Promise.resolve([]),
     planIds.length
       ? prisma.earlyRedemption.findMany({
-          where: { savingsPlanId: { in: planIds }, status: { in: PENDING_REDEMPTION_STATUSES } },
+          where: { savingsPlanId: { in: planIds }, status: { in: PENDING_REDEMPTION_STATUSES }, ...excludeExpiredPending() },
           select: { ref: true, status: true, savingsPlanId: true },
         })
       : Promise.resolve([]),

@@ -1,8 +1,9 @@
 'use client'
 
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { IN_APP_IDLE_SECONDS } from '@/lib/session-policy'
 
-const IDLE_MS = 5 * 60 * 1000
+const IDLE_MS = IN_APP_IDLE_SECONDS * 1000
 const WARN_SEC = 30
 const RING_CIRC = 2 * Math.PI * 34
 
@@ -49,13 +50,21 @@ export default function IdleTimeout({ onLogout }: { onLogout: () => void }) {
 
   useEffect(() => {
     if (typeof window === 'undefined') return
-    if (!(window as unknown as { __vochusApp?: string }).__vochusApp) return
 
-    enabled.current = true
     const events = ['touchstart', 'touchend', 'click', 'keydown', 'scroll', 'mousemove']
-    events.forEach(e => window.addEventListener(e, reset, { passive: true }))
-    armIdle()
+    // The app injects __vochusApp around page load, which can land after this mounts,
+    // so also switch on when it announces the flags.
+    const enable = () => {
+      if (enabled.current || !(window as unknown as { __vochusApp?: string }).__vochusApp) return
+      enabled.current = true
+      events.forEach(e => window.addEventListener(e, reset, { passive: true }))
+      armIdle()
+    }
+    enable()
+    window.addEventListener('vochus:flags-ready', enable)
     return () => {
+      window.removeEventListener('vochus:flags-ready', enable)
+      if (!enabled.current) return
       enabled.current = false
       events.forEach(e => window.removeEventListener(e, reset))
       clearAll()

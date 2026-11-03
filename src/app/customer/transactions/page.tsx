@@ -1,8 +1,7 @@
 'use client'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import BottomNav from '@/components/BottomNav'
-import { CUSTOMER_NAV } from '@/components/nav-items'
+import CustomerBottomNav from '@/components/customer/CustomerBottomNav'
 import DepositReceipt, { depositIcon, depositMethod, methodShort, signedAmount, txMeta, txStatus } from '@/components/customer/DepositReceipt'
 import { useCustomerMe } from '@/components/customer/useCustomerMe'
 import BottomSheet from '@/components/ui/BottomSheet'
@@ -41,6 +40,8 @@ function dayLabel(iso: string) {
   return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
 }
 
+const PAGE_SIZE = 30
+
 export default function TransactionsPage() {
   const router = useRouter()
   // /me is used for who recorded each deposit (agent names), and handles the logged-out redirect.
@@ -52,6 +53,7 @@ export default function TransactionsPage() {
   const [planSheet, setPlanSheet] = useState(false)
   const [selected, setSelected] = useState<Tx | null>(null)
   const [hide, setHide] = useState(false)
+  const [shown, setShown] = useState(PAGE_SIZE)
 
   useEffect(() => { setHide(getHideBalance()) }, [])
 
@@ -69,6 +71,7 @@ export default function TransactionsPage() {
   }, [router])
 
   useEffect(() => { load() }, [load])
+  useEffect(() => { setShown(PAGE_SIZE) }, [group, plan])
 
   const recordedBy = useMemo(
     () => new Map((me.data?.transactions ?? []).map(t => [t.id, t.recordedBy])),
@@ -83,14 +86,14 @@ export default function TransactionsPage() {
   )
   const sections = useMemo(() => {
     const out: { label: string; items: Tx[] }[] = []
-    for (const t of filtered) {
+    for (const t of filtered.slice(0, shown)) {
       const label = dayLabel(t.createdAt)
       const last = out[out.length - 1]
       if (last && last.label === label) last.items.push(t)
       else out.push({ label, items: [t] })
     }
     return out
-  }, [filtered])
+  }, [filtered, shown])
 
   const now = new Date()
   const savedThisMonth = all
@@ -121,10 +124,7 @@ export default function TransactionsPage() {
 
   const header = (
     <header className="ui-topbar">
-      <button type="button" className="ui-icon-btn" onClick={() => router.push('/customer/dashboard')} aria-label="Back to home">
-        <Icons.back size={22} aria-hidden="true" />
-      </button>
-      <div className="ui-topbar-main"><h1 className="ui-topbar-title">History</h1></div>
+      <div className="ui-topbar-main"><h1 className="ui-page-title">History</h1></div>
       <button type="button" className="ui-icon-btn ui-icon-btn--plain" onClick={toggleHide} aria-label={hide ? 'Show amounts' : 'Hide amounts'} aria-pressed={hide}>
         {hide ? <Icons.show size={20} aria-hidden="true" /> : <Icons.hide size={20} aria-hidden="true" />}
       </button>
@@ -141,7 +141,7 @@ export default function TransactionsPage() {
         text="Check your connection and try again."
         action={<button type="button" className="ui-btn ui-btn--primary" onClick={load}><Icons.retry size={18} aria-hidden="true" /> Try again</button>}
       />
-      <BottomNav items={CUSTOMER_NAV} />
+      <CustomerBottomNav />
     </div>
   )
 
@@ -224,6 +224,11 @@ export default function TransactionsPage() {
                 </section>
               ))
             )}
+            {filtered.length > shown && (
+              <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => setShown(n => n + PAGE_SIZE)}>
+                Show more ({filtered.length - shown} older)
+              </button>
+            )}
           </>
         )}
       </main>
@@ -257,7 +262,7 @@ export default function TransactionsPage() {
         )}
       </BottomSheet>
 
-      <BottomNav items={CUSTOMER_NAV} />
+      <CustomerBottomNav />
     </div>
   )
 }

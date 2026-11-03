@@ -1,8 +1,10 @@
 import type { PrismaClient } from '@prisma/client'
 import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
+import { REVIEW_ACTION } from '@/lib/payment-intent'
+import { PlanClosedError, creditPlanBalance } from '@/lib/plan-credit'
 
-export type AutoDebitCreditResult = 'credited' | 'already' | 'not_found'
+export type AutoDebitCreditResult = 'credited' | 'already' | 'not_found' | 'review'
 
 function isUniqueViolation(e: unknown): boolean {
   return typeof e === 'object' && e !== null && (e as { code?: unknown }).code === 'P2002'
@@ -22,6 +24,7 @@ export async function creditAutoDebitAttempt(
   const attempt = await client.autoDebitAttempt.findUnique({ where: { reference } })
   if (!attempt) return 'not_found'
   if (attempt.status === 'success') return 'already'
+  if (attempt.status === 'review') return 'review'
 
   const plan = await client.savingsPlan.findUnique({ where: { id: attempt.savingsPlanId } })
   if (!plan) return 'not_found'
@@ -51,11 +54,30 @@ export async function creditAutoDebitAttempt(
           note: 'Auto-debit via Paystack',
         },
       })
-      await tx.savingsPlan.update({ where: { id: plan.id }, data: { balance: { increment: amount } } })
+      await creditPlanBalance(tx, plan.id, amount)
       await tx.autoDebitMandate.update({ where: { id: attempt.mandateId }, data: { consecutiveFailures: 0 } })
     })
   } catch (e: unknown) {
     if ((e instanceof Error && e.message === 'ALREADY_PROCESSED') || isUniqueViolation(e)) return 'already'
+    if (e instanceof PlanClosedError) {
+      // The card has been charged, but nothing can reach a closed plan's balance. Staff resolve it from the audit log.
+      await client.$transaction(async (tx) => {
+        const flipped = await tx.autoDebitAttempt.updateMany({ where: { id: attempt.id, status: { notIn: ['success', 'review'] } }, data: { status: 'review' } })
+        if (flipped.count === 1) {
+          await tx.auditLog.create({
+            data: {
+              action: REVIEW_ACTION,
+              entity: 'AutoDebitAttempt',
+              entityId: attempt.id,
+              details: `Not credited, needs manual review: charged ₦${money(settledAmountNaira)} but plan ${plan.id} is closed — ref ${reference}`,
+              actorType: 'system',
+              actorName: 'Auto-debit',
+            },
+          })
+        }
+      })
+      return 'review'
+    }
     throw e
   }
 

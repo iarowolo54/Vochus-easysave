@@ -3,7 +3,8 @@
 import { useSession, signOut } from 'next-auth/react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { leaveEndedSession, sessionHasEnded } from '@/lib/session-ended'
 import BottomNav from '@/components/BottomNav'
 import { AGENT_NAV } from '@/components/nav-items'
 import IdleTimeout from '@/components/IdleTimeout'
@@ -69,16 +70,54 @@ const pageTitles: Record<string, string> = {
 }
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
-  const { data: session } = useSession()
+  const { data: session, status: sessionStatus } = useSession()
   const pathname = usePathname()
   const router = useRouter()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [chatUnread, setChatUnread] = useState(0)
+  const [canOpenAppSettings, setCanOpenAppSettings] = useState(false)
+  const [ended, setEnded] = useState(false)
+  const leaving = useRef(false)
+
+  // The server ended this session (suspended, password changed, past the cap). Every API call now returns 401,
+  // so send the agent to login instead of leaving a dashboard that can't load anything.
+  const sessionEnded = useCallback(() => {
+    setEnded(true)
+    if (leaving.current) return
+    leaving.current = true
+    leaveEndedSession(
+      () => signOut({ callbackUrl: '/login?ended=1' }),
+      () => window.location.assign('/login?ended=1'),
+    )
+  }, [])
+
+  const sessionCleared = sessionStatus === 'authenticated' && !session?.user
+  useEffect(() => {
+    if (sessionCleared) sessionEnded()
+  }, [sessionCleared, sessionEnded])
+
+  // Only the agent app has a printer/fingerprint sheet; older installs don't announce it.
+  useEffect(() => {
+    const check = () => setCanOpenAppSettings(!!(window as unknown as { __vochusCanOpenSettings?: boolean }).__vochusCanOpenSettings)
+    check()
+    window.addEventListener('vochus:flags-ready', check)
+    return () => window.removeEventListener('vochus:flags-ready', check)
+  }, [])
+
+  function openAppSettings() {
+    setSidebarOpen(false)
+    ;(window as unknown as { VochusAppSettings?: { postMessage: (s: string) => void } }).VochusAppSettings?.postMessage('')
+  }
 
   useEffect(() => {
     async function pollChat() {
       try {
         const res = await fetch('/api/agent/customer-chat')
+        // One 401 can be a busy database, so ask before signing out an agent who is fine.
+        if (res.status === 401) {
+          if (await sessionHasEnded()) sessionEnded()
+          return
+        }
         const data = await res.json()
         const total = (data.customers ?? []).reduce((s: number, c: any) => s + (c.unread ?? 0), 0)
         setChatUnread(total)
@@ -87,7 +126,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     pollChat()
     const iv = setInterval(pollChat, 10000)
     return () => clearInterval(iv)
-  }, [])
+  }, [sessionEnded])
 
   useEffect(() => {
     const agent = session?.user as any
@@ -152,6 +191,17 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   useEffect(() => { setSidebarOpen(false) }, [pathname])
 
 
+  if (ended || sessionCleared) {
+    return (
+      <div className="ui-screen ui-screen--center" role="status">
+        <div className="ui-empty">
+          <span className="ui-spinner" aria-hidden="true" />
+          <p className="ui-empty-title ui-gap-top">Signing you out…</p>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="ag-shell">
       <SessionKeepAlive />
@@ -174,7 +224,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           </span>
         </div>
         <Link href="/dashboard/wallet" className="ag-wallet">
-          <span className="ui-row-sub">Agent wallet</span>
+          <span className="ui-row-sub">Wallet</span>
           <span className="ui-amount ag-wallet-amount">{formatNaira(walletBalance)}</span>
         </Link>
 
@@ -202,6 +252,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
           ))}
         </nav>
 
+        {canOpenAppSettings && (
+          <button type="button" className="ag-nav-item" onClick={openAppSettings}>
+            <Icons.print size={20} aria-hidden="true" />
+            <span>Printer &amp; fingerprint</span>
+          </button>
+        )}
         <button type="button" className="ag-nav-item ag-signout" onClick={() => signOut({ callbackUrl: '/login' })}>
           <Icons.logout size={20} aria-hidden="true" />
           <span>Sign out</span>
