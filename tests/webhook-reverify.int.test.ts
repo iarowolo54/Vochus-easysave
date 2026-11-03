@@ -93,6 +93,7 @@ after(async () => {
   await prisma.transaction.deleteMany({ where: { OR: [{ planId: { in: planIds } }, { ref: { in: refs } }] } })
   await prisma.paymentIntent.deleteMany({ where: { ref: { in: refs } } })
   await prisma.earlyRedemption.deleteMany({ where: { id: { in: erIds } } })
+  await prisma.agentReward.deleteMany({ where: { customerId: { in: customerIds } } })
   await prisma.savingsPlan.deleteMany({ where: { id: { in: planIds } } })
   await prisma.customer.deleteMany({ where: { id: { in: customerIds } } })
   await prisma.agent.deleteMany({ where: { id: agentDbId } })

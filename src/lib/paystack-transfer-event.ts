@@ -44,29 +44,6 @@ export async function handleTransferEvent(client: PrismaClient, type: string, da
   if (!transferCode && !reference) return
   const match = { OR: [...(transferCode ? [{ paystackTransferCode: transferCode }] : []), ...(reference ? [{ ref: reference }] : [])] }
 
-  const records = await client.earlyRedemption.findMany({
-    where: match,
-    select: { id: true, ref: true, status: true, bankTransferStatus: true },
-  })
-  const heldAs = (r: { bankTransferStatus: string | null }) => r.bankTransferStatus ?? ''
-  const refused = records.filter(r => CANNOT_REPLACE[status].includes(heldAs(r)))
-
-  // Paid after we'd given the money back: the customer can have it twice, and only a person can sort that out.
-  if (type === 'transfer.success') {
-    for (const r of records.filter(x => x.status === 'Rejected' || x.status === 'AgentApproved')) {
-      const message = `MANUAL REVIEW: Paystack paid ${r.ref} after it was marked ${r.status}, so the money may have gone out twice. Paystack said: transfer.success, code ${transferCode || 'none'}, reference ${reference ?? 'none'}, amount ${data.amount ?? 'none'} ${data.currency ?? ''}.`
-      await logAudit({ action: 'early_redemption_paid_after_release', entity: 'EarlyRedemption', entityId: r.id, details: message, actorType: 'system', actorName: 'Paystack Webhook' })
-      await notifySuperAdminsPayoutReview(client, { ref: r.ref, message })
-    }
-  }
-
-  for (const r of refused) {
-    const message = `MANUAL REVIEW: Paystack said ${status} for ${r.ref}, but it is recorded as ${heldAs(r)}, so the record was left as it is. Code ${transferCode || 'none'}, reference ${reference ?? 'none'}.`
-    await logAudit({ action: 'paystack_transfer_status_conflict', entity: 'EarlyRedemption', entityId: r.id, details: message, actorType: 'system', actorName: 'Paystack Webhook' })
-    // Paid by Paystack but held as not paid or paid by hand: the one outcome that can mean the money went out twice.
-    if (status === 'success') await notifySuperAdminsPayoutReview(client, { ref: r.ref, message })
-  }
-
   // Conditional on the stored status, so two events racing can't undo each other. A null status counts as open.
   const updated = await client.earlyRedemption.updateMany({
     where: { AND: [match, { OR: [{ bankTransferStatus: null }, { bankTransferStatus: { notIn: CANNOT_REPLACE[status] } }] }] },
@@ -80,5 +57,30 @@ export async function handleTransferEvent(client: PrismaClient, type: string, da
       actorType: 'system',
       actorName: 'Paystack Webhook',
     })
+  }
+
+  // Everything after this reads what the records hold NOW, so an event that lost a race against another one is still
+  // caught: the write above decides what was applied, this decides what staff must look at.
+  const records = await client.earlyRedemption.findMany({
+    where: match,
+    select: { id: true, ref: true, status: true, bankTransferStatus: true },
+  })
+
+  // Paid after we'd given the money back: the customer can have it twice, and only a person can sort that out.
+  if (type === 'transfer.success') {
+    for (const r of records.filter(x => x.status === 'Rejected' || x.status === 'AgentApproved')) {
+      const message = `MANUAL REVIEW: Paystack paid ${r.ref} after it was marked ${r.status}, so the money may have gone out twice. Paystack said: transfer.success, code ${transferCode || 'none'}, reference ${reference ?? 'none'}, amount ${data.amount ?? 'none'} ${data.currency ?? ''}.`
+      await logAudit({ action: 'early_redemption_paid_after_release', entity: 'EarlyRedemption', entityId: r.id, details: message, actorType: 'system', actorName: 'Paystack Webhook' })
+      await notifySuperAdminsPayoutReview(client, { ref: r.ref, message })
+    }
+  }
+
+  // A record that doesn't hold what Paystack just said was left as it was, whether it was refused up front or lost a race.
+  for (const r of records.filter(x => (x.bankTransferStatus ?? '') !== status)) {
+    if (!CANNOT_REPLACE[status].includes(r.bankTransferStatus ?? '')) continue
+    const message = `MANUAL REVIEW: Paystack said ${status} for ${r.ref}, but it is recorded as ${r.bankTransferStatus}, so the record was left as it is. Code ${transferCode || 'none'}, reference ${reference ?? 'none'}.`
+    await logAudit({ action: 'paystack_transfer_status_conflict', entity: 'EarlyRedemption', entityId: r.id, details: message, actorType: 'system', actorName: 'Paystack Webhook' })
+    // Paid by Paystack but held as not paid or paid by hand: the one outcome that can mean the money went out twice.
+    if (status === 'success') await notifySuperAdminsPayoutReview(client, { ref: r.ref, message })
   }
 }

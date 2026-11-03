@@ -1,8 +1,7 @@
 'use client'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import BottomNav from '@/components/BottomNav'
-import { CUSTOMER_NAV } from '@/components/nav-items'
+import CustomerBottomNav from '@/components/customer/CustomerBottomNav'
 import DepositReceipt, { depositIcon, depositMethod, methodShort, signedAmount, txMeta, txStatus } from '@/components/customer/DepositReceipt'
 import { useCustomerMe } from '@/components/customer/useCustomerMe'
 import BottomSheet from '@/components/ui/BottomSheet'
@@ -138,7 +137,7 @@ export default function TransactionsPage() {
         text="Check your connection and try again."
         action={<button type="button" className="ui-btn ui-btn--primary" onClick={load}><Icons.retry size={18} aria-hidden="true" /> Try again</button>}
       />
-      <BottomNav items={CUSTOMER_NAV} />
+      <CustomerBottomNav />
     </div>
   )
 
@@ -254,7 +253,7 @@ export default function TransactionsPage() {
         )}
       </BottomSheet>
 
-      <BottomNav items={CUSTOMER_NAV} />
+      <CustomerBottomNav />
     </div>
   )
 }

@@ -1,9 +1,8 @@
 'use client'
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import BottomNav from '@/components/BottomNav'
+import CustomerBottomNav from '@/components/customer/CustomerBottomNav'
 import Logo from '@/components/Logo'
-import { CUSTOMER_NAV } from '@/components/nav-items'
 import { useCustomerMe } from '@/components/customer/useCustomerMe'
 import EmptyState from '@/components/ui/EmptyState'
 import { FormSkeleton } from '@/components/ui/Skeleton'
@@ -165,7 +164,7 @@ export default function CustomerSettingsPage() {
       </main>
 
       {toast && <Toast message={toast} onDone={() => setToast('')} />}
-      <BottomNav items={CUSTOMER_NAV} />
+      <CustomerBottomNav />
     </div>
   )
 }
