@@ -21,10 +21,8 @@ The super admin Commission page has a "rates" section (agent savings, agent loan
 2. **The customer's redemption fee becomes the platform savings rate, applied to the balance, on every payout path** (customer-started, agent-started, admin-started). The agent's 60% cut is removed from the redemption fee so the agent is never paid twice. Customers pay less than today.
 3. The rates page is the single source of truth for every rate it shows.
 
-## To confirm with the owner (these are my proposals, not decisions)
-
-- **Late repayment penalty:** left out of this work. It is a new customer charge, not a rate wiring fix.
-- **Deposits before go-live:** earn the agent nothing retroactively, and every redemption requested after go-live uses the new fee, even on plans that were part-paid under the old rules.
+5. **Late repayment penalty is left out of this work.** It is a new customer charge, not a rate wiring fix. The page labels it "Not applied yet".
+6. **Older plans (owner, 2026-11-03):** every redemption requested after go-live uses the new fee, including on part-paid plans. To keep agents whole, when such a plan is redeemed the agent is credited the agent savings rate on the part of the balance that was deposited before go-live (the "catch-up"), once, recorded in the ledger as `source = 'savings_catchup'`. Deposits made after go-live pay the agent at deposit time as in Option A.
 
 ## Goals
 
@@ -37,7 +35,7 @@ The super admin Commission page has a "rates" section (agent savings, agent loan
 
 - Changing how agents are paid out (withdrawals, Paystack, the commission-payout button).
 - A penalty for late repayments.
-- Paying commission retroactively on old deposits.
+- Paying commission at deposit time for deposits made before go-live (they are paid once, at redemption, by the catch-up).
 - Changing loan interest rates, savings interest, or reward fees.
 
 ## Anti-goals (would make it a failure even if it "works")
@@ -80,6 +78,7 @@ Steps 3 and 4 must ship together. Steps 1, 2 and 5 can ship earlier.
 
 - **Money maths change for every redemption** after go-live. It needs a deploy note for agents and customers and a check against a few real plans before and after.
 - **Agent income shifts timing:** from redemption to deposit. Agents' commission balances will rise as customers save, and the platform has paid nothing out of Revenue for it: commission is an accounting credit, paid when agents withdraw, as today.
+- **Catch-up base:** the part of the balance deposited before go-live is the sum of that plan's saving transactions dated before go-live, capped at the balance at redemption. The go-live date is stored as a setting when step 3 ships.
 - **In-flight redemptions** requested before go-live keep their stored fee and still pay the agent cut they were computed with. Only new requests use the new rule.
 - **Two server instances, one SQLite file:** ledger writes sit inside the existing short transactions; no extra long ones.
 
