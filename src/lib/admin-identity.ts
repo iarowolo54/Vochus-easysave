@@ -12,13 +12,14 @@ export type AdminIdentity = {
  */
 export function pickIdentity(opts: {
   superAdmin: { id: string; name: string; email: string } | null
-  staff: { id: string; name: string; email: string; status: string } | null
+  staff: { id: string; name: string; email: string; status: string; password: string | null } | null
 }): AdminIdentity {
   const { superAdmin, staff } = opts
   if (superAdmin) {
     return { kind: 'superadmin', id: superAdmin.id, name: superAdmin.name, email: superAdmin.email }
   }
-  if (staff && staff.status === 'Active') {
+  // Only Active staff who have set a password can sign in (Invited/Suspended/null-password never qualify).
+  if (staff && staff.status === 'Active' && staff.password != null) {
     return { kind: 'staff', id: staff.id, name: staff.name, email: staff.email }
   }
   return { kind: 'none' }
