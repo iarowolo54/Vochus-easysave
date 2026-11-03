@@ -203,6 +203,7 @@ export default function RedemptionsPage() {
 
   // Completed payouts
   const [completed, setCompleted] = useState<CompletedRedemption[]>([])
+  const [completedDetail, setCompletedDetail] = useState<CompletedRedemption | null>(null)
   const [completedStats, setCompletedStats] = useState<CompletedStats | null>(null)
   const [completedSearch, setCompletedSearch] = useState('')
   const completedQ = useDebounced(completedSearch.trim())
@@ -703,11 +704,11 @@ export default function RedemptionsPage() {
                   <div className="tbl-wrap tbl-stack">
                     <table>
                       <thead>
-                        <tr><th>Reference</th><th>Customer</th><th>Agent</th><th className="num">Amount</th><th>Method</th><th>Date</th><th>Status</th></tr>
+                        <tr><th>Reference</th><th>Customer</th><th>Agent</th><th className="num">Amount</th><th>Method</th><th>Date</th><th>Status</th><th className="td-pin-end"><span className="sr-only">Actions</span></th></tr>
                       </thead>
                       <tbody>
                         {completed.slice((completedPage - 1) * PAGE_SIZE, completedPage * PAGE_SIZE).map(r => (
-                          <tr key={r.id}>
+                          <tr key={r.id} className="is-clickable" onClick={() => { if (!window.getSelection()?.toString()) setCompletedDetail(r) }}>
                             <td><span className="cm-ref">{r.ref}</span></td>
                             <td data-label="Customer">
                               {r.customerName
@@ -722,6 +723,11 @@ export default function RedemptionsPage() {
                             <td data-label="Method" className="cm-sub2">{r.method ?? '—'}</td>
                             <td data-label="Date" className="cm-nowrap cm-sub2">{dateTime(r.createdAt)}</td>
                             <td data-label="Status"><span className={`bdg ${r.status === 'Done' ? 'bdg-g' : 'bdg-a'}`}>{r.status === 'Done' ? 'Paid' : r.status}</span></td>
+                            <td className="td-pin-end">
+                              <div className="a-row-actions">
+                                <button type="button" className="btn btn-sm btn-outline" onClick={() => setCompletedDetail(r)} aria-label={`View payout ${r.ref}`}>View</button>
+                              </div>
+                            </td>
                           </tr>
                         ))}
                       </tbody>
@@ -942,6 +948,34 @@ export default function RedemptionsPage() {
           busy={rejectBusy} error={rejectError}
           onConfirm={confirmReject} onClose={() => setRejectTarget(null)}
         />
+      )}
+
+      {/* Completed payout details */}
+      {completedDetail && (
+        <Modal icon="redeem" title={completedDetail.ref} sub="Completed payout" onClose={() => setCompletedDetail(null)}
+          footer={<button type="button" className="btn btn-outline" onClick={() => setCompletedDetail(null)}>Close</button>}>
+          <div className="dlg-hero">
+            <div className="dlg-hero-lbl">Amount paid</div>
+            <div className="dlg-hero-amt">{nairaKobo(completedDetail.amount)}</div>
+            <span className="cm-badges"><span className={`bdg ${completedDetail.status === 'Done' ? 'bdg-g' : 'bdg-a'}`}>{completedDetail.status === 'Done' ? 'Paid' : completedDetail.status}</span></span>
+          </div>
+          <div className="cm-sec">
+            <h3 className="cm-sec-title">Customer</h3>
+            <dl className="dlg-ledger">
+              <DlRow label="Name">{completedDetail.customerName ?? '—'}</DlRow>
+              <DlRow label="Customer ID">{completedDetail.customerId ?? '—'}</DlRow>
+              <DlRow label="Agent">{completedDetail.agentName} ({completedDetail.agentId})</DlRow>
+            </dl>
+          </div>
+          <div className="cm-sec">
+            <h3 className="cm-sec-title">Payout</h3>
+            <dl className="dlg-ledger">
+              <DlRow label="Method">{completedDetail.method ?? '—'}</DlRow>
+              <DlRow label="Date">{dateTime(completedDetail.createdAt)}</DlRow>
+              <DlRow label="Reference"><span className="cm-ref">{completedDetail.ref}</span></DlRow>
+            </dl>
+          </div>
+        </Modal>
       )}
 
       {/* Details */}
