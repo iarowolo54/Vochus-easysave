@@ -3,7 +3,7 @@ import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
 import { REVIEW_ACTION } from '@/lib/payment-intent'
 import { PlanClosedError, creditPlanBalance } from '@/lib/plan-credit'
-import { savingsCommissionOps } from '@/lib/commission-ledger'
+import { depositFeeOps } from '@/lib/commission-ledger'
 
 export type AutoDebitCreditResult = 'credited' | 'already' | 'not_found' | 'review'
 
@@ -54,6 +54,7 @@ export async function creditAutoDebitAttempt(
         data: { status: 'success', settledAmount: money(settledAmountNaira) },
       })
       if (claimed.count === 0) throw new Error('ALREADY_PROCESSED')
+      const fee = await depositFeeOps(tx, { planId: plan.id, agentId: customer.agentId, customerId: customer.id, amount, ref: reference, at: new Date() })
       await tx.transaction.create({
         data: {
           ref: reference,
@@ -64,11 +65,11 @@ export async function creditAutoDebitAttempt(
           amount,
           method: 'Paystack',
           status: 'Done',
+          feeTaken: fee,
           note: 'Auto-debit via Paystack',
         },
       })
-      await creditPlanBalance(tx, plan.id, amount)
-      await savingsCommissionOps(tx, { agentId: customer.agentId, customerId: customer.id, planSource: plan.source, amount, ref: reference, at: new Date() })
+      await creditPlanBalance(tx, plan.id, money(amount - fee))
       await tx.autoDebitMandate.update({ where: { id: attempt.mandateId }, data: { consecutiveFailures: 0 } })
     })
   } catch (e: unknown) {

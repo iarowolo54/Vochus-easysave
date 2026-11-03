@@ -19,6 +19,7 @@ export interface RedemptionRecord {
   payoutMethod: string | null
   interestAmount: number
   feeRule: string
+  feeAgent: number
 }
 
 export interface RedemptionCompletionOpts {

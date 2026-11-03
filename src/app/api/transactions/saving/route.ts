@@ -9,7 +9,7 @@ import { creditRegistrationReward } from '@/lib/reward'
 import { selectActivePlan, depositCreatedAt } from '@/lib/saving-plan'
 import { planHasEnded, PLAN_ENDED } from '@/lib/plan-credit'
 import { creditOpenPlan, hasOpenRedemption, PLAN_CLOSED, PlanClosedError, SAVING_BLOCKED } from '@/lib/redemption-balance'
-import { savingsCommissionOps } from '@/lib/commission-ledger'
+import { depositFeeOps } from '@/lib/commission-ledger'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -71,6 +71,7 @@ export async function POST(req: NextRequest) {
       // Atomically debit the agent's wallet; concurrent savings can't overdraw.
       const debited = await debitAgentBalance(tx, agent.id, 'walletBalance', rounded)
       if (!debited) throw new InsufficientFundsError('Agent wallet', agent.walletBalance, rounded)
+      const fee = await depositFeeOps(tx, { planId: plan.id, agentId: agent.id, customerId: customer.id, amount: rounded, ref, at: createdAt ?? new Date() })
       const created = await tx.transaction.create({
         data: {
           ref,
@@ -82,11 +83,11 @@ export async function POST(req: NextRequest) {
           method: method ?? 'Cash',
           status: 'Done',
           walletAfter,
+          feeTaken: fee,
           ...(createdAt ? { createdAt } : {}),
         },
       })
-      await creditOpenPlan(tx, plan.id, rounded)
-      await savingsCommissionOps(tx, { agentId: agent.id, customerId: customer.id, planSource: plan.source, amount: rounded, ref, at: createdAt ?? new Date() })
+      await creditOpenPlan(tx, plan.id, money(rounded - fee))
       return created
     })
   } catch (e) {

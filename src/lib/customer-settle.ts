@@ -7,7 +7,7 @@ import { inFlightKeys } from '@/lib/pay-ahead'
 import { PlanClosedError, creditPlanBalance } from '@/lib/plan-credit'
 import { creditRegistrationReward } from '@/lib/reward'
 import { money } from '@/lib/wallet-guard'
-import { savingsCommissionOps } from '@/lib/commission-ledger'
+import { depositFeeOps } from '@/lib/commission-ledger'
 
 export type SettleResult =
   | { kind: 'credited'; amount: number; planId: string; notBought: number }
@@ -73,6 +73,7 @@ export async function settleIntentPayment(client: PrismaClient, input: Input): P
       // Atomically consume the intent; a losing/replayed call must not credit.
       const consumed = await consumePaymentIntent(tx, reference, { customerId })
       if (!consumed) throw new Error('ALREADY_PROCESSED')
+      const fee = await depositFeeOps(tx, { planId: plan.id, agentId: customer.agentId, customerId: customerId, amount, ref: reference, at: new Date() })
       await tx.transaction.create({
         data: {
           ref: reference,
@@ -83,11 +84,11 @@ export async function settleIntentPayment(client: PrismaClient, input: Input): P
           amount,
           method: 'Paystack',
           status: 'Done',
+          feeTaken: fee,
           note: `Customer self-pay via ${via} — ${channel ?? 'card'}`,
         },
       })
-      await creditPlanBalance(tx, plan.id, amount)
-      await savingsCommissionOps(tx, { agentId: customer.agentId, customerId, planSource: plan.source, amount, ref: reference, at: new Date() })
+      await creditPlanBalance(tx, plan.id, money(amount - fee))
       await tx.customerPayment.create({
         data: { ref: `PAY-${reference}`, customerId, planId: plan.id, amount, status: 'Done', channel: channel ?? 'card' },
       })

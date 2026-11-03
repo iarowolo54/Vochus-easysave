@@ -9,7 +9,7 @@ import { sendToReview } from '@/lib/customer-settle'
 import { PlanClosedError, creditPlanBalance } from '@/lib/plan-credit'
 import { createMandateFromAuthorization } from '@/lib/auto-debit'
 import { ensureEnrolmentMandate, isEnrolmentRef } from '@/lib/auto-debit-enrol'
-import { savingsCommissionOps } from '@/lib/commission-ledger'
+import { depositFeeOps } from '@/lib/commission-ledger'
 
 class RouteError extends Error {
   constructor(public code: 'ALREADY_PROCESSED' | 'NOT_SELF') {
@@ -117,6 +117,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      const fee = await depositFeeOps(tx, { planId: plan.id, agentId: customer.agentId, customerId: customer.id, amount, ref: reference, at: new Date() })
       await tx.transaction.create({
         data: {
           ref: reference,
@@ -127,11 +128,11 @@ export async function POST(req: NextRequest) {
           amount,
           method: 'Paystack',
           status: 'Done',
+          feeTaken: fee,
           note: reusable ? 'Auto-debit enrollment first charge' : 'Auto-debit enrollment charge saved (no reusable card authorization)',
         },
       })
-      await creditPlanBalance(tx, plan.id, amount)
-      await savingsCommissionOps(tx, { agentId: customer.agentId, customerId: customer.id, planSource: plan.source, amount, ref: reference, at: new Date() })
+      await creditPlanBalance(tx, plan.id, money(amount - fee))
     })
   } catch (e) {
     if (e instanceof PlanClosedError) return toReview('closed')

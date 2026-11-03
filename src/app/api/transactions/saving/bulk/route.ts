@@ -10,7 +10,7 @@ import { selectActivePlan } from '@/lib/saving-plan'
 import { creditOpenPlan, hasOpenRedemption, PLAN_CLOSED, PlanClosedError, SAVING_BLOCKED } from '@/lib/redemption-balance'
 import { chargingKeys, checkBulkSelection, liveSlots } from '@/lib/bulk-savings'
 import { isEligiblePlan, perSlotAmount } from '@/lib/catchup'
-import { savingsCommissionOps } from '@/lib/commission-ledger'
+import { depositFeeOps } from '@/lib/commission-ledger'
 
 class DaysTakenError extends Error {}
 
@@ -101,11 +101,16 @@ export async function POST(req: NextRequest) {
       if (!debited) throw new InsufficientFundsError('Agent wallet', agent.walletBalance, totalAmt)
 
       const txns: Awaited<ReturnType<typeof prisma.transaction.create>>[] = []
+      let feeSum = 0
       for (let i = 0; i < dates.length; i++) {
         const walletAfter = money(agent.walletBalance - dailyAmt * (i + 1))
+        const ref = `TXN-${String(9000 + txnCount + i + 1)}`
+        // The platform fee comes out of the earliest days first, one deposit at a time, so a daily plan's first day is taken once.
+        const fee = await depositFeeOps(tx, { planId: plan.id, agentId: agent.id, customerId: customer.id, amount: dailyAmt, ref, at: online ? new Date() : dates[i] })
+        feeSum += fee
         const created = await tx.transaction.create({
           data: {
-            ref: `TXN-${String(9000 + txnCount + i + 1)}`,
+            ref,
             agentId: agent.id,
             customerId: customer.id,
             planId: plan.id,
@@ -114,12 +119,12 @@ export async function POST(req: NextRequest) {
             method: method ?? 'Cash',
             status: 'Done',
             walletAfter,
+            feeTaken: fee,
             // SR-3: online (self) plans ignore client dates; createdAt defaults to now.
             ...(online ? {} : { createdAt: dates[i] }),
           },
         })
         txns.push(created)
-        await savingsCommissionOps(tx, { agentId: agent.id, customerId: customer.id, planSource: plan.source, amount: dailyAmt, ref: created.ref, at: created.createdAt })
         if (online) {
           const coversKey = rawDates[i] as string
           const row = await tx.planDayCoverage.upsert({
@@ -131,7 +136,7 @@ export async function POST(req: NextRequest) {
           if (row.ref !== created.ref) throw new DaysTakenError()
         }
       }
-      await creditOpenPlan(tx, plan.id, totalAmt)
+      await creditOpenPlan(tx, plan.id, money(totalAmt - feeSum))
       return txns
     })
   } catch (e) {
