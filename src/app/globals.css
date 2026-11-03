@@ -2613,3 +2613,15 @@ button.ui-cal-day:disabled:active { transform: none; }
 .ui-catchup-sum strong { font-size: var(--ui-fs-xl); font-weight: 800; }
 .ui-catchup-legend { margin: var(--ui-s3) 0 0; font-size: var(--ui-fs-sm); color: var(--ui-ink-2); }
 .ui-catchup-note { margin: 0; font-size: var(--ui-fs-sm); color: var(--ui-ink-2); }
+
+/* Agent Customers on a phone: one-line controls, tabs that never wrap, a big primary action. */
+@media (max-width: 480px) {
+  .ag-head-actions { flex-wrap: nowrap; }
+  .ag-head-actions .ui-btn { white-space: nowrap; flex: 1 1 auto; justify-content: center; }
+  .ag-head-actions .ui-btn--secondary { flex: 0 0 auto; }
+  .ag-kind button { white-space: nowrap; padding: 0 var(--ui-s1); gap: 6px; font-size: var(--ui-fs-sm); }
+  .ag-toolbar { grid-template-columns: minmax(0, 1fr) 132px; gap: var(--ui-s2); }
+  .ag-toolbar .ui-input { min-height: 48px; }
+  .ag-toolbar .ui-select { padding-left: var(--ui-s3); padding-right: 32px; text-overflow: ellipsis; }
+  .ag-mini-bar { flex-basis: 36px; }
+}

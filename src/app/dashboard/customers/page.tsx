@@ -132,7 +132,7 @@ export default function CustomersPage() {
   const [counts, setCounts] = useState<Partial<Record<StatusFilter, number>>>({})
   // null until the first response tells us whether the API knows customer types yet.
   const [typed, setTyped] = useState<boolean | null>(null)
-  const [kind, setKind] = useState<KindTab>('offline')
+  const [kind, setKind] = useState<KindTab>('all')
   const [kindCounts, setKindCounts] = useState<Partial<Record<CustomerType, number>>>({})
   const [summary, setSummary] = useState<Summary | null>(null)
   const [loading, setLoading] = useState(true)
@@ -366,7 +366,7 @@ export default function CustomersPage() {
                 className="ui-input"
                 type="search"
                 enterKeyHint="search"
-                placeholder="Name, phone or customer ID"
+                placeholder="Name or phone"
                 aria-label="Search customers"
                 autoComplete="off"
                 value={search}
@@ -374,7 +374,7 @@ export default function CustomersPage() {
               />
             </div>
             <select className="ui-input ui-select ag-plan-filter" aria-label="Plan length" value={plan} onChange={e => { setPlan(e.target.value); setPage(1) }}>
-              <option value="">All plan lengths</option>
+              <option value="">Any length</option>
               <option value="30">30 days</option><option value="60">60 days</option>
               <option value="90">90 days</option><option value="180">180 days</option>
             </select>
@@ -415,7 +415,9 @@ export default function CustomersPage() {
                 const left = main ? daysLeft(main.maturityDate) : 0
                 const isSel = wide && selected?.id === c.id
                 // Cash savers who haven't paid today get a Collect button instead of the balance.
-                const collect = cash && !!main && daysSince(c.lastPaidAt) !== 0
+                // The All tab mixes both kinds, so this is decided per customer.
+                const rowCash = tabs && (kind === 'offline' || (kind === 'all' && c.type === 'offline'))
+                const collect = rowCash && !!main && daysSince(c.lastPaidAt) !== 0
                 const row = (
                   <button
                     key={c.id}
@@ -427,7 +429,7 @@ export default function CustomersPage() {
                     <Avatar c={c} />
                     <span className="ag-crow-main">
                       <span className="ag-crow-name">{fullName(c)} <StatusBadge status={c.status} /></span>
-                      {cash ? (
+                      {rowCash ? (
                         <span className="ag-crow-sub">
                           <span className={isOverdue(c.lastPaidAt) ? 'ag-late' : daysSince(c.lastPaidAt) === 0 ? 'ag-paid' : undefined}>{lastPaidText(c.lastPaidAt)}</span>
                         </span>
@@ -439,7 +441,7 @@ export default function CustomersPage() {
                       {main ? (
                         <span className="ag-crow-plan">
                           <span className="ag-mini-bar" aria-hidden="true"><span style={{ width: `${pct}%` }} /></span>
-                          <span className="ag-crow-plan-text">{cash ? amountText(main) : `${main.goal} · ${pct}%`}{others > 0 ? ` · +${others} more` : ''}</span>
+                          <span className="ag-crow-plan-text">{rowCash ? amountText(main) : `${main.goal} · ${pct}%`}{others > 0 ? ` · +${others} more` : ''}</span>
                           {habits[c.customerId] && isDaily(main) && <HabitDot h={habits[c.customerId]} />}
                         </span>
                       ) : (
@@ -456,7 +458,7 @@ export default function CustomersPage() {
                     )}
                   </button>
                 )
-                if (!cash) return row
+                if (!rowCash) return row
                 return (
                   <div key={c.id} className="ag-crow-row">
                     {row}
