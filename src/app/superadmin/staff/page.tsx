@@ -2,17 +2,19 @@
 
 import { useState } from 'react'
 import { Icons } from '@/components/ui/icons'
-import { Field, Modal, PageHeader, Segmented, useToast } from '../_components/admin-ui'
+import { Field, LoadError, Modal, PageHeader, Segmented, useToast } from '../_components/admin-ui'
 import DepartmentsView from './_components/DepartmentsView'
-import RolesView from './_components/RolesView'
 import PeopleView from './_components/PeopleView'
 import { errorOf } from './_components/shared'
+import { useMyAccess } from '../_components/useMyAccess'
+import { actorCeiling } from './_components/ceiling'
 
-type Tab = 'people' | 'roles' | 'departments'
+type Tab = 'people' | 'departments'
 
 export default function StaffPage() {
-  const [tab, setTab] = useState<Tab>('people')
+  const [tab, setTab] = useState<Tab>('departments')
   const [toastNode, toast] = useToast()
+  const { state: me, reload: reloadMe } = useMyAccess(true)
 
   // Approval PIN
   const [showPinModal, setShowPinModal] = useState(false)
@@ -51,30 +53,43 @@ export default function StaffPage() {
     }
   }
 
+  if (me.status === 'loading') {
+    return <div aria-busy="true"><div className="skel" style={{ width: 240, height: 30, marginBottom: 20 }} /><div className="card"><div className="skel" style={{ height: 220 }} /></div></div>
+  }
+  if (me.status === 'error') {
+    return <section className="card"><LoadError what="your access" onRetry={reloadMe} /></section>
+  }
+  const isOwner = me.access.role === 'superadmin'
+  const ceiling = actorCeiling(me.access)
+
   return (
     <>
       <PageHeader
         title="Staff and access"
-        sub="Departments, roles and the people who work in this admin area."
-        actions={<button type="button" className="btn btn-outline" onClick={openPin}><Icons.locked size={18} aria-hidden="true" /> Change approval PIN</button>}
+        sub={isOwner ? 'Departments, roles and the people who work in this admin area.' : 'Your department’s roles and people.'}
+        actions={isOwner ? <button type="button" className="btn btn-outline" onClick={openPin}><Icons.locked size={18} aria-hidden="true" /> Change approval PIN</button> : undefined}
       />
 
       <p className="cs-note" role="note">
         <Icons.report size={16} aria-hidden="true" />
-        <span>Staff sign in at the same admin login as you and see only the areas their role allows. Roles that handle money are marked.</span>
+        <span>
+          {isOwner
+            ? 'New people get an email to set their own password, then see only the screens their role allows. Roles that handle money are marked.'
+            : 'You can add people and roles to your department, but only with access you hold yourself.'}
+        </span>
       </p>
 
-      <div className="cs-tabs">
-        <Segmented<Tab> label="Staff and access sections" value={tab} onChange={setTab} options={[
-          { value: 'people', label: 'People' },
-          { value: 'roles', label: 'Roles' },
-          { value: 'departments', label: 'Departments' },
-        ]} />
-      </div>
+      {isOwner && (
+        <div className="cs-tabs">
+          <Segmented<Tab> label="Staff and access sections" value={tab} onChange={setTab} options={[
+            { value: 'departments', label: 'Departments' },
+            { value: 'people', label: 'All people' },
+          ]} />
+        </div>
+      )}
 
-      {tab === 'people' && <PeopleView toast={toast} />}
-      {tab === 'roles' && <RolesView toast={toast} />}
-      {tab === 'departments' && <DepartmentsView toast={toast} />}
+      {isOwner && tab === 'people' && <PeopleView toast={toast} isOwner ceiling={null} />}
+      {(!isOwner || tab === 'departments') && <DepartmentsView toast={toast} isOwner={isOwner} ceiling={ceiling} />}
 
       {showPinModal && (
         <Modal error={pinError || undefined} icon="locked" title="Change approval PIN" onClose={closePin} busy={pinLoading}

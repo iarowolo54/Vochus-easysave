@@ -1,21 +1,27 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { AREA_KEYS, MONEY_AREAS, type Area } from '@/lib/permissions'
+import { MONEY_SCREENS, hasPermission, parsePermissions, type Perm, type ScreenKey } from '@/lib/permissions'
 
-export type MyAccess = { role: 'superadmin' | 'staff'; areas: Area[]; hasApprovalPin: boolean }
+export type MyAccess = {
+  role: 'superadmin' | 'staff'
+  perms: Perm[]
+  isLead: boolean
+  leadDepartmentId?: string
+  hasApprovalPin: boolean
+}
 export type MyAccessState =
   | { status: 'loading' }
   | { status: 'error' }
   | { status: 'ready'; access: MyAccess }
 
-function isAccess(d: unknown): d is MyAccess {
+function isAccess(d: unknown): d is { role: 'superadmin' | 'staff'; perms: unknown[]; isLead?: unknown; leadDepartmentId?: unknown; hasApprovalPin?: unknown } {
   if (typeof d !== 'object' || d === null) return false
   const o = d as Record<string, unknown>
-  return (o.role === 'superadmin' || o.role === 'staff') && Array.isArray(o.areas)
+  return (o.role === 'superadmin' || o.role === 'staff') && Array.isArray(o.perms)
 }
 
-/** The signed-in admin's role and areas from /api/admin/me. Cosmetic only: the server enforces access. */
+/** The signed-in admin's role, per-screen permissions and lead status from /api/admin/me. Cosmetic only: the server enforces access. */
 export function useMyAccess(enabled: boolean) {
   const [state, setState] = useState<MyAccessState>({ status: 'loading' })
 
@@ -24,8 +30,16 @@ export function useMyAccess(enabled: boolean) {
       const r = await fetch('/api/admin/me')
       const d: unknown = r.ok ? await r.json() : null
       if (!isAccess(d)) throw new Error()
-      const areas = d.areas.filter((a): a is Area => (AREA_KEYS as readonly string[]).includes(a))
-      setState({ status: 'ready', access: { role: d.role, areas, hasApprovalPin: !!d.hasApprovalPin } })
+      setState({
+        status: 'ready',
+        access: {
+          role: d.role,
+          perms: parsePermissions(JSON.stringify(d.perms)),
+          isLead: d.isLead === true,
+          leadDepartmentId: typeof d.leadDepartmentId === 'string' ? d.leadDepartmentId : undefined,
+          hasApprovalPin: !!d.hasApprovalPin,
+        },
+      })
     } catch {
       setState({ status: 'error' })
     }
@@ -36,4 +50,6 @@ export function useMyAccess(enabled: boolean) {
   return { state, reload: load }
 }
 
-export const hasMoneyArea = (areas: Area[]) => areas.some(a => MONEY_AREAS.includes(a))
+/** The approval PIN matters to anyone who can manage a screen that moves money. */
+export const hasMoneyManage = (perms: Perm[]) => MONEY_SCREENS.some(s => hasPermission(perms, s, 'manage'))
+export const canViewScreen = (access: MyAccess, screen: ScreenKey) => access.role === 'superadmin' || hasPermission(access.perms, screen, 'view')

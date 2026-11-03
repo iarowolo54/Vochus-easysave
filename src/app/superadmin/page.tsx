@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { Icons, type IconName } from '@/components/ui/icons'
-import type { Area } from '@/lib/permissions'
+import { hasPermission, parsePermissions, type Perm, type ScreenKey } from '@/lib/permissions'
 
 interface Stats {
   totalAgents: number
@@ -78,8 +78,8 @@ export default function SuperAdminDashboard() {
   const [agents, setAgents] = useState<Agent[]>([])
   // Per-area sections whose endpoint 403s for this staffer are hidden, never an error.
   const [denied, setDenied] = useState({ transactions: false, loans: false, agents: false })
-  // Areas this actor holds (null until known / if /me fails: nothing is hidden, the API still enforces).
-  const [areas, setAreas] = useState<Area[] | null>(null)
+  // Permissions this actor holds (null until known / if /me fails: nothing is hidden, the API still enforces).
+  const [perms, setPerms] = useState<Perm[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
   const [toast, setToast] = useState('')
@@ -103,8 +103,8 @@ export default function SuperAdminDashboard() {
         lRes.ok ? lRes.json() : null,
         aRes.ok ? aRes.json() : null,
       ])
-      const me: { areas?: Area[] } | null = mRes?.ok ? await mRes.json().catch(() => null) : null
-      setAreas(Array.isArray(me?.areas) ? me.areas : null)
+      const me: { perms?: unknown } | null = mRes?.ok ? await mRes.json().catch(() => null) : null
+      setPerms(Array.isArray(me?.perms) ? parsePermissions(JSON.stringify(me.perms)) : null)
       setDenied({ transactions: tRes.status === 403, loans: lRes.status === 403, agents: aRes.status === 403 })
       setStats(s)
       setTransactions((t?.transactions ?? []).slice(0, 8))
@@ -162,8 +162,8 @@ export default function SuperAdminDashboard() {
     )
   }
 
-  const has = (a: Area) => areas === null || areas.includes(a)
-  const showTx = !denied.transactions && has('money')
+  const has = (screen: ScreenKey) => perms === null || hasPermission(perms, screen, 'view')
+  const showTx = !denied.transactions && has('transactions')
   const showLoans = !denied.loans && has('loans')
   const showAgents = !denied.agents && has('agents')
 

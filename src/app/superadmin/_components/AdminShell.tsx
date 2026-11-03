@@ -8,77 +8,72 @@ import '../admin.css'
 import Logo from '@/components/Logo'
 import SessionKeepAlive from '@/components/SessionKeepAlive'
 import { Icons, type IconName } from '@/components/ui/icons'
-import { AREA_LABELS, type Area } from '@/lib/permissions'
-import { useMyAccess, hasMoneyArea } from './useMyAccess'
+import { SCREENS, type ScreenKey } from '@/lib/permissions'
+import { useMyAccess, hasMoneyManage, canViewScreen } from './useMyAccess'
 import NoAccess from './NoAccess'
 import { ChangePasswordModal, SetPinModal } from './SelfService'
 import { useToast } from './admin-ui'
 
-type NavItem = { label: string; icon: IconName; href: string; badge?: 'pendingLoans'; ownerOnly?: boolean }
+// `screen` gates an item for staff on that screen's View (cosmetic; the API guards enforce). `staffAccess` is the
+// Staff & access entry: the owner and any department lead. No screen = always shown.
+type NavItem = { label: string; icon: IconName; href: string; badge?: 'pendingLoans'; screen?: ScreenKey; staffAccess?: boolean }
 
-// `area` gates a group for staff (cosmetic; the API guards enforce). No area = always shown.
-const navGroups: { label: string; area?: Area; items: NavItem[] }[] = [
+const navGroups: { label: string; items: NavItem[] }[] = [
   {
     label: '',
     items: [{ label: 'Home', icon: 'home', href: '/superadmin' }],
   },
   {
     label: 'Agents',
-    area: 'agents',
     items: [
-      { label: 'All agents', icon: 'customers', href: '/superadmin/agents' },
-      { label: 'Agent wallets', icon: 'wallet', href: '/superadmin/agent-wallets' },
-      { label: 'Withdrawals', icon: 'withdraw', href: '/superadmin/agent-withdrawals' },
-      { label: 'Commission', icon: 'commission', href: '/superadmin/commission' },
-      { label: 'Rewards', icon: 'gift', href: '/superadmin/rewards' },
+      { label: 'All agents', screen: 'agents', icon: 'customers', href: '/superadmin/agents' },
+      { label: 'Agent wallets', screen: 'agent-wallets', icon: 'wallet', href: '/superadmin/agent-wallets' },
+      { label: 'Withdrawals', screen: 'withdrawals', icon: 'withdraw', href: '/superadmin/agent-withdrawals' },
+      { label: 'Commission', screen: 'commission', icon: 'commission', href: '/superadmin/commission' },
+      { label: 'Rewards', screen: 'rewards', icon: 'gift', href: '/superadmin/rewards' },
     ],
   },
   {
     label: 'Customers',
-    area: 'customers',
     items: [
-      { label: 'All customers', icon: 'plan', href: '/superadmin/customers' },
-      { label: 'Savings monitor', icon: 'monitor', href: '/superadmin/savings-monitor' },
-      { label: 'Redemptions', icon: 'redeem', href: '/superadmin/early-redemption' },
+      { label: 'All customers', screen: 'customers', icon: 'plan', href: '/superadmin/customers' },
+      { label: 'Savings monitor', screen: 'savings', icon: 'monitor', href: '/superadmin/savings-monitor' },
+      { label: 'Redemptions', screen: 'redemptions', icon: 'redeem', href: '/superadmin/early-redemption' },
     ],
   },
   {
     label: 'Loans',
-    area: 'loans',
     items: [
-      { label: 'Loan requests', icon: 'loan', href: '/superadmin/loan-requests', badge: 'pendingLoans' },
-      { label: 'Disbursements', icon: 'cash', href: '/superadmin/loan-disburse' },
-      { label: 'Repayments', icon: 'repay', href: '/superadmin/loan-repay' },
-      { label: 'Loan calculator', icon: 'calculator', href: '/superadmin/loan-calculator' },
+      { label: 'Loan requests', screen: 'loans', icon: 'loan', href: '/superadmin/loan-requests', badge: 'pendingLoans' },
+      { label: 'Disbursements', screen: 'loan-disbursements', icon: 'cash', href: '/superadmin/loan-disburse' },
+      { label: 'Repayments', screen: 'loan-repayments', icon: 'repay', href: '/superadmin/loan-repay' },
+      { label: 'Loan calculator', screen: 'loans', icon: 'calculator', href: '/superadmin/loan-calculator' },
     ],
   },
   {
     label: 'Money',
-    area: 'money',
     items: [
-      { label: 'Treasury', icon: 'treasury', href: '/superadmin/treasury' },
-      { label: 'Wallet accounts', icon: 'deposit', href: '/superadmin/wallet-accounts' },
-      { label: 'Transactions', icon: 'history', href: '/superadmin/transactions' },
-      { label: 'Payout mode', icon: 'settings', href: '/superadmin/payout-mode' },
+      { label: 'Treasury', screen: 'treasury', icon: 'treasury', href: '/superadmin/treasury' },
+      { label: 'Wallet accounts', screen: 'treasury', icon: 'deposit', href: '/superadmin/wallet-accounts' },
+      { label: 'Transactions', screen: 'transactions', icon: 'history', href: '/superadmin/transactions' },
+      { label: 'Payout mode', screen: 'payout-mode', icon: 'settings', href: '/superadmin/payout-mode' },
     ],
   },
   {
     label: 'Cards',
-    area: 'cards',
     items: [
-      { label: 'Card management', icon: 'card', href: '/superadmin/cards' },
-      { label: 'Generate cards', icon: 'qr', href: '/superadmin/cards/generate' },
-      { label: 'Gift card design', icon: 'design', href: '/superadmin/cards/gift-editor' },
+      { label: 'Card management', screen: 'cards', icon: 'card', href: '/superadmin/cards' },
+      { label: 'Generate cards', screen: 'cards', icon: 'qr', href: '/superadmin/cards/generate' },
+      { label: 'Gift card design', screen: 'cards', icon: 'design', href: '/superadmin/cards/gift-editor' },
     ],
   },
   {
     label: 'Oversight',
-    area: 'oversight',
     items: [
-      { label: 'Staff & access', icon: 'staff', href: '/superadmin/staff', ownerOnly: true },
-      { label: 'Devices', icon: 'device', href: '/superadmin/devices' },
-      { label: 'Audit log', icon: 'audit', href: '/superadmin/audit' },
-      { label: 'Reports', icon: 'reports', href: '/superadmin/reports' },
+      { label: 'Staff & access', icon: 'staff', href: '/superadmin/staff', staffAccess: true },
+      { label: 'Devices', screen: 'devices', icon: 'device', href: '/superadmin/devices' },
+      { label: 'Audit log', screen: 'audit', icon: 'audit', href: '/superadmin/audit' },
+      { label: 'Reports', screen: 'reports', icon: 'reports', href: '/superadmin/reports' },
     ],
   },
 ]
@@ -95,14 +90,10 @@ function activeHref(pathname: string) {
   return best
 }
 
-/** The area a path needs, from the nav group of its longest matching item. Unknown paths need none. */
-function areaForPath(pathname: string): { area?: Area; ownerOnly?: boolean } {
+/** What a path needs, from its longest matching nav item. Unknown paths need nothing. */
+function itemForPath(pathname: string): NavItem | undefined {
   const href = activeHref(pathname)
-  for (const g of navGroups) {
-    const item = g.items.find(i => i.href === href)
-    if (item) return { area: g.area, ownerOnly: item.ownerOnly }
-  }
-  return {}
+  return allItems.find(i => i.href === href)
 }
 
 export default function AdminShell({ children }: { children: React.ReactNode }) {
@@ -164,14 +155,19 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
   const currentLabel = allItems.find(i => i.href === current)?.label ?? 'Admin'
   const access = me.status === 'ready' ? me.access : null
   const isOwner = access?.role === 'superadmin'
-  const can = (area?: Area) => !area || (!!access && (isOwner || access.areas.includes(area)))
+  const canSee = (item?: NavItem) => {
+    if (!item || (!item.screen && !item.staffAccess)) return true
+    if (!access) return false
+    if (isOwner) return true
+    if (item.staffAccess) return access.isLead
+    return !!item.screen && canViewScreen(access, item.screen)
+  }
   const visibleGroups = navGroups
-    .filter(g => can(g.area))
-    .map(g => ({ ...g, items: g.items.filter(i => !i.ownerOnly || isOwner) }))
+    .map(g => ({ ...g, items: g.items.filter(canSee) }))
     .filter(g => g.items.length > 0)
-  const need = areaForPath(pathname)
-  const blocked = me.status === 'ready' && ((need.ownerOnly && !isOwner) || !can(need.area))
-  const canPin = !!access && hasMoneyArea(access.areas)
+  const need = itemForPath(pathname)
+  const blocked = me.status === 'ready' && !canSee(need)
+  const canPin = !!access && hasMoneyManage(access.perms)
   const nudgePin = !!access && access.role === 'staff' && canPin && !access.hasApprovalPin
   const signOutNow = () => signOut({ callbackUrl: '/superadmin/login' })
 
@@ -284,7 +280,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
           {me.status === 'loading' && pathname !== '/superadmin' ? (
             <div aria-busy="true"><div className="skel" style={{ width: 240, height: 30, marginBottom: 20 }} /><div className="card"><div className="skel" style={{ height: 220 }} /></div></div>
           ) : blocked ? (
-            <NoAccess area={need.area ? AREA_LABELS[need.area] : undefined} />
+            <NoAccess area={need?.screen ? SCREENS.find(x => x.key === need.screen)?.label : undefined} />
           ) : children}
         </div>
       </main>
