@@ -65,7 +65,7 @@ const txnMeta = (type: string) => TXN[type] ?? { label: type.charAt(0).toUpperCa
 
 const STATUSES = ['', 'Active', 'Inactive', 'Flagged'] as const
 type StatusFilter = typeof STATUSES[number]
-const STATUS_LABEL: Record<string, string> = { Inactive: 'Not active' }
+const STATUS_LABEL: Record<string, string> = { Inactive: 'Not active', Flagged: 'Under review' }
 
 const fullName = (c: Pick<Customer, 'firstName' | 'lastName'>) => displayName(`${c.firstName} ${c.lastName}`)
 const initials = (c: Pick<Customer, 'firstName' | 'lastName'>) => `${c.firstName[0] ?? ''}${c.lastName[0] ?? ''}`.toUpperCase()
@@ -336,7 +336,7 @@ export default function CustomersPage() {
         <div className="ag-cust-list">
           {tabs && (
             <div className="ui-segment ag-seg ag-kind" role="group" aria-label="Customer type">
-              {([['all', 'All'], ['offline', 'Cash savers'], ['online', 'Online']] as const).map(([k, label]) => (
+              {([['all', 'All'], ['offline', 'Offline'], ['online', 'Online']] as const).map(([k, label]) => (
                 <button key={k} type="button" aria-pressed={kind === k} onClick={() => switchKind(k)}>
                   {label}{(k === 'all' ? portfolio : kindCounts[k]) !== undefined && <span className="ag-kind-count">{k === 'all' ? portfolio : kindCounts[k]}</span>}
                 </button>
@@ -404,7 +404,7 @@ export default function CustomersPage() {
                 : tabs && kind === 'online'
                   ? <EmptyState icon="customers" title="No online customers yet" text="Send someone an invite link. They show here once they sign up."
                       action={<button type="button" className="ui-btn ui-btn--primary" onClick={generateInvite} disabled={inviteLoading}><Icons.share size={18} aria-hidden="true" /> Invite</button>} />
-                  : <EmptyState icon="customers" title={cash ? 'No cash savers yet' : 'No customers yet'}
+                  : <EmptyState icon="customers" title={cash ? 'No offline customers yet' : 'No customers yet'}
                       text={cash ? 'Customers you enrol and collect cash from show here.' : 'Customers you enrol will show here.'}
                       action={<Link href="/dashboard/enrol" className="ui-btn ui-btn--primary">Enrol a customer</Link>} />}
             </section>
@@ -524,7 +524,7 @@ function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, g
         <div className="ag-profile-main">
           <p className="ag-profile-name">{fullName(c)} <StatusBadge status={c.status} /></p>
           <p className="ui-row-sub">
-            {c.type && <span className={`ag-type ag-type--${c.type}`}>{c.type === 'offline' ? 'Cash saver' : 'Online'}</span>}
+            {c.type && <span className={`ag-type ag-type--${c.type}`}>{c.type === 'offline' ? 'Offline' : 'Online'}</span>}
             {c.customerId} · since {formatDate(c.createdAt)}
           </p>
           <a className="ui-link ag-profile-phone" href={`tel:${c.phone}`}><Icons.phone size={16} aria-hidden="true" /> {c.phone}</a>
