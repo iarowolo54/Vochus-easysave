@@ -13,6 +13,7 @@ import { addDays, isoDate, parseDateInput, today } from '@/lib/plan-dates'
 import { createReceiptSender, SEND_IDLE } from '@/lib/receipt-send'
 import BottomSheet from '@/components/ui/BottomSheet'
 import EmptyState from '@/components/ui/EmptyState'
+import DatePicker from '@/components/ui/DatePicker'
 import EndDateField, { endDateDays } from '@/components/ui/EndDateField'
 import { FormError } from '@/components/ui/FormErrors'
 import PinPad from '@/components/ui/PinPad'
@@ -930,7 +931,7 @@ function NewPlanForm({ plan, setPlan }: { plan: typeof EMPTY_PLAN; setPlan: (fn:
         </select>
       </div>
       {plan.endDate && (
-        <EndDateField start={start} cadence={plan.cadence} value={plan.endDate}
+        <EndDateField picker start={start} cadence={plan.cadence} value={plan.endDate}
           onChange={(v, days) => setPlan(p => ({ ...p, endDate: v, periodDays: days ? String(days) : '' }))} />
       )}
 
@@ -942,9 +943,9 @@ function NewPlanForm({ plan, setPlan }: { plan: typeof EMPTY_PLAN; setPlan: (fn:
 
       <div className="ui-field">
         <label className="ui-label" htmlFor="plan-start">Start date <span className="ui-link--muted">(optional)</span></label>
-        <input id="plan-start" className="ui-input" type="date"
-          value={plan.startDate} onChange={e => {
-            const v = e.target.value
+        <DatePicker id="plan-start" ariaLabel="Plan start date" sheetTitle="Pick a start date" todayPrefix
+          value={plan.startDate || isoDate(today())} onChange={iso => {
+            const v = iso === isoDate(today()) ? '' : iso
             // Keep a chosen end date where it is; the length changes instead.
             setPlan(p => ({ ...p, startDate: v, periodDays: p.endDate ? String(endDateDays(p.endDate, parseDateInput(v) ?? today(), p.cadence) ?? '') : p.periodDays }))
           }} />

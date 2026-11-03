@@ -9,6 +9,7 @@ import { displayName, formatNaira } from '@/lib/format'
 import { addDays, isoDate, parseDateInput, today } from '@/lib/plan-dates'
 import EmptyState from '@/components/ui/EmptyState'
 import { NG_STATES, lgasOf } from '@/lib/ng-lgas'
+import DatePicker from '@/components/ui/DatePicker'
 import EndDateField, { endDateDays } from '@/components/ui/EndDateField'
 import { FieldError, FormError } from '@/components/ui/FormErrors'
 import { Icons } from '@/components/ui/icons'
@@ -682,20 +683,24 @@ export default function EnrolPage() {
                   </Field>
                 </div>
                 <div className="ag-grid-2">
-                  <Field id="sd" label="Start date" hint="Leave empty to start today.">
-                    <input id="sd" className="ag-tf-input" type="date" value={form.startDate} onChange={e => {
-                      set('startDate', e.target.value)
-                      // Keep a chosen end date where it is; the length changes instead.
-                      if (customEnd) set('periodDays', String(endDateDays(customEnd, parseDateInput(e.target.value) ?? today(), form.cadence) ?? ''))
-                    }} />
-                  </Field>
+                  <div className="ui-field">
+                    <label className="ui-label" htmlFor="sd">Start date</label>
+                    <DatePicker id="sd" ariaLabel="Plan start date" sheetTitle="Pick a start date" todayPrefix
+                      value={form.startDate || isoDate(today())} onChange={iso => {
+                        const v = iso === isoDate(today()) ? '' : iso
+                        set('startDate', v)
+                        // Keep a chosen end date where it is; the length changes instead.
+                        if (customEnd) set('periodDays', String(endDateDays(customEnd, parseDateInput(v) ?? today(), form.cadence) ?? ''))
+                      }} />
+                    <p className="ag-fineprint">Starts today unless you pick another day.</p>
+                  </div>
                   <Field id="nt" label="Note (optional)">
                     <input id="nt" className="ag-tf-input" placeholder="e.g. Daughter’s school fees" value={form.notes} onChange={e => set('notes', e.target.value)} />
                   </Field>
                 </div>
 
                 {customEnd && (
-                  <EndDateField start={planStart} cadence={form.cadence} value={customEnd}
+                  <EndDateField picker start={planStart} cadence={form.cadence} value={customEnd}
                     onChange={(v, days) => { setCustomEnd(v); set('periodDays', days ? String(days) : '') }} />
                 )}
 

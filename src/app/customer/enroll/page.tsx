@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { blockNonDigit, digitsOnly } from '@/lib/numeric'
 import Logo from '@/components/Logo'
 import AmountField from '@/components/ui/AmountField'
+import DatePicker from '@/components/ui/DatePicker'
 import EndDateField, { endDateDays } from '@/components/ui/EndDateField'
 import BottomSheet from '@/components/ui/BottomSheet'
 import CodeBoxes from '@/components/ui/CodeBoxes'
@@ -916,11 +917,12 @@ function EnrollContent() {
             <h1 className="cu-q">For how long?</h1>
             <p className="cu-lead">Saving {formatNaira(perPayment(draft), { minor: false })} {UNIT[cadence].per}. Pick when you want to collect.</p>
             <div className="ag-tf-wrap cu-start">
-              <div className="ag-tf cu-tf">
-                <label className="ag-tf-label" htmlFor="plan-start">Starts on</label>
-                <input id="plan-start" className="ag-tf-input" type="date" min={isoDate(today())} value={planStart || isoDate(today())}
-                  onChange={e => {
-                    const v = !e.target.value || e.target.value === isoDate(today()) ? '' : e.target.value
+              <div className="ui-field">
+                <label className="ui-label" htmlFor="plan-start">Starts on</label>
+                <DatePicker id="plan-start" ariaLabel="Plan start date" sheetTitle="Pick a start date" todayPrefix
+                  minIso={isoDate(today())} value={planStart || isoDate(today())}
+                  onChange={iso => {
+                    const v = !iso || iso === isoDate(today()) ? '' : iso
                     setPlanStart(v)
                     // Keep a chosen end date where it is; the length changes instead.
                     if (customEnd) { const d = endDateDays(customEnd, parseDateInput(v) ?? today(), cadence); if (d) setPeriod(d / UNIT[cadence].days) }
@@ -955,7 +957,7 @@ function EnrollContent() {
             </div>
             {customEnd && (
               <div className="cu-enddate">
-                <EndDateField start={startDay} cadence={cadence} value={customEnd}
+                <EndDateField picker start={startDay} cadence={cadence} value={customEnd}
                   onChange={(v, days) => { setCustomEnd(v); if (days) setPeriod(days / UNIT[cadence].days) }} />
               </div>
             )}

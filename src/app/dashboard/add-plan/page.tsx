@@ -3,6 +3,7 @@ import { useEffect, useState, Suspense, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useSearchParams, useRouter } from 'next/navigation'
 import EmptyState from '@/components/ui/EmptyState'
+import DatePicker from '@/components/ui/DatePicker'
 import EndDateField, { endDateDays } from '@/components/ui/EndDateField'
 import { FieldError, FormError } from '@/components/ui/FormErrors'
 import { ListSkeleton } from '@/components/ui/Skeleton'
@@ -167,7 +168,7 @@ function AddPlanContent() {
           </Field>
         </div>
         {customEnd && (
-          <EndDateField start={planStart} cadence={cadence} value={customEnd}
+          <EndDateField picker start={planStart} cadence={cadence} value={customEnd}
             onChange={(v, d) => { setCustomEnd(v); setPeriodDays(d ? String(d) : '') }} />
         )}
 
@@ -178,13 +179,17 @@ function AddPlanContent() {
         {touched && errs.goal && <FieldError id="goal-error" message={errs.goal} />}
 
         <div className="ag-grid-2">
-          <Field id="ap-start" label="Start date" hint="Leave empty to start today.">
-            <input id="ap-start" className="ag-tf-input" type="date" value={startDate} onChange={e => {
-              setStartDate(e.target.value)
-              // Keep a chosen end date where it is; the length changes instead.
-              if (customEnd) setPeriodDays(String(endDateDays(customEnd, parseDateInput(e.target.value) ?? today(), cadence) ?? ''))
-            }} />
-          </Field>
+          <div className="ui-field">
+            <label className="ui-label" htmlFor="ap-start">Start date</label>
+            <DatePicker id="ap-start" ariaLabel="Plan start date" sheetTitle="Pick a start date" todayPrefix
+              value={startDate || isoDate(today())} onChange={iso => {
+                const v = iso === isoDate(today()) ? '' : iso
+                setStartDate(v)
+                // Keep a chosen end date where it is; the length changes instead.
+                if (customEnd) setPeriodDays(String(endDateDays(customEnd, parseDateInput(v) ?? today(), cadence) ?? ''))
+              }} />
+            <p className="ag-fineprint">Starts today unless you pick another day.</p>
+          </div>
           <Field id="ap-note" label="Note (optional)">
             <input id="ap-note" className="ag-tf-input" maxLength={200} placeholder="e.g. Saving for the wedding" value={notes} onChange={e => setNotes(e.target.value)} />
           </Field>
