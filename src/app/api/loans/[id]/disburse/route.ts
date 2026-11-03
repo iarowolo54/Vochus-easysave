@@ -3,7 +3,8 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
-import { LOAN_AGENT_COMMISSION, LOAN_PLATFORM_FEE } from '@/lib/wallet-rates'
+import { getCommissionRates } from '@/lib/commission-rates'
+import { loanCommissionAmounts, recordCommission } from '@/lib/commission-ledger'
 import { debitAgentBalance } from '@/lib/wallet-debit'
 import { customerHasOtherDisbursedLoan } from '@/lib/loan-eligibility'
 
@@ -23,8 +24,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const body = await req.json().catch(() => ({}))
   const method = body.method ?? 'Cash'
 
-  const agentComm = loan.principal * LOAN_AGENT_COMMISSION
-  const platformRevenue = loan.interestAmount * LOAN_PLATFORM_FEE
+  const rates = await getCommissionRates(prisma)
+  const { agent: agentComm, platform: platformRevenue } = loanCommissionAmounts(rates, loan.principal, loan.interestAmount)
 
   const txnCount = await prisma.transaction.count()
   const ref = `DSB-${String(txnCount + 1).padStart(5, '0')}`
@@ -50,6 +51,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         update: { balance: { increment: platformRevenue } },
         create: { type: 'Revenue', balance: platformRevenue },
       })
+      await recordCommission(tx, { party: 'agent', agentId: agent.id, source: 'loan', sourceRef: ref, customerId: loan.customerId, base: loan.principal, ratePct: rates.agentLoan, amount: agentComm })
+      await recordCommission(tx, { party: 'platform', agentId: null, source: 'loan', sourceRef: ref, customerId: loan.customerId, base: loan.interestAmount, ratePct: rates.platformLoan, amount: platformRevenue })
       await tx.transaction.create({
         data: {
           ref,

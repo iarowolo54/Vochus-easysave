@@ -3,7 +3,8 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
-import { LOAN_REPAY_AGENT_COMMISSION } from '@/lib/wallet-rates'
+import { getCommissionRates } from '@/lib/commission-rates'
+import { recordCommission, repaymentCommissionAmount } from '@/lib/commission-ledger'
 import { money } from '@/lib/wallet-guard'
 
 class RepayRefused extends Error {}
@@ -27,7 +28,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const amt = parseFloat(body?.amount)
   if (!isFinite(amt) || amt <= 0) return NextResponse.json({ error: 'Amount must be a positive number' }, { status: 400 })
 
-  const repayComm = amt * LOAN_REPAY_AGENT_COMMISSION
+  const rates = await getCommissionRates(prisma)
+  const repayComm = repaymentCommissionAmount(rates, amt)
 
   let ref = ''
   let outstanding = 0
@@ -56,6 +58,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         where: { id: agent.id },
         data: { walletBalance: { increment: amt }, commissionBalance: { increment: repayComm } },
       })
+      await recordCommission(tx, { party: 'agent', agentId: agent.id, source: 'repayment', sourceRef: ref, customerId: current.customerId, base: amt, ratePct: rates.agentRepay, amount: repayComm })
       if (fullyRepaid) await tx.loan.update({ where: { id: current.id }, data: { status: 'Repaid' } })
     })
   } catch (e) {

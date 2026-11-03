@@ -2,7 +2,8 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Prisma } from '@prisma/client'
-import { catchupBase, redemptionFee, recordCommission, savingsCommissionOps } from '../src/lib/commission-ledger'
+import { catchupBase, loanCommissionAmounts, redemptionFee, recordCommission, repaymentCommissionAmount, savingsCommissionOps } from '../src/lib/commission-ledger'
+import { DEFAULT_COMMISSION_RATES } from '../src/lib/commission-rates'
 
 type Row = Record<string, unknown>
 function stubTx(opts: { goLive?: string; rates?: Record<string, number>; existing?: boolean } = {}) {
@@ -87,4 +88,14 @@ test('the catch-up base is the pre-go-live deposits, capped at the balance and n
   assert.equal(catchupBase(5000, 3000), 3000)
   assert.equal(catchupBase(2000, 3000), 2000)
   assert.equal(catchupBase(-1, 3000), 0)
+})
+
+test('loan commission follows the rates: agent on the principal, platform on the interest', () => {
+  assert.deepEqual(loanCommissionAmounts(DEFAULT_COMMISSION_RATES, 50000, 3600), { agent: 500, platform: 180 })
+  assert.equal(loanCommissionAmounts({ ...DEFAULT_COMMISSION_RATES, agentLoan: 2 }, 50000, 3600).agent, 1000)
+})
+
+test('repayment commission follows the agent repay rate', () => {
+  assert.equal(repaymentCommissionAmount(DEFAULT_COMMISSION_RATES, 33600), 168)
+  assert.equal(repaymentCommissionAmount({ ...DEFAULT_COMMISSION_RATES, agentRepay: 0 }, 33600), 0)
 })

@@ -1,6 +1,6 @@
 import type { Prisma, PrismaClient } from '@prisma/client'
 import { money } from '@/lib/wallet-guard'
-import { getCommissionRates, pct } from '@/lib/commission-rates'
+import { getCommissionRates, pct, type CommissionRates } from '@/lib/commission-rates'
 
 export const GO_LIVE_KEY = 'commissionGoLive'
 
@@ -71,4 +71,13 @@ export function redemptionFee(balance: number, platformSavingsPct: number, planS
 /** The part of a balance that was deposited before go-live and so was never paid at deposit time. */
 export function catchupBase(preGoLiveDeposits: number, balance: number): number {
   return money(Math.max(0, Math.min(preGoLiveDeposits, balance)))
+}
+
+/** What a disbursed loan earns: the agent on the principal, the platform on the interest. */
+export function loanCommissionAmounts(rates: CommissionRates, principal: number, interest: number): { agent: number; platform: number } {
+  return { agent: pct(principal, rates.agentLoan), platform: pct(interest, rates.platformLoan) }
+}
+
+export function repaymentCommissionAmount(rates: CommissionRates, amount: number): number {
+  return pct(amount, rates.agentRepay)
 }
