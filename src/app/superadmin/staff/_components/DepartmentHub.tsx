@@ -50,12 +50,15 @@ export default function DepartmentHub({ department, isOwner, ceiling, toast, onC
         <section className="card cs-hub-sec" aria-label="Department lead">
           <Field id="hub-lead" label="Department lead"
             error={leadError}
-            hint={members.length === 0
-              ? 'Add and activate someone in this department first, then appoint them lead.'
+            hint={members.length === 0 && !department.lead
+              ?'Add and activate someone in this department first, then appoint them lead.'
               : 'A lead manages this department’s roles and people, but can only give access they hold themselves.'}>
-            <select id="hub-lead" className="a-input" value={leadId} disabled={busy || members.length === 0 && !leadId}
+            <select id="hub-lead" className="a-input" value={leadId} disabled={busy || (members.length === 0 && !leadId)}
               onChange={e => saveLead(e.target.value)}>
               <option value="">No lead</option>
+              {department.lead && !members.some(m => m.id === department.lead?.id) && (
+                <option value={department.lead.id}>{department.lead.name} (not active)</option>
+              )}
               {members.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
             </select>
           </Field>
