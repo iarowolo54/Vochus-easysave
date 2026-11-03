@@ -23,6 +23,7 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 import { decode, encode } from 'next-auth/jwt'
 import { requireEnv } from '@/lib/env'
+import { isDevPreviewPath } from '@/lib/dev-preview'
 import { isAdminAreaRole } from '@/lib/permissions'
 import { verifyCustomerToken, signCustomerToken, type CustomerSession } from '@/lib/customer-token'
 import { IDLE_SECONDS, type Actor } from '@/lib/session-policy'
@@ -100,6 +101,9 @@ const customerDecoder: Decoder = async (raw) => {
 
 export async function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl
+
+  // Leftover no-sign-in preview pages (they can linger on a server because deploys never delete files): refuse them.
+  if (isDevPreviewPath(pathname)) return new NextResponse(null, { status: 404 })
 
   // 1. Let auth/login endpoints manage their own cookies, untouched.
   if (isAuthEndpoint(pathname)) return NextResponse.next()
@@ -257,5 +261,5 @@ async function applyCookies(
 }
 
 export const config = {
-  matcher: ['/dashboard/:path*', '/superadmin/:path*', '/customer/:path*', '/api/:path*'],
+  matcher: ['/dashboard/:path*', '/superadmin/:path*', '/customer/:path*', '/api/:path*', '/dev-preview/:path*'],
 }
