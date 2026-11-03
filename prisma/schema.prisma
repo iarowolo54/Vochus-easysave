@@ -363,6 +363,8 @@ model EarlyRedemption {
   decidedAt              DateTime?
   decidedBy              String?
   adminNote              String?
+  /// 'v1' = fee split 3/5 agent, 2/5 platform (before go-live); 'v2' = fee is all platform, agent gets the catch-up.
+  feeRule                String    @default("v1")
 }
 
 model MemberCard {
@@ -715,4 +717,22 @@ model ApprovalPinAttempt {
   windowStart DateTime @default(now())
   count       Int      @default(0)
   updatedAt   DateTime @updatedAt
+}
+
+/// Append-only record of every commission and platform fee. Never updated or deleted.
+model CommissionLedger {
+  id         String   @id @default(cuid())
+  party      String   // 'agent' | 'platform'
+  agentId    String?
+  source     String   // 'savings' | 'savings_catchup' | 'loan' | 'repayment' | 'redemption_fee'
+  sourceRef  String
+  customerId String?
+  base       Float
+  ratePct    Float
+  amount     Float
+  createdAt  DateTime @default(now())
+
+  @@unique([source, sourceRef, party])
+  @@index([agentId, createdAt])
+  @@index([party, createdAt])
 }
