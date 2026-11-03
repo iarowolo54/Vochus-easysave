@@ -1,15 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { adminActor, requireDeptManage, requireSuperAdmin } from '@/lib/admin-guard'
+import { actorPermissions, adminActor, requireDeptManage, requireSuperAdmin } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { issueStaffInvite } from '@/lib/staff-invite'
+import { canGrant, parsePermissions } from '@/lib/permissions'
 
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params
 
   const staff = await prisma.staffUser.findUnique({
     where: { id },
-    select: { id: true, name: true, email: true, status: true, departmentId: true },
+    select: { id: true, name: true, email: true, status: true, departmentId: true, roleRef: { select: { permissions: true } } },
   })
   // The owner, or the lead of the staffer's own department (re-checked fresh).
   let actor: { id?: string; name: string; type: 'superadmin' | 'staff' }
@@ -26,7 +27,13 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
   if (!staff) return NextResponse.json({ error: 'Staff not found' }, { status: 404 })
   if (staff.status !== 'Invited') return NextResponse.json({ error: 'Only pending invites can be re-sent' }, { status: 400 })
 
-  const { link, emailed } = await issueStaffInvite(staff)
+  // A lead can't re-invite someone whose role is above the lead's own access.
+  if (actor.type === 'staff' && !canGrant(await actorPermissions(actor), parsePermissions(staff.roleRef?.permissions))) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  const issued = await issueStaffInvite(staff)
+  if (!issued) return NextResponse.json({ error: 'Only pending invites can be re-sent' }, { status: 409 })
   await logAudit({
     action: 'staff_invite_resent',
     entity: 'StaffUser',
@@ -36,5 +43,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     actorId: actor.id,
     actorName: actor.name,
   })
-  return NextResponse.json({ ok: true, link, emailed })
+  // The raw link is a bearer credential for the account: only the owner is shown it. Everyone else
+  // relies on the email to the invitee.
+  return NextResponse.json({ ok: true, emailed: issued.emailed, ...(actor.type === 'superadmin' ? { link: issued.link } : {}) })
 }

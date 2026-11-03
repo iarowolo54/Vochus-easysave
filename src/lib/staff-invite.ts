@@ -19,12 +19,17 @@ export function inviteEmailHtml(name: string, link: string): string {
   `
 }
 
-export async function issueStaffInvite(staff: { id: string; name: string; email: string }): Promise<{ link: string; emailed: boolean }> {
+/**
+ * Only a still-Invited account can be (re-)invited: the write is conditional, so an account that
+ * activated or was suspended in the meantime is never reset. Returns null (no mail, no link) then.
+ */
+export async function issueStaffInvite(staff: { id: string; name: string; email: string }): Promise<{ link: string; emailed: boolean } | null> {
   const token = generateInviteToken()
-  await prisma.staffUser.update({
-    where: { id: staff.id },
-    data: { inviteTokenHash: token.hash, inviteExpiresAt: token.expiresAt, status: 'Invited', password: null },
+  const updated = await prisma.staffUser.updateMany({
+    where: { id: staff.id, status: 'Invited' },
+    data: { inviteTokenHash: token.hash, inviteExpiresAt: token.expiresAt },
   })
+  if (updated.count === 0) return null
   const link = inviteLink(token.raw)
 
   // SMTP is production-only; a mail failure never fails the invite (the creator still gets the link).

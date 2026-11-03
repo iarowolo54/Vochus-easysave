@@ -2,7 +2,7 @@ import { getServerSession, type Session } from 'next-auth'
 import { NextResponse } from 'next/server'
 import { adminAuthOptions } from './auth-admin'
 import { prisma } from './prisma'
-import { decideAdminAccess, parsePermissions, type Action, type ScreenKey } from './permissions'
+import { SCREENS, decideAdminAccess, parsePermissions, type Action, type Perm, type ScreenKey } from './permissions'
 
 type Guard = { ok: true; session: Session } | { ok: false; response: NextResponse }
 
@@ -156,4 +156,30 @@ export async function resolveDeptManage(departmentId: string, deps: AdminGuardDe
 /** Owner, or the Active lead of `departmentId` (see resolveDeptManage). */
 export function requireDeptManage(departmentId: string): Promise<AdminGuard> {
   return resolveDeptManage(departmentId)
+}
+
+/**
+ * The department this staffer currently leads, or null. Fresh read: the staffer must be Active,
+ * be the department's lead, and still belong to it (same rule as requireDeptManage).
+ */
+export async function findLeadDepartmentId(staffId: string): Promise<string | null> {
+  const dept = await prisma.department.findFirst({
+    where: { leadId: staffId, members: { some: { id: staffId, status: 'Active' } } },
+    select: { id: true },
+  })
+  return dept?.id ?? null
+}
+
+/** The actor's current permission ceiling (fresh). The owner holds every permission. */
+export async function actorPermissions(actor: { id?: string; type: 'superadmin' | 'staff' }): Promise<Perm[]> {
+  if (actor.type === 'superadmin') {
+    return SCREENS.flatMap((s) => s.actions.map((a) => `${s.key}:${a}` as Perm))
+  }
+  if (!actor.id) return []
+  const staff = await prisma.staffUser.findUnique({
+    where: { id: actor.id },
+    select: { status: true, roleRef: { select: { status: true, permissions: true } } },
+  })
+  if (!staff || staff.status !== 'Active' || staff.roleRef?.status !== 'Active') return []
+  return parsePermissions(staff.roleRef.permissions)
 }
