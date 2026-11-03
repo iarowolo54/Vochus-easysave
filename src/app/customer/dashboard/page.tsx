@@ -7,6 +7,7 @@ import CollectionTracker from '@/components/customer/CollectionTracker'
 import PlanEnded, { PlanSummary } from '@/components/customer/PlanEnded'
 import DepositReceipt, { depositIcon, depositMethod } from '@/components/customer/DepositReceipt'
 import { DayDetails, SavingsCalendar, WeekStrip, type DaySelection } from '@/components/customer/SavingsCard'
+import PaymentNotices, { type HeldPayment, type PaymentNotice } from '@/components/customer/PaymentNotices'
 import TodayStatus from '@/components/customer/TodayStatus'
 import { useCustomerMe } from '@/components/customer/useCustomerMe'
 import ActionButton from '@/components/ui/ActionButton'
@@ -42,6 +43,8 @@ type CustomerData = {
   plans: Plan[]
   transactions: Tx[]
   pendingRedemptions: { ref: string; status: string; savingsPlanId: string }[]
+  paymentNotices?: PaymentNotice[]
+  heldPayments?: HeldPayment[]
 }
 
 function capitalise(s: string) {
@@ -133,7 +136,6 @@ export default function CustomerDashboard() {
   )
   // Bulk Savings deposits count for the days they cover, not the day they were paid.
   const dayTxs = useMemo(() => dayDeposits(planTxs, plan?.coveredRefs), [planTxs, plan?.coveredRefs])
-  const depositDates = useMemo(() => dayTxs.map(t => t.createdAt), [dayTxs])
   // The goal bar fills with the same counter as the balance, so they land together.
   const shownBalance = useCountUp(plan?.balance ?? 0, !hideBalance)
 
@@ -186,7 +188,7 @@ export default function CustomerDashboard() {
     windowStart = dateKey(new Date(startDay.getFullYear(), startDay.getMonth(), startDay.getDate() + daysIn - (daysIn % 7)))
   }
   // Bulk Savings is offered only for eligible (active, self-service, daily/weekly) plans with a day left to pay for.
-  const slots = plan ? buildSlots(plan, depositDates, plan.coveredKeys ?? []) : []
+  const slots = plan ? buildSlots(plan, dayTxs, plan.coveredKeys ?? []) : []
   const canBulkSave = !!plan && !ended && !pending
     && isEligiblePlan({ status: plan.status, source: plan.source ?? '', cadence: plan.cadence })
     && selectableKeys(slots).length > 0
@@ -295,6 +297,8 @@ export default function CustomerDashboard() {
         )}
 
         {pending && <CollectionTracker status={pending.status} onView={() => router.push('/customer/redeem')} />}
+
+        <PaymentNotices notices={data.paymentNotices} held={data.heldPayments} hideAmounts={hideBalance} />
 
         {!finished && <div className="ui-actions">
           {!ended && (

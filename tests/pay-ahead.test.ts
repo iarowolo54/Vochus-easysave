@@ -203,14 +203,13 @@ test('isSlotFunded: a monthly plan has no slot to fund', () => {
   assert.equal(isSlotFunded({ ...dailyPlan, cadence: 'monthly' }, [dep('2026-11-04T09:00:00Z', 9999)], at('2026-11-04T12:00:00Z')), false)
 })
 
-test('ordinaryDeposits: drops coverage payments and earlier auto-debit credits', () => {
+test('ordinaryDeposits: drops only coverage payments', () => {
   const rows = [
     { ref: 'PLAIN', amount: 1, createdAt: at('2026-11-04T09:00:00Z') },
     { ref: 'BULK', amount: 2, createdAt: at('2026-11-04T09:00:00Z') },
     { ref: 'autodebit-p-20261104', amount: 3, createdAt: at('2026-11-04T09:00:00Z') },
-    { ref: 'addenroll-p-x', amount: 50, createdAt: at('2026-11-04T09:00:00Z') },
   ]
-  assert.deepEqual(ordinaryDeposits(rows, ['BULK']).map(r => r.ref), ['PLAIN', 'addenroll-p-x'])
+  assert.deepEqual(ordinaryDeposits(rows, ['BULK']).map(r => r.ref), ['PLAIN', 'autodebit-p-20261104'])
 })
 
 test('nextPaymentDate: walks past a day funded by plain deposits', () => {

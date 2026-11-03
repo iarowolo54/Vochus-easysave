@@ -149,3 +149,37 @@ test('slotKeyForDate: a weekly plan maps any day to the week holding it', () => 
   assert.equal(slotKeyForDate(slots, '2026-10-31', true), null)
   assert.equal(slotKeyForDate(slots, '2026-11-22', true), null)
 })
+
+// ── Online plans: paid only at the full plan amount ──
+const online = { ...daily, source: 'self', dailyAmount: 100 }
+const onlineWeekly = { ...weekly, source: 'self', dailyAmount: 100 }
+const paid = (amount: number, day = 5) => ({ createdAt: at(2026, 11, day), amount })
+const stateOf = (slots: ReturnType<typeof buildSlots>, key: string) => slots.find(s => s.key === key)?.state
+
+test('online daily: the full amount is paid, one naira less is not', () => {
+  assert.equal(stateOf(buildSlots(online, [paid(100)], [], now), '2026-11-05'), 'saved')
+  assert.equal(stateOf(buildSlots(online, [paid(99)], [], now), '2026-11-05'), 'today')
+  assert.equal(stateOf(buildSlots(online, [paid(99, 3)], [], now), '2026-11-03'), 'missed')
+})
+
+test('online daily: several deposits on the day add up', () => {
+  assert.equal(stateOf(buildSlots(online, [paid(40), paid(60)], [], now), '2026-11-05'), 'saved')
+})
+
+test('online weekly: needs the full week across the slot', () => {
+  assert.equal(stateOf(buildSlots(onlineWeekly, [paid(300, 2), paid(400, 6)], [], now), '2026-11-01'), 'saved')
+  assert.equal(stateOf(buildSlots(onlineWeekly, [paid(300, 2), paid(399, 6)], [], now), '2026-11-01'), 'today')
+})
+
+test('online: coverage still pays a part-paid day', () => {
+  const slot = buildSlots(online, [paid(50)], ['2026-11-05'], now).find(s => s.key === '2026-11-05')
+  assert.equal(slot?.state, 'saved')
+  assert.equal(slot?.coveredOnly, true)
+})
+
+test('offline: any deposit still counts, whatever the amount', () => {
+  const offline = { ...online, source: 'agent' }
+  assert.equal(stateOf(buildSlots(offline, [paid(1)], [], now), '2026-11-05'), 'saved')
+  const offlineWeekly = { ...onlineWeekly, source: 'agent' }
+  assert.equal(stateOf(buildSlots(offlineWeekly, [paid(1, 2)], [], now), '2026-11-01'), 'saved')
+})

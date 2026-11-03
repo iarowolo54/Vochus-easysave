@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import EmptyState from '@/components/ui/EmptyState'
 import LogoLoader from '@/components/ui/LogoLoader'
 import { Icons } from '@/components/ui/icons'
+import { BULK_SAVINGS_LABEL } from '@/lib/catchup'
 import { formatNaira } from '@/lib/format'
 import { describeFailure, postJson } from '@/lib/http'
 import { setJustPaid } from '@/lib/payment-flash'
@@ -19,7 +20,7 @@ type State =
   | { kind: 'autoSavedInstead' } // the card can't be reused, but the first payment was saved
   | { kind: 'autoFailed'; message: string; canRetry: boolean }
 
-type NotBought = { count: number; weekly: boolean } | null
+type NotBought = { count: number; weekly: boolean; reason: 'amount' | 'overlap' } | null
 
 const ENROLL_PREFIX = 'addenroll-'
 /** Server reasons arrive without a full stop ("Card cannot be used for auto-debit"). */
@@ -51,10 +52,12 @@ function CallbackContent() {
       setState({ kind: 'autoFailed', message: describeFailure(r), canRetry: !definite })
       return
     }
-    const r = await postJson<{ amount?: number; newBalance?: number; alreadyProcessed?: boolean; review?: boolean; notBought?: NotBought }>(
+    const r = await postJson<{ amount?: number; newBalance?: number; alreadyProcessed?: boolean; review?: boolean; pending?: boolean; notBought?: NotBought }>(
       '/api/customer/paystack/verify', { reference },
     )
     if (r.ok && r.data.review) { setState({ kind: 'review' }); return }
+    // Still settling, such as a bank transfer. It hasn't failed, so don't say it has.
+    if (r.ok && r.data.pending) { setState({ kind: 'unconfirmed' }); return }
     if (r.ok && (r.data.alreadyProcessed || r.data.amount)) {
       const amount = r.data.amount ?? null
       if (amount && !r.data.alreadyProcessed) setJustPaid(amount)
@@ -155,14 +158,17 @@ function CallbackContent() {
   )
 
   if (state.kind === 'success' && state.notBought) {
-    const unit = state.notBought.weekly ? 'week' : 'day'
-    const many = state.notBought.count !== 1
+    const n = state.notBought
+    const unit = `${n.weekly ? 'week' : 'day'}${n.count === 1 ? '' : 's'}`
+    const money = state.amount ? formatNaira(state.amount) : 'Your money'
     return (
       <div className="ui-screen ui-screen--center">
         <EmptyState
           icon="pending"
-          title={`${state.notBought.count} ${unit}${many ? 's' : ''} not paid for`}
-          text={`${state.amount ? formatNaira(state.amount) : 'Your money'} is in your savings, but this payment wasn’t applied to ${state.notBought.count} of the ${unit}s you picked. Check your savings card to see what’s paid.`}
+          title={n.reason === 'overlap' ? `${n.count} ${unit} already paid` : `${n.count} ${unit} still unpaid`}
+          text={n.reason === 'overlap'
+            ? `${money} is in your savings, so nothing is lost. ${n.count === 1 ? 'That' : 'Those'} ${unit} had already been paid when this payment came through.`
+            : `${money} is in your savings, but the amount didn’t match what you picked, so ${n.count === 1 ? 'that' : 'those'} ${unit} ${n.count === 1 ? 'is' : 'are'} still unpaid. You can pay through ${BULK_SAVINGS_LABEL}, and auto-funding may charge ${n.count === 1 ? 'it' : 'them'}.`}
           action={<div className="ui-stack">{home}{refLine}</div>}
         />
       </div>

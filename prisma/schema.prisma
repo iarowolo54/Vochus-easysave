@@ -610,6 +610,7 @@ model PaymentIntent {
   coversKeys String? // JSON array of day-keys
 
   @@index([customerId])
+  @@index([planId])
   @@index([agentId])
 }
 

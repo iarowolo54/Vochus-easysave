@@ -64,13 +64,6 @@ export async function settleIntentPayment(client: PrismaClient, input: Input): P
   const wanted = parseCoversKeys(intent.coversKeys)
   const keys = matches ? wanted : []
 
-  // Days the card has been charged for since this checkout opened aren't free, even with no coverage row.
-  const charged = await client.autoDebitAttempt.findMany({
-    where: { savingsPlanId: plan.id, status: { in: ['processing', 'success'] } },
-    select: { cycleDate: true },
-  })
-  const chargedKeys = new Set(inFlightKeys(plan, charged))
-
   const priorSavings = await client.transaction.count({ where: { customerId, type: 'saving' } })
 
   let bought = 0
@@ -96,6 +89,14 @@ export async function settleIntentPayment(client: PrismaClient, input: Input): P
       await tx.customerPayment.create({
         data: { ref: `PAY-${reference}`, customerId, planId: plan.id, amount, status: 'Done', channel: channel ?? 'card' },
       })
+
+      // Days the card has been charged for since this checkout opened aren't free, even with no coverage row. Read here,
+      // inside the write, so a charge starting just now is seen.
+      const charged = await tx.autoDebitAttempt.findMany({
+        where: { savingsPlanId: plan.id, status: { in: ['processing', 'success'] } },
+        select: { cycleDate: true },
+      })
+      const chargedKeys = new Set(inFlightKeys(plan, charged))
 
       // Only free days are written; the first payment to a day keeps it (unique savingsPlanId + coversKey).
       const lost: string[] = []
@@ -144,14 +145,21 @@ export async function settleIntentPayment(client: PrismaClient, input: Input): P
   return { kind: 'credited', amount, planId: plan.id, notBought: wanted.length - bought }
 }
 
-/** How many of the days on this payment's intent it did not end up buying, for the customer's notice. */
-export async function daysNotBought(client: PrismaClient, reference: string, customerId: string): Promise<{ count: number; weekly: boolean }> {
+export type NotBought = { count: number; weekly: boolean; reason: 'amount' | 'overlap' }
+
+/** How many of the days on this payment's intent it did not end up buying, and why, for the customer's notice. */
+export async function daysNotBought(client: PrismaClient, reference: string, customerId: string): Promise<NotBought> {
   const intent = await client.paymentIntent.findFirst({ where: { ref: reference, customerId } })
   const wanted = parseCoversKeys(intent?.coversKeys ?? null)
-  if (!intent?.planId || wanted.length === 0) return { count: 0, weekly: false }
-  const [bought, plan] = await Promise.all([
+  if (!intent?.planId || wanted.length === 0) return { count: 0, weekly: false, reason: 'overlap' }
+  const [bought, plan, credit] = await Promise.all([
     client.planDayCoverage.count({ where: { savingsPlanId: intent.planId, ref: reference, coversKey: { in: wanted } } }),
     client.savingsPlan.findUnique({ where: { id: intent.planId }, select: { cadence: true } }),
+    client.transaction.findUnique({ where: { ref: reference }, select: { amount: true } }),
   ])
-  return { count: wanted.length - bought, weekly: plan?.cadence === 'weekly' }
+  return {
+    count: wanted.length - bought,
+    weekly: plan?.cadence === 'weekly',
+    reason: credit && money(credit.amount) !== money(intent.amount) ? 'amount' : 'overlap',
+  }
 }

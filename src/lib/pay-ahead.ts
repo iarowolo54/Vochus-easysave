@@ -2,9 +2,7 @@
 // skipped, not charged. Coverage keys are WAT days, so cycle dates are read in WAT too; PM2 sets no
 // TZ, and process-local dates would drift from the customer's calendar for an hour every night.
 import { autoDebitCadence, cycleCreditAmount, nextRunAt } from '@/lib/auto-debit-schedule'
-import { perSlotAmount } from '@/lib/catchup'
-import { keyPlusDays, watKey } from '@/lib/savings-card'
-import { money } from '@/lib/wallet-guard'
+import { keyPlusDays, reachesSlotAmount, watKey } from '@/lib/savings-card'
 
 type CyclePlan = { cadence: string; startDate: Date }
 type RangePlan = CyclePlan & { periodDays: number }
@@ -49,16 +47,13 @@ export function isCycleCovered(plan: CyclePlan, coveredKeys: string[], cycleDate
   return coveredKeys.some(k => k >= range.first && k <= range.last)
 }
 
-/**
- * The deposits that can fund a cycle: not coverage payments, which count for the days they cover, and not
- * earlier auto-debit credits, or a weekly cycle could skip itself on the back of last cycle's charge.
- */
+/** The deposits that can fund a slot: not coverage payments, which count for the days they cover. */
 export function ordinaryDeposits<T extends { ref: string }>(deposits: T[], coveringRefs: string[]): T[] {
   const covering = new Set(coveringRefs)
-  return deposits.filter(d => !covering.has(d.ref) && !d.ref.startsWith('autodebit-'))
+  return deposits.filter(d => !covering.has(d.ref))
 }
 
-/** Have ordinary deposits in this cycle's slot already reached that slot's plan amount? */
+/** Have deposits in this cycle's slot already reached that slot's plan amount? The same rule as the calendar. */
 export function isSlotFunded(plan: FundingPlan, deposits: DepositAmount[], cycleDate: Date): boolean {
   const range = slotRange(plan, cycleDate)
   if (!range) return false
@@ -66,7 +61,7 @@ export function isSlotFunded(plan: FundingPlan, deposits: DepositAmount[], cycle
     const key = watKey(d.createdAt)
     return key >= range.first && key <= range.last ? sum + d.amount : sum
   }, 0)
-  return money(paid) >= money(perSlotAmount(plan))
+  return reachesSlotAmount(plan, paid)
 }
 
 /** The slot keys being charged right now, so a customer can't pay for one by hand at the same moment. */

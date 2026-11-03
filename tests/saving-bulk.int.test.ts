@@ -194,6 +194,30 @@ test('ONLINE: an agent refused by a customer checkout is told why, with a readab
   assert.doesNotMatch(error, /\d{4}-\d{2}-\d{2}/)
 })
 
+test('ONLINE: a charge starting between the check and the credit refuses it, with the wallet untouched', async () => {
+  const { c, plan } = await online()
+  const m = await prisma.autoDebitMandate.create({
+    data: { customerId: c.id, savingsPlanId: plan.id, authorizationCode: `AUTH_${rid}`, authSignature: 'sig', authEmail: 'a@b.c', status: 'active', amountPerCycle: 100, nextRunAt: new Date() },
+  })
+  await prisma.autoDebitAttempt.create({
+    data: { mandateId: m.id, savingsPlanId: plan.id, reference: `autodebit-${plan.id}-race`, cycleDate: new Date(Date.now() + DAY), creditAmount: 100, grossCharged: 102, feeEstimate: 2, status: 'processing' },
+  })
+  const delegate = prisma.autoDebitAttempt as unknown as { findMany: (a: unknown) => Promise<unknown> }
+  const real = delegate.findMany
+  let first = true
+  delegate.findMany = (a: unknown) => {
+    if (first) { first = false; return Promise.resolve([]) } // the check, before the attempt existed
+    return real.call(delegate, a)
+  }
+  try {
+    assert.equal((await call({ customerId: c.id, dates: [wat(1)], method: 'Cash', planId: plan.id })).status, 409)
+  } finally {
+    delegate.findMany = real
+  }
+  assert.equal(await wallet(), 100000)
+  assert.equal(await prisma.transaction.count({ where: { planId: plan.id } }), 0)
+})
+
 test('ONLINE monthly is refused', async () => {
   const { c, plan } = await online('monthly')
   assert.equal((await call({ customerId: c.id, dates: [wat(1)], method: 'Cash', planId: plan.id })).status, 400)

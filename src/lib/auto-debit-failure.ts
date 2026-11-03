@@ -2,8 +2,10 @@ import type { PrismaClient } from '@prisma/client'
 import { pauseMandate } from '@/lib/auto-debit'
 import { sendMail } from '@/lib/mail'
 import { sendSMS } from '@/lib/kudisms'
+import { INTENT_DONE, parseCoversKeys } from '@/lib/payment-intent'
+import { inFlightKeys } from '@/lib/pay-ahead'
 
-type Client = Pick<PrismaClient, 'autoDebitMandate' | 'autoDebitAttempt' | 'savingsPlan' | 'customer'>
+type Client = Pick<PrismaClient, 'paymentIntent' | 'planDayCoverage' | 'auditLog' | 'autoDebitMandate' | 'autoDebitAttempt' | 'savingsPlan' | 'customer'>
 
 export const MAX_CONSECUTIVE_FAILURES = 3
 
@@ -46,6 +48,39 @@ function escapeHtml(s: string): string {
 }
 
 /**
+ * A customer's payment gave way to this charge while it was processing, so it wrote no coverage for the day. Now the
+ * charge has failed, that day is unpaid though they paid for it. Their money is safe in savings; flag it for staff.
+ * Best-effort, like the notification.
+ */
+async function auditYieldedPayments(client: Client, attempt: { savingsPlanId: string; cycleDate: Date; reference: string }): Promise<void> {
+  try {
+    const plan = await client.savingsPlan.findUnique({ where: { id: attempt.savingsPlanId }, select: { cadence: true, startDate: true } })
+    const [key] = plan ? inFlightKeys(plan, [attempt]) : []
+    if (!key) return
+    const covered = await client.planDayCoverage.findFirst({ where: { savingsPlanId: attempt.savingsPlanId, coversKey: key }, select: { id: true } })
+    if (covered) return
+    const intents = await client.paymentIntent.findMany({
+      where: { planId: attempt.savingsPlanId, status: INTENT_DONE, coversKeys: { contains: key } },
+      select: { ref: true, coversKeys: true },
+    })
+    for (const intent of intents) {
+      if (!parseCoversKeys(intent.coversKeys).includes(key)) continue
+      await client.auditLog.create({
+        data: {
+          action: 'payment_yielded_to_failed_charge',
+          entity: 'Transaction',
+          details: `Payment ${intent.ref} gave way to auto-debit ${attempt.reference} for ${key}, which then failed. The day is unpaid; the money is in savings.`,
+          actorType: 'system',
+          actorName: 'Auto-debit',
+        },
+      })
+    }
+  } catch {
+    // best-effort: must never affect recording the failure
+  }
+}
+
+/**
  * Record a failed auto-debit charge. Idempotent per attempt reference: an attempt
  * already marked failed is not counted twice. Pauses the mandate immediately on an
  * unrecoverable card error, otherwise after MAX_CONSECUTIVE_FAILURES in a row.
@@ -71,6 +106,8 @@ export async function recordAutoDebitFailure(
     const m = await client.autoDebitMandate.findUnique({ where: { id: attempt.mandateId }, select: { status: true } })
     return { paused: m?.status === 'paused' }
   }
+
+  await auditYieldedPayments(client, attempt)
 
   const mandate = await client.autoDebitMandate.update({
     where: { id: attempt.mandateId },

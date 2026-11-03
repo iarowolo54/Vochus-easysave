@@ -7,7 +7,7 @@ import { insufficientResponse, InsufficientFundsError, money } from '@/lib/walle
 import { debitAgentBalance } from '@/lib/wallet-debit'
 import { creditRegistrationReward } from '@/lib/reward'
 import { selectActivePlan } from '@/lib/saving-plan'
-import { checkBulkSelection, liveSlots } from '@/lib/bulk-savings'
+import { chargingKeys, checkBulkSelection, liveSlots } from '@/lib/bulk-savings'
 import { isEligiblePlan, perSlotAmount } from '@/lib/catchup'
 
 class DaysTakenError extends Error {}
@@ -87,6 +87,11 @@ export async function POST(req: NextRequest) {
   let results: Awaited<ReturnType<typeof prisma.transaction.create>>[]
   try {
     results = await prisma.$transaction(async (tx) => {
+      // Inside the write, so a charge that started since the check above is seen before any money moves.
+      if (online) {
+        const charging = await chargingKeys(tx, plan)
+        if (rawDates.some((k: string) => charging.has(k))) throw new DaysTakenError()
+      }
       // Atomically debit the agent's wallet (conditional decrement) so two
       // concurrent bulk saves can't overdraw it below zero.
       const debited = await debitAgentBalance(tx, agent.id, 'walletBalance', totalAmt)
@@ -127,7 +132,7 @@ export async function POST(req: NextRequest) {
     })
   } catch (e) {
     if (e instanceof InsufficientFundsError) return insufficientResponse(e)
-    if (e instanceof DaysTakenError) return NextResponse.json({ error: 'One of these days has just been paid for. Check the calendar and try again' }, { status: 409 })
+    if (e instanceof DaysTakenError) return NextResponse.json({ error: 'One of these days has just been paid for or is being charged. Check the calendar and try again' }, { status: 409 })
     throw e
   }
 

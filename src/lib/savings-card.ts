@@ -12,7 +12,23 @@ export type Slot = {
   coveredOnly: boolean // saved via a coverage marker (Bulk Savings) with no deposit on that day/week
 }
 
-type PlanLike = { startDate: string; maturityDate: string; periodDays: number; cadence?: string }
+type PlanLike = { startDate: string; maturityDate: string; periodDays: number; cadence?: string; source?: string; dailyAmount?: number }
+
+/** A deposit for the calendar. A bare date counts as a full payment, for callers with no amounts (offline plans). */
+export type SlotDeposit = string | { createdAt: string; amount: number }
+
+/** Amount that covering one slot costs: a day for daily plans, a full week for weekly. */
+export function perSlotAmount(plan: { cadence?: string; dailyAmount: number }): number {
+  return (plan.cadence ?? 'daily') === 'weekly' ? plan.dailyAmount * 7 : plan.dailyAmount
+}
+
+/**
+ * The one definition of a funded slot on an online plan, for the calendar, Bulk Savings and auto-debit: deposits in it have
+ * reached the full plan amount. Rounded because these are floats: 0.1 + 0.2 must reach 0.3.
+ */
+export function reachesSlotAmount(plan: { cadence?: string; dailyAmount: number }, paid: number): boolean {
+  return Math.round(paid * 100) >= Math.round(perSlotAmount(plan) * 100)
+}
 
 /** Local-time YYYY-MM-DD (WAT on customers' phones), comparable as a string. */
 export function dateKey(d: Date): string {
@@ -54,10 +70,19 @@ function watMidnight(key: string): Date {
 }
 
 function slotsFor(
-  plan: PlanLike, depositDates: string[], coveredKeys: string[], now: Date,
+  plan: PlanLike, deposits: SlotDeposit[], coveredKeys: string[], now: Date,
   keyOf: (d: Date) => string, dateOf: (key: string) => Date,
 ): Slot[] {
-  const paid = new Set(depositDates.map(d => keyOf(new Date(d))))
+  const dated = deposits.map(d => (typeof d === 'string'
+    ? { key: keyOf(new Date(d)), amount: Infinity }
+    : { key: keyOf(new Date(d.createdAt)), amount: d.amount }))
+  // Online plans count a slot only at the full amount. Offline: any deposit counts, as it always has.
+  const dailyAmount = plan.source === 'self' ? plan.dailyAmount : undefined
+  const funded = (first: string, last: string) => {
+    const inSlot = dated.filter(d => d.key >= first && d.key <= last)
+    if (dailyAmount === undefined) return inSlot.length > 0
+    return inSlot.length > 0 && reachesSlotAmount({ cadence: plan.cadence, dailyAmount }, inSlot.reduce((sum, d) => sum + d.amount, 0))
+  }
   const covered = new Set(coveredKeys)
   const today = keyOf(now)
   const startKey = keyOf(new Date(plan.startDate))
@@ -65,7 +90,7 @@ function slotsFor(
   if (!isWeekly(plan)) {
     return Array.from({ length: plan.periodDays }, (_, i) => {
       const key = keyPlusDays(startKey, i)
-      const isPaid = paid.has(key)
+      const isPaid = funded(key, key)
       const isCovered = covered.has(key)
       const state: SlotState = isPaid || isCovered ? 'saved' : key < today ? 'missed' : key === today ? 'today' : 'upcoming'
       return { key, date: dateOf(key), index: i + 1, state, coveredOnly: !isPaid && isCovered }
@@ -76,7 +101,7 @@ function slotsFor(
   return Array.from({ length: weeks }, (_, w) => {
     const first = keyPlusDays(startKey, w * 7)
     const last = keyPlusDays(startKey, w * 7 + 6)
-    const hasDeposit = [...paid].some(k => k >= first && k <= last)
+    const hasDeposit = funded(first, last)
     const hasCover = [...covered].some(k => k >= first && k <= last)
     const saved = hasDeposit || hasCover
     const state: SlotState = saved ? 'saved' : last < today ? 'missed' : first <= today ? 'today' : 'upcoming'
@@ -84,13 +109,13 @@ function slotsFor(
   })
 }
 
-export function buildSlots(plan: PlanLike, depositDates: string[], coveredKeys: string[] = [], now = new Date()): Slot[] {
-  return slotsFor(plan, depositDates, coveredKeys, now, dateKey, localMidnight)
+export function buildSlots(plan: PlanLike, deposits: SlotDeposit[], coveredKeys: string[] = [], now = new Date()): Slot[] {
+  return slotsFor(plan, deposits, coveredKeys, now, dateKey, localMidnight)
 }
 
 /** buildSlots for the server: PM2 sets no TZ, so slot days must be pinned to WAT, where customers' phones are. */
-export function buildSlotsWat(plan: PlanLike, depositDates: string[], coveredKeys: string[] = [], now = new Date()): Slot[] {
-  return slotsFor(plan, depositDates, coveredKeys, now, watKey, watMidnight)
+export function buildSlotsWat(plan: PlanLike, deposits: SlotDeposit[], coveredKeys: string[] = [], now = new Date()): Slot[] {
+  return slotsFor(plan, deposits, coveredKeys, now, watKey, watMidnight)
 }
 
 /** Last day (YYYY-MM-DD) covered by a slot: the day itself, or the 7th day of a weekly slot. */

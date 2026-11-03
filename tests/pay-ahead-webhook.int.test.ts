@@ -32,19 +32,22 @@ require_.cache[headersPath] = {
 const koboByRef = new Map<string, number>()
 const currencyByRef = new Map<string, string>()
 const duringVerify = new Map<string, () => Promise<void>>()
+const statusByRef = new Map<string, string>()
+let initProbe: (() => Promise<unknown>) | null = null
 const realFetch = globalThis.fetch
 globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
   const u = typeof url === 'string' ? url : url.toString()
   if (u.includes('/transaction/initialize')) {
     const sent = JSON.parse(String(init?.body ?? '{}'))
+    if (initProbe) return new Response(JSON.stringify(await initProbe()), { status: 400 })
     return new Response(JSON.stringify({ status: true, data: { reference: sent.reference, authorization_url: 'https://checkout.paystack.test/x' } }), { status: 200 })
   }
   const m = u.match(/\/transaction\/verify\/([^/?]+)/)
   if (m) {
     const ref = decodeURIComponent(m[1])
     await duringVerify.get(ref)?.()
-    const amount = koboByRef.get(ref) ?? 0
-    return new Response(JSON.stringify({ status: true, data: { status: 'success', amount, currency: currencyByRef.get(ref) ?? 'NGN', channel: 'card' } }), { status: 200 })
+    const amount = koboByRef.get(ref)
+    return new Response(JSON.stringify({ status: true, data: { status: statusByRef.get(ref) ?? 'success', amount, currency: currencyByRef.get(ref) ?? 'NGN', channel: 'card' } }), { status: 200 })
   }
   return realFetch(url as never, init)
 }) as typeof fetch
@@ -281,14 +284,14 @@ test('the customer sees a wrong amount bought no days, from verify and after the
   const v1 = await sendVerify(direct.c, r1)
   assert.equal(v1.status, 200)
   assert.equal(v1.body.amount, 150)
-  assert.deepEqual(v1.body.notBought, { count: 2, weekly: false })
+  assert.deepEqual(v1.body.notBought, { count: 2, weekly: false, reason: 'amount' })
 
   const hook = await mk()
   const r2 = await mkIntent(hook.c, hook.plan.id, keys, 200)
   await sendWebhook(r2, { customerId: hook.c.id, planId: hook.plan.id, kobo: 15000 })
   const v2 = await sendVerify(hook.c, r2)
   assert.equal(v2.body.alreadyProcessed, true)
-  assert.deepEqual(v2.body.notBought, { count: 2, weekly: false })
+  assert.deepEqual(v2.body.notBought, { count: 2, weekly: false, reason: 'amount' })
 })
 
 test('verify tells the customer a payment is under review, whichever route found it', async () => {
@@ -363,11 +366,11 @@ test('a plan redeemed between the read and the credit takes no money: nothing pa
   const { c, plan } = await mk()
   const ref = await mkIntent(c, plan.id, tomorrowKeys(), 200)
   const intent = await prisma.paymentIntent.findUniqueOrThrow({ where: { ref } })
-  // settleIntentPayment reads the plan, then attempts, then credits: redeem it in between.
+  // settleIntentPayment reads the plan, counts earlier savings, then credits: redeem it in between.
   const racing = new Proxy(prisma, {
     get(target, key) {
-      if (key !== 'autoDebitAttempt') return Reflect.get(target, key)
-      return { findMany: async () => { await prisma.savingsPlan.update({ where: { id: plan.id }, data: { status: 'Redeemed' } }); return [] } }
+      if (key !== 'transaction') return Reflect.get(target, key)
+      return { count: async () => { await prisma.savingsPlan.update({ where: { id: plan.id }, data: { status: 'Redeemed' } }); return 0 } }
     },
   })
   const r = await settleIntentPayment(racing, { intent, reference: ref, amountNaira: 200, currency: 'NGN', via: 'Paystack webhook' })
@@ -405,6 +408,97 @@ test('any other status goes to review, not where nobody can collect it', async (
   }
 })
 
+test('a webhook review row that cannot be written fails the request, so Paystack retries', async () => {
+  const { c, plan } = await mk()
+  await prisma.savingsPlan.update({ where: { id: plan.id }, data: { status: 'Redeemed' } })
+  const delegate = prisma.auditLog as unknown as { create: (a: unknown) => Promise<unknown> }
+  const real = delegate.create
+  delegate.create = (a: unknown) => {
+    const data = (a as { data?: { action?: string } }).data
+    return data?.action === 'payment_needs_manual_review' ? Promise.reject(new Error('database is locked')) : real.call(delegate, a)
+  }
+  try {
+    await assert.rejects(() => sendWebhook(`VCHS-CST-${rid}-noaudit-${++n}`, { customerId: c.id, planId: plan.id, kobo: 20000 }))
+  } finally {
+    delegate.create = real
+  }
+})
+
+test('an enrollment first payment is left to its verify route, so the mandate gets made', async () => {
+  const { c, plan } = await mk()
+  const ref = `addenroll-${plan.id}-${rid}-${++n}`
+  await prisma.paymentIntent.create({ data: { ref, actorType: 'customer', customerId: c.id, planId: plan.id, amount: 50 } })
+  assert.equal((await sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 5000 })).status, 200)
+  assert.equal(await prisma.transaction.count({ where: { ref } }), 0)
+  assert.equal((await prisma.paymentIntent.findUniqueOrThrow({ where: { ref } })).status, 'Pending')
+})
+
+test('verify: a payment still pending at Paystack says so, not that it failed', async () => {
+  const { c, plan } = await mk()
+  const ref = await mkIntent(c, plan.id, null, 100)
+  statusByRef.set(ref, 'pending')
+  const v = await sendVerify(c, ref)
+  assert.equal(v.status, 200)
+  assert.equal(v.body.pending, true)
+  assert.equal(await prisma.transaction.count({ where: { ref } }), 0)
+  assert.equal((await prisma.paymentIntent.findUniqueOrThrow({ where: { ref } })).status, 'Pending')
+})
+
+test('verify: a failed payment is still a failure', async () => {
+  const { c, plan } = await mk()
+  const ref = await mkIntent(c, plan.id, null, 100)
+  statusByRef.set(ref, 'failed')
+  assert.equal((await sendVerify(c, ref)).status, 400)
+})
+
+test('/me: a lasting notice for a payment that bought no days, and one for a held payment', async () => {
+  const { c, plan } = await mk()
+  const key = tomorrowKey()
+  await sendVerify(c, await mkIntent(c, plan.id, [key], 100))
+  const second = await mkIntent(c, plan.id, [key], 100)
+  await sendVerify(c, second)
+  const wrong = await mkIntent(c, plan.id, [watKey(new Date(Date.now() + 5 * DAY))], 100)
+  koboByRef.set(wrong, 5000)
+  await sendVerify(c, wrong)
+  const held = await mkIntent(c, plan.id, null, 300)
+  await prisma.paymentIntent.update({ where: { ref: held }, data: { status: 'Review' } })
+
+  const { signCustomerToken } = await import('../src/lib/customer-auth')
+  currentToken = await signCustomerToken({ id: c.id, customerId: c.customerId, name: 'C X', agentId })
+  const { GET } = await import('../src/app/api/customer/me/route')
+  const me = await (await GET()).json() as { paymentNotices: { ref: string; count: number; reason: string; amount: number }[]; heldPayments: { ref: string; amount: number }[] }
+  const byRef = new Map(me.paymentNotices.map(x => [x.ref, x]))
+  assert.equal(byRef.size, 2)
+  assert.deepEqual([byRef.get(second)?.count, byRef.get(second)?.reason, byRef.get(second)?.amount], [1, 'overlap', 100])
+  assert.deepEqual([byRef.get(wrong)?.count, byRef.get(wrong)?.reason, byRef.get(wrong)?.amount], [1, 'amount', 50])
+  assert.deepEqual(me.heldPayments.map(h => [h.ref, h.amount]), [[held, 300]])
+})
+
+test('/me: a part-paid online day stays payable at the full price, on phone and server alike', async () => {
+  const { c, plan } = await mk()
+  const ref = await mkIntent(c, plan.id, null, 40)
+  await sendVerify(c, ref)
+  const { phone, server } = await slotsBothWays(c, plan.id)
+  for (const slots of [phone, server]) assert.equal(slots.find(s => s.key === todayKey())?.state, 'today')
+  assert.equal(await sendInit(c, plan.id, [todayKey()]), 200)
+  const intent = await prisma.paymentIntent.findFirstOrThrow({ where: { planId: plan.id, status: 'Pending' } })
+  assert.equal(intent.amount, 100)
+  assert.equal(await balanceOf(plan.id), 40)
+})
+
+test('init writes the intent before calling Paystack, and removes it if Paystack refuses', async () => {
+  const { c, plan } = await mk()
+  let intentsWhenCalled = -1
+  initProbe = async () => { intentsWhenCalled = await prisma.paymentIntent.count({ where: { planId: plan.id } }); return { status: false, message: 'Nope' } }
+  try {
+    assert.equal(await sendInit(c, plan.id, [tomorrowKey()]), 502)
+  } finally {
+    initProbe = null
+  }
+  assert.equal(intentsWhenCalled, 1)
+  assert.equal(await prisma.paymentIntent.count({ where: { planId: plan.id } }), 0)
+})
+
 test('verify: if the webhook wins during the Paystack fetch, it reports already processed', async () => {
   const { c, plan } = await mk()
   const keys = tomorrowKeys()
@@ -423,7 +517,7 @@ test('overlap: a second payment writes only the free days and audits the rest', 
   const second = await mkIntent(c, plan.id, [day1, day2], 200)
   await sendVerify(c, first)
   const v = await sendVerify(c, second)
-  assert.deepEqual(v.body.notBought, { count: 1, weekly: false })
+  assert.deepEqual(v.body.notBought, { count: 1, weekly: false, reason: 'overlap' })
   const cov = await prisma.planDayCoverage.findMany({ where: { savingsPlanId: plan.id } })
   assert.deepEqual(Object.fromEntries(cov.map(x => [x.coversKey, x.ref])), { [day1]: first, [day2]: second })
   const audit = await auditFor('payment_days_overlap', second)
@@ -440,7 +534,7 @@ test('backing out and starting again, then both checkouts getting paid: the day 
   for (const i of [older, newer]) koboByRef.set(i.ref, 10000)
   assert.equal((await sendVerify(c, older.ref)).status, 200)
   const v = await sendVerify(c, newer.ref)
-  assert.deepEqual(v.body.notBought, { count: 1, weekly: false })
+  assert.deepEqual(v.body.notBought, { count: 1, weekly: false, reason: 'overlap' })
   assert.equal(await balanceOf(plan.id), 200)
   assert.equal(await prisma.planDayCoverage.count({ where: { savingsPlanId: plan.id } }), 1)
 })
@@ -451,7 +545,7 @@ test('overlap: a payment that bought no days does not count as saved today', asy
   await sendVerify(c, await mkIntent(c, plan.id, [key], 100))
   const second = await mkIntent(c, plan.id, [key], 100)
   const v = await sendVerify(c, second)
-  assert.deepEqual(v.body.notBought, { count: 1, weekly: false })
+  assert.deepEqual(v.body.notBought, { count: 1, weekly: false, reason: 'overlap' })
   assert.equal(await prisma.planDayCoverage.count({ where: { ref: second } }), 0)
   const { phone, server } = await slotsBothWays(c, plan.id)
   for (const slots of [phone, server]) assert.equal(slots.find(s => s.key === todayKey())?.state, 'today')
@@ -469,7 +563,7 @@ test('overlap: a day the card has since been charged for is not free', async () 
   })
   const ref = await mkIntent(c, plan.id, [key], 100)
   const v = await sendVerify(c, ref)
-  assert.deepEqual(v.body.notBought, { count: 1, weekly: false })
+  assert.deepEqual(v.body.notBought, { count: 1, weekly: false, reason: 'overlap' })
   assert.equal(await prisma.planDayCoverage.count({ where: { savingsPlanId: plan.id } }), 0)
   assert.ok(await auditFor('payment_days_overlap', ref))
 })
@@ -483,7 +577,7 @@ async function sendInit(c: { id: string; customerId: string }, planId: string, k
 }
 
 type MePlan = { id: string; startDate: string; maturityDate: string; periodDays: number; cadence: string; coveredKeys: string[]; coveredRefs: string[] }
-type MeTx = { ref: string; createdAt: string; planId: string }
+type MeTx = { ref: string; createdAt: string; planId: string; amount: number }
 
 /** The slots both sides build: the phone from /api/customer/me, and the server as init does. */
 async function slotsBothWays(c: { id: string; customerId: string }, planId: string) {
@@ -492,7 +586,7 @@ async function slotsBothWays(c: { id: string; customerId: string }, planId: stri
   const { GET } = await import('../src/app/api/customer/me/route')
   const me = await (await GET()).json() as { plans: MePlan[]; transactions: MeTx[] }
   const plan = me.plans.find(p => p.id === planId)!
-  const dates = dayDeposits(me.transactions.filter(t => t.planId === planId), plan.coveredRefs).map(t => t.createdAt)
+  const dates = dayDeposits(me.transactions.filter(t => t.planId === planId), plan.coveredRefs).map(t => ({ createdAt: t.createdAt, amount: t.amount }))
   return { plan, phone: buildSlots(plan, dates, plan.coveredKeys), server: buildSlotsWat(plan, dates, plan.coveredKeys) }
 }
 

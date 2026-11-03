@@ -18,6 +18,14 @@ export class PaystackRejected extends Error {
   }
 }
 
+/** Paystack doesn't know this reference, so no charge was ever made with it. */
+export class PaystackReferenceNotFound extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'PaystackReferenceNotFound'
+  }
+}
+
 async function request(method: string, path: string, body?: object) {
   const res = await fetch(`${BASE}${path}`, {
     method,
@@ -185,7 +193,7 @@ export async function chargeAuthorization(input: {
   if (isTestMode()) {
     return { status: 'success', reference: input.reference, gatewayResponse: 'Approved', raw: null }
   }
-  const data = await call('POST', '/transaction/charge_authorization', {
+  const { httpStatus, data } = await request('POST', '/transaction/charge_authorization', {
     authorization_code: input.authorizationCode,
     email: input.email,
     amount: Math.round(input.amountNaira * 100),
@@ -193,7 +201,12 @@ export async function chargeAuthorization(input: {
     reference: input.reference,
     ...(input.metadata ? { metadata: input.metadata } : {}),
   })
-  if (!data.status) throw new Error(data.message ?? 'Charge failed')
+  if (!data.status) {
+    const message = (data.message as string | undefined) ?? 'Charge refused'
+    // Unknown outcome, so reconcile decides: a server error says nothing, and a duplicate means the first may have gone through.
+    if (httpStatus >= 500 || /duplicate/i.test(message)) throw new Error(message)
+    return { status: 'failed', reference: input.reference, gatewayResponse: message, raw: data }
+  }
   return {
     status: data.data.status as string, // 'success' | 'failed' | 'pending' | ...
     reference: (data.data.reference ?? input.reference) as string,
@@ -241,8 +254,14 @@ export async function verifyTransaction(reference: string): Promise<{
   if (isTestMode() && (reference.startsWith('autodebit-') || reference.startsWith('VCHS-'))) {
     return { status: 'success', amountNaira: 0, currency: 'NGN', channel: 'card', gatewayResponse: 'Approved', raw: null }
   }
-  const data = await call('GET', `/transaction/verify/${encodeURIComponent(reference)}`)
-  if (!data.status) throw new Error(data.message ?? 'Transaction verification failed')
+  const { httpStatus, data } = await request('GET', `/transaction/verify/${encodeURIComponent(reference)}`)
+  if (!data.status) {
+    const message = (data.message as string | undefined) ?? 'Transaction verification failed'
+    // Only this exact wording, on a client error. Paystack's live wording is unconfirmed, and misreading anything else as
+    // "never charged" would record a failure for a charge that may have gone through, so anything else stays unknown.
+    if (httpStatus < 500 && /^transaction( reference)? not found\.?$/i.test(message.trim())) throw new PaystackReferenceNotFound(message)
+    throw new Error(message)
+  }
   const d = data.data
   return {
     status: d.status as string,

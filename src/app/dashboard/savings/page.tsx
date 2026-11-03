@@ -8,7 +8,8 @@ import { blockMinus, nonNegativeString } from '@/lib/numeric'
 import { avatarTint } from '@/lib/avatar'
 import { waLink } from '@/lib/whatsapp'
 import { displayName, formatDate, formatNaira, formatTime } from '@/lib/format'
-import { slotKeyForDate } from '@/lib/savings-card'
+import { readableKey } from '@/lib/catchup'
+import { keyPlusDays, slotKeyForDate } from '@/lib/savings-card'
 import { addDays, isoDate, parseDateInput, today } from '@/lib/plan-dates'
 import BottomSheet from '@/components/ui/BottomSheet'
 import EmptyState from '@/components/ui/EmptyState'
@@ -59,10 +60,10 @@ function maskPhone(p: string) {
   return p.slice(0, 4) + '****' + p.slice(-3)
 }
 
-function whatsAppLink(phone: string, r: Receipt, days: number) {
+function whatsAppLink(phone: string, r: Receipt, days: number, unit: 'day' | 'week') {
   const lines = [
     'Vochus Easy Save — saving received',
-    `${formatNaira(r.amount)} for ${displayName(r.customer)}${days > 1 ? ` (${days} days)` : ''}`,
+    `${formatNaira(r.amount)} for ${displayName(r.customer)}${days > 1 ? ` (${days} ${unit}s)` : ''}`,
     `New balance: ${formatNaira(r.balance)}`,
     r.goal ? `Plan: ${r.goal}` : '',
     `Date: ${r.date}`,
@@ -104,6 +105,8 @@ function SavingsContent() {
   const [hasPin, setHasPin] = useState(true)
   const [lastReceipt, setLastReceipt] = useState<Receipt | null>(null)
   const [lastDays, setLastDays] = useState(1)
+  // Kept from when it was recorded: reset() clears the calendar this came from.
+  const [lastUnit, setLastUnit] = useState<'day' | 'week'>('day')
   const [lastPhone, setLastPhone] = useState('')
   const [walletBalance, setWalletBalance] = useState<number | null>(null)
   const [recent, setRecent] = useState<RecentCustomer[]>([])
@@ -327,6 +330,21 @@ function SavingsContent() {
     update()
   }
 
+  async function refreshOnlineCalendar() {
+    if (!onlineCal || !planId) return
+    try {
+      const cal = await fetch(`/api/transactions/saving/bulk?planId=${planId}`).then(r => r.json()) as { online?: boolean } & Partial<OnlineCalendar>
+      if (!cal.online) return
+      const online = cal as OnlineCalendar
+      setOnlineCal(online)
+      setPaidDates(online.slots.filter(s => s.state === 'saved').map(s => s.key))
+      const open = new Set(online.slots.filter(s => s.state !== 'saved').map(s => s.key))
+      setSelectedDates(prev => prev.filter(k => open.has(k)))
+    } catch {
+      // The server still checks every day, so a stale calendar can't cause a wrong payment.
+    }
+  }
+
   function requestPin() {
     if (!selected) { setError('Choose a customer first.'); return }
     if (!plan) { setError(choosePlan ? 'Choose which plan this saving goes into.' : 'This customer has no active plan.'); return }
@@ -386,7 +404,13 @@ function SavingsContent() {
       setError('We lost the connection. Check Today’s savings before recording again, so the customer isn’t charged twice.')
       setLoading(false); setRefreshKey(k => k + 1); return
     }
-    if (!res.ok) { setError(data.error ?? 'The saving could not be recorded. Please try again.'); setLoading(false); return }
+    if (!res.ok) {
+      setError(data.error ?? 'The saving could not be recorded. Please try again.')
+      setLoading(false)
+      // The calendar was out of date: refresh it so days that can't be paid for any more drop out.
+      if (isBulk && (res.status === 400 || res.status === 409)) refreshOnlineCalendar()
+      return
+    }
     setLoading(false)
     update()
 
@@ -416,6 +440,7 @@ function SavingsContent() {
       inviteUrl,
     })
     setLastDays(isBulk ? selectedDates.length : 1)
+    setLastUnit(isBulk && onlineCal?.weekly ? 'week' : 'day')
     setLastPhone(selected.phone ?? '')
     reset()
     setRefreshKey(k => k + 1)
@@ -464,7 +489,7 @@ function SavingsContent() {
               <p className="ui-row-sub">for <strong className="ag-done-name">{displayName(lastReceipt.customer)}</strong></p>
 
               <dl className="ag-done-rows">
-                {lastDays > 1 && <div><dt>{onlineCal?.weekly ? 'Weeks paid' : 'Days paid'}</dt><dd>{lastDays}</dd></div>}
+                {lastDays > 1 && <div><dt>{lastUnit === 'week' ? 'Weeks paid' : 'Days paid'}</dt><dd>{lastDays}</dd></div>}
                 <div><dt>New balance</dt><dd>{formatNaira(lastReceipt.balance)}</dd></div>
                 <div><dt>Paid in</dt><dd>{lastReceipt.method}</dd></div>
                 {lastReceipt.goal && <div><dt>Plan</dt><dd>{lastReceipt.goal}</dd></div>}
@@ -476,7 +501,7 @@ function SavingsContent() {
                   <Icons.add size={18} aria-hidden="true" /> Record another
                 </button>
                 {lastPhone && (
-                  <a className="ui-btn ui-btn--secondary ui-btn--block" href={whatsAppLink(lastPhone, lastReceipt, lastDays)} target="_blank" rel="noopener noreferrer">
+                  <a className="ui-btn ui-btn--secondary ui-btn--block" href={whatsAppLink(lastPhone, lastReceipt, lastDays, lastUnit)} target="_blank" rel="noopener noreferrer">
                     <Icons.share size={18} aria-hidden="true" /> Send receipt on WhatsApp
                   </a>
                 )}
@@ -795,13 +820,13 @@ function DayPicker({ loading, planStartDate, paidDates, selectedDates, setSelect
           if (!day) return <li key={idx} aria-hidden="true" />
           const ds = toDS(year, month, day)
           const slot = slotOf(ds)
-          const beforeStart = new Date(year, month, day) < planStart || slot === null
+          const outsidePlan = new Date(year, month, day) < planStart || slot === null
           const isPaid = slot !== null && paidSet.has(slot)
           const isSel = slot !== null && selectedSet.has(slot)
           const isToday = ds === todayStr
           const label = new Date(year, month, day).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
           const cls = ['ui-cal-day', 'ag-cal-day',
-            beforeStart ? 'ui-cal-day--off' : isPaid ? 'ui-cal-day--saved' : isSel ? 'ag-cal-day--picked' : '',
+            outsidePlan ? 'ui-cal-day--off' : isPaid ? 'ui-cal-day--saved' : isSel ? 'ag-cal-day--picked' : '',
             isToday ? 'ag-cal-day--today' : '',
           ].filter(Boolean).join(' ')
           return (
@@ -809,9 +834,9 @@ function DayPicker({ loading, planStartDate, paidDates, selectedDates, setSelect
               <button
                 type="button"
                 className={cls}
-                disabled={beforeStart || isPaid}
+                disabled={outsidePlan || isPaid}
                 aria-pressed={isPaid ? undefined : isSel}
-                aria-label={`${label}${isPaid ? ', already paid' : beforeStart ? ', before the plan started' : ''}${isToday ? ', today' : ''}`}
+                aria-label={`${label}${isPaid ? ', already paid' : outsidePlan ? (online && new Date(year, month, day) >= planStart ? ', after the plan ends' : ', before the plan started') : ''}${isToday ? ', today' : ''}`}
                 onClick={() => { if (slot) setSelectedDates(prev => prev.includes(slot) ? prev.filter(x => x !== slot) : [...prev, slot]) }}
               >
                 {day}
@@ -831,7 +856,7 @@ function DayPicker({ loading, planStartDate, paidDates, selectedDates, setSelect
           </span>
           {sorted.length > 0 && (
             <span className="ag-cal-dates">
-              {sorted.map(d => new Date(d + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })).join(', ')}
+              {sorted.map(d => (online?.weekly ? `${readableKey(d)} – ${readableKey(keyPlusDays(d, 6))}` : new Date(d + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' }))).join(', ')}
             </span>
           )}
         </div>

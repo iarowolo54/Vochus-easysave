@@ -5,7 +5,7 @@
 // from today; the chosen day-keys are recorded as coverage, which interest never reads
 // and auto-debit uses to skip days already paid. All amounts are computed server-side
 // from the plan rate — never trusted from the client.
-import { keyPlusDays, type Slot } from './savings-card'
+import { keyPlusDays, perSlotAmount, type Slot } from './savings-card'
 
 // Kept local (same maths as `money` in wallet-guard) so this module stays client-safe:
 // wallet-guard imports next/server, which must not be pulled into the customer UI bundle.
@@ -22,11 +22,7 @@ export const BULK_SAVINGS_LABEL = 'Bulk Savings'
 export const MAX_CATCHUP_KEYS = 90
 const MAX_KEYS = MAX_CATCHUP_KEYS
 
-/** Amount that covering one slot costs: a day for daily plans, a full week for weekly. */
-export function perSlotAmount(plan: RatePlan): number {
-  const weekly = (plan.cadence ?? 'daily') === 'weekly'
-  return weekly ? plan.dailyAmount * 7 : plan.dailyAmount
-}
+export { perSlotAmount }
 
 /** Only Active, self-service, daily/weekly plans can use Bulk Savings (not monthly/offline/closed). */
 export function isEligiblePlan(plan: EligiblePlan): boolean {

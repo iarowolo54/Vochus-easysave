@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import { timingSafeEqual } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { accruedInterestForPlan } from '@/lib/savings-interest-plan'
-import { runDueAutoDebits, reconcileProcessingAttempts } from '@/lib/auto-debit-run'
+import { reconcileAbandonedEnrollments, runDueAutoDebits, reconcileProcessingAttempts } from '@/lib/auto-debit-run'
 import { sendWeeklySummaries } from '@/lib/weekly-summary-run'
 import { isSummaryDay } from '@/lib/summary-day'
 
@@ -66,6 +66,7 @@ export async function GET(req: Request) {
   try {
     const rec = await reconcileProcessingAttempts(prisma, now)
     settled = rec.settled
+    await reconcileAbandonedEnrollments(prisma, now)
   } catch (err) {
     console.error('[cron/daily] auto-debit reconcile failed', err instanceof Error ? err.message : 'unknown')
   }

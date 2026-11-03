@@ -9,7 +9,7 @@ import {
   type Slot, type SlotState,
 } from '@/lib/savings-card'
 
-type Plan = { startDate: string; maturityDate: string; periodDays: number; cadence?: string; balance: number; dailyAmount: number; coveredKeys?: string[]; coveredRefs?: string[] }
+type Plan = { startDate: string; maturityDate: string; periodDays: number; cadence?: string; source?: string; balance: number; dailyAmount: number; coveredKeys?: string[]; coveredRefs?: string[] }
 
 export type Deposit = { id: string; ref?: string; amount: number; createdAt: string; method: string | null; recordedBy: string }
 
@@ -30,7 +30,7 @@ function useCardData(plan: Plan, deposits: Deposit[]) {
   const weekly = isWeekly(plan)
   const ended = hasEnded(plan)
   const counted = useMemo(() => dayDeposits(deposits, plan.coveredRefs), [deposits, plan.coveredRefs])
-  const slots = useMemo(() => buildSlots(plan, counted.map(d => d.createdAt), plan.coveredKeys ?? []), [plan, counted])
+  const slots = useMemo(() => buildSlots(plan, counted, plan.coveredKeys ?? []), [plan, counted])
   const byDay = useMemo(() => depositsByDay(counted), [counted])
 
   function select(slot: Slot): DaySelection {

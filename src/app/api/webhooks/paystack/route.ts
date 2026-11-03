@@ -46,8 +46,7 @@ export async function POST(req: NextRequest) {
   const customerId = meta.customerId as string | undefined
 
   // Scheduled auto-debit charges ('autodebit-'): credit the attempt's contribution, NOT the grossed-up
-  // charge. Must run before the generic customer self-pay branch below. ('addenroll-' enrollment refs
-  // intentionally fall through to the generic branch.)
+  // charge. Must run before the generic customer self-pay branch below.
   if (reference.startsWith('autodebit-')) {
     try {
       // Never trust the webhook body for crediting: re-verify with Paystack.
@@ -79,6 +78,10 @@ export async function POST(req: NextRequest) {
   const existing = await prisma.transaction.findUnique({ where: { ref: reference } })
   if (existing) return NextResponse.json({ ok: true })
 
+  // Enrollment first payments belong to their verify route, which creates the mandate. Crediting here first would leave the
+  // customer with no auto-funding. If they never return, the daily reconcile saves the money.
+  if (reference.startsWith('addenroll-')) return NextResponse.json({ ok: true })
+
   // The server-side intent is the authority on who and which plan, over Paystack metadata.
   const intent = await prisma.paymentIntent.findUnique({ where: { ref: reference } })
   if (intent?.actorType === 'customer') {
@@ -99,12 +102,15 @@ export async function POST(req: NextRequest) {
 
     // Money arrived that can't be credited here: never drop it silently.
     const needsReview = async (reason: string) => {
-      await logAudit({
-        action: REVIEW_ACTION,
-        entity: 'Transaction',
-        details: `Not credited, needs manual review: ${reason} — ref ${reference}`,
-        actorType: 'system',
-        actorName: 'Paystack Webhook',
+      // A real insert, unlike logAudit: if this can't be recorded the money would vanish silently, so fail and let Paystack retry.
+      await prisma.auditLog.create({
+        data: {
+          action: REVIEW_ACTION,
+          entity: 'Transaction',
+          details: `Not credited, needs manual review: ${reason} — ref ${reference}`,
+          actorType: 'system',
+          actorName: 'Paystack Webhook',
+        },
       })
       console.warn(`[paystack webhook] needs manual review ref=${reference}`)
       return NextResponse.json({ ok: true })

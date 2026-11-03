@@ -2,8 +2,10 @@ import type { PrismaClient } from '@prisma/client'
 import { dueMandates } from '@/lib/auto-debit'
 import { autoDebitCadence, cycleCreditAmount, nextRunAt } from '@/lib/auto-debit-schedule'
 import { grossUpForFee } from '@/lib/auto-debit-fee'
-import { chargeAuthorization, verifyTransaction } from '@/lib/paystack'
-import { creditAutoDebitAttempt } from '@/lib/auto-debit-credit'
+import { PaystackReferenceNotFound, chargeAuthorization, verifyTransaction } from '@/lib/paystack'
+import { creditAutoDebitAttempt, flagAttemptForReview } from '@/lib/auto-debit-credit'
+import { settleIntentPayment } from '@/lib/customer-settle'
+import { INTENT_PENDING } from '@/lib/payment-intent'
 import { recordAutoDebitFailure } from '@/lib/auto-debit-failure'
 import { logAudit } from '@/lib/audit'
 import { hasOpenRedemption, heldKeys, loadCycleState } from '@/lib/bulk-savings'
@@ -168,6 +170,11 @@ export async function reconcileProcessingAttempts(
     try {
       const result = await verifyTransaction(attempt.reference)
       if (result.status === 'success') {
+        // Money that isn't what we charged is for staff, the same as the webhook won't credit it.
+        if (result.amountNaira > 0 && (result.currency !== 'NGN' || result.amountNaira < attempt.creditAmount)) {
+          await flagAttemptForReview(client, attempt.id, `reconcile found ${result.currency} ${result.amountNaira}, expected ₦${attempt.creditAmount} — ref ${attempt.reference}`)
+          continue
+        }
         // Test-mode verify reports amount 0: fall back to what we charged.
         const settledAmountNaira = result.amountNaira > 0 ? result.amountNaira : attempt.grossCharged
         const r = await creditAutoDebitAttempt(client, { reference: attempt.reference, settledAmountNaira })
@@ -180,8 +187,47 @@ export async function reconcileProcessingAttempts(
         failed++
       }
     } catch (err) {
+      // Past the age threshold and Paystack has never heard of it: the charge never got there. Timeouts stay processing.
+      if (err instanceof PaystackReferenceNotFound) {
+        await recordAutoDebitFailure(client, { reference: attempt.reference, gatewayResponse: 'Charge never reached Paystack' })
+        failed++
+        continue
+      }
       console.error('[auto-debit] reconcile failed', attempt.savingsPlanId, errMsg(err))
     }
   }
   return { settled, failed }
+}
+
+const ENROLLMENT_RECONCILE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000
+
+/**
+ * The webhook leaves first payments to the customer's return, because that is what creates the mandate. If they never
+ * come back, the money is still theirs: save it, with no mandate, and they can set auto-funding up again. Abandoned
+ * checkouts stay Pending, so this stops looking after a week.
+ */
+export async function reconcileAbandonedEnrollments(
+  client: PrismaClient,
+  now: Date = new Date(),
+  olderThanMs: number = DEFAULT_RECONCILE_AGE_MS,
+): Promise<number> {
+  const stale = await client.paymentIntent.findMany({
+    where: {
+      ref: { startsWith: 'addenroll-' },
+      status: INTENT_PENDING,
+      createdAt: { lt: new Date(now.getTime() - olderThanMs), gte: new Date(now.getTime() - ENROLLMENT_RECONCILE_MAX_AGE_MS) },
+    },
+  })
+  let saved = 0
+  for (const intent of stale) {
+    try {
+      const result = await verifyTransaction(intent.ref)
+      if (result.status !== 'success') continue
+      const settled = await settleIntentPayment(client, { intent, reference: intent.ref, amountNaira: result.amountNaira, currency: result.currency, channel: result.channel, via: 'Paystack webhook' })
+      if (settled.kind === 'credited') saved++
+    } catch (err) {
+      console.error('[auto-debit] enrollment reconcile failed', intent.planId, errMsg(err))
+    }
+  }
+  return saved
 }

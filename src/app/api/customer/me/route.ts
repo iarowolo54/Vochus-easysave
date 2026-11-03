@@ -3,7 +3,7 @@ import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
 import { accruedInterestForPlan, interestProjectionForPlan } from '@/lib/savings-interest-plan'
 import { IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
-import { coveringRefsByPlan } from '@/lib/bulk-savings'
+import { coverageByPlan, paymentNotices } from '@/lib/bulk-savings'
 
 // A redemption is "pending" for the customer home until it is actually paid: everything in flight
 // except Approved (handoff #30 — mid-payout AwaitingOTP/Finalizing must keep the tracker up and
@@ -63,19 +63,13 @@ export async function GET() {
   const planIds = plansBase.map(p => p.id)
 
   // Days covered by Bulk Savings payments and the deposits that paid for them, per plan (scoped to this customer's plan ids).
-  const coverageRows = planIds.length
-    ? await prisma.planDayCoverage.findMany({
-        where: { savingsPlanId: { in: planIds } },
-        select: { savingsPlanId: true, coversKey: true },
-        orderBy: { coversKey: 'asc' },
-      })
-    : []
-  const coveringRefs = await coveringRefsByPlan(prisma, planIds)
+  const coverage = await coverageByPlan(prisma, planIds)
   const plans = plansBase.map(p => ({
     ...p,
-    coveredKeys: coverageRows.filter(r => r.savingsPlanId === p.id).map(r => r.coversKey),
-    coveredRefs: coveringRefs.get(p.id) ?? [],
+    coveredKeys: coverage.get(p.id)?.keys ?? [],
+    coveredRefs: coverage.get(p.id)?.refs ?? [],
   }))
+  const notices = await paymentNotices(prisma, customer.id, planIds, now)
   const plan = plans[0] ?? null
 
   // Every deposit on the customer's active plans, so the home screen can show per-plan history and
@@ -117,6 +111,7 @@ export async function GET() {
     state: customer.state,
     lga: customer.lga,
     photoUrl: customer.photoUrl,
+    ...notices,
     agent: customer.agent,
     plan,
     plans,

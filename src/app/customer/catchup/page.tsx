@@ -33,7 +33,7 @@ function CatchupScreen() {
   const plan = plans.find(p => p.id === planId) ?? null
   const deposits = useMemo(() => (data && plan ? data.transactions.filter(t => t.planId === plan.id) : []), [data, plan])
   const slots = useMemo(
-    () => (plan ? buildSlots(plan, dayDeposits(deposits, plan.coveredRefs).map(d => d.createdAt), plan.coveredKeys ?? []) : []),
+    () => (plan ? buildSlots(plan, dayDeposits(deposits, plan.coveredRefs), plan.coveredKeys ?? []) : []),
     [plan, deposits],
   )
   const selectable = useMemo(() => new Set(selectableKeys(slots)), [slots])
