@@ -158,7 +158,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             <Amount value={agent.walletBalance} size="hero" animate />
           </div>
           <Link href="/dashboard/wallet" className="ui-btn ui-btn--primary ag-wallet-btn">
-            <Icons.add size={20} aria-hidden="true" /> Add money to wallet
+            <Icons.add size={18} aria-hidden="true" /> Add money
           </Link>
         </section>
         <nav className="ui-actions ag-actions" aria-label="Main actions">

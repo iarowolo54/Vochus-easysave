@@ -1187,9 +1187,10 @@ body:has(.ui-auth) { background: var(--ui-canvas) !important; }
 .ag-col > .ui-section-head:first-child { margin-top: 0; }
 /* Balance on the left, its one action on the right; the button drops below on narrow phones. */
 /* Label and balance on top, one wide button underneath: the same on a phone and in a narrow card. */
-.ag-wallet-card { display: flex; flex-direction: column; gap: var(--ui-s4); padding: var(--ui-s5); margin: 0; }
-.ag-wallet-label { margin: 0 0 var(--ui-s1); font-size: var(--ui-fs-sm); font-weight: 600; color: var(--ui-ink-2); }
-.ag-wallet-btn { width: 100%; min-height: 52px; justify-content: center; font-size: var(--ui-fs-md); text-decoration: none; }
+.ag-wallet-card { display: flex; flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--ui-s3); padding: var(--ui-s4) var(--ui-s5); margin: 0; }
+.ag-wallet-card .ui-amount--hero { font-size: var(--ui-fs-xl); letter-spacing: -0.5px; }
+.ag-wallet-label { margin: 0 0 2px; font-size: var(--ui-fs-sm); font-weight: 600; color: var(--ui-ink-2); }
+.ag-wallet-btn { width: auto; min-height: 44px; padding-inline: var(--ui-s4); justify-content: center; font-size: var(--ui-fs-sm); text-decoration: none; white-space: nowrap; }
 .ag-actions { justify-content: flex-start; gap: var(--ui-s5); margin: var(--ui-s5) 0; }
 .ag-actions .ui-action { text-decoration: none; font-size: var(--ui-fs-sm); }
 .ag-stats { display: grid; grid-template-columns: 1fr 1fr; gap: var(--ui-s4) var(--ui-s3); margin: var(--ui-s2) 0 0; }
@@ -2647,4 +2648,4 @@ button.ui-cal-day:disabled:active { transform: none; }
 @media (min-width: 1024px) { .ag-crow-view { display: none; } }
 
 /* The reminder to tap "I've sent the money" must not be missed, so it reads as a notice and not as small print. */
-.ui-transfer-reminder { margin: var(--ui-s3) 0; padding: var(--ui-s3) var(--ui-s4); border-radius: var(--ui-r-md); background: var(--ui-warn-tint); color: var(--ui-ink); font-size: var(--ui-fs-sm); text-align: left; }
+.ui-transfer-reminder { display: block; margin: var(--ui-s3) 0; padding: var(--ui-s3) var(--ui-s4); border-radius: var(--ui-r-md); background: var(--ui-warn-tint); color: var(--ui-ink); font-size: var(--ui-fs-sm); text-align: left; }
