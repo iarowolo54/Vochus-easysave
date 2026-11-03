@@ -7,6 +7,7 @@ import { sendSMS } from '@/lib/kudisms'
 import { sendMail } from '@/lib/mail'
 import { createRedemptionWithUniqueCode } from '@/lib/redemption-create'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
+import { feeContext } from '@/lib/commission-ledger'
 import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
 import { escapeHtml } from '@/lib/escape-html'
@@ -80,7 +81,8 @@ export async function POST(req: NextRequest) {
     const customerName = `${plan.customer.firstName} ${plan.customer.lastName}`
 
     const hasCashDeposit = await planHasCashDeposit(prisma, plan.id)
-    const rates = redemptionDeduction({ balance: plan.balance, dailyAmount: plan.dailyAmount, cadence: plan.cadence, hasCashDeposit, periodDays: plan.periodDays, initiator: 'admin', source: (plan as any).source })
+    const fee = await feeContext(prisma, new Date())
+    const rates = redemptionDeduction({ balance: plan.balance, dailyAmount: plan.dailyAmount, cadence: plan.cadence, hasCashDeposit, periodDays: plan.periodDays, initiator: 'admin', source: (plan as any).source, ...('platformSavingsPct' in fee ? { platformSavingsPct: fee.platformSavingsPct } : {}) })
     const deduction = money(rates.total)
     const netPayout = money(plan.balance - deduction)
 
@@ -95,6 +97,7 @@ export async function POST(req: NextRequest) {
       balance: plan.balance,
       penalty: deduction,
       netPayout,
+      feeRule: fee.feeRule,
       token: tokenHash,
       tokenExpiry,
       payoutMethod: payoutMethod ?? 'Cash',

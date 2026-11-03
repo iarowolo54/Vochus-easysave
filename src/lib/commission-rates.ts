@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client'
-import { money } from '@/lib/wallet-guard'
+import { money } from '@/lib/money'
 
 /** Every rate is a percent. Savings rates apply to each deposit (and to the balance at redemption). */
 export interface CommissionRates {

@@ -5,6 +5,7 @@ import type { Prisma } from '@prisma/client'
 import { money } from '@/lib/wallet-guard'
 import { interestPayoutOps } from '@/lib/redemption-interest-ops'
 import { claimPlanForPayout } from '@/lib/redemption-balance'
+import { completionCredits } from '@/lib/commission-ledger'
 
 export class ConflictError extends Error {}
 
@@ -17,6 +18,7 @@ export interface RedemptionRecord {
   netPayout: number
   payoutMethod: string | null
   interestAmount: number
+  feeRule: string
 }
 
 export interface RedemptionCompletionOpts {
@@ -40,9 +42,6 @@ export async function redemptionCompletionOps(
   opts: RedemptionCompletionOpts,
 ): Promise<void> {
   const { decidedBy, isBankTransfer, bankTransferStatus, paystackRecipientCode, paystackTransferCode, claimFrom, walletAfter, adminNote } = opts
-  const agentComm = money(record.penalty * (3 / 5))
-  const platformFee = money(record.penalty * (2 / 5))
-  const revenueCredit = platformFee
 
   // Bank: the Processing claim (and plan lock) was taken earlier. Cash: claim record + plan here.
   const claim = await tx.earlyRedemption.updateMany({
@@ -61,6 +60,7 @@ export async function redemptionCompletionOps(
     const refused = await claimPlanForPayout(tx, record.savingsPlanId, record.balance)
     if (refused) throw new ConflictError(refused)
   }
+  const { agentCredit: agentComm, platformCredit: revenueCredit } = await completionCredits(tx, record, agentId, customerId)
   await tx.platformWallet.upsert({
     where: { type: 'Revenue' },
     update: { balance: { increment: revenueCredit } },

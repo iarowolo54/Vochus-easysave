@@ -1,5 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client'
-import { money } from '@/lib/wallet-guard'
+import { money } from '@/lib/money'
 import { getCommissionRates, pct, type CommissionRates } from '@/lib/commission-rates'
 
 export const GO_LIVE_KEY = 'commissionGoLive'
@@ -80,4 +80,57 @@ export function loanCommissionAmounts(rates: CommissionRates, principal: number,
 
 export function repaymentCommissionAmount(rates: CommissionRates, amount: number): number {
   return pct(amount, rates.agentRepay)
+}
+
+/**
+ * How a redeemed plan's stored fee is credited. A v1 record (requested before go-live) keeps the old 3/5 agent,
+ * 2/5 platform split and gets no catch-up; a v2 record's fee is all the platform's and the agent gets the catch-up.
+ */
+export function completionSplit(rec: { penalty: number; feeRule: string }, catchupAmount: number): { agentCredit: number; platformCredit: number } {
+  if (rec.feeRule === 'v2') return { agentCredit: money(catchupAmount), platformCredit: money(rec.penalty) }
+  return { agentCredit: money(rec.penalty * (3 / 5)), platformCredit: money(rec.penalty * (2 / 5)) }
+}
+
+/** What a new redemption request should use: the new fee rule once live, otherwise today's. */
+export async function feeContext(client: Pick<PrismaClient, 'platformSetting'>, at: Date): Promise<{ feeRule: 'v1' } | { feeRule: 'v2'; platformSavingsPct: number }> {
+  if (!(await isNewModelLive(client, at))) return { feeRule: 'v1' }
+  return { feeRule: 'v2', platformSavingsPct: (await getCommissionRates(client)).platformSavings }
+}
+
+/**
+ * Works out and records what a completed redemption credits, inside the completion transaction.
+ * Returns the agent and platform amounts to credit; the caller applies them to the balances.
+ */
+export async function completionCredits(
+  tx: LedgerClient,
+  rec: { ref: string; savingsPlanId: string; balance: number; penalty: number; feeRule: string },
+  agentId: string,
+  customerId: string | null,
+): Promise<{ agentCredit: number; platformCredit: number }> {
+  let catchup = 0
+  let catchupBasis = 0
+  let ratePct = 0
+  if (rec.feeRule === 'v2') {
+    const goLive = await getGoLive(tx)
+    if (goLive) {
+      const sum = await tx.transaction.aggregate({
+        where: { planId: rec.savingsPlanId, type: 'saving', createdAt: { lt: goLive } },
+        _sum: { amount: true },
+      })
+      catchupBasis = catchupBase(sum._sum.amount ?? 0, rec.balance)
+      ratePct = (await getCommissionRates(tx)).agentSavings
+      catchup = pct(catchupBasis, ratePct)
+    }
+  }
+  const out = completionSplit(rec, catchup)
+  const v2 = rec.feeRule === 'v2'
+  await recordCommission(tx, {
+    party: 'agent', agentId, source: v2 ? 'savings_catchup' : 'redemption_fee', sourceRef: rec.ref, customerId,
+    base: v2 ? catchupBasis : rec.penalty, ratePct: v2 ? ratePct : 60, amount: out.agentCredit,
+  })
+  await recordCommission(tx, {
+    party: 'platform', agentId: null, source: 'redemption_fee', sourceRef: rec.ref, customerId,
+    base: rec.balance, ratePct: rec.balance > 0 ? Math.round((rec.penalty / rec.balance) * 10000) / 100 : 0, amount: out.platformCredit,
+  })
+  return out
 }

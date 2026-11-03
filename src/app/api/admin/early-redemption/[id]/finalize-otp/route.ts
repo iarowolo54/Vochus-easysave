@@ -1,3 +1,4 @@
+import { completionCredits } from '@/lib/commission-ledger'
 import { NextResponse } from 'next/server'
 import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
@@ -98,9 +99,6 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
   const agentId = record.savingsPlan.customer.agentId
   const customerId = record.savingsPlan.customer.id
 
-  // The split stored on the request, same as redemptionCompletionOps; working it out again here can disagree.
-  const agentComm = money(record.penalty * (3 / 5))
-  const revenueCredit = money(record.penalty * (2 / 5))
   let reviewNeeded = false
 
   try {
@@ -112,6 +110,8 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
       if (fin.count === 0) throw new Error('Finalizing claim lost')
       // The customer has been paid, so the ledger is written whatever happened.
       reviewNeeded = await settlePlanAfterPayout(tx, record)
+      // The same split redemptionCompletionOps books, from the fee rule stored on the request.
+      const { agentCredit: agentComm, platformCredit: revenueCredit } = await completionCredits(tx, record, agentId, customerId)
       await tx.platformWallet.upsert({
         where: { type: 'Revenue' },
         update: { balance: { increment: revenueCredit } },

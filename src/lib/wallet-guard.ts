@@ -1,9 +1,7 @@
 import { NextResponse } from 'next/server'
 
-export function money(n: number): number {
-  if (!Number.isFinite(n)) return 0
-  return Math.round(n * 100) / 100
-}
+import { money } from './money'
+export { money }
 
 export class InsufficientFundsError extends Error {
   constructor(public wallet: string, public balance: number, public needed: number) {

@@ -55,6 +55,7 @@ interface PageData {
   approved: number
   rejected: number
   tokensToday: number
+  platformSavingsPct?: number | null
   records: RedemptionRecord[]
 }
 
@@ -278,6 +279,7 @@ export default function RedemptionsPage() {
     const fee = Math.min(redemptionDeduction({
       balance: plan.balance, dailyAmount: plan.dailyAmount, cadence: plan.cadence,
       hasCashDeposit: true, periodDays: plan.periodDays, initiator: 'admin',
+      ...(typeof data?.platformSavingsPct === 'number' ? { platformSavingsPct: data.platformSavingsPct } : {}),
     }).total, plan.balance)
     setPreview({ balance: plan.balance, savingsFee: fee, netPayout: plan.balance - fee })
   }

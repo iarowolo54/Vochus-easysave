@@ -3,6 +3,7 @@ import { randomBytes } from 'crypto'
 import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
+import { feeContext } from '@/lib/commission-ledger'
 import { money } from '@/lib/wallet-guard'
 import { excludeExpiredPending, IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
 import { balanceUnchanged, readyToFinalize } from '@/lib/redemption-balance'
@@ -76,8 +77,11 @@ export async function GET() {
     return issued.toDateString() === today.toDateString()
   }).length
 
+  const fee = await feeContext(prisma, new Date())
   return NextResponse.json({
     pending, approved, rejected, tokensToday,
+    // Present once the new fee rule is live; the new-request preview uses it so it matches what the server charges.
+    platformSavingsPct: 'platformSavingsPct' in fee ? fee.platformSavingsPct : null,
     records: records.map(r => ({
       id: r.id,
       ref: r.ref,
@@ -145,7 +149,8 @@ export async function POST(req: Request) {
   const isEarly = type === 'early' || plan.status === 'Active'
   const gross = money(plan.balance)
   const hasCashDeposit = await planHasCashDeposit(prisma, plan.id)
-  const rates = redemptionDeduction({ balance: plan.balance, dailyAmount: plan.dailyAmount, cadence: plan.cadence, hasCashDeposit, periodDays: plan.periodDays, initiator: 'admin', source: (plan as any).source })
+  const fee = await feeContext(prisma, new Date())
+  const rates = redemptionDeduction({ balance: plan.balance, dailyAmount: plan.dailyAmount, cadence: plan.cadence, hasCashDeposit, periodDays: plan.periodDays, initiator: 'admin', source: (plan as any).source, ...('platformSavingsPct' in fee ? { platformSavingsPct: fee.platformSavingsPct } : {}) })
   const deduction = money(rates.total)
   const netPayout = money(gross - deduction)
 
@@ -160,6 +165,7 @@ export async function POST(req: Request) {
       balance: gross,
       penalty: deduction,
       netPayout,
+      feeRule: fee.feeRule,
     },
   })
 

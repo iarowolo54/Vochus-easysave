@@ -1,4 +1,5 @@
 import type { CommissionRates } from '@/lib/commission-rates'
+import { redemptionFee } from '@/lib/commission-ledger'
 
 export const CASH_DAILY_RATE = 1 / 31
 export const CASH_WEEKLY_RATE = 0.075
@@ -33,11 +34,18 @@ export function redemptionDeduction(opts: {
   initiator?: 'admin' | 'customer'
   commRates?: CommissionRates
   source?: string | null
+  /** New model: the fee is this percent of the balance, all of it the platform's. */
+  platformSavingsPct?: number
 }) {
-  const { balance, dailyAmount, cadence, hasCashDeposit, periodDays, initiator, commRates, source } = opts
+  const { balance, dailyAmount, cadence, hasCashDeposit, periodDays, initiator, commRates, source, platformSavingsPct } = opts
 
   if (source === 'self') {
     return { total: 0, platform: 0, agent: 0 }
+  }
+
+  if (platformSavingsPct !== undefined) {
+    const fee = redemptionFee(balance, platformSavingsPct, source ?? null)
+    return { total: fee, platform: fee, agent: 0 }
   }
 
   if (commRates) {

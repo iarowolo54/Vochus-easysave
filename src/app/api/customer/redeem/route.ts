@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { excludeExpiredPending, IN_FLIGHT_REDEMPTION_STATUSES, isExpiredPending } from '@/lib/redemption-statuses'
 import { logAudit } from '@/lib/audit'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
+import { feeContext } from '@/lib/commission-ledger'
 import { money } from '@/lib/wallet-guard'
 import { accruedInterestForPlan } from '@/lib/savings-interest-plan'
 import { resolveAccount } from '@/lib/paystack'
@@ -90,7 +91,8 @@ export async function POST(req: NextRequest) {
   }
 
   const hasCashDeposit = await planHasCashDeposit(prisma, plan.id)
-  const rates = redemptionDeduction({ balance: plan.balance, dailyAmount: plan.dailyAmount, cadence: plan.cadence, hasCashDeposit, initiator: 'customer', source: (plan as any).source })
+  const fee = await feeContext(prisma, now)
+  const rates = redemptionDeduction({ balance: plan.balance, dailyAmount: plan.dailyAmount, cadence: plan.cadence, hasCashDeposit, initiator: 'customer', source: (plan as any).source, ...('platformSavingsPct' in fee ? { platformSavingsPct: fee.platformSavingsPct } : {}) })
   const deduction = money(rates.total)
   const interest = await accruedInterestForPlan(prisma, plan, now)
   const netPayout = money(plan.balance - deduction + interest)
@@ -109,6 +111,7 @@ export async function POST(req: NextRequest) {
     balance: plan.balance,
     penalty: deduction,
     netPayout,
+    feeRule: fee.feeRule,
     interestAmount: interest,
     token: tokenHash,
     tokenExpiry,

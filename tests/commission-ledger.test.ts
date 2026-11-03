@@ -2,11 +2,12 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Prisma } from '@prisma/client'
-import { catchupBase, loanCommissionAmounts, redemptionFee, recordCommission, repaymentCommissionAmount, savingsCommissionOps } from '../src/lib/commission-ledger'
+import { catchupBase, completionCredits, completionSplit, feeContext, loanCommissionAmounts, redemptionFee, recordCommission, repaymentCommissionAmount, savingsCommissionOps } from '../src/lib/commission-ledger'
 import { DEFAULT_COMMISSION_RATES } from '../src/lib/commission-rates'
+import { redemptionDeduction } from '../src/lib/wallet-rates'
 
 type Row = Record<string, unknown>
-function stubTx(opts: { goLive?: string; rates?: Record<string, number>; existing?: boolean } = {}) {
+function stubTx(opts: { goLive?: string; rates?: Record<string, number>; existing?: boolean; preDeposits?: number } = {}) {
   const calls = { ledger: [] as Row[], agentUpdates: [] as Row[] }
   const tx = {
     platformSetting: {
@@ -21,6 +22,7 @@ function stubTx(opts: { goLive?: string; rates?: Record<string, number>; existin
       create: async ({ data }: { data: Row }) => { calls.ledger.push(data); return data },
     },
     agent: { update: async (a: Row) => { calls.agentUpdates.push(a); return a } },
+    transaction: { aggregate: async () => ({ _sum: { amount: opts.preDeposits ?? 0 } }) },
   }
   return { tx: tx as unknown as Prisma.TransactionClient, calls }
 }
@@ -98,4 +100,59 @@ test('loan commission follows the rates: agent on the principal, platform on the
 test('repayment commission follows the agent repay rate', () => {
   assert.equal(repaymentCommissionAmount(DEFAULT_COMMISSION_RATES, 33600), 168)
   assert.equal(repaymentCommissionAmount({ ...DEFAULT_COMMISSION_RATES, agentRepay: 0 }, 33600), 0)
+})
+
+const plan = { dailyAmount: 1000, cadence: 'daily', hasCashDeposit: true }
+
+test('with a platform savings rate the whole fee is the platform\'s and the agent gets none of it', () => {
+  assert.deepEqual(redemptionDeduction({ balance: 62000, ...plan, platformSavingsPct: 1.6 }), { total: 992, platform: 992, agent: 0 })
+})
+
+test('self plans pay no fee under the new rule either', () => {
+  assert.deepEqual(redemptionDeduction({ balance: 62000, ...plan, source: 'self', platformSavingsPct: 1.6 }), { total: 0, platform: 0, agent: 0 })
+})
+
+test('without a platform savings rate the old fee is unchanged', () => {
+  assert.equal(redemptionDeduction({ balance: 31000, ...plan }).total, 1000)
+})
+
+test('a v1 redemption still splits its stored fee 3/5 agent and 2/5 platform and ignores any catch-up', () => {
+  assert.deepEqual(completionSplit({ penalty: 1000, feeRule: 'v1' }, 40), { agentCredit: 600, platformCredit: 400 })
+})
+
+test('a v2 redemption gives the platform the whole fee and the agent only the catch-up', () => {
+  assert.deepEqual(completionSplit({ penalty: 992, feeRule: 'v2' }, 40), { agentCredit: 40, platformCredit: 992 })
+})
+
+test('feeContext is v2 with the platform rate once live, and v1 with nothing before', async () => {
+  const live = stubTx({ goLive: LIVE, rates: { platformSavings: 2 } }).tx
+  assert.deepEqual(await feeContext(live, new Date('2026-11-12T00:00:00Z')), { feeRule: 'v2', platformSavingsPct: 2 })
+  assert.deepEqual(await feeContext(live, new Date('2026-11-01T00:00:00Z')), { feeRule: 'v1' })
+  assert.deepEqual(await feeContext(stubTx().tx, new Date()), { feeRule: 'v1' })
+})
+
+const rec = (over: Partial<Parameters<typeof completionCredits>[1]> = {}) => ({ ref: 'RED-1', savingsPlanId: 'p1', balance: 3000, penalty: 48, feeRule: 'v2', ...over })
+
+test('a v2 redemption credits the catch-up on pre-go-live deposits and books the whole fee to the platform', async () => {
+  const { tx, calls } = stubTx({ goLive: LIVE, preDeposits: 2000 })
+  const out = await completionCredits(tx, rec(), 'ag1', 'c1')
+  assert.deepEqual(out, { agentCredit: 8, platformCredit: 48 })
+  assert.deepEqual(calls.ledger.map(r => [r.party, r.source, r.amount]), [['agent', 'savings_catchup', 8], ['platform', 'redemption_fee', 48]])
+})
+
+test('the catch-up never exceeds the balance', async () => {
+  const { tx } = stubTx({ goLive: LIVE, preDeposits: 99999 })
+  assert.equal((await completionCredits(tx, rec({ balance: 1000, penalty: 16 }), 'ag1', 'c1')).agentCredit, 4)
+})
+
+test('a v1 redemption keeps the old split and writes both ledger rows, with no catch-up', async () => {
+  const { tx, calls } = stubTx({ goLive: LIVE, preDeposits: 2000 })
+  const out = await completionCredits(tx, rec({ feeRule: 'v1', penalty: 1000 }), 'ag1', 'c1')
+  assert.deepEqual(out, { agentCredit: 600, platformCredit: 400 })
+  assert.deepEqual(calls.ledger.map(r => [r.party, r.source, r.amount]), [['agent', 'redemption_fee', 600], ['platform', 'redemption_fee', 400]])
+})
+
+test('a v2 redemption with no go-live date set (should not happen) pays no catch-up', async () => {
+  const { tx } = stubTx({ preDeposits: 2000 })
+  assert.equal((await completionCredits(tx, rec(), 'ag1', 'c1')).agentCredit, 0)
 })
