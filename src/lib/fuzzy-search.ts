@@ -27,6 +27,8 @@ export function editDistance(a: string, b: string): number {
   return d[a.length][b.length]
 }
 
+const MAX_TERM_LENGTH = 40
+
 // Short words allow no slips (too many false hits); longer ones allow one or two.
 function allowedSlips(len: number): number {
   return len <= 3 ? 0 : len <= 6 ? 1 : 2
@@ -35,9 +37,11 @@ function allowedSlips(len: number): number {
 function termMatchesName(term: string, name: string): boolean {
   if (name.includes(term)) return true
   const slips = allowedSlips(term.length)
-  if (!slips) return false
+  // Long words skip the check, which keeps the work per customer bounded.
+  if (!slips || term.length > MAX_TERM_LENGTH) return false
   // Compare against the whole name and its same-length start, so a half-typed name still matches.
-  return editDistance(term, name) <= slips || editDistance(term, name.slice(0, term.length)) <= slips
+  if (Math.abs(term.length - name.length) <= slips && editDistance(term, name) <= slips) return true
+  return editDistance(term, name.slice(0, term.length)) <= slips
 }
 
 export function matchesCustomer(terms: string[], c: SearchableCustomer): boolean {

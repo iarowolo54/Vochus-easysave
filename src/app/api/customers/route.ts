@@ -32,7 +32,7 @@ export async function GET(req: NextRequest) {
   const sortLastPaid = searchParams.get('sort') === 'lastPaid'
   const planDays = planFilter ? parseInt(planFilter) : NaN
 
-  const searchTerms = search.trim().split(/\s+/).filter(Boolean).slice(0, 5)
+  const searchTerms = search.slice(0, 100).trim().split(/\s+/).filter(Boolean).slice(0, 5)
 
   // Typo-tolerant search: match in memory over this agent's own customers (names and phone only,
   // no blobs), then filter the real query by the matching ids.
