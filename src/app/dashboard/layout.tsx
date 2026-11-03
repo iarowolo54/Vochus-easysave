@@ -33,7 +33,7 @@ const navItems: { section: string; items: { label: string; icon: IconName; href:
     { label: 'Interest rates', icon: 'rate', href: '/dashboard/interest-rates' },
   ]},
   { section: 'Money', items: [
-    { label: 'Fund wallet', icon: 'wallet', href: '/dashboard/wallet' },
+    { label: 'Add money to wallet', icon: 'wallet', href: '/dashboard/wallet' },
     { label: 'Commission', icon: 'commission', href: '/dashboard/commission' },
     { label: 'Withdraw', icon: 'withdraw', href: '/dashboard/withdraw' },
     { label: 'Sub-agents', icon: 'team', href: '/dashboard/subagents' },
@@ -57,7 +57,7 @@ const pageTitles: Record<string, string> = {
   '/dashboard/loan-disburse': 'Disburse loan',
   '/dashboard/loan-repay': 'Loan repayment',
   '/dashboard/interest-rates': 'Interest rates',
-  '/dashboard/wallet': 'Fund wallet',
+  '/dashboard/wallet': 'Add money to wallet',
   '/dashboard/commission': 'Commission',
   '/dashboard/withdraw': 'Withdraw commission',
   '/dashboard/subagents': 'Sub-agents',
