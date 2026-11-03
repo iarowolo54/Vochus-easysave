@@ -126,7 +126,7 @@ async function drawReceipt(data: ReceiptData): Promise<{ canvas: HTMLCanvasEleme
   return { canvas, dataUrl: canvas.toDataURL('image/png'), filename: `vochus-receipt-${data.reference.slice(0, 24)}.png` }
 }
 
-type NativeWindow = { __vochusCanSaveReceipt?: boolean; VochusSaveReceipt?: { postMessage: (s: string) => void } }
+type NativeWindow = { __vochusApp?: string; __vochusCanSaveReceipt?: boolean; VochusSaveReceipt?: { postMessage: (s: string) => void } }
 
 function postToApp(dataUrl: string, filename: string): boolean {
   const w = window as unknown as NativeWindow
@@ -135,10 +135,50 @@ function postToApp(dataUrl: string, filename: string): boolean {
   return true
 }
 
+/**
+ * Where "Save receipt image" should send the picture. An app build with the bridge saves it natively. An app build without it
+ * (an older install) must not navigate to the raw image, which a WebView shows at full size and far zoomed in, so the picture
+ * is shown fitted to the screen instead. A normal browser downloads it.
+ */
+export function receiptSaveMode(i: { hasBridge: boolean; inApp: boolean }): 'bridge' | 'preview' | 'download' {
+  if (i.hasBridge) return 'bridge'
+  return i.inApp ? 'preview' : 'download'
+}
+
+/** Shows the receipt picture over the page, fitted to the screen width, so it can be pressed and held to save or screenshotted. */
+function showReceiptPreview(dataUrl: string) {
+  // A dialog opened with showModal() joins the browser's top layer, so it shows above the receipt sheet that is already open.
+  const overlay = document.createElement('dialog')
+  overlay.setAttribute('aria-label', 'Receipt image')
+  overlay.style.cssText = 'position:fixed;inset:0;margin:0;width:100%;height:100%;max-width:none;max-height:none;border:0;padding:16px;box-sizing:border-box;background:rgba(15,42,29,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;overflow:auto'
+  const img = document.createElement('img')
+  img.src = dataUrl
+  img.alt = 'Receipt'
+  img.style.cssText = 'display:block;width:100%;max-width:420px;height:auto;border-radius:12px;background:#fff'
+  const hint = document.createElement('p')
+  hint.textContent = 'Press and hold the receipt to save it, or take a screenshot.'
+  hint.style.cssText = 'margin:0;color:#fff;font:600 14px/1.4 system-ui,sans-serif;text-align:center'
+  const close = document.createElement('button')
+  close.type = 'button'
+  close.textContent = 'Close'
+  close.style.cssText = 'min-height:44px;padding:0 28px;border:0;border-radius:999px;background:#fff;color:#0f2a1d;font:700 15px system-ui,sans-serif'
+  close.onclick = () => overlay.close()
+  overlay.addEventListener('close', () => overlay.remove())
+  overlay.append(img, hint, close)
+  document.body.appendChild(overlay)
+  overlay.showModal()
+}
+
 export async function saveReceiptImage(data: ReceiptData) {
   const img = await drawReceipt(data)
   if (!img) return
-  if (postToApp(img.dataUrl, img.filename)) return
+  const w = window as unknown as NativeWindow
+  const mode = receiptSaveMode({
+    hasBridge: !!(w.__vochusCanSaveReceipt && w.VochusSaveReceipt),
+    inApp: !!w.__vochusApp || /; wv\)/.test(navigator.userAgent),
+  })
+  if (mode === 'bridge') { postToApp(img.dataUrl, img.filename); return }
+  if (mode === 'preview') { showReceiptPreview(img.dataUrl); return }
   const link = document.createElement('a')
   link.download = img.filename
   link.href = img.dataUrl
