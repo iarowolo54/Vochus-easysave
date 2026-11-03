@@ -72,6 +72,8 @@ test('bad signature -> 401 and no credit', async () => {
 
 test('non-autodebit customer self-pay still credits the gross amount (no regression)', async () => {
   const ref = `VCHS-${rid}`
+  // Every checkout the app starts records an intent first; a charge without one is never credited.
+  await prisma.paymentIntent.create({ data: { ref, actorType: 'customer', customerId, planId, amount: 710 } })
   const body = bodyFor(ref)
   const res = await POST(makeReq(body, sign(body)))
   assert.equal(res.status, 200)
@@ -83,6 +85,7 @@ test('non-autodebit customer self-pay still credits the gross amount (no regress
   // reset for the autodebit tests
   await prisma.transaction.deleteMany({ where: { ref } })
   await prisma.customerPayment.deleteMany({ where: { ref: `PAY-${ref}` } })
+  await prisma.paymentIntent.deleteMany({ where: { ref } })
   await prisma.savingsPlan.update({ where: { id: planId }, data: { balance: 100 } })
 })
 

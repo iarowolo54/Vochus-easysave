@@ -182,13 +182,14 @@ test('coverage comes from the intent, never from Paystack metadata', async () =>
   await assertCreditedOnce(plan.id, ref, 200, keys)
 })
 
-test('a metadata-only coversKeys with no intent writes no coverage, and still credits as before', async () => {
+test('a charge with no intent is never credited, even with coversKeys in its metadata: it is audited for review', async () => {
   const { c, plan } = await mk()
   const ref = `VCHS-CST-${rid}-nointent`
-  await sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 20000, metaKeys: tomorrowKeys() })
-  assert.equal(await prisma.transaction.count({ where: { ref } }), 1)
-  assert.equal((await prisma.savingsPlan.findUniqueOrThrow({ where: { id: plan.id } })).balance, 200)
+  assert.equal((await sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 20000, metaKeys: tomorrowKeys() })).status, 200)
+  assert.equal(await prisma.transaction.count({ where: { ref } }), 0)
+  assert.equal(await balanceOf(plan.id), 0)
   assert.equal(await prisma.planDayCoverage.count({ where: { savingsPlanId: plan.id } }), 0)
+  assert.ok(await auditFor('payment_needs_manual_review', ref))
 })
 
 test('a plain save intent (no keys) credits, consumes, and writes no coverage', async () => {
@@ -319,7 +320,7 @@ test('a webhook with no intent in another currency is not credited', async () =>
   assert.ok(await auditFor('payment_needs_manual_review', ref))
 })
 
-test('two deliveries of a webhook with no intent at once credit once', async () => {
+test('two deliveries of a webhook with no intent at once credit nothing', async () => {
   const { c, plan } = await mk()
   const ref = `VCHS-CST-${rid}-race-${++n}`
   const results = await Promise.all([
@@ -327,36 +328,8 @@ test('two deliveries of a webhook with no intent at once credit once', async () 
     sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 20000 }),
   ])
   for (const r of results) assert.equal(r.status, 200)
-  assert.equal(await prisma.transaction.count({ where: { ref } }), 1)
-  assert.equal(await balanceOf(plan.id), 200)
-})
-
-test('a webhook whose credit collides with a ref that has no transaction rethrows, so Paystack retries', async () => {
-  const { c, plan } = await mk()
-  const ref = `VCHS-CST-${rid}-collide-${++n}`
-  await prisma.customerPayment.create({ data: { ref: `PAY-${ref}`, customerId: c.id, planId: plan.id, amount: 1, status: 'Done', channel: 'card' } })
-  await assert.rejects(() => sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 20000 }))
-  assert.equal(await balanceOf(plan.id), 0)
   assert.equal(await prisma.transaction.count({ where: { ref } }), 0)
-})
-
-test('a webhook that loses the race to the same ref returns early, with no second audit or balance change', async () => {
-  const { c, plan } = await mk()
-  const ref = `VCHS-CST-${rid}-lost-${++n}`
-  await sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 20000 })
-  // Past the first check the row looks absent, as it does for the delivery that loses a real race.
-  const delegate = prisma.transaction as unknown as { findUnique: (a: unknown) => Promise<unknown> }
-  const real = delegate.findUnique
-  let calls = 0
-  delegate.findUnique = (a: unknown) => (++calls === 1 ? Promise.resolve(null) : real.call(delegate, a))
-  try {
-    assert.equal((await sendWebhook(ref, { customerId: c.id, planId: plan.id, kobo: 20000 })).status, 200)
-  } finally {
-    delegate.findUnique = real
-  }
-  assert.equal(calls, 2, 'took the collision path')
-  assert.equal(await balanceOf(plan.id), 200)
-  assert.equal(await prisma.auditLog.count({ where: { action: 'customer_paystack_payment', details: { contains: ref } } }), 1)
+  assert.equal(await balanceOf(plan.id), 0)
 })
 
 test('a plan redeemed between the read and the credit takes no money: nothing partial, flagged for review', async () => {
