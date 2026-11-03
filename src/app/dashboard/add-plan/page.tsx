@@ -1,4 +1,6 @@
 'use client'
+import { feeSentence } from '@/lib/savings-fee'
+import { usePlanFees } from '@/lib/use-plan-fees'
 import { useEffect, useState, Suspense, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useSearchParams, useRouter } from 'next/navigation'
@@ -43,6 +45,7 @@ function AddPlanContent() {
   const [touched, setTouched] = useState(false)
 
   const [cadence, setCadence] = useState<Cadence>('daily')
+  const fees = usePlanFees()
   const [amount, setAmount] = useState('')
   const [periodDays, setPeriodDays] = useState('')
   const [goal, setGoal] = useState('')
@@ -199,7 +202,7 @@ function AddPlanContent() {
           <div className="ag-target">
             <span className="ui-row-sub ui-block">They’ll have saved</span>
             <span className="ag-target-amount">{formatNaira(total, { minor: false })}</span>
-            <span className="ui-row-sub ui-block">by {formatDate(ends)}. A platform fee is taken when they collect.</span>
+            <span className="ui-row-sub ui-block">by {formatDate(ends)}. {feeSentence({ live: fees.live, cadence, amountPerPayment: raw / UNIT_DAYS[cadence], periodicFeePct: fees.periodicFeePct })}</span>
           </div>
         )}
 

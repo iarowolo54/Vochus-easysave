@@ -1,5 +1,7 @@
 'use client'
 
+import { feeSentence } from '@/lib/savings-fee'
+import { usePlanFees } from '@/lib/use-plan-fees'
 import { useState, useRef, useEffect, useCallback, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -69,6 +71,7 @@ function maturity(p: Pick<PlanDraft, 'startDate' | 'periodDays'>) {
 }
 
 export default function EnrolPage() {
+  const fees = usePlanFees()
   const router = useRouter()
   const { data: session, status: sessionStatus } = useSession()
   const walletBalance = (session?.user as { walletBalance?: number } | undefined)?.walletBalance ?? 0
@@ -815,7 +818,7 @@ export default function EnrolPage() {
 
                 <button type="button" role="checkbox" aria-checked={form.agreed} className={`ag-agree${form.agreed ? ' is-on' : ''}`} onClick={() => { set('agreed', !form.agreed); setError('') }}>
                   <span className="ag-agree-box" aria-hidden="true">{form.agreed && <Icons.check size={16} />}</span>
-                  <span>The customer agrees to the terms. They understand how much they save, for how long, when the plan ends, the withdrawal rules, and that a platform fee is taken at withdrawal.</span>
+                  <span>The customer agrees to the terms. They understand how much they save, for how long, when the plan ends, the withdrawal rules. {feeSentence({ live: fees.live, cadence: form.cadence, amountPerPayment: parseFloat(form.dailyAmount) || 0, periodicFeePct: fees.periodicFeePct })}</span>
                 </button>
 
                 <FlowActions primary={<button type="button" className="ui-btn ui-btn--primary ag-flow-cta" disabled={loading || !form.agreed} onClick={submit}>

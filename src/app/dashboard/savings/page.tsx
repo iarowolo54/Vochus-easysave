@@ -1,5 +1,7 @@
 'use client'
 
+import { planFeePreview } from '@/lib/savings-fee'
+import { usePlanFees } from '@/lib/use-plan-fees'
 import { useState, useEffect, useCallback, useRef, Suspense } from 'react'
 import { useSession } from 'next-auth/react'
 import { useSearchParams, useRouter } from 'next/navigation'
@@ -879,11 +881,16 @@ function NewPlanForm({ plan, setPlan }: { plan: typeof EMPTY_PLAN; setPlan: (fn:
   const rawAmt = parseFloat(plan.dailyAmount) || 0
   const dailyEquiv = isW ? rawAmt / 7 : isM ? rawAmt / 30 : rawAmt
   const previewTotal = rawAmt && plan.periodDays ? Math.round(dailyEquiv * parseInt(plan.periodDays)) : 0
-  const deductionPreview = previewTotal > 0
-    ? (isW || isM
-      ? Math.round(previewTotal * 0.20 * 100) / 100
-      : Math.round(dailyEquiv * (parseInt(plan.periodDays) / 31) * 100) / 100)
-    : 0
+  const fees = usePlanFees()
+  // Once the new fee model is on, show what it will really take; until then the old estimate.
+  const feePreview = fees.live && previewTotal > 0 ? planFeePreview({ cadence: plan.cadence, amountPerPayment: rawAmt, totalSaved: previewTotal, periodicFeePct: fees.periodicFeePct }) : null
+  const deductionPreview = feePreview
+    ? feePreview.total
+    : previewTotal > 0
+      ? (isW || isM
+        ? Math.round(previewTotal * 0.20 * 100) / 100
+        : Math.round(dailyEquiv * (parseInt(plan.periodDays) / 31) * 100) / 100)
+      : 0
   const unit = isW ? 'Weekly' : isM ? 'Monthly' : 'Daily'
   const start = parseDateInput(plan.startDate) ?? today()
 
@@ -954,7 +961,7 @@ function NewPlanForm({ plan, setPlan }: { plan: typeof EMPTY_PLAN; setPlan: (fn:
       {previewTotal > 0 && (
         <dl className="ag-done-rows ag-plan-preview">
           <div><dt>Total at the end</dt><dd>{formatNaira(previewTotal, { minor: false })}</dd></div>
-          {deductionPreview > 0 && <div><dt>Platform fee at the end</dt><dd>−{formatNaira(deductionPreview)}</dd></div>}
+          {deductionPreview > 0 && <div><dt>{feePreview ? (feePreview.kind === 'first-day' ? 'Platform fee (first day’s savings)' : 'Platform fee (from each deposit)') : 'Platform fee at the end'}</dt><dd>−{formatNaira(deductionPreview)}</dd></div>}
         </dl>
       )}
     </section>

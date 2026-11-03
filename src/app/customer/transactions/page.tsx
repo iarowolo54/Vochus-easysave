@@ -14,7 +14,7 @@ import { getHideBalance, setHideBalance } from '@/lib/preferences'
 import { saveReceiptImage, shareReceiptImage } from '@/lib/receipt-image'
 
 type Tx = {
-  id: string; ref: string; type: string; amount: number
+  id: string; ref: string; type: string; amount: number; feeTaken?: number
   method: string | null; status: string; createdAt: string
   planGoal?: string | null
   cadence?: string | null
@@ -118,6 +118,7 @@ export default function TransactionsPage() {
         ['Date', `${formatDate(tx.createdAt)}, ${formatTime(tx.createdAt)}`],
         ...(tx.planGoal ? [[meta.planLabel, tx.planGoal] as [string, string]] : []),
         ['Method', depositMethod({ method: tx.method, recordedBy: recordedBy.get(tx.id) })],
+        ...(tx.feeTaken ? [['Platform fee', `−${formatNaira(tx.feeTaken)}`] as [string, string]] : []),
       ] as [string, string][],
     }
   }

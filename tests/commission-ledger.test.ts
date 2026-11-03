@@ -2,7 +2,7 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import type { Prisma, PrismaClient } from '@prisma/client'
-import { collectionFee, completionCredits, depositFeeOps, loanCommissionAmounts, recordCommission, repaymentCommissionAmount } from '../src/lib/commission-ledger'
+import { collectionFee, completionCredits, depositFeeOps, buildPlanFees, loanCommissionAmounts, recordCommission, repaymentCommissionAmount } from '../src/lib/commission-ledger'
 import { DEFAULT_COMMISSION_RATES } from '../src/lib/commission-rates'
 
 type Row = Record<string, unknown>
@@ -146,4 +146,9 @@ test('loan commission follows the rates: agent on the principal, platform on the
 test('repayment commission follows the agent repay rate', () => {
   assert.equal(repaymentCommissionAmount(DEFAULT_COMMISSION_RATES, 33600), 168)
   assert.equal(repaymentCommissionAmount({ ...DEFAULT_COMMISSION_RATES, agentRepay: 0 }, 33600), 0)
+})
+
+test('buildPlanFees reports whether the model is live and the weekly/monthly percentage', () => {
+  assert.deepEqual(buildPlanFees(true, { ...DEFAULT_COMMISSION_RATES, periodicFeePct: 9 }), { live: true, periodicFeePct: 9 })
+  assert.deepEqual(buildPlanFees(false, DEFAULT_COMMISSION_RATES), { live: false, periodicFeePct: 7.5 })
 })

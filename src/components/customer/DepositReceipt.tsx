@@ -11,6 +11,8 @@ export type ReceiptTx = {
   type?: string
   /** Raw status from the API ("Done", "Pending", …). Defaults to Done. */
   status?: string
+  /** Platform fee taken out of this deposit, if any. */
+  feeTaken?: number
 }
 
 type Direction = 'in' | 'out' | 'none'
@@ -123,6 +125,7 @@ export default function DepositReceipt({ tx, planName, hideAmounts, onHelp, onDo
         <div><dt>Date</dt><dd>{when}</dd></div>
         {planName && <div><dt>{meta.planLabel}</dt><dd>{planName}</dd></div>}
         <div><dt>Method</dt><dd>{depositMethod(tx)}</dd></div>
+        {!!tx.feeTaken && tx.feeTaken > 0 && <div><dt>Platform fee</dt><dd>{hideAmounts ? '₦ ••••' : `−${formatNaira(tx.feeTaken)}`}</dd></div>}
         <div>
           <dt>Reference</dt>
           <dd className="ui-receipt-ref">

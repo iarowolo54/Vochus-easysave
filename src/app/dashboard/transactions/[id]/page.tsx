@@ -15,7 +15,7 @@ import { createReceiptSender, SEND_IDLE } from '@/lib/receipt-send'
 import { waLink } from '@/lib/whatsapp'
 
 interface Txn {
-  id: string; ref: string; type: string; amount: number
+  id: string; ref: string; type: string; amount: number; feeTaken?: number
   method: string | null; status: string; receiptStatus: string; canSendReceipt: boolean
   note: string | null; createdAt: string
   agent: { name: string; agentId: string }
@@ -124,6 +124,7 @@ export default function TransactionDetailPage() {
   const rows: [string, string][] = [
     ['Date', when],
     ...(txn.method ? [['Paid by', txn.method] as [string, string]] : []),
+    ...(txn.feeTaken ? [['Platform fee', `−${formatNaira(txn.feeTaken)}`] as [string, string]] : []),
     ...(txn.customer ? [['Customer', `${customer} (${txn.customer.customerId})`] as [string, string]] : []),
     ...(txn.plan ? [['Plan', `${txn.plan.goal} · ${txn.plan.durationDays} days`] as [string, string]] : []),
     ['Agent', `${displayName(txn.agent.name)} (${txn.agent.agentId})`],

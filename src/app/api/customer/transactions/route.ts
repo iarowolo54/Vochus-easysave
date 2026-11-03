@@ -22,6 +22,7 @@ export async function GET() {
       ref: t.ref,
       type: t.type,
       amount: t.amount,
+      feeTaken: t.feeTaken,
       method: t.method,
       status: statuses.get(t.id) ?? t.status,
       createdAt: t.createdAt,

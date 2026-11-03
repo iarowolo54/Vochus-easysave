@@ -4,7 +4,6 @@ import { useState, useEffect, useCallback, type ReactNode } from 'react'
 import { Icons } from '@/components/ui/icons'
 import { digitsOnly } from '@/lib/numeric'
 import { IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
-import { redemptionDeduction } from '@/lib/wallet-rates'
 import {
   ConfirmModal, Empty, Field, LoadError, Modal, PageHeader, Pager, SearchField, Segmented,
   TableSkeleton, dateTime, shortDate, nairaKobo, useDebounced, useToast,
@@ -270,16 +269,18 @@ export default function RedemptionsPage() {
   useEffect(() => { setHistoryPage(1) }, [historySearch, historyTypeFilter, historyStatusFilter])
 
   // ── New request ──
-  function calcPreview(planId: string) {
+  async function calcPreview(planId: string) {
     const plan = plans.find(p => p.id === planId)
     if (!plan) { setPreview(null); return }
-    // Same rule the server uses for admin-initiated requests. It's an estimate: the server also
-    // waives the fee for self-saved plans, which this list can't tell.
-    const fee = Math.min(redemptionDeduction({
-      balance: plan.balance, dailyAmount: plan.dailyAmount, cadence: plan.cadence,
-      hasCashDeposit: true, periodDays: plan.periodDays, initiator: 'admin',
-    }).total, plan.balance)
-    setPreview({ balance: plan.balance, savingsFee: fee, netPayout: plan.balance - fee })
+    // The server works the fee out, so the preview always matches what the request will carry.
+    try {
+      const res = await fetch(`/api/admin/early-redemption/preview?planId=${encodeURIComponent(planId)}`)
+      if (!res.ok) throw new Error()
+      const d = await res.json() as { balance: number; fee: number; netPayout: number }
+      setPreview({ balance: d.balance, savingsFee: d.fee, netPayout: d.netPayout })
+    } catch {
+      setPreview(null)
+    }
   }
 
   function onFormChange(key: keyof typeof form, val: string) {

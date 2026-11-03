@@ -130,3 +130,8 @@ export function loanCommissionAmounts(rates: CommissionRates, principal: number,
 export function repaymentCommissionAmount(rates: CommissionRates, amount: number): number {
   return pct(amount, rates.agentRepay)
 }
+
+/** What the plan screens need to describe the fee: whether the new model is on, and the weekly/monthly percentage. */
+export function buildPlanFees(live: boolean, rates: CommissionRates): { live: boolean; periodicFeePct: number } {
+  return { live, periodicFeePct: rates.periodicFeePct }
+}

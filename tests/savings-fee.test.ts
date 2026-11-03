@@ -1,7 +1,7 @@
 // Unit test: the new savings fee rules (offline daily first-day amount, weekly/monthly deposit fee) and their splits.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { depositFee, planFeePreview, settleUpFee, type FeeRules } from '../src/lib/savings-fee'
+import { depositFee, feeSentence, planFeePreview, settleUpFee, type FeeRules } from '../src/lib/savings-fee'
 
 const R: FeeRules = { dailyFirstAgentPct: 60, periodicFeePct: 7.5, periodicAgentPct: 60 }
 const daily = (feeCollected: number, deposit: number, dailyAmount = 500) => ({ cadence: 'daily', dailyAmount, feeCollected, deposit })
@@ -56,4 +56,17 @@ test('settle-up on a weekly plan is the percentage of the older deposits still i
 test('plan previews: daily shows the first-day amount, weekly the percentage of the total', () => {
   assert.deepEqual(planFeePreview({ cadence: 'daily', amountPerPayment: 500, totalSaved: 45000, periodicFeePct: 7.5 }), { kind: 'first-day', total: 500 })
   assert.deepEqual(planFeePreview({ cadence: 'weekly', amountPerPayment: 10000, totalSaved: 100000, periodicFeePct: 7.5 }), { kind: 'percent', total: 7500 })
+})
+
+test('feeSentence says what the old rule says before go-live', () => {
+  assert.equal(feeSentence({ live: false, cadence: 'daily', amountPerPayment: 500, periodicFeePct: 7.5 }), 'A platform fee is taken when they collect.')
+})
+
+test('feeSentence for a live daily plan names the first day\'s amount', () => {
+  assert.equal(feeSentence({ live: true, cadence: 'daily', amountPerPayment: 500, periodicFeePct: 7.5 }), 'The first day\'s savings (₦500) is the platform fee, taken from their first deposit.')
+})
+
+test('feeSentence for a live weekly or monthly plan names the percentage', () => {
+  assert.equal(feeSentence({ live: true, cadence: 'weekly', amountPerPayment: 10000, periodicFeePct: 7.5 }), 'A platform fee of 7.5% is taken from each deposit.')
+  assert.equal(feeSentence({ live: true, cadence: 'monthly', amountPerPayment: 10000, periodicFeePct: 5 }), 'A platform fee of 5% is taken from each deposit.')
 })

@@ -50,3 +50,12 @@ export function planFeePreview(i: { cadence: string | null; amountPerPayment: nu
   if (isDaily(i.cadence)) return { kind: 'first-day', total: money(i.amountPerPayment) }
   return { kind: 'percent', total: pct(i.totalSaved, i.periodicFeePct) }
 }
+
+/** The one-line fee note shown while a plan is being set up. Before go-live it keeps today's wording. */
+export function feeSentence(i: { live: boolean; cadence: string | null; amountPerPayment: number; periodicFeePct: number }): string {
+  if (!i.live) return 'A platform fee is taken when they collect.'
+  if (isDaily(i.cadence)) {
+    return `The first day's savings (₦${money(i.amountPerPayment).toLocaleString('en-NG', { maximumFractionDigits: 2 })}) is the platform fee, taken from their first deposit.`
+  }
+  return `A platform fee of ${i.periodicFeePct}% is taken from each deposit.`
+}
