@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
+import { money } from '@/lib/money'
 
 export async function GET() {
   const guard = await requirePermission('commission', 'view')
@@ -43,5 +44,14 @@ export async function GET() {
     commissionBalance: a.commissionBalance,
   }))
 
-  return NextResponse.json({ totalPending, totalDisbursed, leaderboard })
+  // The platform's own commission, from the ledger. It only covers fees recorded since the ledger began.
+  const platformRows = await prisma.commissionLedger.groupBy({ by: ['source'], where: { party: 'platform' }, _sum: { amount: true } })
+  const sumOf = (source: string) => platformRows.find(r => r.source === source)?._sum.amount ?? 0
+  const systemCommission = {
+    savingsFees: money(sumOf('redemption_fee')),
+    loanShare: money(sumOf('loan')),
+    total: money(platformRows.reduce((t, r) => t + (r._sum.amount ?? 0), 0)),
+  }
+
+  return NextResponse.json({ totalPending, totalDisbursed, leaderboard, systemCommission })
 }

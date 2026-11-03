@@ -18,6 +18,8 @@ export const DEFAULT_COMMISSION_RATES: CommissionRates = {
 
 export const SETTING_KEY = 'commissionRates'
 export const MAX_COMBINED_SAVINGS_PCT = 10
+/** Typo guards: no single loan or repayment rate may exceed these. */
+const MAX_PCT: Partial<Record<keyof CommissionRates, number>> = { agentLoan: 10, agentRepay: 10, platformLoan: 50 }
 
 const KEYS = Object.keys(DEFAULT_COMMISSION_RATES) as (keyof CommissionRates)[]
 const usable = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v) && v >= 0 && v <= 100
@@ -44,6 +46,9 @@ export function validateRates(rates: unknown): { ok: true; rates: CommissionRate
   if (!src) return { ok: false, error: 'Invalid payload' }
   for (const k of KEYS) if (!usable(src[k])) return { ok: false, error: `Invalid value for ${k}` }
   const r = src as unknown as CommissionRates
+  for (const [k, max] of Object.entries(MAX_PCT)) {
+    if (r[k as keyof CommissionRates] > (max as number)) return { ok: false, error: `${k} can't be more than ${max}%` }
+  }
   if (r.agentSavings + r.platformSavings > MAX_COMBINED_SAVINGS_PCT) {
     return { ok: false, error: `Agent and platform savings rates can't add up to more than ${MAX_COMBINED_SAVINGS_PCT}%` }
   }

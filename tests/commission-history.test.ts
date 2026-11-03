@@ -6,6 +6,8 @@ import {
   redemptionCommission,
   filterEntries,
   sumCommission,
+  entriesFromLedger,
+  mergeHistory,
   type CommissionEntry,
 } from '../src/lib/commission-history'
 
@@ -53,4 +55,30 @@ test('filterEntries: no filters returns all; empty values ignored', () => {
 
 test('sumCommission totals the commission field (rounded)', () => {
   assert.equal(sumCommission([E({ commission: 500 }), E({ commission: 168 }), E({ commission: 600 })]), 1268)
+})
+
+const L = (p: Partial<Parameters<typeof entriesFromLedger>[0][number]>) => ({
+  id: p.id ?? 'l1', source: p.source ?? 'savings', sourceRef: p.sourceRef ?? 'TXN-1', base: p.base ?? 1000, amount: p.amount ?? 4,
+  createdAt: p.createdAt ?? new Date('2026-11-12T10:00:00Z'), customerId: p.customerId ?? null,
+})
+
+test('entriesFromLedger maps ledger sources to the drawer\'s sources and keeps the stored amount', () => {
+  const out = entriesFromLedger([
+    L({ id: 'a', source: 'savings' }), L({ id: 'b', source: 'savings_catchup', sourceRef: 'RED-1' }),
+    L({ id: 'c', source: 'redemption_fee', sourceRef: 'RED-2' }), L({ id: 'd', source: 'loan', sourceRef: 'DSB-1' }),
+  ], new Map())
+  assert.deepEqual(out.map(e => e.source), ['savings', 'savings', 'redemption', 'loan'])
+  assert.equal(out[0].commission, 4)
+  assert.equal(out[0].ref, 'TXN-1')
+})
+
+test('mergeHistory drops a reconstructed entry the ledger already has, and keeps the rest', () => {
+  const ledger = entriesFromLedger([L({ source: 'loan', sourceRef: 'DSB-1', amount: 500 })], new Map())
+  const rec = [E({ id: 'old1', source: 'loan', ref: 'DSB-1' }), E({ id: 'old2', source: 'loan', ref: 'DSB-0' })]
+  assert.deepEqual(mergeHistory(ledger, rec).map(e => e.id).sort(), ['l1', 'old2'].sort())
+})
+
+test('mergeHistory does not treat a loan and a repayment with the same ref as the same event', () => {
+  const ledger = entriesFromLedger([L({ source: 'loan', sourceRef: 'X-1' })], new Map())
+  assert.equal(mergeHistory(ledger, [E({ id: 'r', source: 'repayment', ref: 'X-1' })]).length, 2)
 })

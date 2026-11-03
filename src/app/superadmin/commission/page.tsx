@@ -21,10 +21,13 @@ interface LeaderboardEntry {
   photoUrl?: string | null
 }
 
+interface SystemCommission { savingsFees: number; loanShare: number; total: number }
+
 interface PageData {
   totalPending: number
   totalDisbursed: number
   leaderboard: LeaderboardEntry[]
+  systemCommission: SystemCommission
 }
 
 const TERMS = [30, 60, 90, 180] as const
@@ -41,7 +44,7 @@ const COMM_FIELDS: { key: CommKey; group: 'agent' | 'platform'; label: string; e
   { key: 'agentRepay', group: 'agent', label: 'Repayment commission', example: v => `Per repayment. On ₦33,600 repaid the agent earns ${nairaKobo(336 * v)}.` },
   { key: 'platformSavings', group: 'platform', label: 'Savings platform fee', example: v => `Per savings deposit. On ₦100,000 the platform keeps ${nairaKobo(1000 * v)}.` },
   { key: 'platformLoan', group: 'platform', label: 'Platform share of loan interest', example: v => `Of interest earned. On ₦3,600 of interest the platform keeps ${nairaKobo(36 * v)}.` },
-  { key: 'platformPenalty', group: 'platform', label: 'Late repayment penalty', example: v => `Per day late. ₦50,000 overdue for 3 days costs ${nairaKobo(50000 * v / 100 * 3)}.` },
+  { key: 'platformPenalty', group: 'platform', label: 'Late repayment penalty (not applied yet)', example: v => `Per day late. ₦50,000 overdue for 3 days costs ${nairaKobo(50000 * v / 100 * 3)}.` },
 ]
 const commLabel = (k: CommKey) => COMM_FIELDS.find(f => f.key === k)?.label ?? k
 
@@ -87,7 +90,8 @@ function PctInput({ id, value, invalid, onChange, label }: { id: string; value: 
 }
 
 export default function CommissionPage() {
-  const [data, setData] = useState<PageData>({ totalPending: 0, totalDisbursed: 0, leaderboard: [] })
+  const [ratePin, setRatePin] = useState('')
+  const [data, setData] = useState<PageData>({ totalPending: 0, totalDisbursed: 0, leaderboard: [], systemCommission: { savingsFees: 0, loanShare: 0, total: 0 } })
   const [lbPage, setLbPage] = useState(1)
   const [historyAgent, setHistoryAgent] = useState<LeaderboardEntry | null>(null)
   const [loading, setLoading] = useState(true)
@@ -134,7 +138,7 @@ export default function CommissionPage() {
 
     const board = commD as Partial<PageData> | null
     setBoardFailed(!board)
-    if (board) setData({ totalPending: board.totalPending ?? 0, totalDisbursed: board.totalDisbursed ?? 0, leaderboard: board.leaderboard ?? [] })
+    if (board) setData({ totalPending: board.totalPending ?? 0, totalDisbursed: board.totalDisbursed ?? 0, leaderboard: board.leaderboard ?? [], systemCommission: board.systemCommission ?? { savingsFees: 0, loanShare: 0, total: 0 } })
 
     const loan = ratesD as { rates?: { durationDays: number; rate: number; maxAmount?: number | null; enabled?: boolean }[] } | null
     setLoanFailed(!loan || !Array.isArray(loan.rates))
@@ -219,11 +223,11 @@ export default function CommissionPage() {
   async function saveCommRates(rates: CommRates, done: string) {
     setBusy(true); setConfirmError('')
     try {
-      const res = await fetch('/api/admin/commission/rates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rates }) })
+      const res = await fetch('/api/admin/commission/rates', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ rates, pin: ratePin }) })
       if (!res.ok) { setConfirmError(await errorOf(res, 'The rates weren’t saved. Nothing changed. Try again.')); return }
       setSavedComm(rates); setComm(toDrafts(rates))
       setLastSavedComm(`Saved at ${nowStr()}`)
-      setConfirm(null)
+      setConfirm(null); setRatePin('')
       toast(done, 'success')
     } catch {
       setConfirmError('No connection. Check your internet and try again.')
@@ -315,7 +319,7 @@ export default function CommissionPage() {
         </button>}
       />
 
-      <div className="stats-grid am-stats-3">
+      <div className="stats-grid am-stats-4">
         <div className="stat">
           <div className="stat-lbl">Total commission earned</div>
           <div className="stat-val">{firstLoad ? '—' : naira(data.totalPending + data.totalDisbursed)}</div>
@@ -330,6 +334,11 @@ export default function CommissionPage() {
           <div className="stat-lbl">Paid out</div>
           <div className="stat-val">{firstLoad ? '—' : naira(data.totalDisbursed)}</div>
           <div className="stat-sub">All time</div>
+        </div>
+        <div className="stat">
+          <div className="stat-lbl">System commission</div>
+          <div className="stat-val">{firstLoad ? '—' : naira(data.systemCommission.total)}</div>
+          <div className="stat-sub">Platform fees recorded since tracking began</div>
         </div>
       </div>
 
@@ -568,6 +577,9 @@ export default function CommissionPage() {
                 <li key={f.key}><span>{f.label}</span><span className="am-diff-val"><span className="am-diff-old">{savedComm[f.key]}%</span>{commParsed[f.key]}%</span></li>
               ))}
             </ul>
+            <Field id="rate-pin" label="Your approval PIN">
+              <input id="rate-pin" className="a-input" type="password" inputMode="numeric" autoComplete="off" maxLength={8} value={ratePin} onChange={e => setRatePin(e.target.value)} />
+            </Field>
           </>}
           onConfirm={() => saveCommRates(Object.fromEntries(COMM_FIELDS.map(f => [f.key, commParsed[f.key] as number])) as CommRates, 'Commission rates saved')}
           onClose={() => setConfirm(null)} />
@@ -582,6 +594,9 @@ export default function CommissionPage() {
                 <li key={f.key}><span>{commLabel(f.key)}</span><span className="am-diff-val">{savedComm[f.key] !== DEFAULT_COMM[f.key] && <span className="am-diff-old">{savedComm[f.key]}%</span>}{DEFAULT_COMM[f.key]}%</span></li>
               ))}
             </ul>
+            <Field id="rate-pin" label="Your approval PIN">
+              <input id="rate-pin" className="a-input" type="password" inputMode="numeric" autoComplete="off" maxLength={8} value={ratePin} onChange={e => setRatePin(e.target.value)} />
+            </Field>
           </>}
           onConfirm={() => saveCommRates(DEFAULT_COMM, 'Commission rates reset to defaults')}
           onClose={() => setConfirm(null)} />

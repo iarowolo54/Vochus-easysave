@@ -41,3 +41,10 @@ test('pct takes a percent of an amount and rounds to kobo', () => {
   assert.equal(pct(1000, 0.4), 4)
   assert.equal(pct(33.33, 1.5), 0.5)
 })
+
+test('validateRates caps the loan and repayment rates so a typo cannot pay out a loan\'s worth', () => {
+  assert.equal(validateRates({ ...DEFAULT_COMMISSION_RATES, agentLoan: 11 }).ok, false)
+  assert.equal(validateRates({ ...DEFAULT_COMMISSION_RATES, agentRepay: 11 }).ok, false)
+  assert.equal(validateRates({ ...DEFAULT_COMMISSION_RATES, platformLoan: 51 }).ok, false)
+  assert.equal(validateRates({ ...DEFAULT_COMMISSION_RATES, agentLoan: 10, agentRepay: 10, platformLoan: 50 }).ok, true)
+})

@@ -6,6 +6,8 @@ import {
   repaymentCommission,
   redemptionCommission,
   sumCommission,
+  entriesFromLedger,
+  mergeHistory,
   COMMISSION_SOURCES,
   type CommissionEntry,
   type CommissionSource,
@@ -38,6 +40,19 @@ export async function GET(req: NextRequest, context: { params: Promise<{ agentId
   const toDate = to ? new Date(`${to}T23:59:59.999`) : undefined
   const createdRange = fromDate || toDate ? { ...(fromDate && { gte: fromDate }), ...(toDate && { lte: toDate }) } : undefined
 
+  const ledgerRows = await prisma.commissionLedger.findMany({
+    where: { party: 'agent', agentId: agent.id, ...(createdRange && { createdAt: createdRange }) },
+    orderBy: { createdAt: 'desc' },
+  })
+  const ledgerCustomerIds = [...new Set(ledgerRows.map(r => r.customerId).filter((c): c is string => !!c))]
+  const ledgerCustomers = ledgerCustomerIds.length
+    ? await prisma.customer.findMany({ where: { id: { in: ledgerCustomerIds } }, select: { id: true, firstName: true, lastName: true, customerId: true } })
+    : []
+  const ledgerEntries = entriesFromLedger(
+    ledgerRows,
+    new Map(ledgerCustomers.map(c => [c.id, { name: `${c.firstName} ${c.lastName}`.trim(), customerId: c.customerId }])),
+  ).filter(e => want(e.source))
+
   const [disbursements, repayments, redemptions, rewards] = await Promise.all([
     want('loan')
       ? prisma.transaction.findMany({
@@ -55,6 +70,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ agentId
       ? prisma.earlyRedemption.findMany({
           where: {
             status: 'Approved',
+            feeRule: 'v1', // v2 redemptions are in the ledger; their fee is not split 3/5
             penalty: { gt: 0 },
             savingsPlan: { customer: { agentId: agent.id } },
             ...(createdRange && { decidedAt: createdRange }),
@@ -70,7 +86,7 @@ export async function GET(req: NextRequest, context: { params: Promise<{ agentId
       : Promise.resolve([]),
   ])
 
-  const entries: CommissionEntry[] = [
+  const reconstructed: CommissionEntry[] = [
     ...disbursements.map((t): CommissionEntry => ({
       id: `loan:${t.id}`, date: t.createdAt.toISOString(), source: 'loan',
       commission: loanCommission(t.amount), baseAmount: t.amount,
@@ -93,7 +109,8 @@ export async function GET(req: NextRequest, context: { params: Promise<{ agentId
     })),
   ]
 
-  // Source + date filtering already applied in-query; just order newest-first.
+  // Ledger rows are exact; reconstructed events they cover are dropped. Source + date filtering is already applied.
+  const entries = mergeHistory(ledgerEntries, reconstructed)
   entries.sort((x, y) => y.date.localeCompare(x.date))
 
   return NextResponse.json({

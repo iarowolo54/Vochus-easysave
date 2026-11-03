@@ -3,6 +3,7 @@ import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { getCommissionRates, SETTING_KEY, validateRates } from '@/lib/commission-rates'
+import { verifyApprovalPin } from '@/lib/approval-pin'
 
 export async function GET() {
   const guard = await requirePermission('commission', 'view')
@@ -21,6 +22,11 @@ export async function POST(req: NextRequest) {
   const checked = validateRates(body?.rates)
   if (!checked.ok) return NextResponse.json({ error: checked.error }, { status: 400 })
   const rates = checked.rates
+  // Rates move real money, so a saved change also needs the approver's PIN.
+  if (!body?.pin) return NextResponse.json({ error: 'Approval PIN required' }, { status: 400 })
+  const pinCheck = await verifyApprovalPin(session, body.pin)
+  if (!pinCheck.ok) return pinCheck.response
+  const before = await getCommissionRates(prisma)
 
   await prisma.platformSetting.upsert({
     where: { key: SETTING_KEY },
@@ -31,7 +37,7 @@ export async function POST(req: NextRequest) {
   logAudit({
     action: 'commission_rates_updated',
     entity: 'PlatformSetting',
-    details: `Commission rates updated: agent savings ${rates.agentSavings}%, agent loan ${rates.agentLoan}%, platform savings ${rates.platformSavings}%, platform loan ${rates.platformLoan}%`,
+    details: `Commission rates updated: ${(Object.keys(rates) as (keyof typeof rates)[]).filter(k => rates[k] !== before[k]).map(k => `${k} ${before[k]}% → ${rates[k]}%`).join(', ') || 'no change'}`,
     actorType: guard.actor.type,
     actorId: guard.actor.id,
     actorName: guard.actor.name,

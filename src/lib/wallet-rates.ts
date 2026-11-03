@@ -8,9 +8,6 @@ export const BANK_WEEKLY_RATE = 0.035
 export const TOTAL_SAVINGS_FEE = CASH_DAILY_RATE
 export const PLATFORM_SAVINGS_FEE = TOTAL_SAVINGS_FEE * (2 / 5)
 export const AGENT_SAVINGS_COMMISSION = TOTAL_SAVINGS_FEE * (3 / 5)
-export const LOAN_AGENT_COMMISSION = 0.01
-export const LOAN_PLATFORM_FEE = 0.05
-export const LOAN_REPAY_AGENT_COMMISSION = 0.005
 export const EARLY_EXIT_PENALTY = 0
 
 export function savingsFeeRates(cadence: string | null | undefined, hasCashDeposit: boolean) {

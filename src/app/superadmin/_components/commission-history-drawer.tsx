@@ -5,9 +5,9 @@ import { Modal, Pager, SearchField, Empty, LoadError, TableSkeleton, nairaKobo, 
 
 const PAGE_SIZE = 25
 
-type Source = 'loan' | 'repayment' | 'redemption' | 'reward'
-const SOURCE_LABELS: Record<Source, string> = { loan: 'Loans', repayment: 'Repayments', redemption: 'Redemptions', reward: 'Rewards' }
-const ALL_SOURCES: Source[] = ['loan', 'repayment', 'redemption', 'reward']
+type Source = 'loan' | 'repayment' | 'redemption' | 'reward' | 'savings'
+const SOURCE_LABELS: Record<Source, string> = { loan: 'Loans', repayment: 'Repayments', redemption: 'Redemptions', reward: 'Rewards', savings: 'Savings' }
+const ALL_SOURCES: Source[] = ['savings', 'loan', 'repayment', 'redemption', 'reward']
 
 interface Entry {
   id: string; date: string; source: Source; commission: number; baseAmount: number
