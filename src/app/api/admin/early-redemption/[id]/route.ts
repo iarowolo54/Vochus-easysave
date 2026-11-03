@@ -7,7 +7,7 @@ import { logAudit } from '@/lib/audit'
 import { redemptionCompletionOps, ConflictError } from '@/lib/redemption-complete'
 import { BALANCE_CHANGED, balanceUnchanged, CASH_NEEDS_ACTIVE_AGENT, claimPlanForPayout, NO_MONEY_LEFT, reopenPlanAfterNoTransfer, settlePlanAfterPayout, TRANSFER_ACCEPTED } from '@/lib/redemption-balance'
 import { getPayoutMode } from '@/lib/payout-mode'
-import { heldForNameCheck } from '@/lib/payout-account'
+import { heldForNameCheck, isBankMethod } from '@/lib/payout-account'
 import { customerType } from '@/lib/customer-type'
 import {
   notifyCustomerRedemptionPaid,
@@ -24,7 +24,7 @@ const OPEN_STATUSES = ['Pending', 'TokenValidated', 'AgentApproved']
  */
 async function notifyManualOutcome(
   outcome: { kind: 'paid' } | { kind: 'declined'; reason: string },
-  r: { ref: string; netPayout: number },
+  r: { ref: string; netPayout: number; balance: number; penalty: number; payoutMethod: string | null; bankName: string | null; accountNumber: string | null; accountName: string | null; savingsPlan: { goal: string } },
   customerId: string,
   agentId: string,
 ): Promise<void> {
@@ -37,7 +37,18 @@ async function notifyManualOutcome(
     if (!customer) return
     const type = customerType(plans)
     const customerName = `${customer.firstName} ${customer.lastName}`
-    const base = { amountNaira: r.netPayout, ref: r.ref }
+    const base = {
+      amountNaira: r.netPayout,
+      ref: r.ref,
+      firstName: customer.firstName,
+      planGoal: r.savingsPlan.goal,
+      balanceNaira: r.balance,
+      feeNaira: r.penalty,
+      method: isBankMethod(r.payoutMethod) ? 'Bank transfer' : 'Cash',
+      bankName: r.bankName,
+      accountNumber: r.accountNumber,
+      accountName: r.accountName,
+    }
     if (outcome.kind === 'paid') {
       await notifyCustomerRedemptionPaid(customer, type, base)
       if (agent) await notifyAgentRedemptionPaid(agent, { customerName, ...base })

@@ -99,6 +99,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           amountNaira: redemption.netPayout,
           ref: redemption.ref,
           reason: 'declined by your agent',
+          firstName: cust.firstName,
+          planGoal: redemption.savingsPlan.goal,
         })
       }
     } catch {

@@ -23,7 +23,7 @@ export function accountNameMatches(accountName: string, customer: { firstName: s
 
 /** Refs of requests an agent made. Customers choose their own account, so only these are checked against the name. */
 export const AGENT_REQUEST_PREFIX = 'RDM-'
-const isBankMethod = (m: string | null) => m === 'Bank Transfer' || m === 'BankTransfer'
+export const isBankMethod = (m: string | null) => m === 'Bank Transfer' || m === 'BankTransfer'
 
 /**
  * An agent's bank payout in another name isn't refused outright, because real names differ on bank records. It's held:

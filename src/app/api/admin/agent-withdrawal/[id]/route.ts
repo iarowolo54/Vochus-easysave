@@ -62,6 +62,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
           amountNaira: record.amount,
           ref: record.ref,
           reason: adminNote || 'No reason given',
+          agentName: agent.name,
         })
       }
     } catch (e) {
@@ -102,7 +103,16 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       })
 
       try {
-        await notifyAgentPayoutPaid(agent, { amountNaira: record.amount, ref: record.ref })
+        await notifyAgentPayoutPaid(agent, {
+          amountNaira: record.amount,
+          ref: record.ref,
+          agentName: agent.name,
+          transferRef: adminNote || null,
+          method: 'Bank transfer',
+          bankName: record.bankName,
+          accountNumber: record.accountNumber,
+          accountName: record.accountName,
+        })
       } catch (e) {
         console.error('[agent-withdrawal] paid notification failed', e instanceof Error ? e.message : e)
       }
