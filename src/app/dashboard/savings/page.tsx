@@ -336,6 +336,28 @@ function SavingsContent() {
     update()
   }
 
+  // Matured or collected plans can be reopened so the customer can save into them again.
+  async function reopenPlan(id: string) {
+    if (!selected) return
+    setLoading(true); setError('')
+    try {
+      const res = await fetch('/api/customers/plan/reopen', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ customerId: selected.id, planId: id }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) { setError(data.error ?? 'The plan could not be reopened. Please try again.'); setLoading(false); return }
+    } catch {
+      setError('No connection. Check your internet and try again.'); setLoading(false); return
+    }
+    setToast(`Plan reopened for ${selected.firstName} ${selected.lastName}`)
+    reset()
+    setLoading(false)
+    setRefreshKey(k => k + 1)
+    update()
+  }
+
   function requestPin() {
     if (!selected) { setError('Choose a customer first.'); return }
     if (!plan) { setError(choosePlan ? 'Choose which plan this saving goes into.' : 'This customer has no active plan.'); return }
@@ -458,6 +480,9 @@ function SavingsContent() {
     </a>
   )
   const redeemed = selected?.planStatus === 'Redeemed'
+  const finishedPlans = (selected?.savingsPlans ?? [])
+    .filter(p => p.status === 'Redeemed' || (p.status === 'Active' && p.maturityDate !== null && new Date(p.maturityDate).getTime() <= Date.now()))
+    .slice(0, 3)
   const bulkTotal = (onlineCal?.perSlot ?? plan?.dailyAmount ?? 0) * selectedDates.length
   const bulkUnit = onlineCal?.weekly ? 'week' : 'day'
   const payAmount = bulkMode ? bulkTotal : parseFloat(amount || '0')
@@ -585,6 +610,20 @@ function SavingsContent() {
                 </div>
                 <button type="button" className="ui-link" onClick={changeCustomer}>Change</button>
               </section>
+
+              {finishedPlans.length > 0 && (
+                <section className="ui-card ui-card--list" aria-label="Finished plans">
+                  {finishedPlans.map(p => (
+                    <div key={p.id} className="ui-row">
+                      <span className="ui-row-main">
+                        <span className="ui-row-title">{p.goal}</span>
+                        <span className="ui-row-sub">{formatNaira(perPayment(p), { minor: false })} a {planUnit(p)} · {p.status === 'Redeemed' ? 'collected' : 'matured'}</span>
+                      </span>
+                      <button type="button" className="ui-btn ui-btn--secondary" disabled={loading} onClick={() => reopenPlan(p.id)}>Save again</button>
+                    </div>
+                  ))}
+                </section>
+              )}
 
               {redeemed ? (
                 <NewPlanForm plan={newPlan} setPlan={setNewPlan} />

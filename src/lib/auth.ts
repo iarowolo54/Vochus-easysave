@@ -5,6 +5,7 @@ import bcrypt from 'bcryptjs'
 import { prisma } from './prisma'
 import { isPastAbsoluteCap, IDLE_SECONDS } from '@/lib/session-policy'
 import { refundAttempt, reserveAgentAttempt, reserveAttempt } from '@/lib/login-attempt'
+import { sendLoginAlert } from '@/lib/login-alert'
 import { rightmostForwardedIp } from '@/lib/rate-limit'
 
 const AGENT_IP_FAIL_LIMIT = 20
@@ -163,6 +164,8 @@ export const authOptions: NextAuthOptions = {
           try { meta = device ? JSON.parse(device) : undefined } catch { meta = undefined }
           recordDeviceSession({ deviceId, app, agentId: agent.id, meta })
         }
+
+        void sendLoginAlert({ email: agent.email, name: agent.name }, biometricToken ? 'fingerprint' : 'password')
 
         return {
           id: agent.id,

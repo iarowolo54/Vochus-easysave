@@ -39,6 +39,7 @@ type CustomerData = {
   agent: { name: string; agentId: string; phone: string }
   plan: Plan | null
   plans: Plan[]
+  redeemedPlans?: { id: string; goal: string; dailyAmount: number; periodDays: number; cadence?: string }[]
   transactions: Tx[]
   pendingRedemptions: { ref: string; status: string; savingsPlanId: string }[]
 }
@@ -93,6 +94,23 @@ export default function CustomerDashboard() {
   const [receiptTx, setReceiptTx] = useState<Tx | null>(null)
   const [toast, setToast] = useState('')
   const [bioOffer, setBioOffer] = useState(false)
+  const [reopening, setReopening] = useState(false)
+
+  // A finished plan goes back to Active, then the normal save screen takes over.
+  async function saveAgain(planId: string) {
+    if (reopening) return
+    setReopening(true)
+    try {
+      const res = await fetch('/api/customer/plan/reopen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ planId }) })
+      const body = await res.json().catch(() => ({}))
+      if (!res.ok) { setToast(body.error ?? 'Couldn’t reopen this plan. Try again.'); return }
+      router.push(`/customer/save?planId=${encodeURIComponent(planId)}`)
+    } catch {
+      setToast('Couldn’t reopen this plan. Check your connection and try again.')
+    } finally {
+      setReopening(false)
+    }
+  }
 
   async function acceptBiometric() {
     setBioOffer(false)
@@ -295,6 +313,12 @@ export default function CustomerDashboard() {
 
         {pending && <CollectionTracker status={pending.status} onView={() => router.push('/customer/redeem')} />}
 
+        {plan && finished && (
+          <div className="ui-actions">
+            <ActionButton icon="add" label="Save again" disabled={reopening} onClick={() => saveAgain(plan.id)} />
+          </div>
+        )}
+
         {!finished && <div className="ui-actions">
           {!ended && (
             <ActionButton
@@ -368,6 +392,26 @@ export default function CustomerDashboard() {
             ))
           )}
         </section>
+
+        {!!data.redeemedPlans?.length && (
+          <>
+            <div className="ui-section-head">
+              <h2>Collected plans</h2>
+            </div>
+            <section className="ui-card ui-card--list">
+              {data.redeemedPlans.map(p => (
+                <ListRow
+                  key={p.id}
+                  icon="plan"
+                  title={p.goal}
+                  sub={`${formatNaira(p.dailyAmount)} a ${p.cadence === 'weekly' ? 'week' : p.cadence === 'monthly' ? 'month' : 'day'} · collected`}
+                  value={reopening ? '…' : 'Save again'}
+                  onClick={() => saveAgain(p.id)}
+                />
+              ))}
+            </section>
+          </>
+        )}
 
         <div className="ui-section-head">
           <h2>Your agent</h2>

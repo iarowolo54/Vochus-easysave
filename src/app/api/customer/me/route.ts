@@ -78,6 +78,15 @@ export async function GET() {
   }))
   const plan = plans[0] ?? null
 
+  // Collected plans, offered on the home screen so the customer can save into one again. Kept apart from
+  // `plans` because the save, collect and settings screens expect `plans` to hold only open plans.
+  const redeemedPlans = await prisma.savingsPlan.findMany({
+    where: { customerId: customer.id, status: 'Redeemed' },
+    orderBy: { startDate: 'desc' },
+    take: 5,
+    select: { id: true, goal: true, dailyAmount: true, periodDays: true, cadence: true },
+  })
+
   // Every deposit on the customer's active plans, so the home screen can show per-plan history and
   // which days are paid (bulk deposits are stamped with the day they cover). Scoped to this customer.
   const [planTxs, pendingRedemptions] = await Promise.all([
@@ -120,6 +129,7 @@ export async function GET() {
     agent: customer.agent,
     plan,
     plans,
+    redeemedPlans,
     recentTransactions: txs,
     pendingRedemption: pendingRedemption && { ref: pendingRedemption.ref, status: pendingRedemption.status },
     transactions,

@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { signCustomerToken, customerCookieOptions } from '@/lib/customer-auth'
 import { recordDeviceSession } from '@/lib/device-session'
 import { logAudit } from '@/lib/audit'
+import { sendLoginAlert } from '@/lib/login-alert'
 import {
   checkLoginThrottle,
   recordLoginFailure,
@@ -164,6 +165,9 @@ export async function POST(req: NextRequest) {
     actorId: customer.id,
     actorName: `${customer.firstName} ${customer.lastName}`,
   })
+
+  // Only an address the customer proved is theirs gets the alert (agent-typed emails are unverified).
+  void sendLoginAlert({ email: customer.emailVerifiedAt ? customer.email : null, name: `${customer.firstName} ${customer.lastName}` }, biometricToken ? 'fingerprint' : 'password')
 
   if (app && deviceId) {
     recordDeviceSession({

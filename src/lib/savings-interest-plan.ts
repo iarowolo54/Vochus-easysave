@@ -11,13 +11,13 @@ type PlanClient = Pick<PrismaClient, 'transaction' | 'savingsInterestRate'>
  */
 export async function accruedInterestForPlan(
   client: PlanClient,
-  plan: { id: string; source: string; startDate: Date; maturityDate: Date },
+  plan: { id: string; source: string; startDate: Date; maturityDate: Date; cycleStartedAt?: Date | null },
   asOf: Date,
 ): Promise<number> {
   if (plan.source !== 'self') return 0
   const [deposits, rateSchedule] = await Promise.all([
     client.transaction.findMany({
-      where: { planId: plan.id, type: 'saving', status: 'Done' },
+      where: { planId: plan.id, type: 'saving', status: 'Done', ...(plan.cycleStartedAt ? { createdAt: { gte: plan.cycleStartedAt } } : {}) },
       select: { amount: true, createdAt: true },
     }),
     getSavingsRateSchedule(client),
