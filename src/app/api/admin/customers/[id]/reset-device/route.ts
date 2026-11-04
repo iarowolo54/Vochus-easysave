@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireAnyPermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { resetCustomerDevice } from '@/lib/reset-device'
 
 // Frees a customer's account from the phone it is locked to, so they can sign in on a new one (the next sign-in binds again), and
 // signs out their current phone and revokes its fingerprint sign-in. That happens whether or not a lock was set, the same as for
@@ -16,11 +17,7 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     select: { id: true, firstName: true, lastName: true, customerId: true },
   })
   if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
-  const revoked = await prisma.$transaction(async (tx) => {
-    await tx.customer.update({ where: { id }, data: { boundDeviceId: null, tokenVersion: { increment: 1 } } })
-    const tokens = await tx.biometricToken.updateMany({ where: { customerId: id, revokedAt: null }, data: { revokedAt: new Date() } })
-    return tokens.count
-  })
+  const revoked = await resetCustomerDevice(prisma, id)
 
   logAudit({
     action: 'customer_reset_device',

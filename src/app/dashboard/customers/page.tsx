@@ -19,6 +19,8 @@ interface Plan {
 
 interface Customer {
   id: string
+  /** True while the customer's account is locked to one phone. */
+  deviceBound?: boolean
   customerId: string
   firstName: string
   lastName: string
@@ -151,6 +153,9 @@ export default function CustomersPage() {
   const [inviteLoading, setInviteLoading] = useState(false)
   const [inviteError, setInviteError] = useState('')
   const [inviteCopied, setInviteCopied] = useState(false)
+  const [resetFor, setResetFor] = useState<Customer | null>(null)
+  const [resetBusy, setResetBusy] = useState(false)
+  const [resetError, setResetError] = useState('')
   const limit = 10
   const router = useRouter()
   const wide = useWide()
@@ -276,6 +281,23 @@ export default function CustomersPage() {
     if (!selected || !customers.some(c => c.id === selected.id)) viewCustomer(customers[0], false)
   }, [wide, loading, customers, selected, viewCustomer])
 
+  async function resetDevice() {
+    const c = resetFor
+    if (!c) return
+    setResetBusy(true); setResetError('')
+    try {
+      const res = await fetch(`/api/customers/${c.id}/reset-device`, { method: 'POST' })
+      if (!res.ok) { setResetError('Couldn’t reset the phone. Check your connection and try again.'); return }
+      setCustomers(prev => prev.map(x => x.id === c.id ? { ...x, deviceBound: false } : x))
+      setSelected(prev => (prev && prev.id === c.id ? { ...prev, deviceBound: false } : prev))
+      setResetFor(null)
+    } catch {
+      setResetError('Couldn’t reset the phone. Check your connection and try again.')
+    } finally {
+      setResetBusy(false)
+    }
+  }
+
   function go(path: string) {
     if (!selected) return
     const cid = selected.customerId
@@ -291,6 +313,7 @@ export default function CustomersPage() {
       expandedPlan={expandedPlan}
       setExpandedPlan={setExpandedPlan}
       go={go}
+      onResetDevice={() => { setResetError(''); setResetFor(selected) }}
       habit={habits[selected.customerId]}
     />
   )
@@ -483,6 +506,21 @@ export default function CustomersPage() {
           {detail}
         </BottomSheet>
       )}
+
+      <BottomSheet open={!!resetFor} onClose={() => { if (!resetBusy) setResetFor(null) }} title="Reset their phone?">
+        {resetFor && (
+          <>
+            <p className="ui-note">{fullName(resetFor)} is signed in on one phone. After you reset it they are signed out there, and can sign in on a new phone with their password. The next phone they sign in on becomes theirs. Their savings stay as they are.</p>
+            {resetError && <p className="ag-set-note ag-set-note--warn" role="alert"><Icons.error size={16} aria-hidden="true" /> {resetError}</p>}
+            <div className="ui-stack">
+              <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={resetBusy} onClick={resetDevice}>
+                {resetBusy ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Resetting…</> : 'Reset phone'}
+              </button>
+              <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" disabled={resetBusy} onClick={() => setResetFor(null)}>Cancel</button>
+            </div>
+          </>
+        )}
+      </BottomSheet>
     </div>
   )
 }
@@ -507,13 +545,14 @@ function HabitDot({ h }: { h: MonthStats }) {
   )
 }
 
-function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, go, habit }: {
+function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, go, onResetDevice, habit }: {
   c: Customer
   txns: Txn[]
   txnsLoading: boolean
   expandedPlan: string | null
   setExpandedPlan: (id: string | null) => void
   go: (path: string) => void
+  onResetDevice: () => void
   habit?: MonthStats
 }) {
   const active = c.savingsPlans.filter(p => p.status === 'Active').length
@@ -565,6 +604,11 @@ function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, g
         <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/loan-request')}><Icons.loan size={18} aria-hidden="true" /> New loan</button>
         <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/loan-repay')}><Icons.repay size={18} aria-hidden="true" /> Pay loan</button>
       </div>
+      {c.deviceBound && (
+        <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={onResetDevice}>
+          <Icons.device size={18} aria-hidden="true" /> Reset their phone
+        </button>
+      )}
 
       <h3 className="ag-profile-section">Details</h3>
       <dl className="ag-set-rows ag-profile-details">

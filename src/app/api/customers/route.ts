@@ -150,6 +150,8 @@ export async function GET(req: NextRequest) {
       state: c.state,
       lga: c.lga,
       photoUrl: c.photoUrl,
+      // Whether the account is locked to a phone; the device id itself is never sent.
+      deviceBound: c.boundDeviceId != null,
     }
   })
 
