@@ -1185,12 +1185,13 @@ body:has(.ui-auth) { background: var(--ui-canvas) !important; }
 .ag-home-grid { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--ui-s5); align-items: start; }
 .ag-col { min-width: 0; }
 .ag-col > .ui-section-head:first-child { margin-top: 0; }
-/* Balance on the left, its one action on the right; the button drops below on narrow phones. */
-/* Label and balance on top, one wide button underneath: the same on a phone and in a narrow card. */
-.ag-wallet-card { display: flex; flex-direction: row; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: var(--ui-s3); padding: var(--ui-s4) var(--ui-s5); margin: 0; }
-.ag-wallet-card .ui-amount--hero { font-size: var(--ui-fs-xl); letter-spacing: -0.5px; }
+/* Wallet and commission side by side: label and balance on top, one wide button underneath each. */
+.ag-wallet-card { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--ui-s4); padding: var(--ui-s4); margin: 0; }
+.ag-wallet-col { display: flex; flex-direction: column; align-items: stretch; gap: var(--ui-s1); min-width: 0; }
+.ag-wallet-col .ag-wallet-btn { margin-top: var(--ui-s2); }
+.ag-wallet-card .ui-amount--hero { font-size: var(--ui-fs-lg); letter-spacing: -0.5px; white-space: nowrap; }
 .ag-wallet-label { margin: 0 0 2px; font-size: var(--ui-fs-sm); font-weight: 600; color: var(--ui-ink-2); }
-.ag-wallet-btn { width: auto; min-height: 44px; padding-inline: var(--ui-s4); justify-content: center; font-size: var(--ui-fs-sm); text-decoration: none; white-space: nowrap; }
+.ag-wallet-btn { width: 100%; min-height: 44px; padding-inline: var(--ui-s3); justify-content: center; font-size: var(--ui-fs-sm); text-decoration: none; white-space: nowrap; }
 .ag-actions { justify-content: flex-start; gap: var(--ui-s5); margin: var(--ui-s5) 0; }
 .ag-actions .ui-action { text-decoration: none; font-size: var(--ui-fs-sm); }
 .ag-stats { display: grid; grid-template-columns: 1fr 1fr; gap: var(--ui-s4) var(--ui-s3); margin: var(--ui-s2) 0 0; }

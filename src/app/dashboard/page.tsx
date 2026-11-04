@@ -152,14 +152,21 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
       </section>
 
       <div className="ag-kpis">
-        <section className="ui-card ag-wallet-card" aria-label="Wallet">
-          <div>
+        <section className="ui-card ag-wallet-card" aria-label="Wallet and commission">
+          <div className="ag-wallet-col">
             <p className="ag-wallet-label">Wallet balance</p>
             <Amount value={agent.walletBalance} size="hero" animate />
+            <Link href="/dashboard/wallet" className="ui-btn ui-btn--primary ag-wallet-btn">
+              <Icons.add size={18} aria-hidden="true" /> Add money
+            </Link>
           </div>
-          <Link href="/dashboard/wallet" className="ui-btn ui-btn--primary ag-wallet-btn">
-            <Icons.add size={18} aria-hidden="true" /> Add money
-          </Link>
+          <div className="ag-wallet-col">
+            <p className="ag-wallet-label">Commission</p>
+            <Amount value={Math.round(agent.commissionBalance * 100) / 100} size="hero" animate />
+            <Link href="/dashboard/withdraw" className="ui-btn ui-btn--secondary ag-wallet-btn">
+              <Icons.withdraw size={18} aria-hidden="true" /> Withdraw
+            </Link>
+          </div>
         </section>
         <nav className="ui-actions ag-actions" aria-label="Main actions">
           <Link href="/dashboard/savings" className="ui-action">
