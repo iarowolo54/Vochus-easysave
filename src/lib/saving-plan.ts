@@ -73,3 +73,21 @@ export function depositCreatedAt(planSource: string, clientDate?: string | Date 
   if (planSource === 'self') return undefined
   return clientDate ? new Date(clientDate) : undefined
 }
+
+export const ALREADY_SAVED_TODAY = 'A saving has already been recorded for this plan on that day.'
+
+const WAT_MS = 60 * 60 * 1000 // Africa/Lagos is UTC+1 all year
+
+/** True when this plan already has a saving on the same Lagos calendar day as `at`. */
+export async function hasSavingOnDay(
+  client: Pick<PrismaClient, 'transaction'> | Prisma.TransactionClient,
+  planId: string,
+  at: Date,
+): Promise<boolean> {
+  const dayStart = Math.floor((at.getTime() + WAT_MS) / 86_400_000) * 86_400_000 - WAT_MS
+  const found = await client.transaction.findFirst({
+    where: { planId, type: 'saving', createdAt: { gte: new Date(dayStart), lt: new Date(dayStart + 86_400_000) } },
+    select: { id: true },
+  })
+  return !!found
+}

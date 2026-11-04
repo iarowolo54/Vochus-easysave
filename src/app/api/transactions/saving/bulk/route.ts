@@ -6,13 +6,14 @@ import { logAudit } from '@/lib/audit'
 import { insufficientResponse, InsufficientFundsError, money } from '@/lib/wallet-guard'
 import { debitAgentBalance } from '@/lib/wallet-debit'
 import { creditRegistrationReward } from '@/lib/reward'
-import { selectActivePlan } from '@/lib/saving-plan'
+import { selectActivePlan, hasSavingOnDay, ALREADY_SAVED_TODAY } from '@/lib/saving-plan'
 import { creditOpenPlan, hasOpenRedemption, PLAN_CLOSED, PlanClosedError, SAVING_BLOCKED } from '@/lib/redemption-balance'
 import { chargingKeys, checkBulkSelection, liveSlots } from '@/lib/bulk-savings'
 import { isEligiblePlan, perSlotAmount } from '@/lib/catchup'
 import { depositFeeOps } from '@/lib/commission-ledger'
 
 class DaysTakenError extends Error {}
+class AlreadySavedError extends Error {}
 
 /** The calendar an agent picks from on an online plan. Offline plans use paid-dates, as they always have. */
 export async function GET(req: NextRequest) {
@@ -95,6 +96,10 @@ export async function POST(req: NextRequest) {
         const charging = await chargingKeys(tx, plan)
         if (rawDates.some((k: string) => charging.has(k))) throw new DaysTakenError()
       }
+      // Offline days are stamped per date: refuse any day this plan already has a saving for.
+      if (!online) {
+        for (const d of dates) if (await hasSavingOnDay(tx, plan.id, d)) throw new AlreadySavedError()
+      }
       // Atomically debit the agent's wallet (conditional decrement) so two
       // concurrent bulk saves can't overdraw it below zero.
       const debited = await debitAgentBalance(tx, agent.id, 'walletBalance', totalAmt)
@@ -142,6 +147,7 @@ export async function POST(req: NextRequest) {
   } catch (e) {
     if (e instanceof InsufficientFundsError) return insufficientResponse(e)
     if (e instanceof PlanClosedError) return NextResponse.json({ error: PLAN_CLOSED }, { status: 409 })
+    if (e instanceof AlreadySavedError) return NextResponse.json({ error: ALREADY_SAVED_TODAY }, { status: 409 })
     if (e instanceof DaysTakenError) return NextResponse.json({ error: 'One of these days has just been paid for or is being charged. Check the calendar and try again' }, { status: 409 })
     throw e
   }

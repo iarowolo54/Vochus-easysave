@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { parsePaging } from '@/lib/paging'
+import { rankMatches } from '@/lib/fuzzy'
 
 export async function GET(req: NextRequest) {
   const guard = await requirePermission('transactions', 'view')
@@ -14,7 +15,24 @@ export async function GET(req: NextRequest) {
 
   const { page, limit, skip } = parsePaging(searchParams)
 
+  const search = (searchParams.get('search') ?? '').trim()
+
   const where: any = {}
+  if (search) {
+    // Customers and agents are small tables: rank them in memory so a typo still finds the person,
+    // then fetch only their transactions (plus any reference that contains the text).
+    const [customers, agents] = await Promise.all([
+      prisma.customer.findMany({ select: { id: true, firstName: true, lastName: true, customerId: true } }),
+      prisma.agent.findMany({ select: { id: true, name: true, agentId: true } }),
+    ])
+    const customerIds = rankMatches(search, customers, c => [c.firstName, c.lastName, c.customerId], 300).map(c => c.id)
+    const agentIds = rankMatches(search, agents, a => [a.name, a.agentId], 100).map(a => a.id)
+    where.OR = [
+      { ref: { contains: search } },
+      { customerId: { in: customerIds } },
+      { agentId: { in: agentIds } },
+    ]
+  }
   if (type) where.type = type
   if (date) {
     const d = new Date(date)

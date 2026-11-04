@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react'
 import {
-  Empty, Field, LoadError, Modal, PageHeader, Pager, TableSkeleton, dateTime, nairaKobo,
+  Empty, Field, LoadError, Modal, PageHeader, Pager, SearchField, TableSkeleton, dateTime, nairaKobo, useDebounced,
 } from '../_components/admin-ui'
 
 interface Transaction {
@@ -65,8 +65,10 @@ export default function TransactionsPage() {
   const [total, setTotal] = useState<number | null>(null)
   const [type, setType] = useState('')
   const [date, setDate] = useState('')
+  const [search, setSearch] = useState('')
+  const q = useDebounced(search.trim())
   // The page belongs to one set of filters; changing a filter starts again at page 1 without a second fetch.
-  const filterKey = `${type}|${date}`
+  const filterKey = `${type}|${date}|${q}`
   const [paging, setPaging] = useState({ key: filterKey, page: 1 })
   const page = paging.key === filterKey ? paging.page : 1
   const setPage = (p: number) => setPaging({ key: filterKey, page: p })
@@ -82,6 +84,7 @@ export default function TransactionsPage() {
       const params = new URLSearchParams()
       if (type) params.set('type', type)
       if (date) params.set('date', date)
+      if (q) params.set('search', q)
       params.set('page', String(page))
       params.set('limit', String(PAGE_SIZE))
       const res = await fetch(`/api/admin/transactions?${params}`)
@@ -96,11 +99,11 @@ export default function TransactionsPage() {
     } finally {
       if (seq === reqSeq.current) setLoading(false)
     }
-  }, [type, date, page])
+  }, [type, date, q, page])
 
   useEffect(() => { load() }, [load])
 
-  const filtered = !!(type || date)
+  const filtered = !!(type || date || q)
   const count = total ?? transactions.length
   const paginated = total === null ? transactions.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE) : transactions
 
@@ -109,6 +112,7 @@ export default function TransactionsPage() {
       <PageHeader title="Transactions" sub="Every transaction on the platform, across agents and customers. Newest first." />
 
       <div className="toolbar">
+        <SearchField value={search} onChange={setSearch} placeholder="Customer, agent or reference" label="Search transactions" />
         <div className="cm-toolbar-field">
           <label className="a-label" htmlFor="tx-type">Type</label>
           <select id="tx-type" className="a-input cm-select" value={type} onChange={e => setType(e.target.value)}>
@@ -119,7 +123,7 @@ export default function TransactionsPage() {
           <label className="a-label" htmlFor="tx-date">Date</label>
           <input id="tx-date" type="date" className="a-input cm-date" value={date} onChange={e => setDate(e.target.value)} />
         </div>
-        {filtered && <button type="button" className="btn btn-outline btn-sm" onClick={() => { setType(''); setDate('') }}>Clear filters</button>}
+        {filtered && <button type="button" className="btn btn-outline btn-sm" onClick={() => { setType(''); setDate(''); setSearch('') }}>Clear filters</button>}
       </div>
 
       <section className="card" aria-label="Transactions" aria-busy={loading}>
@@ -127,8 +131,8 @@ export default function TransactionsPage() {
           : failed ? <LoadError what="transactions" onRetry={load} />
           : count === 0 ? (
             filtered
-              ? <Empty icon="history" title="No transactions match these filters" text="Try another date or type, or clear the filters."
-                  action={<button type="button" className="btn btn-outline" onClick={() => { setType(''); setDate('') }}>Clear filters</button>} />
+              ? <Empty icon="history" title="No transactions match these filters" text="Check the spelling, try another date or type, or clear the filters."
+                  action={<button type="button" className="btn btn-outline" onClick={() => { setType(''); setDate(''); setSearch('') }}>Clear filters</button>} />
               : <Empty icon="history" title="No transactions yet" text="Savings, redemptions and loan payments show here as they happen." />
           ) : (
             <>

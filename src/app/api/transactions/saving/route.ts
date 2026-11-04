@@ -6,10 +6,12 @@ import { logAudit } from '@/lib/audit'
 import { assertSufficient, insufficientResponse, InsufficientFundsError, money } from '@/lib/wallet-guard'
 import { debitAgentBalance } from '@/lib/wallet-debit'
 import { creditRegistrationReward } from '@/lib/reward'
-import { selectActivePlan, depositCreatedAt } from '@/lib/saving-plan'
+import { selectActivePlan, depositCreatedAt, hasSavingOnDay, ALREADY_SAVED_TODAY } from '@/lib/saving-plan'
 import { planHasEnded, PLAN_ENDED } from '@/lib/plan-credit'
 import { creditOpenPlan, hasOpenRedemption, PLAN_CLOSED, PlanClosedError, SAVING_BLOCKED } from '@/lib/redemption-balance'
 import { depositFeeOps } from '@/lib/commission-ledger'
+
+class AlreadySavedError extends Error {}
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -68,6 +70,8 @@ export async function POST(req: NextRequest) {
   let txn
   try {
     txn = await prisma.$transaction(async (tx) => {
+      // One saving per plan per day. Checked inside the write so two quick taps can't both pass.
+      if (await hasSavingOnDay(tx, plan.id, createdAt ?? new Date())) throw new AlreadySavedError()
       // Atomically debit the agent's wallet; concurrent savings can't overdraw.
       const debited = await debitAgentBalance(tx, agent.id, 'walletBalance', rounded)
       if (!debited) throw new InsufficientFundsError('Agent wallet', agent.walletBalance, rounded)
@@ -92,6 +96,7 @@ export async function POST(req: NextRequest) {
     })
   } catch (e) {
     if (e instanceof InsufficientFundsError) return insufficientResponse(e)
+    if (e instanceof AlreadySavedError) return NextResponse.json({ error: ALREADY_SAVED_TODAY }, { status: 409 })
     if (e instanceof PlanClosedError) return NextResponse.json({ error: PLAN_CLOSED }, { status: 409 })
     throw e
   }

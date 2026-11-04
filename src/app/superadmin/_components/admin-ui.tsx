@@ -26,7 +26,7 @@ export function PageHeader({ title, sub, actions }: { title: string; sub?: React
 export function Avatar({ name, photoUrl, tone = 'green' }: { name: string; photoUrl?: string | null; tone?: 'green' | 'amber' | 'red' | 'blue' | 'grey' }) {
   return (
     <span className={`av${tone === 'grey' ? '' : ` av-${tone}`}`} aria-hidden="true">
-      {photoUrl ? <img src={photoUrl} alt="" /> : initialsOf(name)}
+      {photoUrl ? <img src={photoUrl} alt="" loading="lazy" decoding="async" /> : initialsOf(name)}
     </span>
   )
 }

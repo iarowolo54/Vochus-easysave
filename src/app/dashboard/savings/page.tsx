@@ -644,7 +644,7 @@ function SavingsContent() {
                       <div>
                         <strong>Already paid today:</strong>{' '}
                         {alreadyPaid.map(p => `${formatNaira(p.amount, { minor: false })} at ${p.time}`).join(', ')}.
-                        {' '}Only record again if this is new cash.
+                        {' '}Today’s saving is already recorded.
                       </div>
                     </div>
                   )}
@@ -677,12 +677,12 @@ function SavingsContent() {
                   <button
                     type="button"
                     className="ui-btn ui-btn--primary ui-btn--block"
-                    disabled={loading || short || (bulkMode && selectedDates.length === 0)}
+                    disabled={loading || short || !!alreadyPaid || (bulkMode && selectedDates.length === 0)}
                     onClick={requestPin}
                   >
                     {loading
                       ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Recording…</>
-                      : payAmount > 0 ? `${alreadyPaid ? 'Record again' : 'Record'} ${formatNaira(payAmount, { minor: false })}` : 'Record saving'}
+                      : payAmount > 0 ? `${alreadyPaid ? 'Already recorded' : 'Record'} ${formatNaira(payAmount, { minor: false })}` : 'Record saving'}
                   </button>
                 )}
                 <button type="button" className="ui-btn ui-btn--plain ui-btn--block" onClick={reset} disabled={loading}>Cancel</button>
@@ -735,8 +735,7 @@ function SavingsContent() {
           {bulkMode ? ` (${selectedDates.length} ${bulkUnit}${selectedDates.length === 1 ? '' : 's'})` : ''} for{' '}
           <strong>{displayName(`${selected?.firstName ?? ''} ${selected?.lastName ?? ''}`)}</strong>
         </p>
-        {alreadyPaid && <p className="ag-sheet-warn"><Icons.error size={16} aria-hidden="true" /> They already paid today. Make sure this is new cash.</p>}
-        {pinModal && (
+                {pinModal && (
           <PinPad
             value={pinEntry}
             onChange={v => { setPinEntry(v); setPinError('') }}

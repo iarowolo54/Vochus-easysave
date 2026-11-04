@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, type ReactNode } from 'react'
 import {
   Avatar, ConfirmModal, Empty, LoadError, Modal, PageHeader, Pager, SearchField, Segmented,
-  TableSkeleton, naira, shortDate, useDebounced, useToast,
+  TableSkeleton, dateTime, naira, nairaKobo, shortDate, useDebounced, useToast,
 } from '../_components/admin-ui'
 import { ClearSignInLockModal, SendResetCodeModal } from '../_components/send-reset-code'
 
@@ -65,6 +65,40 @@ function TypeBadge({ type }: { type: CustomerType }) {
     : <span className="bdg bdg-b">Online</span>
 }
 
+interface PlanTxn { id: string; ref: string; type: string; amount: number; method: string | null; status: string; note: string | null; feeTaken: number; createdAt: string }
+interface PlanFull {
+  id: string; goal: string; dailyAmount: number; periodDays: number; cadence: string; source: string
+  startDate: string; maturityDate: string; balance: number; status: string; interestAccrued: number
+  transactions: PlanTxn[]
+}
+interface CustomerFull {
+  dob: string | null; nokName: string; nokRelation: string; nokPhone: string; emailVerified: boolean
+  plans: PlanFull[]; otherTransactions: PlanTxn[]
+}
+
+const txnLabel = (t: string) => t.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase())
+
+function TxnList({ txns }: { txns: PlanTxn[] }) {
+  return (
+    <div className="tbl-wrap tbl-stack">
+      <table>
+        <thead><tr><th>Reference</th><th>Type</th><th className="num">Amount</th><th>Method</th><th>Date</th></tr></thead>
+        <tbody>
+          {txns.map(t => (
+            <tr key={t.id}>
+              <td><span className="cm-ref">{t.ref}</span></td>
+              <td data-label="Type">{txnLabel(t.type)}{t.status !== 'Done' && <> · <span className="cm-sub2">{t.status}</span></>}</td>
+              <td className="num cm-strong" data-label="Amount">{t.amount > 0 ? nairaKobo(t.amount) : '—'}</td>
+              <td data-label="Method" className="cm-sub2">{t.method ?? '—'}</td>
+              <td data-label="Date" className="cm-nowrap cm-sub2">{dateTime(t.createdAt)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  )
+}
+
 const PAGE_SIZE = 20
 
 async function errorOf(res: Response, fallback: string) {
@@ -96,6 +130,8 @@ export default function CustomersPage() {
   const [failed, setFailed] = useState(false)
   const [toastNode, toast] = useToast()
   const [detail, setDetail] = useState<Customer | null>(null)
+  const [full, setFull] = useState<CustomerFull | null>(null)
+  const [fullState, setFullState] = useState<'loading' | 'failed' | 'ready'>('loading')
 
   // Lock / unlock confirmation
   const [lockTarget, setLockTarget] = useState<Customer | null>(null)
@@ -122,6 +158,20 @@ export default function CustomersPage() {
   }, [q])
 
   useEffect(() => { load() }, [load])
+
+  // Plans and their transactions load when a customer is opened, not with the list.
+  const detailId = detail?.id
+  useEffect(() => {
+    setFull(null)
+    if (!detailId) return
+    let live = true
+    setFullState('loading')
+    fetch(`/api/admin/customers/${detailId}`)
+      .then(r => { if (!r.ok) throw new Error(); return r.json() as Promise<CustomerFull> })
+      .then(d => { if (live) { setFull(d); setFullState('ready') } })
+      .catch(() => { if (live) setFullState('failed') })
+    return () => { live = false }
+  }, [detailId])
   useEffect(() => { setPage(1) }, [q, filter, typeFilter])
 
   function askLock(c: Customer) {
@@ -276,7 +326,7 @@ export default function CustomersPage() {
       </section>
 
       {detail && (
-        <Modal icon="customers" title={detail.name} sub={detail.customerId} onClose={() => setDetail(null)}
+        <Modal icon="customers" size="lg" title={detail.name} sub={detail.customerId} onClose={() => setDetail(null)}
           footer={<>
             <button type="button" className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>
             <button type="button" className="btn btn-outline" onClick={() => { setSendCodeFor(detail); setDetail(null) }}>Send reset code</button>
@@ -300,8 +350,20 @@ export default function CustomersPage() {
               <DlRow label="Phone">{detail.phone}</DlRow>
               <DlRow label="Email">{orDash(detail.email)}</DlRow>
               <DlRow label="Address">{orDash(detail.address)}</DlRow>
+              {full && <DlRow label="Date of birth">{orNotRecorded(full.dob ? shortDate(full.dob) : null)}</DlRow>}
             </dl>
           </div>
+
+          {full && (
+            <div className="cm-sec">
+              <h3 className="cm-sec-title">Next of kin</h3>
+              <dl className="dlg-ledger">
+                <DlRow label="Name">{orDash(full.nokName)}</DlRow>
+                <DlRow label="Relationship">{orDash(full.nokRelation)}</DlRow>
+                <DlRow label="Phone">{orDash(full.nokPhone)}</DlRow>
+              </dl>
+            </div>
+          )}
 
           {hasProfileFields(detail) && (
             <div className="cm-sec">
@@ -336,6 +398,32 @@ export default function CustomersPage() {
               )}
               <DlRow label="Enrolled">{shortDate(detail.createdAt)}</DlRow>
             </dl>
+          </div>
+
+          <div className="cm-sec">
+            <h3 className="cm-sec-title">Plans{full ? ` (${full.plans.length})` : ''}</h3>
+            {fullState === 'loading' && !full && <p className="cm-sub2">Loading plans…</p>}
+            {fullState === 'failed' && <p className="cm-late">Couldn’t load the plans. Close this and open the customer again.</p>}
+            {full && full.plans.length === 0 && <p className="cm-sub2">This customer has no savings plans.</p>}
+            {full?.plans.map(p => (
+              <div key={p.id} className="cm-sec">
+                <h4 className="cm-sec-title">{p.goal} · <StatusBadge status={p.status} /></h4>
+                <dl className="dlg-ledger">
+                  <DlRow label="Saves">{naira(p.dailyAmount)} {p.cadence === 'daily' ? 'a day' : `per ${p.cadence.replace(/ly$/, '')}`} for {p.periodDays} days</DlRow>
+                  <DlRow label="Balance"><span className="cm-strong">{naira(p.balance)}</span></DlRow>
+                  {p.interestAccrued > 0 && <DlRow label="Interest earned">{naira(p.interestAccrued)}</DlRow>}
+                  <DlRow label="Type">{p.source === 'self' ? 'Online' : 'Cash saver'}</DlRow>
+                  <DlRow label="Runs">{shortDate(p.startDate)} to {shortDate(p.maturityDate)}</DlRow>
+                </dl>
+                {p.transactions.length === 0 ? <p className="cm-sub2">No transactions on this plan yet.</p> : <TxnList txns={p.transactions} />}
+              </div>
+            ))}
+            {full && full.otherTransactions.length > 0 && (
+              <div className="cm-sec">
+                <h4 className="cm-sec-title">Other transactions</h4>
+                <TxnList txns={full.otherTransactions} />
+              </div>
+            )}
           </div>
         </Modal>
       )}
