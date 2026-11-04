@@ -10,7 +10,11 @@ export async function GET(req: Request) {
   try {
     return NextResponse.json(await pollMoniepointAlerts())
   } catch (e) {
-    console.error('[bank-alerts] poll failed:', e instanceof Error ? e.message : 'unknown error')
+    // imapflow reports a refused login as just "Command failed"; the reason is on these fields. Never the password.
+    const d = (e ?? {}) as { code?: unknown; responseText?: unknown; authenticationFailed?: unknown }
+    console.error('[bank-alerts] poll failed:', e instanceof Error ? e.message : 'unknown error', {
+      code: d.code, responseText: d.responseText, authenticationFailed: d.authenticationFailed,
+    })
     return NextResponse.json({ error: 'Poll failed' }, { status: 502 })
   }
 }
