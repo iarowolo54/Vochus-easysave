@@ -63,12 +63,19 @@ export default function PhoneSettings() {
 
   async function turnFingerprintOff() {
     setError('')
+    const w = win()
+    // An app that can't forget the fingerprint must not have it revoked on the server either.
+    if (!w.VochusBiometricClear) { setError('This version of the app can’t turn fingerprint sign-in off. Update the app and try again.'); return }
     waitForApp('fingerprint')
     try {
-      const w = win()
-      await fetch('/api/auth/biometric/revoke', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceId: w.__vochusDeviceId ?? '' }) })
-    } catch { /* the phone still forgets it below; the token is only useful from this phone */ }
-    win().VochusBiometricClear?.postMessage('')
+      // Revoke on the server first. The phone only forgets it once that has worked, so the two never disagree.
+      const res = await fetch('/api/auth/biometric/revoke', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ deviceId: w.__vochusDeviceId ?? '' }) })
+      if (!res.ok) throw new Error()
+      w.VochusBiometricClear.postMessage('')
+    } catch {
+      setBusy('')
+      setError('Couldn’t turn off fingerprint sign-in. Check your connection and try again.')
+    }
   }
 
   const heading = <div className="ui-section-head"><h2>This phone</h2></div>
