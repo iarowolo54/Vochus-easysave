@@ -56,6 +56,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid input: provide 1–90 dates' }, { status: 400 })
   }
 
+  // Each date must be a real yyyy-mm-dd and appear once, or one request could record the same day twice.
+  const validDay = (k: unknown) => typeof k === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(k) && !Number.isNaN(new Date(`${k}T12:00:00`).getTime())
+  if (!rawDates.every(validDay) || new Set(rawDates).size !== rawDates.length) {
+    return NextResponse.json({ error: 'Invalid input: each date must be a real day, listed once' }, { status: 400 })
+  }
+
   const customer = await prisma.customer.findFirst({ where: { id: customerId, agentId: agent.id } })
   if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
 

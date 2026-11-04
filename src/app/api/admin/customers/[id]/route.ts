@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requirePermission } from '@/lib/admin-guard'
+import { requirePermission, resolveAdminAccess } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 
 // Full view of one customer: profile, next of kin, every plan and each plan's transactions.
@@ -8,6 +8,9 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   if (!guard.ok) return guard.response
 
   const { id } = await params
+  // Transactions are the transactions screen's data: show them only to actors who can open it.
+  const canSeeTxns = (await resolveAdminAccess('transactions', 'view')).ok
+  const txnSelect = canSeeTxns ? { orderBy: { createdAt: 'desc' as const }, take: 200, select: { id: true, ref: true, type: true, amount: true, method: true, status: true, note: true, feeTaken: true, createdAt: true } } : undefined
   const c = await prisma.customer.findUnique({
     where: { id },
     select: {
@@ -17,11 +20,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
         select: {
           id: true, goal: true, dailyAmount: true, periodDays: true, cadence: true, source: true,
           startDate: true, maturityDate: true, balance: true, status: true, interestAccrued: true,
-          transactions: {
-            orderBy: { createdAt: 'desc' },
-            take: 200,
-            select: { id: true, ref: true, type: true, amount: true, method: true, status: true, note: true, feeTaken: true, createdAt: true },
-          },
+          ...(txnSelect ? { transactions: txnSelect } : {}),
         },
       },
     },
@@ -29,7 +28,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   if (!c) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
 
   // Transactions that belong to no plan (e.g. enrolment, wallet funding).
-  const other = await prisma.transaction.findMany({
+  const other = !canSeeTxns ? [] : await prisma.transaction.findMany({
     where: { customerId: id, planId: null },
     orderBy: { createdAt: 'desc' },
     take: 50,
@@ -42,7 +41,8 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     nokRelation: c.nokRelation,
     nokPhone: c.nokPhone,
     emailVerified: c.emailVerifiedAt != null,
-    plans: c.savingsPlans,
+    transactionsHidden: !canSeeTxns,
+    plans: c.savingsPlans.map(p => ({ ...p, transactions: 'transactions' in p ? p.transactions : [] })),
     otherTransactions: other,
   })
 }

@@ -73,7 +73,7 @@ interface PlanFull {
 }
 interface CustomerFull {
   dob: string | null; nokName: string; nokRelation: string; nokPhone: string; emailVerified: boolean
-  plans: PlanFull[]; otherTransactions: PlanTxn[]
+  plans: PlanFull[]; otherTransactions: PlanTxn[]; transactionsHidden?: boolean
 }
 
 const txnLabel = (t: string) => t.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase())
@@ -415,7 +415,7 @@ export default function CustomersPage() {
                   <DlRow label="Type">{p.source === 'self' ? 'Online' : 'Cash saver'}</DlRow>
                   <DlRow label="Runs">{shortDate(p.startDate)} to {shortDate(p.maturityDate)}</DlRow>
                 </dl>
-                {p.transactions.length === 0 ? <p className="cm-sub2">No transactions on this plan yet.</p> : <TxnList txns={p.transactions} />}
+                {full.transactionsHidden ? null : p.transactions.length === 0 ? <p className="cm-sub2">No transactions on this plan yet.</p> : <TxnList txns={p.transactions} />}
               </div>
             ))}
             {full && full.otherTransactions.length > 0 && (

@@ -28,15 +28,16 @@ function wordCost(w: string, t: string): number | null {
   const max = allowance(w.length)
   if (max === 0) return null
   // Compare against the same-length start of the word too, so a half-typed, misspelled name still matches.
-  const d = Math.min(distance(w, t), distance(w, t.slice(0, w.length)))
+  const prefix = t.slice(0, w.length)
+  const d = Math.min(Math.abs(w.length - t.length) > max ? Infinity : distance(w, t), distance(w, prefix))
   return d <= max ? d : null
 }
 
 /** Lower is better, null means no match. Every typed word must match one of the fields' words. */
 export function fuzzyScore(query: string, fields: (string | null | undefined)[]): number | null {
-  const words = norm(query).split(' ').filter(Boolean).slice(0, 5)
+  const words = norm(query.slice(0, 64)).split(' ').filter(Boolean).slice(0, 5).map(w => w.slice(0, 32))
   if (!words.length) return null
-  const targets = fields.flatMap(f => (f ? norm(f).split(' ') : [])).filter(Boolean)
+  const targets = fields.flatMap(f => (f ? norm(f.slice(0, 80)).split(' ') : [])).filter(Boolean)
   let total = 0
   for (const w of words) {
     let best: number | null = null
