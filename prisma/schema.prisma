@@ -653,9 +653,26 @@ model PaymentIntent {
   createdAt  DateTime  @default(now())
   consumedAt DateTime?
   coversKeys String? // JSON array of day-keys
+  /// 'paystack' | 'transfer'. A transfer intent's amount carries a unique kobo and it closes at expiresAt.
+  method     String    @default("paystack")
+  expiresAt  DateTime?
 
   @@index([customerId])
   @@index([agentId])
+}
+
+/// A Moniepoint credit alert read from the mailbox. messageId and txnId are unique so one transfer credits once.
+model BankAlert {
+  id         String   @id @default(cuid())
+  messageId  String   @unique
+  txnId      String   @unique
+  amount     Float
+  senderName String
+  narration  String
+  alertAt    DateTime
+  status     String // Matched | Unmatched
+  intentRef  String?
+  createdAt  DateTime @default(now())
 }
 
 model SavingsInterestRate {

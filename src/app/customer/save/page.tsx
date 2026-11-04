@@ -1,7 +1,7 @@
 'use client'
-import TransferReminder from '@/components/ui/TransferReminder'
 import { useEffect, useState, Suspense, type FormEvent } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import TransferPanel, { type TransferDetails } from './transfer-panel'
 import CustomerBottomNav from '@/components/customer/CustomerBottomNav'
 import { useCustomerMe } from '@/components/customer/useCustomerMe'
 import Amount from '@/components/ui/Amount'
@@ -86,6 +86,7 @@ function SavePageInner() {
   const [pickerOpen, setPickerOpen] = useState(false)
   const [error, setError] = useState('')
   const [paying, setPaying] = useState(false)
+  const [transfer, setTransfer] = useState<TransferDetails | null>(null)
 
   // New-plan form
   const [cadence, setCadence] = useState<Cadence>('daily')
@@ -125,12 +126,12 @@ function SavePageInner() {
     setError('')
     if (!selectedPlan) { setError('Choose a savings plan first.'); return }
     setPaying(true)
-    const result = await postJson<{ authorizationUrl: string }>('/api/customer/paystack/init', {
+    const result = await postJson<TransferDetails>('/api/customer/transfer/init', {
       amount: periodAmount(selectedPlan), planId: selectedPlan.id,
     })
-    if (result.ok) { window.location.href = result.data.authorizationUrl; return }
     setPaying(false)
-    setError(describeFailure(result, { 502: 'Paystack isn’t responding right now. Please try again in a few minutes.' }))
+    if (result.ok) { setTransfer(result.data); return }
+    setError(describeFailure(result))
   }
 
   async function createPlan(e: FormEvent) {
@@ -208,9 +209,13 @@ function SavePageInner() {
           />
         )}
 
-        {mode === 'pay' && selectedPlan && !pending && (
+        {mode === 'pay' && selectedPlan && !pending && transfer && (
+          <TransferPanel details={transfer} planName={selectedPlan.goal} onClose={() => setTransfer(null)} />
+        )}
+
+        {mode === 'pay' && selectedPlan && !pending && !transfer && (
           <>
-            {/* Review layout (Cash App style): the sentence says exactly what will happen before Paystack opens. */}
+            {/* Review layout (Cash App style): the sentence says exactly what will happen before the account details show. */}
             <section className="ui-review" aria-label="Payment summary">
               <p className="ui-review-kicker">Your {ADJ[cadenceOf(selectedPlan)]} savings</p>
               <h2 className="ui-review-title">
@@ -234,18 +239,17 @@ function SavePageInner() {
               </div>
               <div className="ui-row">
                 <dt className="ui-row-main ui-row-sub">Pay with</dt>
-                <dd className="ui-review-value">Paystack<span className="ui-row-sub ui-block">Card, transfer or USSD</span></dd>
+                <dd className="ui-review-value">Bank transfer<span className="ui-row-sub ui-block">To our Moniepoint account</span></dd>
               </div>
             </dl>
 
             <FormError message={error} />
 
             <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={pay} disabled={paying} aria-busy={paying}>
-              {paying ? 'Opening Paystack…' : `Confirm and pay ${formatNaira(periodAmount(selectedPlan), { minor: false })}`}
+              {paying ? 'Getting account details…' : `Pay ${formatNaira(periodAmount(selectedPlan), { minor: false })} by transfer`}
             </button>
-            <TransferReminder />
             <p className="ui-note ui-note--center">
-              <Icons.locked size={14} aria-hidden="true" /> You’ll finish on Paystack’s secure page.
+              <Icons.locked size={14} aria-hidden="true" /> You’ll get an account number and an exact amount to send.
             </p>
 
             <button type="button" className="ui-btn ui-btn--secondary ui-btn--block ui-gap-top" onClick={() => { setMode('new'); setError('') }}>

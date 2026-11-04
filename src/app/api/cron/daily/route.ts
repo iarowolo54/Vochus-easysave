@@ -1,26 +1,12 @@
 import { NextResponse } from 'next/server'
-import { timingSafeEqual } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
+import { cronAuthorized as authorized } from '@/lib/cron-auth'
 import { accruedInterestForPlan } from '@/lib/savings-interest-plan'
 import { runDueAutoDebits, reconcileProcessingAttempts } from '@/lib/auto-debit-run'
 import { sendWeeklySummaries } from '@/lib/weekly-summary-run'
 import { isSummaryDay } from '@/lib/summary-day'
 
 export const dynamic = 'force-dynamic'
-
-/** Constant-time bearer check. Fails closed when CRON_SECRET is unset/empty. */
-function authorized(req: Request): boolean {
-  const secret = process.env.CRON_SECRET
-  if (!secret) return false
-  const header = req.headers.get('authorization') ?? ''
-  const match = /^Bearer (.+)$/.exec(header)
-  if (!match) return false
-  const given = Buffer.from(match[1])
-  const expected = Buffer.from(secret)
-  // timingSafeEqual throws on unequal lengths; a length mismatch is simply a rejection.
-  if (given.length !== expected.length) return false
-  return timingSafeEqual(given, expected)
-}
 
 export async function GET(req: Request) {
   if (!authorized(req)) {
