@@ -1,7 +1,7 @@
 // Unit test: what the agent screens show for the phone's printer and fingerprint, depending on the app build.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { phoneSettingsMode, phoneState, shouldAutoEnrollFingerprint } from '../src/lib/phone-settings'
+import { phoneSettingsMode, phoneState, readPhoneFlags, shouldAutoEnrollFingerprint } from '../src/lib/phone-settings'
 
 const NEW_APP = { __vochusApp: 'agent', __vochusCanManagePhone: true, __vochusCanOpenSettings: true, __vochusCanBiometric: true, __vochusBiometricEnrolled: false, __vochusPrinterName: '' }
 const OLD_APP = { __vochusApp: 'agent', __vochusCanOpenSettings: true, __vochusCanBiometric: true, __vochusBiometricEnrolled: false }
@@ -29,4 +29,21 @@ test('fingerprint only turns itself on in an older app; the new app waits for th
   assert.equal(shouldAutoEnrollFingerprint(NEW_APP), false)
   assert.equal(shouldAutoEnrollFingerprint({ ...OLD_APP, __vochusBiometricEnrolled: true }), false)
   assert.equal(shouldAutoEnrollFingerprint({}), false)
+})
+
+test('readPhoneFlags copies only the flags the screens use', () => {
+  const w = { ...NEW_APP, __vochusDeviceId: 'dev-1', somethingElse: 1, document: {} }
+  assert.deepEqual(readPhoneFlags(w), { ...NEW_APP })
+})
+
+test('readPhoneFlags never touches the rest of the browser window, so a getter that throws cannot break the page', () => {
+  const w = { ...NEW_APP } as Record<string, unknown>
+  Object.defineProperty(w, 'localStorage', { enumerable: true, get() { throw new Error('SecurityError: storage is blocked') } })
+  assert.doesNotThrow(() => readPhoneFlags(w))
+  assert.equal(readPhoneFlags(w).__vochusApp, 'agent')
+})
+
+test('readPhoneFlags leaves out flags the app did not set', () => {
+  assert.deepEqual(readPhoneFlags({ __vochusApp: 'agent' }), { __vochusApp: 'agent' })
+  assert.deepEqual(readPhoneFlags({}), {})
 })

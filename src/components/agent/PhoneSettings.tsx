@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import { FormError } from '@/components/ui/FormErrors'
 import { Icons } from '@/components/ui/icons'
-import { phoneSettingsMode, phoneState, type PhoneFlags } from '@/lib/phone-settings'
+import { phoneSettingsMode, phoneState, readPhoneFlags, type PhoneFlags } from '@/lib/phone-settings'
 
 type Bridge = { postMessage: (s: string) => void }
 type PhoneWindow = PhoneFlags & {
@@ -23,7 +23,7 @@ export default function PhoneSettings() {
   const [busy, setBusy] = useState<'' | 'printer' | 'fingerprint'>('')
   const [error, setError] = useState('')
 
-  const read = useCallback(() => { setFlags({ ...win() }); setBusy('') }, [])
+  const read = useCallback(() => { setFlags(readPhoneFlags(win())); setBusy('') }, [])
   useEffect(() => {
     read()
     window.addEventListener('vochus:flags-ready', read)

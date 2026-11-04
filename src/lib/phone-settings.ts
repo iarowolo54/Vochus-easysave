@@ -29,3 +29,17 @@ export function phoneState(w: PhoneFlags): { printerName: string | null; fingerp
 export function shouldAutoEnrollFingerprint(w: PhoneFlags): boolean {
   return !!w.__vochusCanBiometric && !w.__vochusBiometricEnrolled && phoneSettingsMode(w) !== 'manage'
 }
+
+const FLAG_KEYS = [
+  '__vochusApp', '__vochusCanManagePhone', '__vochusCanOpenSettings', '__vochusCanBiometric', '__vochusBiometricEnrolled', '__vochusPrinterName',
+] as const
+
+/**
+ * Reads just the app's flags off `window`. Never copy the whole window object: that runs every browser getter on it, and some of them
+ * (storage, for one) throw inside an app WebView, which breaks the page.
+ */
+export function readPhoneFlags(w: PhoneFlags): PhoneFlags {
+  const out: Record<string, unknown> = {}
+  for (const k of FLAG_KEYS) if (w[k] !== undefined) out[k] = w[k]
+  return out as PhoneFlags
+}
