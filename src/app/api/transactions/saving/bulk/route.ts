@@ -57,7 +57,12 @@ export async function POST(req: NextRequest) {
   }
 
   // Each date must be a real yyyy-mm-dd and appear once, or one request could record the same day twice.
-  const validDay = (k: unknown) => typeof k === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(k) && !Number.isNaN(new Date(`${k}T12:00:00`).getTime())
+  // A real day survives a round trip (2026-02-31 would roll over to March, so it is refused).
+  const validDay = (k: unknown) => {
+    if (typeof k !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(k)) return false
+    const [y, m, d] = k.split('-').map(Number)
+    return new Date(Date.UTC(y, m - 1, d)).toISOString().slice(0, 10) === k
+  }
   if (!rawDates.every(validDay) || new Set(rawDates).size !== rawDates.length) {
     return NextResponse.json({ error: 'Invalid input: each date must be a real day, listed once' }, { status: 400 })
   }
