@@ -64,6 +64,7 @@ async function processAlert(alert: ParsedAlert, messageId: string): Promise<'cre
 
 export async function pollMoniepointAlerts(): Promise<PollResult> {
   const sender = requireEnv('MONIEPOINT_SENDER')
+  const ourAccount = requireEnv('MONIEPOINT_ACCOUNT_NUMBER')
   const client = new ImapFlow({
     host: 'imap.gmail.com', port: 993, secure: true, logger: false,
     auth: { user: requireEnv('IMAP_USER'), pass: requireEnv('IMAP_APP_PASSWORD') },
@@ -90,6 +91,8 @@ export async function pollMoniepointAlerts(): Promise<PollResult> {
           if (/credit/i.test(mail.subject ?? '')) console.warn(`[bank-alerts] credit-looking email could not be read, messageId=${mail.messageId ?? 'none'}`)
           continue
         }
+        // A genuine Moniepoint alert for someone else's account (replayed to this inbox) must never credit ours.
+        if (alert.accountNumber !== ourAccount) continue
         const outcome = await processAlert(alert, mail.messageId ?? `txn-${alert.txnId}`)
         if (outcome === 'credited') out.credited++
         else if (outcome === 'unmatched') out.unmatched++

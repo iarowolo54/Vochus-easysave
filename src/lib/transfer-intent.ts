@@ -41,6 +41,16 @@ export function matchAlertToIntent(
   return hits.length === 1 ? hits[0] : 'ambiguous'
 }
 
+/** An open intent the customer can simply keep using: same plan, same base amount, not yet expired. */
+export function canReuse(
+  intent: { amount: number; planId: string | null; expiresAt: Date | null },
+  planId: string,
+  baseAmount: number,
+  now: number = Date.now(),
+): boolean {
+  return intent.planId === planId && Math.floor(money(intent.amount)) === baseAmount && (intent.expiresAt?.getTime() ?? 0) > now
+}
+
 /** Open means still Pending and not past its grace; these are the amounts a new intent must avoid. */
 export function openTransferIntents(now = Date.now()) {
   return prisma.paymentIntent.findMany({
@@ -53,17 +63,30 @@ export function openTransferIntents(now = Date.now()) {
   })
 }
 
-/** Creates the intent with a unique amount, or returns null when every kobo for this amount is in use. */
+/**
+ * Creates the intent with a unique amount, or returns null when every kobo for this amount is in use. A customer has
+ * one open transfer at a time: asking again for the same plan and amount returns it, and anything else closes the old
+ * one (it still counts for the grace period, in case they pay it). So one account can't tie up the kobo pool.
+ */
 export async function createTransferIntent(input: { customerId: string; planId: string; baseAmount: number }) {
   const ref = `VCHS-TRF-${Date.now()}-${randomBytes(6).toString('base64url').toUpperCase()}`
   return prisma.$transaction(async (tx) => {
-    const open = await tx.paymentIntent.findMany({
-      where: { method: TRANSFER_METHOD, status: INTENT_PENDING, expiresAt: { gt: new Date(Date.now() - TRANSFER_GRACE_MS) } },
-      select: { amount: true },
-    })
+    const now = Date.now()
+    const live = { method: TRANSFER_METHOD, status: INTENT_PENDING, expiresAt: { gt: new Date(now - TRANSFER_GRACE_MS) } }
+
+    const mine = await tx.paymentIntent.findMany({ where: { ...live, customerId: input.customerId } })
+    const again = mine.find((i) => canReuse(i, input.planId, input.baseAmount, now))
+    if (again && again.expiresAt) return { ref: again.ref, payAmount: again.amount, expiresAt: again.expiresAt }
+    for (const old of mine) {
+      if (old.expiresAt && old.expiresAt.getTime() > now) {
+        await tx.paymentIntent.update({ where: { id: old.id }, data: { expiresAt: new Date(now) } })
+      }
+    }
+
+    const open = await tx.paymentIntent.findMany({ where: live, select: { amount: true } })
     const payAmount = pickUniqueKobo(input.baseAmount, open.map((o) => o.amount))
     if (payAmount === null) return null
-    const expiresAt = new Date(Date.now() + TRANSFER_WINDOW_MS)
+    const expiresAt = new Date(now + TRANSFER_WINDOW_MS)
     await tx.paymentIntent.create({
       data: {
         ref, actorType: 'customer', customerId: input.customerId, planId: input.planId,

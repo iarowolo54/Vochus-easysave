@@ -3,9 +3,11 @@ import { createHash } from 'node:crypto'
 
 export interface ParsedAlert {
   amount: number
+  /** The account the money landed in. A genuine alert for another account must never credit ours. */
+  accountNumber: string
   senderName: string
   narration: string
-  /** The sender's bank transaction number from the narration. Without one, an id derived from the whole alert (it has the balance after the credit, which differs every time). */
+  /** Dedupe key: a hash of the whole alert. The balance after the credit differs every time, and the sender-typed narration can't force a clash. */
   txnId: string
   at: Date
 }
@@ -45,16 +47,16 @@ export function parseMoniepointAlert(raw: string): ParsedAlert | null {
   const amount = Number(amt[1].replace(/,/g, ''))
   const at = parseLagosTime(when[1])
   const narration = narr[1].trim()
-  if (!(amount > 0) || !at) return null
+  const account = /Account Number:\s*(\d{10})/i.exec(t)
+  if (!(amount > 0) || !at || !account) return null
 
   const sender = /Sender's Name:\s*(?:from\s+)?(.+?)(?:-{3,}|Date\s*&|$)/i.exec(t)
   const senderName = sender ? sender[1].trim() : ''
   const balance = /Account Balance:\s*(?:N|₦|NGN)?\s*([\d,]+(?:\.\d{1,2})?)/i.exec(t)
-  const digits = /(\d{6,})\s*(?:\||$)/.exec(narration)
-  const txnId = digits
-    ? digits[1]
-    : 'h' + createHash('sha256').update([amount, at.toISOString(), senderName, narration, balance ? balance[1] : ''].join('|')).digest('hex').slice(0, 24)
-  return { amount, senderName, narration, txnId, at }
+  const txnId = 'h' + createHash('sha256')
+    .update([amount, at.toISOString(), account[1], senderName, narration, balance ? balance[1] : ''].join('|'))
+    .digest('hex').slice(0, 24)
+  return { amount, accountNumber: account[1], senderName, narration, txnId, at }
 }
 
 function domainOf(address: string): string {

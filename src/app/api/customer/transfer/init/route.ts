@@ -16,6 +16,8 @@ export async function POST(req: NextRequest) {
   const input = (body && typeof body === 'object' ? body : {}) as { amount?: unknown; planId?: unknown }
   const amount = money(Number(input.amount))
   if (!(amount >= 100)) return NextResponse.json({ error: 'Minimum ₦100' }, { status: 400 })
+  // The kobo is ours to assign; a customer can't choose the figure they will be matched on.
+  if (!Number.isInteger(amount)) return NextResponse.json({ error: 'Enter a whole-naira amount.' }, { status: 400 })
   if (amount > 10_000_000) return NextResponse.json({ error: 'That amount is too large for one transfer.' }, { status: 400 })
 
   const customer = await prisma.customer.findUnique({ where: { id: session.id } })

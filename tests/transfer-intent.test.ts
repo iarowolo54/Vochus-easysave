@@ -1,7 +1,7 @@
 //   npx tsx --test tests/transfer-intent.test.ts
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { pickUniqueKobo, matchAlertToIntent, TRANSFER_WINDOW_MS, TRANSFER_GRACE_MS } from '../src/lib/transfer-intent'
+import { pickUniqueKobo, matchAlertToIntent, canReuse, TRANSFER_WINDOW_MS, TRANSFER_GRACE_MS } from '../src/lib/transfer-intent'
 
 test('pickUniqueKobo takes the first free kobo from .01', () => {
   assert.equal(pickUniqueKobo(13000, []), 13000.01)
@@ -43,4 +43,15 @@ test('wrong amount does not match', () => {
 
 test('two intents with the same amount are ambiguous', () => {
   assert.equal(matchAlertToIntent({ amount: 500.01, at: at(1000) }, [intent('A', 500.01), intent('B', 500.01)]), 'ambiguous')
+})
+
+const future = new Date(Date.now() + 60_000)
+test('canReuse: same plan, same base amount, still open', () => {
+  assert.equal(canReuse({ amount: 13000.37, planId: 'P', expiresAt: future }, 'P', 13000), true)
+})
+
+test('canReuse: different plan, different amount or an expired intent is not reused', () => {
+  assert.equal(canReuse({ amount: 13000.37, planId: 'Q', expiresAt: future }, 'P', 13000), false)
+  assert.equal(canReuse({ amount: 13000.37, planId: 'P', expiresAt: future }, 'P', 12000), false)
+  assert.equal(canReuse({ amount: 13000.37, planId: 'P', expiresAt: new Date(Date.now() - 1) }, 'P', 13000), false)
 })

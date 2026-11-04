@@ -26,7 +26,8 @@ test('parses the real sample', () => {
   assert.ok(a)
   assert.equal(a.amount, 13000)
   assert.equal(a.senderName, 'AROWOLO OLUSAKIN ISAIAH')
-  assert.equal(a.txnId, '38476235933')
+  assert.equal(a.accountNumber, '6801958686')
+  assert.match(a.txnId, /^h[0-9a-f]{24}$/)
   assert.equal(a.at.toISOString(), '2026-11-02T18:52:45.000Z')
 })
 
@@ -36,10 +37,10 @@ test('a duplicated body (plain + html) parses the same single alert', () => {
 })
 
 test('parses html-wrapped text and kobo amounts', () => {
-  const html = `<html><body><p>Credit Amount</p><p><b>1,250.37</b></p><p>Date &amp; Time: 03 Nov, 2026 | 12:05:09 AM</p><p>Narration: MOB/X/payment/9988776655|JANE DOE</p><p>Sender's Name: from JANE DOE</p></body></html>`
+  const html = `<html><body><p>Credit Amount</p><p><b>1,250.37</b></p><p>Account Number: 6801958686</p><p>Date &amp; Time: 03 Nov, 2026 | 12:05:09 AM</p><p>Narration: MOB/X/payment/9988776655|JANE DOE</p><p>Sender's Name: from JANE DOE</p></body></html>`
   const a = parseMoniepointAlert(html)
   assert.equal(a?.amount, 1250.37)
-  assert.equal(a?.txnId, '9988776655')
+  assert.equal(a?.accountNumber, '6801958686')
   assert.equal(a?.at.toISOString(), '2026-11-02T23:05:09.000Z')
 })
 
@@ -60,6 +61,23 @@ test('same amount and time but a different balance gives a different id', () => 
   const x = parseMoniepointAlert(SETTLEMENT('500.00', '1,000.00', '03 Nov, 2026 | 10:00:00 AM'))
   const y = parseMoniepointAlert(SETTLEMENT('500.00', '1,500.00', '03 Nov, 2026 | 10:00:00 AM'))
   assert.notEqual(x?.txnId, y?.txnId)
+})
+
+test('an alert with no account number is not trusted', () => {
+  assert.equal(parseMoniepointAlert(BODY.replace('Account Number: 6801958686', '')), null)
+})
+
+test('the account number is read so a replayed alert for another account can be refused', () => {
+  assert.equal(parseMoniepointAlert(BODY.replace('6801958686', '1234567890'))?.accountNumber, '1234567890')
+})
+
+test('digits typed into the narration cannot set or clash the id', () => {
+  const a = parseMoniepointAlert(BODY)
+  const b = parseMoniepointAlert(BODY.replace('07:52:45 PM', '07:53:45 PM'))
+  const c = parseMoniepointAlert(BODY.replace('17,947.00', '31,000.00'))
+  assert.ok(a && b && c)
+  assert.notEqual(a.txnId, b.txnId)
+  assert.notEqual(a.txnId, c.txnId)
 })
 
 test('text that is not a credit alert is null', () => {
