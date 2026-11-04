@@ -318,7 +318,7 @@ type MenuItem = { label: string; onSelect?: () => void; danger?: boolean; href?:
  * scrolling table can't clip it, and opens upwards when there's no room below.
  */
 export function RowMenu({ label, items }: { label: string; items: (MenuItem | false | null | undefined)[] }) {
-  const [pos, setPos] = useState<{ top?: number; bottom?: number; right: number } | null>(null)
+  const [pos, setPos] = useState<{ top?: number; bottom?: number; right?: number; left?: number } | null>(null)
   const ref = useRef<HTMLDivElement>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
   const list = items.filter(Boolean) as MenuItem[]
@@ -328,9 +328,11 @@ export function RowMenu({ label, items }: { label: string; items: (MenuItem | fa
     if (open) { setPos(null); return }
     const r = btnRef.current?.getBoundingClientRect()
     if (!r) return
-    const right = window.innerWidth - r.right
+    // Line the menu's right edge up with the button; when the button sits near the left edge
+    // (stacked mobile cards) that would push the menu off-screen, so line up the left edge instead.
+    const side = r.right < 232 ? { left: Math.max(8, r.left) } : { right: Math.max(8, window.innerWidth - r.right) }
     const roomBelow = window.innerHeight - r.bottom
-    setPos(roomBelow < list.length * 44 + 24 ? { bottom: window.innerHeight - r.top + 6, right } : { top: r.bottom + 6, right })
+    setPos(roomBelow < list.length * 44 + 24 ? { bottom: window.innerHeight - r.top + 6, ...side } : { top: r.bottom + 6, ...side })
   }
 
   useEffect(() => {

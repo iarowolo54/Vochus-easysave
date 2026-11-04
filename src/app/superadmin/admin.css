@@ -547,7 +547,7 @@
 .admin-root .a-rowmenu { position: relative; display: inline-flex; }
 .admin-root .a-rowmenu-btn { width: 36px; height: 36px; border-radius: 50%; border: 1px solid var(--border2); background: var(--surface); color: var(--text); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; }
 .admin-root .a-rowmenu-btn:hover { background: var(--surface2); }
-.admin-root .a-rowmenu-list { position: fixed; z-index: 250; min-width: 200px; padding: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 32px rgba(15, 42, 29, .12); }
+.admin-root .a-rowmenu-list { position: fixed; z-index: 250; min-width: 200px; max-width: calc(100vw - 16px); padding: 6px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: 0 12px 32px rgba(15, 42, 29, .12); }
 .admin-root .a-rowmenu-list > * { display: flex; align-items: center; width: 100%; min-height: 40px; padding: 0 12px; border: none; border-radius: 8px; background: none; font: inherit; font-size: 14px; color: var(--text); text-decoration: none; text-align: left; cursor: pointer; white-space: nowrap; }
 .admin-root .a-rowmenu-list > *:hover { background: var(--surface2); }
 .admin-root .a-rowmenu-list > .is-danger { color: var(--red); }

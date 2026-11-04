@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { splitDaysByPlan } from '@/lib/calendar-plans'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -24,9 +25,10 @@ export async function GET(req: NextRequest) {
     })
     if (!customer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-    const plan = await prisma.savingsPlan.findFirst({
+    const plans = await prisma.savingsPlan.findMany({
       where: { customerId: customer.id, status: 'Active' },
       orderBy: { startDate: 'desc' },
+      select: { id: true, goal: true, dailyAmount: true, periodDays: true, startDate: true, maturityDate: true, balance: true },
     })
 
     const transactions = await prisma.transaction.findMany({
@@ -39,20 +41,9 @@ export async function GET(req: NextRequest) {
       orderBy: { createdAt: 'asc' },
     })
 
-    const days: Record<number, { amount: number; ref: string; time: string }> = {}
-    for (const tx of transactions) {
-      const d = tx.createdAt.getDate()
-      if (!days[d]) {
-        days[d] = {
-          amount: 0,
-          ref: tx.ref,
-          time: tx.createdAt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }),
-        }
-      }
-      days[d].amount += tx.amount
-    }
+    const daysByPlan = splitDaysByPlan(plans, transactions)
 
-    return NextResponse.json({ customer: { ...customer, name: `${customer.firstName} ${customer.lastName}` }, plan, days })
+    return NextResponse.json({ customer: { ...customer, name: `${customer.firstName} ${customer.lastName}` }, plans, daysByPlan })
   }
 
   const customers = await prisma.customer.findMany({
@@ -61,7 +52,6 @@ export async function GET(req: NextRequest) {
       savingsPlans: {
         where: { status: 'Active' },
         orderBy: { startDate: 'desc' },
-        take: 1,
       },
     },
     orderBy: { createdAt: 'desc' },
@@ -69,6 +59,7 @@ export async function GET(req: NextRequest) {
 
   const result = await Promise.all(customers.map(async (c) => {
     const plan = c.savingsPlans[0]
+    const planCount = c.savingsPlans.length
 
     const txs = await prisma.transaction.findMany({
       where: {
@@ -104,6 +95,7 @@ export async function GET(req: NextRequest) {
       customerId: c.customerId,
       name: `${c.firstName} ${c.lastName}`,
       phone: c.phone,
+      planCount,
       plan: plan ? {
         id: plan.id,
         dailyAmount: plan.dailyAmount,

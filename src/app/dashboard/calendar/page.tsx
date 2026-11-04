@@ -19,13 +19,14 @@ interface CustomerTile {
   customerId: string
   name: string
   phone: string
+  planCount: number
   plan: { dailyAmount: number; periodDays: number; startDate: string; maturityDate: string; balance: number } | null
   monthStats: { saved: number; missed: number; total: number; pct: number; bestStreak: number }
 }
 
 interface DayData { amount: number; ref: string; time: string }
 interface CalCustomer { id: string; customerId: string; name: string; phone: string }
-interface CalPlan { id: string; dailyAmount: number; periodDays: number; startDate: string; maturityDate: string; balance: number }
+interface CalPlan { id: string; goal?: string; dailyAmount: number; periodDays: number; startDate: string; maturityDate: string; balance: number }
 
 /** ₦500 → "500", ₦12,500 → "12.5k": fits inside a calendar day. */
 function compact(n: number) {
@@ -52,8 +53,9 @@ function CalendarPage() {
   const [listFailed, setListFailed] = useState(false)
 
   const [selected, setSelected] = useState<CalCustomer | null>(null)
-  const [plan, setPlan] = useState<CalPlan | null>(null)
-  const [days, setDays] = useState<Record<number, DayData>>({})
+  const [plans, setPlans] = useState<CalPlan[]>([])
+  const [planId, setPlanId] = useState<string | null>(null)
+  const [daysByPlan, setDaysByPlan] = useState<Record<string, Record<number, DayData>>>({})
   const [loadingCal, setLoadingCal] = useState(false)
   const [activeDay, setActiveDay] = useState<number | null>(null)
   const [showLog, setShowLog] = useState(false)
@@ -66,8 +68,8 @@ function CalendarPage() {
     fetch(`/api/calendar?year=${yr}&month=${mo}&customerId=${cid}`)
       .then(r => r.json())
       .then(d => {
-        setPlan(d.plan ?? null)
-        setDays(d.days ?? {})
+        setPlans(d.plans ?? [])
+        setDaysByPlan(d.daysByPlan ?? {})
       })
       .catch(() => {})
       .finally(() => setLoadingCal(false))
@@ -76,8 +78,9 @@ function CalendarPage() {
   const selectCustomer = useCallback((c: CustomerTile) => {
     const now = new Date()
     setSelected({ id: c.id, customerId: c.customerId, name: c.name, phone: c.phone })
-    setPlan(c.plan as CalPlan | null)
-    setDays({})
+    setPlans(c.plan ? [c.plan as CalPlan] : [])
+    setPlanId(null)
+    setDaysByPlan({})
     setCalYear(now.getFullYear())
     setCalMonth(now.getMonth())
     loadCalendar(c.id, now.getFullYear(), now.getMonth())
@@ -102,7 +105,7 @@ function CalendarPage() {
   }, [cidParam, selectCustomer])
 
   function clearCustomer() {
-    setSelected(null); setPlan(null); setDays({}); setSearch(''); setActiveDay(null)
+    setSelected(null); setPlans([]); setPlanId(null); setDaysByPlan({}); setSearch(''); setActiveDay(null)
   }
 
   function moveMonth(delta: number) {
@@ -117,6 +120,10 @@ function CalendarPage() {
     setCalYear(today.getFullYear()); setCalMonth(today.getMonth())
     if (selected) loadCalendar(selected.id, today.getFullYear(), today.getMonth())
   }
+
+  // A customer can have several active plans; each has its own calendar.
+  const plan = plans.find(p => p.id === planId) ?? plans[0] ?? null
+  const days: Record<number, DayData> = (plan && daysByPlan[plan.id]) || {}
 
   const dim = new Date(calYear, calMonth + 1, 0).getDate()
   const firstDay = new Date(calYear, calMonth, 1).getDay()
@@ -173,7 +180,7 @@ function CalendarPage() {
                   <span className={`ui-avatar ag-av ag-av--${avatarTint(c.customerId)}`} aria-hidden="true">{initials(c.name)}</span>
                   <span className="ag-crow-main">
                     <span className="ag-crow-name">{displayName(c.name)}</span>
-                    <span className="ag-crow-sub">{c.customerId} · {c.plan ? `${formatNaira(c.plan.dailyAmount, { minor: false })} a day` : 'No active plan'}</span>
+                    <span className="ag-crow-sub">{c.customerId} · {c.plan ? `${formatNaira(c.plan.dailyAmount, { minor: false })} a day${c.planCount > 1 ? ` · ${c.planCount} plans` : ''}` : 'No active plan'}</span>
                     {c.plan && saved + missed > 0 && (
                       <span className="ag-crow-plan">
                         <span className={`ag-mini-bar ag-mini-bar--${tone(p)}`} aria-hidden="true"><span style={{ width: `${p}%` }} /></span>
@@ -246,6 +253,17 @@ function CalendarPage() {
           <Icons.add size={18} aria-hidden="true" /> Record saving
         </Link>
       </section>
+
+      {plans.length > 1 && (
+        <div className="ui-chips" role="group" aria-label="Savings plans">
+          {plans.map(p => (
+            <button key={p.id} type="button" className="ui-chip" aria-pressed={p.id === plan?.id}
+              onClick={() => { setPlanId(p.id); setActiveDay(null) }}>
+              {p.goal ? `${p.goal} · ` : ''}{formatNaira(p.dailyAmount, { minor: false })} a day
+            </button>
+          ))}
+        </div>
+      )}
 
       {plan && (
         <Link href={`/dashboard/savings?cid=${encodeURIComponent(selected.customerId)}&bulk=1`}
