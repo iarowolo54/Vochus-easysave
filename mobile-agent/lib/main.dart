@@ -188,6 +188,10 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
           onMessageReceived: (_) => _openSettings())
       ..addJavaScriptChannel('VochusBiometric',
           onMessageReceived: (msg) => _handleBiometricEnroll(msg.message))
+      ..addJavaScriptChannel('VochusBiometricClear',
+          onMessageReceived: (_) => _handleBiometricDisable())
+      ..addJavaScriptChannel('VochusPrinterSetup',
+          onMessageReceived: (msg) => _handlePrinterSetup(msg.message))
       ..addJavaScriptChannel('VochusTriggerBiometric',
           onMessageReceived: (_) => _handleBiometricTrigger())
       ..setNavigationDelegate(
@@ -322,6 +326,8 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
   Future<void> _injectFlags() async {
     final hasBio = _bioToken != null ? "true" : "false";
     final deviceJson = jsonEncode(_deviceMeta);
+    final prefs = await SharedPreferences.getInstance();
+    final printerName = jsonEncode(prefs.getString(kPrinterNameKey) ?? '');
     await _controller.runJavaScript(
       "window.__vochusApp = 'agent';"
       "window.__vochusDeviceId = '$_deviceId';"
@@ -331,6 +337,8 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
       "window.__vochusBiometricEnrolled = $hasBio;"
       "window.__vochusCanSaveReceipt = true;"
       "window.__vochusCanOpenSettings = true;"
+      "window.__vochusCanManagePhone = true;"
+      "window.__vochusPrinterName = $printerName;"
       "try { window.dispatchEvent(new Event('vochus:flags-ready')); } catch(e) {}",
     );
   }
@@ -415,14 +423,28 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
       final token = data['token'] as String?;
       final identifier = data['identifier'] as String?;
       if (token == null || identifier == null) return;
+      // Turning it on is the agent's own choice from Settings, so check it is really them (and that the phone has a fingerprint).
+      final ok = await _promptBiometric();
+      if (!ok) {
+        _toast('Fingerprint sign-in was not turned on');
+        await _injectFlags();
+        return;
+      }
       await _secure.write(key: kBioTokenKey, value: token);
       await _secure.write(key: kBioIdentifierKey, value: identifier);
       _bioToken = token;
       _bioIdentifier = identifier;
-      _toast('Biometric sign-in enabled');
+      _toast('Fingerprint sign-in turned on');
+      await _injectFlags();
     } catch (e) {
-      _toast('Could not enable biometric: $e');
+      _toast('Could not turn on fingerprint sign-in: $e');
     }
+  }
+
+  Future<void> _handleBiometricDisable() async {
+    await _clearBiometric();
+    _toast('Fingerprint sign-in turned off');
+    await _injectFlags();
   }
 
   Future<void> _clearBiometric() async {
@@ -640,21 +662,41 @@ class _WebViewPageState extends State<WebViewPage> with WidgetsBindingObserver {
       ),
     );
     if (action == 'pick') {
-      await _ensureBluetoothPermissions();
-      final picked = await _pickPrinter();
-      if (picked != null) {
-        await prefs.setString(kPrinterMacKey, picked.macAdress);
-        await prefs.setString(kPrinterNameKey, picked.name ?? 'Printer');
-        _toast('Printer linked: ${picked.name ?? picked.macAdress}');
-      }
+      await _pickAndLinkPrinter(prefs);
     } else if (action == 'unlink-printer') {
-      await prefs.remove(kPrinterMacKey);
-      await prefs.remove(kPrinterNameKey);
-      _toast('Printer unlinked');
+      await _unlinkPrinter(prefs);
     } else if (action == 'unlink-bio') {
       await _clearBiometric();
       _toast('Biometric sign-in disabled');
     }
+    await _injectFlags();
+  }
+
+  Future<void> _pickAndLinkPrinter(SharedPreferences prefs) async {
+    await _ensureBluetoothPermissions();
+    final picked = await _pickPrinter();
+    if (picked != null) {
+      await prefs.setString(kPrinterMacKey, picked.macAdress);
+      await prefs.setString(kPrinterNameKey, picked.name ?? 'Printer');
+      _toast('Printer linked: ${picked.name ?? picked.macAdress}');
+    }
+  }
+
+  Future<void> _unlinkPrinter(SharedPreferences prefs) async {
+    await prefs.remove(kPrinterMacKey);
+    await prefs.remove(kPrinterNameKey);
+    _toast('Printer unlinked');
+  }
+
+  /// From the Settings page: 'pick' chooses a paired Bluetooth printer, 'unlink' forgets it. Either way the page is told the new state.
+  Future<void> _handlePrinterSetup(String action) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (action == 'pick') {
+      await _pickAndLinkPrinter(prefs);
+    } else if (action == 'unlink') {
+      await _unlinkPrinter(prefs);
+    }
+    await _injectFlags();
   }
 
   void _toast(String msg) {

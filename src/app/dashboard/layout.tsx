@@ -1,5 +1,6 @@
 'use client'
 
+import { phoneSettingsMode, shouldAutoEnrollFingerprint, type PhoneFlags } from '@/lib/phone-settings'
 import { useSession, signOut } from 'next-auth/react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
@@ -98,7 +99,8 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   // Only the agent app has a printer/fingerprint sheet; older installs don't announce it.
   useEffect(() => {
-    const check = () => setCanOpenAppSettings(!!(window as unknown as { __vochusCanOpenSettings?: boolean }).__vochusCanOpenSettings)
+    // The newer app has its printer and fingerprint controls on the Settings page, so only older apps keep the menu item.
+    const check = () => setCanOpenAppSettings(phoneSettingsMode(window as unknown as PhoneFlags) === 'legacy')
     check()
     window.addEventListener('vochus:flags-ready', check)
     return () => window.removeEventListener('vochus:flags-ready', check)
@@ -140,13 +142,12 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
   useEffect(() => {
     if (!session?.user) return
-    const w = window as unknown as {
-      __vochusCanBiometric?: boolean
-      __vochusBiometricEnrolled?: boolean
+    const w = window as unknown as PhoneFlags & {
       __vochusDeviceId?: string
       VochusBiometric?: { postMessage: (s: string) => void }
     }
-    if (!w.__vochusCanBiometric || w.__vochusBiometricEnrolled || !w.VochusBiometric) return
+    // Older apps switch fingerprint on by themselves; the newer app waits for the Enable button on the Settings page.
+    if (!shouldAutoEnrollFingerprint(w) || !w.VochusBiometric) return
     ;(async () => {
       try {
         const r = await fetch('/api/auth/biometric/issue', {

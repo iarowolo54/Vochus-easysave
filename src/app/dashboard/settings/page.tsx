@@ -9,6 +9,7 @@ import { FieldError, FormError } from '@/components/ui/FormErrors'
 import { ListSkeleton } from '@/components/ui/Skeleton'
 import Toast from '@/components/ui/Toast'
 import { Icons } from '@/components/ui/icons'
+import PhoneSettings from '@/components/agent/PhoneSettings'
 import { formatDate, formatNaira } from '@/lib/format'
 import { blockNonDigit, digitsOnly } from '@/lib/numeric'
 
@@ -281,6 +282,8 @@ export default function SettingsPage() {
               <span className="ag-crow-end"><Icons.next size={18} aria-hidden="true" /></span>
             </button>
           </section>
+
+          <PhoneSettings />
         </div>
 
         <div className="ag-col">
