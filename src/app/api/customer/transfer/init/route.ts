@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'You’ve asked to collect from this plan. You can’t add money until that request is finished.' }, { status: 409 })
   }
 
-  const intent = await createTransferIntent({ customerId: customer.id, planId: plan.id, baseAmount: amount })
+  const intent = await createTransferIntent({ actor: { customerId: customer.id }, planId: plan.id, baseAmount: amount })
   if (!intent) return NextResponse.json({ error: 'Lots of people are paying right now. Please try again in a few minutes.' }, { status: 503 })
 
   logAudit({

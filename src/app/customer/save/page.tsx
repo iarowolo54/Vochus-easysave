@@ -1,7 +1,7 @@
 'use client'
 import { useEffect, useState, Suspense, type FormEvent } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import TransferPanel, { type TransferDetails } from './transfer-panel'
+import TransferPanel, { type TransferDetails } from '@/components/ui/TransferPanel'
 import CustomerBottomNav from '@/components/customer/CustomerBottomNav'
 import { useCustomerMe } from '@/components/customer/useCustomerMe'
 import Amount from '@/components/ui/Amount'
@@ -210,7 +210,15 @@ function SavePageInner() {
         )}
 
         {mode === 'pay' && selectedPlan && !pending && transfer && (
-          <TransferPanel details={transfer} planName={selectedPlan.goal} onClose={() => setTransfer(null)} />
+          <TransferPanel
+            details={transfer}
+            statusUrl="/api/customer/transfer/status"
+            destination={selectedPlan.goal}
+            balanceLabel="Your balance"
+            doneHref="/customer/dashboard"
+            historyHref="/customer/transactions"
+            onClose={() => setTransfer(null)}
+          />
         )}
 
         {mode === 'pay' && selectedPlan && !pending && !transfer && (

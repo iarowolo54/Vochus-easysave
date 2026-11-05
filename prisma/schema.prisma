@@ -656,6 +656,9 @@ model PaymentIntent {
   /// 'paystack' | 'transfer'. A transfer intent's amount carries a unique kobo and it closes at expiresAt.
   method     String    @default("paystack")
   expiresAt  DateTime?
+  /// Set when staff credited this by hand: the admin's name and the reason they gave.
+  manualBy   String?
+  manualNote String?
 
   @@index([customerId])
   @@index([agentId])
@@ -670,9 +673,12 @@ model BankAlert {
   senderName String
   narration  String
   alertAt    DateTime
-  status     String // Matched | Unmatched
+  status     String // Matched | Unmatched | Resolved | Dismissed
   intentRef  String?
   createdAt  DateTime @default(now())
+  resolvedAt   DateTime?
+  resolvedBy   String?
+  resolvedNote String?
 }
 
 model SavingsInterestRate {

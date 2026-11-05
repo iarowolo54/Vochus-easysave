@@ -6,6 +6,7 @@ import { prisma } from '@/lib/prisma'
 import { requireEnv } from '@/lib/env'
 import { REVIEW_ACTION } from '@/lib/payment-intent'
 import { settleIntentPayment } from '@/lib/customer-settle'
+import { settleAgentTransfer } from '@/lib/agent-settle'
 import { isAuthenticAlert, parseMoniepointAlert, type ParsedAlert } from '@/lib/moniepoint-alert'
 import { TRANSFER_METHOD, matchAlertToIntent, openTransferIntents } from '@/lib/transfer-intent'
 
@@ -47,9 +48,11 @@ async function processAlert(alert: ParsedAlert, messageId: string): Promise<'cre
   try {
     const intent = await prisma.paymentIntent.findUnique({ where: { ref: match.ref } })
     if (!intent) throw new Error('intent vanished')
-    const result = await settleIntentPayment(prisma, {
-      intent, reference: match.ref, amountNaira: alert.amount, currency: 'NGN', channel: 'bank_transfer', via: 'Moniepoint transfer',
-    })
+    const result = intent.actorType === 'agent'
+      ? await settleAgentTransfer(prisma, { intent, reference: match.ref, amountNaira: alert.amount, via: 'Moniepoint transfer' })
+      : await settleIntentPayment(prisma, {
+          intent, reference: match.ref, amountNaira: alert.amount, currency: 'NGN', channel: 'bank_transfer', via: 'Moniepoint transfer',
+        })
     if (result.kind === 'review') {
       await prisma.bankAlert.update({ where: { id: row.id }, data: { status: 'Unmatched' } })
       return 'unmatched'

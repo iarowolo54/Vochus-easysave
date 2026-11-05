@@ -17,7 +17,19 @@ type Status = 'pending' | 'done' | 'review' | 'expired'
 const POLL_MS = 5000
 
 /** Shows where to send the money and waits for the bank's credit alert to be matched on the server. */
-export default function TransferPanel({ details, planName, onClose }: { details: TransferDetails; planName: string; onClose: () => void }) {
+export default function TransferPanel({ details, statusUrl, destination, balanceLabel, doneHref, historyHref, onDone, onClose }: {
+  details: TransferDetails
+  /** The status route; the reference is added to it. */
+  statusUrl: string
+  /** Where the money went, e.g. a plan name or "your wallet". */
+  destination: string
+  balanceLabel: string
+  doneHref: string
+  historyHref: string
+  /** Called once when the money has been credited. */
+  onDone?: (newBalance: number | null) => void
+  onClose: () => void
+}) {
   const router = useRouter()
   const [status, setStatus] = useState<Status>('pending')
   const [balance, setBalance] = useState<number | null>(null)
@@ -26,23 +38,25 @@ export default function TransferPanel({ details, planName, onClose }: { details:
   const [checkFailed, setCheckFailed] = useState(false)
   const [checking, setChecking] = useState(false)
   const alive = useRef(true)
+  const notified = useRef(false)
 
   const check = useCallback(async () => {
     setChecking(true)
     try {
-      const res = await fetch(`/api/customer/transfer/status?ref=${encodeURIComponent(details.ref)}`, { cache: 'no-store' })
+      const res = await fetch(`${statusUrl}?ref=${encodeURIComponent(details.ref)}`, { cache: 'no-store' })
       if (!res.ok) throw new Error('status')
       const body: { status: Status; newBalance?: number } = await res.json()
       if (!alive.current) return
       setCheckFailed(false)
       if (body.newBalance !== undefined) setBalance(body.newBalance)
       setStatus(body.status)
+      if (body.status === 'done' && !notified.current) { notified.current = true; onDone?.(body.newBalance ?? null) }
     } catch {
       if (alive.current) setCheckFailed(true)
     } finally {
       if (alive.current) setChecking(false)
     }
-  }, [details.ref])
+  }, [details.ref, statusUrl, onDone])
 
   useEffect(() => {
     alive.current = true
@@ -75,8 +89,8 @@ export default function TransferPanel({ details, planName, onClose }: { details:
       <EmptyState
         icon="check"
         title={`${exact} received`}
-        text={balance !== null ? `It’s in ${planName}. Your balance is now ${formatNaira(balance)}.` : `It’s in ${planName}.`}
-        action={<button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => router.push('/customer/dashboard')}>Done</button>}
+        text={balance !== null ? `It’s in ${destination}. ${balanceLabel} is now ${formatNaira(balance)}.` : `It’s in ${destination}.`}
+        action={<button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => router.push(doneHref)}>Done</button>}
       />
     )
   }
@@ -87,7 +101,7 @@ export default function TransferPanel({ details, planName, onClose }: { details:
         icon="pending"
         title="We’re checking your payment"
         text="We got your money but need to check it before it shows in your plan. We’ll sort it out soon. You don’t need to send it again."
-        action={<button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => router.push('/customer/dashboard')}>Back to home</button>}
+        action={<button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => router.push(doneHref)}>Back</button>}
       />
     )
   }
@@ -102,7 +116,7 @@ export default function TransferPanel({ details, planName, onClose }: { details:
         action={
           <div className="ui-stack">
             <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={onClose}>Start again</button>
-            <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => router.push('/customer/transactions')}>See my transactions</button>
+            <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => router.push(historyHref)}>See my history</button>
           </div>
         }
       />

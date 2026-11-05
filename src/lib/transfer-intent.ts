@@ -44,7 +44,7 @@ export function matchAlertToIntent(
 /** An open intent the customer can simply keep using: same plan, same base amount, not yet expired. */
 export function canReuse(
   intent: { amount: number; planId: string | null; expiresAt: Date | null },
-  planId: string,
+  planId: string | null,
   baseAmount: number,
   now: number = Date.now(),
 ): boolean {
@@ -63,18 +63,22 @@ export function openTransferIntents(now = Date.now()) {
   })
 }
 
+export type TransferActor = { customerId: string } | { agentId: string }
+
 /**
- * Creates the intent with a unique amount, or returns null when every kobo for this amount is in use. A customer has
- * one open transfer at a time: asking again for the same plan and amount returns it, and anything else closes the old
- * one (it still counts for the grace period, in case they pay it). So one account can't tie up the kobo pool.
+ * Creates the intent with a unique amount, or returns null when every kobo for this amount is in use. An actor (a
+ * customer or an agent) has one open transfer at a time: asking again for the same plan and amount returns it, and
+ * anything else closes the old one (it still counts for the grace period, in case they pay it). So one account can't tie
+ * up the kobo pool. `planId` is the savings plan for a customer and null for an agent's wallet.
  */
-export async function createTransferIntent(input: { customerId: string; planId: string; baseAmount: number }) {
+export async function createTransferIntent(input: { actor: TransferActor; planId: string | null; baseAmount: number }) {
   const ref = `VCHS-TRF-${Date.now()}-${randomBytes(6).toString('base64url').toUpperCase()}`
+  const mineWhere = 'customerId' in input.actor ? { customerId: input.actor.customerId } : { agentId: input.actor.agentId }
   return prisma.$transaction(async (tx) => {
     const now = Date.now()
     const live = { method: TRANSFER_METHOD, status: INTENT_PENDING, expiresAt: { gt: new Date(now - TRANSFER_GRACE_MS) } }
 
-    const mine = await tx.paymentIntent.findMany({ where: { ...live, customerId: input.customerId } })
+    const mine = await tx.paymentIntent.findMany({ where: { ...live, ...mineWhere } })
     const again = mine.find((i) => canReuse(i, input.planId, input.baseAmount, now))
     if (again && again.expiresAt) return { ref: again.ref, payAmount: again.amount, expiresAt: again.expiresAt }
     for (const old of mine) {
@@ -89,8 +93,8 @@ export async function createTransferIntent(input: { customerId: string; planId: 
     const expiresAt = new Date(now + TRANSFER_WINDOW_MS)
     await tx.paymentIntent.create({
       data: {
-        ref, actorType: 'customer', customerId: input.customerId, planId: input.planId,
-        amount: payAmount, method: TRANSFER_METHOD, expiresAt,
+        ref, actorType: 'customerId' in input.actor ? 'customer' : 'agent', planId: input.planId,
+        ...mineWhere, amount: payAmount, method: TRANSFER_METHOD, expiresAt,
       },
     })
     return { ref, payAmount, expiresAt }

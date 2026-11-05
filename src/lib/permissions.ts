@@ -31,6 +31,7 @@ export const SCREENS = [
   { key: 'loan-disbursements', label: 'Loan disbursements', group: 'Loans', actions: VM, handlesMoney: true, manageNote: 'Disburse loans' },
   { key: 'loan-repayments', label: 'Loan repayments', group: 'Loans', actions: VM, handlesMoney: true, manageNote: 'Record repayments' },
   { key: 'treasury', label: 'Treasury', group: 'Money', actions: VM, handlesMoney: true, manageNote: 'Fund wallets, inject capital, commission payout' },
+  { key: 'bank-transfers', label: 'Bank transfers', group: 'Money', actions: VM, handlesMoney: true, manageNote: 'Credit a transfer by hand' },
   { key: 'transactions', label: 'Transactions', group: 'Money', actions: V },
   { key: 'payout-mode', label: 'Payout mode', group: 'Money', actions: VM, handlesMoney: true, manageNote: 'Switch payouts between Auto and Manual' },
   { key: 'cards', label: 'Cards', group: 'Cards', actions: VM, manageNote: 'Generate cards, gift-card design' },

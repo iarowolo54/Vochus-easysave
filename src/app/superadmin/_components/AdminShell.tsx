@@ -55,6 +55,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
     items: [
       { label: 'Treasury', screen: 'treasury', icon: 'treasury', href: '/superadmin/treasury' },
       { label: 'Wallet accounts', screen: 'treasury', icon: 'deposit', href: '/superadmin/wallet-accounts' },
+      { label: 'Bank transfers', screen: 'bank-transfers', icon: 'deposit', href: '/superadmin/bank-transfers' },
       { label: 'Transactions', screen: 'transactions', icon: 'history', href: '/superadmin/transactions' },
       { label: 'Payout mode', screen: 'payout-mode', icon: 'settings', href: '/superadmin/payout-mode' },
     ],

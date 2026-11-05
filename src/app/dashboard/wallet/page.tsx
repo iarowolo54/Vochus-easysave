@@ -1,7 +1,6 @@
 'use client'
 
-import TransferReminder from '@/components/ui/TransferReminder'
-import { useState, useEffect, useRef, Suspense } from 'react'
+import { useState, useEffect, useCallback, Suspense } from 'react'
 import Link from 'next/link'
 import { useSearchParams } from 'next/navigation'
 import { useSession } from 'next-auth/react'
@@ -12,31 +11,16 @@ import { FormError } from '@/components/ui/FormErrors'
 import ListRow from '@/components/ui/ListRow'
 import { ListSkeleton } from '@/components/ui/Skeleton'
 import Toast from '@/components/ui/Toast'
+import TransferPanel, { type TransferDetails } from '@/components/ui/TransferPanel'
 import { Icons } from '@/components/ui/icons'
 
 interface Funding { id: string; ref: string; amount: number; method: string; note: string | null; createdAt: string }
-
-declare global {
-  interface Window {
-    PaystackPop: {
-      setup(opts: {
-        key: string
-        email: string
-        amount: number
-        ref: string
-        metadata?: Record<string, unknown>
-        callback: (resp: { reference: string }) => void
-        onClose: () => void
-      }): { openIframe(): void }
-    }
-  }
-}
 
 const QUICK = [1000, 5000, 10000, 50000]
 
 const MIN = 100
 
-type AgentUser = { id?: string; agentId?: string; email?: string; walletBalance?: number }
+type AgentUser = { walletBalance?: number }
 
 export default function WalletPage() {
   return <Suspense><WalletContent /></Suspense>
@@ -57,8 +41,7 @@ function WalletContent() {
   const [toast, setToast] = useState('')
   const [error, setError] = useState('')
   const [paying, setPaying] = useState(false)
-  const [paystackReady, setPaystackReady] = useState(false)
-  const scriptLoaded = useRef(false)
+  const [transfer, setTransfer] = useState<TransferDetails | null>(null)
 
   const loadFundings = () => {
     fetch('/api/wallet').then(r => r.json()).then(d => {
@@ -73,78 +56,37 @@ function WalletContent() {
     loadFundings()
   }, [session])
 
-  useEffect(() => {
-    if (scriptLoaded.current) return
-    scriptLoaded.current = true
-    if (window.PaystackPop) { setPaystackReady(true); return }
-    const s = document.createElement('script')
-    s.src = 'https://js.paystack.co/v1/inline.js'
-    s.async = true
-    s.onload = () => setPaystackReady(true)
-    document.head.appendChild(s)
-  }, [])
-
   async function handlePay() {
     const amt = parseFloat(amount)
     if (!amt || amt < MIN) { setError(`The smallest top-up is ${formatNaira(MIN, { minor: false })}.`); return }
+    if (!Number.isInteger(amt)) { setError('Enter a whole-naira amount.'); return }
 
     setPaying(true); setError('')
-
-    let initRes: Response
-    let initData: { error?: string; email?: string; reference?: string }
     try {
-      initRes = await fetch('/api/wallet/paystack/init', {
+      const res = await fetch('/api/agent/transfer/init', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ amount: amt }),
       })
-      initData = await initRes.json()
+      const data = await res.json().catch(() => ({})) as Partial<TransferDetails> & { error?: string }
+      if (!res.ok || !data.ref) { setError(data.error ?? 'Couldn’t start the top-up. Please try again.'); return }
+      setTransfer(data as TransferDetails)
     } catch {
-      setError('No connection. Check your internet and try again.'); setPaying(false); return
+      setError('No connection. Check your internet and try again.')
+    } finally {
+      setPaying(false)
     }
-    if (!initRes.ok) { setError(initData.error ?? 'Couldn’t start the payment. Please try again.'); setPaying(false); return }
-
-    if (!window.PaystackPop) { setError('Paystack is still loading. Try again in a moment.'); setPaying(false); return }
-
-    const pubKey = process.env.NEXT_PUBLIC_PAYSTACK_PUBLIC_KEY ?? ''
-    const agentUser = session?.user as AgentUser | undefined
-    const email = initData.email ?? agentUser?.email ?? `${agentUser?.agentId?.toLowerCase()}@vochus.ng`
-
-    const verify = (reference: string) => {
-      fetch('/api/wallet/paystack/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reference }),
-      })
-        .then(r => r.json().then(d => ({ ok: r.ok, d })))
-        .then(({ ok, d }) => {
-          setPaying(false)
-          if (ok || d.alreadyProcessed) {
-            setBalance(d.newBalance)
-            setAmount('')
-            loadFundings()
-            update()
-            setToast(`${formatNaira(amt, { minor: false })} added to your wallet`)
-            setFunded(true)
-          } else {
-            setError(d.error ?? 'We couldn’t confirm the payment. If you were charged, contact support with the reference.')
-          }
-        })
-        .catch(() => { setPaying(false); setError('We couldn’t confirm the payment. If you were charged, contact support with the reference.') })
-    }
-
-    const handler = window.PaystackPop.setup({
-      key: pubKey,
-      email,
-      amount: Math.round(amt * 100),
-      ref: initData.reference ?? '',
-      metadata: { agentId: agentUser?.id, agentCode: agentUser?.agentId },
-      callback: (resp) => { verify(resp.reference) },
-      onClose: () => { setPaying(false) },
-    })
-
-    handler.openIframe()
   }
+
+  const credited = useCallback((newBalance: number | null) => {
+    if (newBalance !== null) setBalance(newBalance)
+    setAmount('')
+    loadFundings()
+    update()
+    setToast('Your wallet is topped up')
+    setFunded(true)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const amt = parseFloat(amount) || 0
   const valid = amt >= MIN
@@ -165,6 +107,20 @@ function WalletContent() {
       <div className="ag-home-grid ag-wallet-grid">
         <div className="ag-col">
           <div className="ui-section-head"><h2 id="topup-title">Add money</h2></div>
+          {transfer ? (
+            <section className="ui-card ag-topup" aria-labelledby="topup-title">
+              <TransferPanel
+                details={transfer}
+                statusUrl="/api/agent/transfer/status"
+                destination="your wallet"
+                balanceLabel="Your wallet"
+                doneHref="/dashboard"
+                historyHref="/dashboard/wallet"
+                onDone={credited}
+                onClose={() => setTransfer(null)}
+              />
+            </section>
+          ) : (
           <section className="ui-card ag-topup" aria-labelledby="topup-title">
             <div className="ag-topup-balance">
               <span className="ag-topup-icon" aria-hidden="true"><Icons.wallet size={22} /></span>
@@ -198,16 +154,14 @@ function WalletContent() {
               <div><dt>Wallet after</dt><dd className={valid ? 'ag-strong' : undefined}>{valid ? formatNaira(balance + amt) : '—'}</dd></div>
             </dl>
 
-            <button type="button" className="ui-btn ui-btn--primary ui-btn--block ag-topup-btn" disabled={paying || !paystackReady || !valid} onClick={handlePay}>
-              {!paystackReady
-                ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Loading Paystack…</>
-                : paying
-                  ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Waiting for payment…</>
-                  : valid ? `Pay ${formatNaira(amt, { minor: false })}` : 'Enter an amount'}
+            <button type="button" className="ui-btn ui-btn--primary ui-btn--block ag-topup-btn" disabled={paying || !valid} onClick={handlePay}>
+              {paying
+                ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Getting account details…</>
+                : valid ? `Pay ${formatNaira(amt, { minor: false })} by transfer` : 'Enter an amount'}
             </button>
-            <TransferReminder />
-            <p className="ui-note ui-note--center"><Icons.locked size={16} aria-hidden="true" /> Secured by Paystack · card, bank transfer or USSD</p>
+            <p className="ui-note ui-note--center"><Icons.locked size={16} aria-hidden="true" /> You’ll get an account number and an exact amount to send.</p>
           </section>
+          )}
         </div>
 
         <div className="ag-col">
@@ -231,7 +185,7 @@ function WalletContent() {
                 <ListRow
                   key={f.id}
                   icon={f.method === 'Paystack' ? 'card' : 'wallet'}
-                  title={f.method === 'Paystack' ? 'Paystack top-up' : 'Wallet funding'}
+                  title={f.method === 'Paystack' ? 'Card top-up' : f.method === 'Transfer' ? 'Bank transfer top-up' : 'Wallet funding'}
                   sub={`${formatDate(f.createdAt)} · ${formatTime(f.createdAt)}`}
                   value={<span className="ui-value-stack ui-amount--positive">+{formatNaira(f.amount, { minor: false })}</span>}
                 />
