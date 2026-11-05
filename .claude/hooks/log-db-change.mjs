@@ -13,7 +13,7 @@ import { projectDir, readInput } from './lib.mjs';
 const HEADING = '# Production database change log (written by a hook, newest last; leave these lines in place)';
 const KEEP = 60;
 const SERVER = /69\.197\.164\.193/;
-const DB_WORDS = /(sqlite3|prisma|migrate|db push|dev\.db|\.db\b|\.sqlite3?\b|update\s+["'`\w]+\s+set|delete\s+from|insert\s+into|alter\s+table|drop\s+(table|column|index)|truncate)/i;
+const DB_WORDS = /(\bsqlite3\b|prisma(?:\.cmd)?\s+(?:migrate|db|studio)|\bupdate\s+["'`\w]+\s+set\b|\bdelete\s+from\b|\binsert\s+into\b|\balter\s+table\b|\bdrop\s+(?:table|column|index)\b|\btruncate\b|\b(?:cp|mv|rm|scp|rsync)\b[^|;&]*\.(?:db|sqlite3?)\b)/i;
 const DEPLOY = /^(?:cd (\/[A-Za-z0-9_./-]+)\s*&&\s*)?(ALLOW_DB_PUSH=1 )?(?:\.\/)?scripts\/(deploy|rollback)\.sh$/;
 
 const input = readInput();
@@ -32,15 +32,24 @@ function attempt(fn, fallback) {
 function responseText() {
   const r = input.tool_response;
   if (r == null) return '';
-  if (typeof r === 'string') return r;
-  return [r.stdout, r.output, r.stderr, r.content].filter((x) => typeof x === 'string').join('\n') || attempt(() => JSON.stringify(r), '');
+  const text = typeof r === 'string' ? r : [r.stdout, r.output, r.stderr, r.content].filter((x) => typeof x === 'string').join('\n') || attempt(() => JSON.stringify(r), '');
+  // Long output reaches the hook only as a preview that names the file holding all of it.
+  const full = text.match(/Full output saved to: (\S+)/)?.[1];
+  return full ? attempt(() => readFileSync(full, 'utf8'), text) : text;
 }
 
-// Secrets must never reach the log: mask anything that looks like a credential assignment or key.
+// Values must never reach the log, only what was done and to what. Every quoted string, every number of 4+ digits
+// (BVNs, account numbers, phones, PINs, codes) and every credential-looking assignment or header is masked, so
+// `UPDATE Agent SET pin='1234'` is logged as `UPDATE Agent SET pin='?'`.
 function redact(text) {
   return text
-    .replace(/(password|passwd|pass|secret|token|key|pin|otp)(\s*[=:]\s*)\S+/gi, '$1$2[hidden]')
+    .replace(/(bearer|authorization:?)\s+\S+/gi, '$1 [hidden]')
+    .replace(/(\s-[puP])\s*\S+/g, '$1 [hidden]')
+    .replace(/\b(password|passwd|pass|secret|token|key|pin|otp|bvn|nin|accountNumber|email|phone)(\s*[=:]\s*)\S+/gi, '$1$2[hidden]')
     .replace(/\b(sk|pk)_(live|test)_\w+/g, '[hidden]')
+    .replace(/\\?'[^']*\\?'/g, "'?'")
+    .replace(/\\?"[^"]*?\\"/g, '"?"')
+    .replace(/\d{4,}/g, '?')
     .replace(/\s+/g, ' ');
 }
 
@@ -96,7 +105,7 @@ try {
   const lines = existsSync(file) ? readFileSync(file, 'utf8').split('\n').filter((l) => l.startsWith('- ')) : [];
   lines.push(entry);
   mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, `${HEADING}\n\n${lines.slice(-KEEP).join('\n')}\n`);
+  writeFileSync(file, `${HEADING}\n\n${lines.slice(-KEEP).join('\n')}\n`, { mode: 0o600 });
   process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: input.hook_event_name, additionalContext: `Logged in ${file}.` } }));
 } catch (err) {
   process.stdout.write(JSON.stringify({ hookSpecificOutput: { hookEventName: input.hook_event_name, additionalContext: `This production database change could NOT be logged automatically (${err.code ?? 'error'}). Add it to ${file} by hand.` } }));
