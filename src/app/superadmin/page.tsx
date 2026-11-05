@@ -246,7 +246,7 @@ export default function SuperAdminDashboard() {
         </Tile>
       </div>
 
-      {stats.deposits && has('customers') && (
+      {stats.deposits && has('transactions') && (
         <section className="card ov-row" aria-labelledby="ov-deposits">
           <div className="card-hd">
             <h3 id="ov-deposits">Savings deposits</h3>

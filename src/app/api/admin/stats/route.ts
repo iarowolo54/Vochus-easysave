@@ -1,11 +1,14 @@
 import { NextResponse } from 'next/server'
-import { requireAdminArea } from '@/lib/admin-guard'
+import { requireAdminArea, requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { depositPeriodStarts, summariseDeposits } from '@/lib/deposit-periods'
 
 export async function GET() {
   const guard = await requireAdminArea()
   if (!guard.ok) return guard.response
+
+  // Deposit figures are transaction data: only for actors who may view transactions.
+  const canSeeDeposits = (await requirePermission('transactions', 'view')).ok
 
   const [
     totalAgents,
@@ -23,10 +26,10 @@ export async function GET() {
     prisma.loan.count({ where: { status: 'Pending' } }),
     prisma.transaction.count({ where: { type: 'redemption', status: 'Pending' } }),
     // Only two small columns, from the start of last month: enough for the periods and the month chart.
-    prisma.transaction.findMany({
+    canSeeDeposits ? prisma.transaction.findMany({
       where: { type: 'saving', status: 'Done', createdAt: { gte: depositPeriodStarts().prevMonth } },
       select: { createdAt: true, amount: true, feeTaken: true },
-    }),
+    }) : Promise.resolve([]),
   ])
 
   const totalSavingsPool = savingsPlans.reduce((s, p) => s + p.balance, 0)
@@ -40,6 +43,6 @@ export async function GET() {
     activeLoansPortfolio,
     pendingLoans,
     pendingRedemptions,
-    deposits: summariseDeposits(depositRows),
+    ...(canSeeDeposits && { deposits: summariseDeposits(depositRows) }),
   })
 }

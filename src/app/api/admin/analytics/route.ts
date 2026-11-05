@@ -66,7 +66,12 @@ export async function GET(req: NextRequest) {
   const { earnings, topAgents, idleAgents, loans: loanBook, out, deposits: dep, savers, plansBySource, growth, buckets, ...rest } = r
   return NextResponse.json({
     ...rest,
-    buckets,
+    // Each series only carries the figures the actor may see.
+    buckets: buckets.map(b => ({
+      start: b.start,
+      ...(money && { deposits: b.deposits }),
+      ...(customersOk && { customers: b.customers, agents: b.agents }),
+    })),
     can: { money, commission, agents: agentsOk, loans: loansOk, customers: customersOk },
     ...(money && { deposits: dep, savers, plansBySource, out }),
     ...(commission && { earnings }),
