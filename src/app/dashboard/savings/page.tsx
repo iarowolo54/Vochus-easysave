@@ -14,6 +14,7 @@ import { slotKeyForDate } from '@/lib/savings-card'
 import { addDays, isoDate, parseDateInput, today } from '@/lib/plan-dates'
 import { createReceiptSender, SEND_IDLE } from '@/lib/receipt-send'
 import BottomSheet from '@/components/ui/BottomSheet'
+import ReopenCodeSheet from '@/components/ui/ReopenCodeSheet'
 import EmptyState from '@/components/ui/EmptyState'
 import DatePicker from '@/components/ui/DatePicker'
 import EndDateField, { endDateDays } from '@/components/ui/EndDateField'
@@ -336,24 +337,13 @@ function SavingsContent() {
     update()
   }
 
-  // Matured or collected plans can be reopened so the customer can save into them again.
-  async function reopenPlan(id: string) {
+  // Matured or collected plans can be reopened, but only once the customer has read the code texted to them to the agent.
+  const [reopenFor, setReopenFor] = useState<{ id: string; name: string } | null>(null)
+  function reopenDone() {
     if (!selected) return
-    setLoading(true); setError('')
-    try {
-      const res = await fetch('/api/customers/plan/reopen', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ customerId: selected.id, planId: id }),
-      })
-      const data = await res.json().catch(() => ({}))
-      if (!res.ok) { setError(data.error ?? 'The plan could not be reopened. Please try again.'); setLoading(false); return }
-    } catch {
-      setError('No connection. Check your internet and try again.'); setLoading(false); return
-    }
+    setReopenFor(null)
     setToast(`Plan reopened for ${selected.firstName} ${selected.lastName}`)
     reset()
-    setLoading(false)
     setRefreshKey(k => k + 1)
     update()
   }
@@ -496,6 +486,18 @@ function SavingsContent() {
   return (
     <div className="ag-page">
       {toast && <Toast message={toast} onDone={() => setToast('')} />}
+      {reopenFor && selected && (
+        <ReopenCodeSheet
+          open
+          onClose={() => setReopenFor(null)}
+          who={{ kind: 'agent', customerName: selected.firstName }}
+          planName={reopenFor.name}
+          sendUrl="/api/customers/plan/reopen/code"
+          confirmUrl="/api/customers/plan/reopen"
+          body={{ customerId: selected.id, planId: reopenFor.id }}
+          onDone={reopenDone}
+        />
+      )}
 
       <div className="ag-home-grid">
         <div className="ag-col">
@@ -619,7 +621,7 @@ function SavingsContent() {
                         <span className="ui-row-title">{p.goal}</span>
                         <span className="ui-row-sub">{formatNaira(perPayment(p), { minor: false })} a {planUnit(p)} · {p.status === 'Redeemed' ? 'collected' : 'matured'}</span>
                       </span>
-                      <button type="button" className="ui-btn ui-btn--secondary" disabled={loading} onClick={() => reopenPlan(p.id)}>Save again</button>
+                      <button type="button" className="ui-btn ui-btn--secondary" disabled={loading} onClick={() => setReopenFor({ id: p.id, name: p.goal })}>Save again</button>
                     </div>
                   ))}
                 </section>

@@ -39,3 +39,15 @@ export async function reopenPlan(client: Client, input: { planId: string; custom
         : { count: 0 }
   return moved.count === 1 ? { ok: true, planId: plan.id } : { ok: false, reason: 'not_finished' }
 }
+
+/** Whether this plan could be reopened right now, without changing it. Checked before a code is sent. */
+export async function checkReopenable(client: Client, input: { planId: string; customerId: string }, now: Date = new Date()): Promise<ReopenResult> {
+  const plan = await client.savingsPlan.findFirst({
+    where: { id: input.planId, customerId: input.customerId },
+    select: { id: true, status: true, maturityDate: true },
+  })
+  if (!plan) return { ok: false, reason: 'not_found' }
+  if (await hasOpenRedemption(client, plan.id, now)) return { ok: false, reason: 'collecting' }
+  const finished = plan.status === 'Redeemed' || (plan.status === 'Active' && plan.maturityDate <= now)
+  return finished ? { ok: true, planId: plan.id } : { ok: false, reason: 'not_finished' }
+}

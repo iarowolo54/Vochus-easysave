@@ -46,7 +46,7 @@ export function newResetId() {
 }
 
 export type ResetActor = 'customer' | 'agent'
-export type ResetPurpose = 'reset' | 'unlock' | 'admin' | 'login_unlock' | 'password_change'
+export type ResetPurpose = 'reset' | 'unlock' | 'admin' | 'login_unlock' | 'password_change' | `plan_reopen:${string}`
 
 export function generateCode(): string {
   return randomInt(0, 1_000_000).toString().padStart(6, '0')
@@ -278,11 +278,11 @@ export async function redeemResetCode(
   // Single use, even under concurrent requests. A successful reset retires every other live code too.
   const consumed = await prisma.passwordResetOtp.updateMany({ where: { id: otp.id, consumedAt: null }, data: { consumedAt: at } })
   if (consumed.count !== 1) return null
-  // A new password ends every other live code on the account, whatever its purpose; a login unlock sets
-  // no password, so it ends only other unlock codes. The code was right, so a failure here mustn't fail
+  // A new password ends every other live code on the account, whatever its purpose; a login unlock or a plan
+  // restart sets no password, so each ends only its own kind of code. The code was right, so a failure here mustn't fail
   // the reset; the others expire within minutes anyway.
   await prisma.passwordResetOtp
-    .updateMany({ where: { actorType, actorId, consumedAt: null, ...(otp.purpose === 'login_unlock' ? { purpose: 'login_unlock' } : {}) }, data: { consumedAt: at } })
+    .updateMany({ where: { actorType, actorId, consumedAt: null, ...(otp.purpose === 'login_unlock' || otp.purpose.startsWith('plan_reopen:') ? { purpose: otp.purpose } : {}) }, data: { consumedAt: at } })
     .catch(() => console.error('Older password reset codes could not be retired'))
   return otp.purpose as ResetPurpose
 }

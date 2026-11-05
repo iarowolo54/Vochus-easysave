@@ -10,6 +10,7 @@ import TodayStatus from '@/components/customer/TodayStatus'
 import { useCustomerMe } from '@/components/customer/useCustomerMe'
 import ActionButton from '@/components/ui/ActionButton'
 import BottomSheet from '@/components/ui/BottomSheet'
+import ReopenCodeSheet from '@/components/ui/ReopenCodeSheet'
 import EmailAlertsSheet from '@/components/customer/EmailAlertsSheet'
 import Toast from '@/components/ui/Toast'
 import { biometricDeclined, biometricState, enableBiometric, setBiometricDeclined } from '@/lib/app-biometric'
@@ -101,23 +102,10 @@ export default function CustomerDashboard() {
   useEffect(() => { try { setEmailAsk(sessionStorage.getItem('ves.emailAlertsAsk') !== 'no') } catch { setEmailAsk(true) } }, [])
   function dismissEmailAsk() { setEmailAsk(false); try { sessionStorage.setItem('ves.emailAlertsAsk', 'no') } catch {} }
   const [bioOffer, setBioOffer] = useState(false)
-  const [reopening, setReopening] = useState(false)
+  const [reopenFor, setReopenFor] = useState<{ id: string; name: string } | null>(null)
 
-  // A finished plan goes back to Active, then the normal save screen takes over.
-  async function saveAgain(planId: string) {
-    if (reopening) return
-    setReopening(true)
-    try {
-      const res = await fetch('/api/customer/plan/reopen', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ planId }) })
-      const body = await res.json().catch(() => ({}))
-      if (!res.ok) { setToast(body.error ?? 'Couldn’t reopen this plan. Try again.'); return }
-      router.push(`/customer/save?planId=${encodeURIComponent(planId)}`)
-    } catch {
-      setToast('Couldn’t reopen this plan. Check your connection and try again.')
-    } finally {
-      setReopening(false)
-    }
-  }
+  // A finished plan goes back to Active only after the customer types the code texted to them; then the normal save screen takes over.
+  function saveAgain(planId: string, name: string) { setReopenFor({ id: planId, name }) }
 
   async function acceptBiometric() {
     setBioOffer(false)
@@ -331,7 +319,7 @@ export default function CustomerDashboard() {
 
         {plan && finished && (
           <div className="ui-actions">
-            <ActionButton icon="add" label="Save again" disabled={reopening} onClick={() => saveAgain(plan.id)} />
+            <ActionButton icon="add" label="Save again" onClick={() => saveAgain(plan.id, plan.goal)} />
           </div>
         )}
 
@@ -421,8 +409,8 @@ export default function CustomerDashboard() {
                   icon="plan"
                   title={p.goal}
                   sub={`${formatNaira(p.dailyAmount)} a ${p.cadence === 'weekly' ? 'week' : p.cadence === 'monthly' ? 'month' : 'day'} · collected`}
-                  value={reopening ? '…' : 'Save again'}
-                  onClick={() => saveAgain(p.id)}
+                  value="Save again"
+                  onClick={() => saveAgain(p.id, p.goal)}
                 />
               ))}
             </section>
@@ -507,6 +495,18 @@ export default function CustomerDashboard() {
         </div>
       </BottomSheet>
 
+      {reopenFor && (
+        <ReopenCodeSheet
+          open
+          onClose={() => setReopenFor(null)}
+          who={{ kind: 'customer' }}
+          planName={reopenFor.name}
+          sendUrl="/api/customer/plan/reopen/code"
+          confirmUrl="/api/customer/plan/reopen"
+          body={{ planId: reopenFor.id }}
+          onDone={() => router.push(`/customer/save?planId=${encodeURIComponent(reopenFor.id)}`)}
+        />
+      )}
       {data.email && <EmailAlertsSheet open={emailSheet} onClose={() => setEmailSheet(false)} email={data.email} onConfirmed={() => { setEmailSheet(false); setToast('Email alerts are on.'); reload() }} />}
       {toast && <Toast message={toast} onDone={() => setToast('')} />}
 
