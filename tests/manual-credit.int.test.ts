@@ -157,3 +157,30 @@ test('a failed credit leaves the held payment held and no stray request behind',
     await db.savingsPlan.update({ where: { id: planId }, data: { maturityDate: plan.maturityDate } })
   }
 })
+
+test('a held payment with the same naira figure (no kobo) blocks crediting the request, and crediting the held money instead works', async () => {
+  const ref = `VCHS-T-${rid}-5`
+  await newIntent(ref, { amount: 3000.37 })
+  const held = await newAlert('g', 3000.0)
+  const blocked = await creditRequestByHand(db, { ref, admin, note: 'customer says paid' })
+  assert.equal(blocked.ok === false && blocked.status, 409)
+  assert.equal(await db.transaction.count({ where: { ref } }), 0)
+  // the right move: credit the held money to that customer, at the amount that arrived
+  const r = await creditAlertByHand(db, { alertId: held.id, target: { kind: 'customer', customerId, planId }, admin, note: 'sender is this customer' })
+  assert.deepEqual(r, { ok: true, amount: 3000 })
+})
+
+test('held money with the same naira figure as a recent hand credit needs an explicit acknowledgement', async () => {
+  const ref = `VCHS-T-${rid}-6`
+  await newIntent(ref, { amount: 4000.37 })
+  assert.equal((await creditRequestByHand(db, { ref, admin, note: 'paid, seen in bank app' })).ok, true)
+
+  // the real payment arrives later as a round figure
+  const late = await newAlert('h', 4000.0)
+  const refused = await creditAlertByHand(db, { alertId: late.id, target: { kind: 'customer', customerId, planId }, admin, note: 'maybe the same' })
+  assert.equal(refused.ok === false && refused.status, 409)
+  assert.equal((await db.bankAlert.findUniqueOrThrow({ where: { id: late.id } })).status, 'Unmatched')
+
+  const ok = await creditAlertByHand(db, { alertId: late.id, target: { kind: 'customer', customerId, planId }, admin, note: 'checked: a different sender', ackLookalike: true })
+  assert.equal(ok.ok, true)
+})

@@ -9,6 +9,7 @@ import { settleIntentPayment } from '@/lib/customer-settle'
 import { settleAgentTransfer } from '@/lib/agent-settle'
 import { isAuthenticAlert, parseMoniepointAlert, type ParsedAlert } from '@/lib/moniepoint-alert'
 import { TRANSFER_METHOD, matchAlertToIntent, openTransferIntents } from '@/lib/transfer-intent'
+import { findRecentHandCredit } from '@/lib/manual-credit'
 
 export interface PollResult { scanned: number; credited: number; unmatched: number }
 
@@ -34,10 +35,7 @@ async function processAlert(alert: ParsedAlert, messageId: string): Promise<'cre
   if (match === 'none' || match === 'ambiguous') {
     const row = await prisma.bankAlert.create({ data: { ...base, status: 'Unmatched' } })
     // Money that looks like a payment staff already credited by hand is flagged, so it is dismissed and not credited twice.
-    const lookalike = await prisma.paymentIntent.findFirst({
-      where: { manualBy: { not: null }, status: 'Done', amount: alert.amount, consumedAt: { gte: new Date(Date.now() - 3 * 86_400_000) } },
-      select: { ref: true },
-    })
+    const lookalike = await findRecentHandCredit(prisma, alert.amount)
     await prisma.auditLog.create({
       data: {
         action: REVIEW_ACTION, entity: 'BankAlert', entityId: row.id,

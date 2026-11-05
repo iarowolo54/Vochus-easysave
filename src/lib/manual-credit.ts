@@ -45,7 +45,20 @@ function settle(client: PrismaClient, intent: Intent, admin: Admin, note: string
 }
 
 const HELD_SAME_AMOUNT =
-  'A held payment of exactly this amount is waiting on this screen. If it is the same money, credit that one (or dismiss it first), so it isn’t credited twice.'
+  'Money for about this amount is already held on this screen (the same naira figure, without the extra kobo). If it is the same payment, credit the held money to this person instead, or dismiss it first, so it isn’t credited twice.'
+const LOOKALIKE =
+  'This is the same naira figure as a payment staff credited by hand in the last 3 days. It may be the same money. Tick the box to confirm you have checked it is not, then try again.'
+
+const HAND_LOOKBACK_MS = 3 * 86_400_000
+
+/** A payment staff credited by hand in the last 3 days for the same naira figure (kobo ignored, since a rounded payment lands on it). */
+export function findRecentHandCredit(client: PrismaClient, amount: number) {
+  const floor = Math.floor(money(amount))
+  return client.paymentIntent.findFirst({
+    where: { manualBy: { not: null }, status: 'Done', consumedAt: { gte: new Date(Date.now() - HAND_LOOKBACK_MS) }, amount: { gte: floor, lt: floor + 1 } },
+    select: { ref: true },
+  })
+}
 
 /** A started transfer the person says they paid. Credited at the amount they were shown. */
 export async function creditRequestByHand(client: PrismaClient, input: { ref: string; admin: Admin; note: string }): Promise<ManualResult> {
@@ -54,8 +67,9 @@ export async function creditRequestByHand(client: PrismaClient, input: { ref: st
   if (intent.status !== INTENT_PENDING) return { ok: false, status: 409, error: TAKEN }
 
   // The bank may already have told us about this money. Crediting both would pay it twice.
+  const floor = Math.floor(money(intent.amount))
   const held = await client.bankAlert.findFirst({
-    where: { status: 'Unmatched', amount: intent.amount, alertAt: { gte: intent.createdAt } },
+    where: { status: 'Unmatched', amount: { gte: floor, lt: floor + 1 }, alertAt: { gte: intent.createdAt } },
     select: { id: true },
   })
   if (held) return { ok: false, status: 409, error: HELD_SAME_AMOUNT }
@@ -71,7 +85,7 @@ export type AlertTarget = { kind: 'customer'; customerId: string; planId: string
 /** Money that arrived and was held. Credited to the customer's plan or the agent's wallet staff choose. */
 export async function creditAlertByHand(
   client: PrismaClient,
-  input: { alertId: string; target: AlertTarget; admin: Admin; note: string },
+  input: { alertId: string; target: AlertTarget; admin: Admin; note: string; ackLookalike?: boolean },
 ): Promise<ManualResult> {
   const alert = await client.bankAlert.findUnique({ where: { id: input.alertId } })
   if (!alert) return { ok: false, status: 404, error: 'Held payment not found.' }
@@ -83,6 +97,11 @@ export async function creditAlertByHand(
   } else {
     const agent = await client.agent.findUnique({ where: { id: input.target.agentId }, select: { id: true } })
     if (!agent) return { ok: false, status: 404, error: 'That agent wasn’t found.' }
+  }
+
+  // Money that looks like a payment already credited by hand needs the staff member to say they checked.
+  if (!input.ackLookalike && alert.status === 'Unmatched' && await findRecentHandCredit(client, alert.amount)) {
+    return { ok: false, status: 409, error: LOOKALIKE }
   }
 
   const amount = money(alert.amount)

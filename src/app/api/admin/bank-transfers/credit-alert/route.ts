@@ -23,6 +23,6 @@ export async function POST(req: NextRequest) {
   if (t.kind === 'customer' && typeof t.customerId === 'string' && typeof t.planId === 'string') target = { kind: 'customer', customerId: t.customerId, planId: t.planId }
   if (t.kind === 'agent' && typeof t.agentId === 'string') target = { kind: 'agent', agentId: t.agentId }
   if (!target) return NextResponse.json({ error: 'Choose who to credit.' }, { status: 400 })
-  const r = await creditAlertByHand(prisma, { alertId: b.alertId, target, admin, note })
+  const r = await creditAlertByHand(prisma, { alertId: b.alertId, target, admin, note, ackLookalike: b.ackLookalike === true })
   return r.ok ? NextResponse.json({ ok: true, amount: r.amount }) : NextResponse.json({ error: r.error }, { status: r.status })
 }

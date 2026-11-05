@@ -31,6 +31,7 @@ interface Row {
   note: string | null
   bank: { sender: string; narration: string; txnId: string; bankTime: string; seenAt: string } | null
   possible: { who: Who | null; plan: string | null; amount: number; startedAt: string; state: string }[]
+  possibleMore: number
   lookalike: boolean
 }
 interface Page {
@@ -118,7 +119,7 @@ export default function BankTransfersPage() {
         </div>
       )}
 
-      <div className="toolbar">
+      <div className="toolbar bt-toolbar">
         <SearchField value={search} onChange={setSearch} placeholder="Name, ID, plan, sender or amount" label="Search bank transfers" />
         <Segmented label="Status" value={filter} options={options} onChange={setFilter} />
       </div>
@@ -141,7 +142,7 @@ export default function BankTransfersPage() {
                   </thead>
                   <tbody>
                     {data.rows.map(r => (
-                      <tr key={`${r.kind}-${r.id}`} style={{ cursor: 'pointer' }} onClick={() => setDialog({ type: 'detail', row: r })}>
+                      <tr key={`${r.kind}-${r.id}`} className="bt-row" onClick={() => setDialog({ type: 'detail', row: r })}>
                         <td data-label="When" className="cm-nowrap cm-sub2">
                           <button type="button" className="cm-cell-btn" aria-label={`See details of the ${nairaKobo(r.amount)} transfer`}
                             onClick={e => { e.stopPropagation(); setDialog({ type: 'detail', row: r }) }}>
@@ -154,21 +155,20 @@ export default function BankTransfersPage() {
                         </td>
                         <td data-label="For" className="cm-sub2">{r.who?.type === 'agent' ? 'Wallet top-up' : r.plan ?? (r.kind === 'alert' ? '—' : 'Savings')}</td>
                         <td data-label="Amount" className="num cm-strong">{nairaKobo(r.amount)}</td>
-                        <td data-label="Status" style={{ minWidth: 220 }}>
+                        <td data-label="Status">
                           <span className={`bdg ${BADGE[r.status]}`}>{r.statusLabel}</span>
-                          <div className="td-sub" style={wrapLeft}>{r.summary}</div>
+                          <div className="td-sub bt-note">{r.summary}</div>
                         </td>
-                        <td data-label="Action" onClick={e => e.stopPropagation()} style={{ minWidth: 150 }}>
-                          {data.canManage && r.actionable ? (
-                            <div style={{ display: 'grid', gap: 6, justifyItems: 'start' }}>
-                              {r.kind === 'request'
-                                ? <button type="button" className="btn btn-outline btn-sm" onClick={() => setDialog({ type: 'request', row: r })}>Credit this payment</button>
-                                : <>
-                                    <button type="button" className="btn btn-outline btn-sm" onClick={() => setDialog({ type: 'alert', row: r })}>Credit to someone</button>
-                                    <button type="button" className="btn btn-outline btn-sm" onClick={() => setDialog({ type: 'dismiss', row: r })}>Dismiss</button>
-                                  </>}
-                            </div>
-                          ) : <button type="button" className="ui-link" onClick={() => setDialog({ type: 'detail', row: r })}>View details</button>}
+                        <td data-label="" onClick={e => e.stopPropagation()}>
+                          <div className="bt-actions">
+                            {data.canManage && r.actionable && (r.kind === 'request'
+                              ? <button type="button" className="btn btn-outline btn-sm" onClick={() => setDialog({ type: 'request', row: r })}>Credit this payment</button>
+                              : <>
+                                  <button type="button" className="btn btn-outline btn-sm" onClick={() => setDialog({ type: 'alert', row: r })}>Credit to someone</button>
+                                  <button type="button" className="btn btn-outline btn-sm" onClick={() => setDialog({ type: 'dismiss', row: r })}>Dismiss</button>
+                                </>)}
+                            <button type="button" className="ui-link" onClick={() => setDialog({ type: 'detail', row: r })}>View details</button>
+                          </div>
                         </td>
                       </tr>
                     ))}
@@ -296,7 +296,8 @@ function DetailDialog({ row, canManage, onClose, onAction }: {
               ))}
             </Ledger>
           )}
-          <p className="a-hint">If one of these is the sender, choose “Credit to a customer or agent” and pick them. The amount credited is the amount that arrived.</p>
+          {r.possibleMore > 0 && <p className="a-hint">{r.possibleMore} more {r.possibleMore === 1 ? 'person has' : 'people have'} a request near this amount and {r.possibleMore === 1 ? 'is' : 'are'} not shown.</p>}
+          <p className="a-hint">A close amount is not proof. Only credit someone after you have confirmed they are the sender, for example from the sender’s name above or a receipt they show you. The amount credited is the amount that arrived.</p>
         </Section>
       )}
     </Modal>
@@ -317,6 +318,9 @@ function ActionDialog({ dialog, onClose, onDone }: { dialog: Exclude<Dialog, { t
   const [people, setPeople] = useState<Person[]>([])
   const [person, setPerson] = useState<Person | null>(null)
   const [planId, setPlanId] = useState('')
+  // Held money that looks like a payment already credited by hand needs a tick to say it was checked.
+  const [ack, setAck] = useState(false)
+  const needsAck = dialog.type === 'alert' && row.lookalike
 
   useEffect(() => {
     if (dialog.type !== 'alert' || q.length < 2) { setPeople([]); return }
@@ -338,7 +342,7 @@ function ActionDialog({ dialog, onClose, onDone }: { dialog: Exclude<Dialog, { t
 
   const needsTarget = dialog.type === 'alert'
   const targetOk = !needsTarget || (kind === 'agent' ? !!person : !!person && !!planId)
-  const ready = targetOk && note.trim().length >= 3 && pin.length > 0
+  const ready = targetOk && note.trim().length >= 3 && pin.length > 0 && (!needsAck || ack)
 
   async function submit() {
     if (!ready) return
@@ -350,7 +354,7 @@ function ActionDialog({ dialog, onClose, onDone }: { dialog: Exclude<Dialog, { t
     try {
       const res = await fetch(`/api/admin/bank-transfers/${url}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...body, note: note.trim(), pin }),
+        body: JSON.stringify({ ...body, note: note.trim(), pin, ...(needsAck ? { ackLookalike: ack } : {}) }),
       })
       const d = await res.json().catch(() => ({})) as { ok?: boolean; error?: string }
       if (!res.ok || !d.ok) { setError(d.error ?? 'That didn’t go through. Nothing was changed.'); return }
@@ -375,7 +379,16 @@ function ActionDialog({ dialog, onClose, onDone }: { dialog: Exclude<Dialog, { t
         sub={row.who ? <>for <strong>{row.who.name}</strong> · {row.who.code}</> : row.bank ? <>sent by <strong>{row.bank.sender || 'an unknown sender'}</strong></> : null} />
 
       {row.bank && dialog.type !== 'request' && (
-        <p className="a-hint" style={wrapLeft}>Bank narration: {row.bank.narration || 'not shown'}</p>
+        <p className="a-hint" style={{ ...wrapLeft, marginBottom: 14 }}>Bank narration: {row.bank.narration || 'not shown'}</p>
+      )}
+      {needsAck && (
+        <div className="a-alert a-alert-a" role="alert">
+          <p style={wrapLeft}>This is the same naira figure as a payment staff credited by hand in the last 3 days. It may be the same money.</p>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: 8 }}>
+            <input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)} style={{ marginTop: 3 }} />
+            <span style={wrapLeft}>I have checked it is not the same payment.</span>
+          </label>
+        </div>
       )}
 
       {dialog.type === 'alert' && (
