@@ -85,6 +85,7 @@ model Customer {
   phone        String
   email        String?
   emailVerifiedAt DateTime? // set only when the customer proved the address; agent-entered emails stay null
+  emailAlertsOn   Boolean  @default(true) // the customer's switch for sign-in and payment emails; only acts once the email is verified
   dob          DateTime?
   address      String
   language     String       @default("English")

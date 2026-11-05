@@ -10,6 +10,7 @@ import TodayStatus from '@/components/customer/TodayStatus'
 import { useCustomerMe } from '@/components/customer/useCustomerMe'
 import ActionButton from '@/components/ui/ActionButton'
 import BottomSheet from '@/components/ui/BottomSheet'
+import EmailAlertsSheet from '@/components/customer/EmailAlertsSheet'
 import Toast from '@/components/ui/Toast'
 import { biometricDeclined, biometricState, enableBiometric, setBiometricDeclined } from '@/lib/app-biometric'
 import { HomeSkeleton } from '@/components/ui/Skeleton'
@@ -36,7 +37,7 @@ type Tx = {
   planId: string | null; recordedBy: string
 }
 type CustomerData = {
-  customerId: string; name: string; phone: string; email: string | null; photoUrl: string | null
+  customerId: string; name: string; phone: string; email: string | null; emailVerified?: boolean; photoUrl: string | null
   agent: { name: string; agentId: string; phone: string }
   plan: Plan | null
   plans: Plan[]
@@ -94,6 +95,11 @@ export default function CustomerDashboard() {
   const [daySel, setDaySel] = useState<DaySelection | null>(null)
   const [receiptTx, setReceiptTx] = useState<Tx | null>(null)
   const [toast, setToast] = useState('')
+  // Asked once per sign-in: "Not now" lasts until the browser session ends, so it comes back next time they sign in.
+  const [emailAsk, setEmailAsk] = useState(false)
+  const [emailSheet, setEmailSheet] = useState(false)
+  useEffect(() => { try { setEmailAsk(sessionStorage.getItem('ves.emailAlertsAsk') !== 'no') } catch { setEmailAsk(true) } }, [])
+  function dismissEmailAsk() { setEmailAsk(false); try { sessionStorage.setItem('ves.emailAlertsAsk', 'no') } catch {} }
   const [bioOffer, setBioOffer] = useState(false)
   const [reopening, setReopening] = useState(false)
 
@@ -255,6 +261,15 @@ export default function CustomerDashboard() {
       </header>
 
       <main className="ui-container">
+        {data.email && !data.emailVerified && emailAsk && (
+          <section className="ui-banner ui-banner--info" aria-label="Email alerts" style={{ flexDirection: 'column' }}>
+            <div><strong>Want alerts by email?</strong> Confirm your email and we’ll tell you when someone signs in and when a payment reaches your savings. You can turn it off any time in Settings.</div>
+            <div className="ui-btn-row">
+              <button type="button" className="ui-btn ui-btn--primary" onClick={() => setEmailSheet(true)}>Confirm my email</button>
+              <button type="button" className="ui-btn ui-btn--secondary" onClick={dismissEmailAsk}>Not now</button>
+            </div>
+          </section>
+        )}
         {plan && finished ? (
           <section className="ui-hero" aria-label="Savings balance">
             {/* The pill is centred on its own; the eye hangs off its right edge so it doesn't shift the pill. */}
@@ -492,6 +507,7 @@ export default function CustomerDashboard() {
         </div>
       </BottomSheet>
 
+      {data.email && <EmailAlertsSheet open={emailSheet} onClose={() => setEmailSheet(false)} email={data.email} onConfirmed={() => { setEmailSheet(false); setToast('Email alerts are on.'); reload() }} />}
       {toast && <Toast message={toast} onDone={() => setToast('')} />}
 
       <CustomerBottomNav />

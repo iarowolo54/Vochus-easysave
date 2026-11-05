@@ -122,6 +122,8 @@ export async function GET() {
     name: `${customer.firstName} ${customer.lastName}`,
     phone: customer.phone,
     email: customer.email,
+    emailVerified: customer.emailVerifiedAt != null,
+    emailAlertsOn: customer.emailAlertsOn,
     gender: customer.gender,
     state: customer.state,
     lga: customer.lga,

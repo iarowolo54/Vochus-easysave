@@ -11,11 +11,12 @@ import { FormSkeleton } from '@/components/ui/Skeleton'
 import ListRow from '@/components/ui/ListRow'
 import { Icons } from '@/components/ui/icons'
 import Toast from '@/components/ui/Toast'
+import EmailAlertsSheet from '@/components/customer/EmailAlertsSheet'
 import { biometricState, disableBiometric, enableBiometric } from '@/lib/app-biometric'
 import { displayName } from '@/lib/format'
 import { getHideBalance, getTextSize, setHideBalance, setTextSize, type TextSize } from '@/lib/preferences'
 
-type CustomerData = { customerId: string; name: string; phone: string; email: string | null; photoUrl: string | null }
+type CustomerData = { customerId: string; name: string; phone: string; email: string | null; emailVerified?: boolean; emailAlertsOn?: boolean; photoUrl: string | null }
 
 function Field({ id, label, error, children }: { id: string; label: string; error?: string; children: ReactNode }) {
   return (
@@ -38,6 +39,8 @@ export default function CustomerSettingsPage() {
   const [bioBusy, setBioBusy] = useState(false)
   const [toast, setToast] = useState('')
   const [pwOpen, setPwOpen] = useState(false)
+  const [emailOpen, setEmailOpen] = useState(false)
+  const [alertBusy, setAlertBusy] = useState(false)
   const [curPw, setCurPw] = useState('')
   const [newPw, setNewPw] = useState('')
   const [newPw2, setNewPw2] = useState('')
@@ -115,6 +118,17 @@ export default function CustomerSettingsPage() {
     }
   }
 
+  async function toggleEmailAlerts() {
+    if (!data) return
+    setAlertBusy(true)
+    try {
+      const res = await fetch('/api/customer/email-alerts', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on: !data.emailAlertsOn }) })
+      if (res.ok) reload()
+      else setToast('That didn’t work. Check your connection and try again.')
+    } catch { setToast('That didn’t work. Check your connection and try again.') }
+    setAlertBusy(false)
+  }
+
   async function toggleBiometric() {
     if (!bio.canManage) {
       setToast('Fingerprint sign-in works in the Vochus Easy Save app. Open the app on your phone to turn it on.')
@@ -187,6 +201,25 @@ export default function CustomerSettingsPage() {
           <ListRow title="Phone" value={data.phone} />
           {data.email && <ListRow title="Email" value={data.email} />}
         </section>
+
+        {data.email && (
+          <>
+            <div className="ui-section-head"><h2>Notifications</h2></div>
+            <section className="ui-card ui-card--list">
+              {data.emailVerified ? (
+                <div className="ui-row">
+                  <div className="ui-row-main">
+                    <div className="ui-row-title" id="email-alerts-label">Email alerts</div>
+                    <div className="ui-row-sub">Get an email when someone signs in and when a payment reaches your savings.</div>
+                  </div>
+                  <button type="button" role="switch" className="ui-switch" aria-checked={!!data.emailAlertsOn} aria-labelledby="email-alerts-label" disabled={alertBusy} onClick={toggleEmailAlerts} />
+                </div>
+              ) : (
+                <ListRow title="Get alerts by email" sub="Confirm your email to get sign-in and payment emails." onClick={() => setEmailOpen(true)} />
+              )}
+            </section>
+          </>
+        )}
 
         <div className="ui-section-head"><h2>Display</h2></div>
         <section className="ui-card">
@@ -284,6 +317,8 @@ export default function CustomerSettingsPage() {
           </>
         )}
       </BottomSheet>
+
+      {data.email && <EmailAlertsSheet open={emailOpen} onClose={() => setEmailOpen(false)} email={data.email} onConfirmed={() => { setEmailOpen(false); setToast('Email alerts are on.'); reload() }} />}
 
       {toast && <Toast message={toast} onDone={() => setToast('')} />}
       <CustomerBottomNav />

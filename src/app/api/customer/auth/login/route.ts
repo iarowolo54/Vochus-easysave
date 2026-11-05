@@ -6,6 +6,7 @@ import { signCustomerToken, customerCookieOptions } from '@/lib/customer-auth'
 import { recordDeviceSession } from '@/lib/device-session'
 import { logAudit } from '@/lib/audit'
 import { sendLoginAlert } from '@/lib/login-alert'
+import { alertEmailFor } from '@/lib/email-alerts'
 import {
   checkLoginThrottle,
   recordLoginFailure,
@@ -166,17 +167,8 @@ export async function POST(req: NextRequest) {
     actorName: `${customer.firstName} ${customer.lastName}`,
   })
 
-  // Only an address that is really the customer's gets the alert. Agent-typed emails on offline accounts are
-  // unverified. Online customers registered themselves with an emailed code, and accounts made before
-  // `emailVerifiedAt` existed have it null, so a self-created plan counts as proof too.
-  void (async () => {
-    let email = customer.emailVerifiedAt ? customer.email : null
-    if (!email && customer.email) {
-      const selfPlan = await prisma.savingsPlan.findFirst({ where: { customerId: customer.id, source: 'self' }, select: { id: true } })
-      if (selfPlan) email = customer.email
-    }
-    await sendLoginAlert({ email, name: `${customer.firstName} ${customer.lastName}` }, biometricToken ? 'fingerprint' : 'password')
-  })().catch(() => {})
+  // Only an address the customer confirmed with a code, and hasn't switched off, gets the alert.
+  void sendLoginAlert({ email: alertEmailFor(customer), name: `${customer.firstName} ${customer.lastName}` }, biometricToken ? 'fingerprint' : 'password')
 
   if (app && deviceId) {
     recordDeviceSession({
