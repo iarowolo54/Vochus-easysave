@@ -31,3 +31,8 @@ test('held alerts map to the same words', () => {
   assert.equal(alertStatus({ status: 'Resolved' }), 'by-hand')
   assert.equal(alertStatus({ status: 'Dismissed' }), 'dismissed')
 })
+
+test('a cancelled request shows as cancelled, whatever its window says', () => {
+  assert.equal(intentStatus({ status: 'Cancelled', expiresAt: at(60_000), manualBy: null }, now), 'cancelled')
+  assert.equal(intentStatus({ status: 'Cancelled', expiresAt: at(-TRANSFER_GRACE_MS * 5), manualBy: null }, now), 'cancelled')
+})

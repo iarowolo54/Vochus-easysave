@@ -213,6 +213,7 @@ function SavePageInner() {
           <TransferPanel
             details={transfer}
             statusUrl="/api/customer/transfer/status"
+            cancelUrl="/api/customer/transfer/cancel"
             destination={selectedPlan.goal}
             balanceLabel="Your balance"
             doneHref="/customer/dashboard"
@@ -227,7 +228,7 @@ function SavePageInner() {
             <section className="ui-review" aria-label="Payment summary">
               <p className="ui-review-kicker">Your {ADJ[cadenceOf(selectedPlan)]} savings</p>
               <h2 className="ui-review-title">
-                Pay {formatNaira(periodAmount(selectedPlan), { minor: false })} into {selectedPlan.goal}
+                Save {formatNaira(periodAmount(selectedPlan), { minor: false })} into {selectedPlan.goal}
               </h2>
             </section>
 
@@ -242,8 +243,8 @@ function SavePageInner() {
                 </dd>
               </div>
               <div className="ui-row">
-                <dt className="ui-row-main ui-row-sub">Amount</dt>
-                <dd className="ui-review-value ui-amount">{formatNaira(periodAmount(selectedPlan))}</dd>
+                <dt className="ui-row-main ui-row-sub">You’ll send</dt>
+                <dd className="ui-review-value ui-amount">{formatNaira(periodAmount(selectedPlan), { minor: false })} <span className="tp-kobo-hint">+ a few kobo</span></dd>
               </div>
               <div className="ui-row">
                 <dt className="ui-row-main ui-row-sub">Pay with</dt>
@@ -254,11 +255,12 @@ function SavePageInner() {
             <FormError message={error} />
 
             <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={pay} disabled={paying} aria-busy={paying}>
-              {paying ? 'Getting account details…' : `Pay ${formatNaira(periodAmount(selectedPlan), { minor: false })} by transfer`}
+              {paying ? 'Getting account details…' : 'Get account and exact amount'}
             </button>
-            <p className="ui-note ui-note--center">
-              <Icons.locked size={14} aria-hidden="true" /> You’ll get an account number and an exact amount to send.
-            </p>
+            <div className="tp-callout tp-callout--pre">
+              <p className="tp-callout-title">Next you’ll see the exact amount</p>
+              <p className="tp-callout-text">It has a few extra kobo, like {formatNaira(periodAmount(selectedPlan) + 0.37)}. Send it exactly, kobo included, so we can tell the payment is yours. The kobo is not a fee. All of it goes into your savings.</p>
+            </div>
 
             <button type="button" className="ui-btn ui-btn--secondary ui-btn--block ui-gap-top" onClick={() => { setMode('new'); setError('') }}>
               <Icons.add size={18} aria-hidden="true" /> Start a new plan

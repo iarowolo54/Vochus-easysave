@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
-import { INTENT_DONE, INTENT_PENDING, INTENT_REVIEW, INTENT_SUPERSEDED } from '@/lib/payment-intent'
+import { INTENT_CANCELLED, INTENT_DONE, INTENT_PENDING, INTENT_REVIEW, INTENT_SUPERSEDED } from '@/lib/payment-intent'
 import { pollIfStale } from '@/lib/moniepoint-poll'
 import { TRANSFER_GRACE_MS, TRANSFER_METHOD } from '@/lib/transfer-intent'
 
@@ -33,6 +33,7 @@ export async function GET(req: NextRequest) {
     const plan = intent.planId ? await prisma.savingsPlan.findUnique({ where: { id: intent.planId }, select: { balance: true } }) : null
     return NextResponse.json({ status: 'closed', newBalance: plan?.balance })
   }
+  if (intent.status === INTENT_CANCELLED) return NextResponse.json({ status: 'cancelled' })
   if (intent.status === INTENT_REVIEW) return NextResponse.json({ status: 'review' })
   const closes = (intent.expiresAt?.getTime() ?? 0) + TRANSFER_GRACE_MS
   return NextResponse.json({ status: Date.now() > closes ? 'expired' : 'pending' })

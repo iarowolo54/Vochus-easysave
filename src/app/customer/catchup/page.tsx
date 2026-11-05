@@ -148,6 +148,7 @@ function CatchupScreen() {
           <TransferPanel
             details={transfer}
             statusUrl="/api/customer/transfer/status"
+            cancelUrl="/api/customer/transfer/cancel"
             destination={plan.goal}
             balanceLabel="Your balance"
             doneHref="/customer/dashboard"
@@ -192,7 +193,7 @@ function CatchupScreen() {
           <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={pay} disabled={count === 0 || paying}>
             {paying ? 'Getting account details…' : count === 0 ? `Select a ${unit} to pay` : `Pay ${formatNaira(total)} by transfer`}
           </button>
-          <p className="ui-catchup-note">You’ll get an account number and an exact amount to send.</p>
+          <p className="ui-catchup-note">Next you’ll see the exact amount to send. It has a few extra kobo. Send it exactly, kobo included.</p>
         </div>
       </main>
     </div>

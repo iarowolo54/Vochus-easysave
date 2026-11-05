@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { TRANSFER_METHOD } from '@/lib/transfer-intent'
-import { STATUS_LABEL, alertStatus, intentStatus, type TransferStatus } from '@/lib/transfer-status'
+import { HELD_LABEL, STATUS_LABEL, alertStatus, intentStatus, type TransferStatus } from '@/lib/transfer-status'
 import { LATE_ALLOWANCE_MS, handCreditSince, sameFigure } from '@/lib/transfer-figure'
 import { INTENT_SUPERSEDED } from '@/lib/payment-intent'
 
@@ -10,7 +10,7 @@ export const dynamic = 'force-dynamic'
 
 const FETCH_LIMIT = 300
 const PAGE_SIZE = 25
-const FILTERS: readonly string[] = ['all', 'paid', 'waiting', 'not-paid', 'needs-review', 'by-hand']
+const FILTERS: readonly string[] = ['all', 'paid', 'waiting', 'not-paid', 'cancelled', 'needs-review', 'by-hand']
 const DAY_MS = 86_400_000
 
 type Who = { type: 'customer' | 'agent'; name: string; code: string }
@@ -51,6 +51,7 @@ type Row = {
 const summaryFor = (status: TransferStatus, manualBy: string | null): string => {
   if (status === 'paid') return 'Matched to the bank alert automatically'
   if (status === 'waiting') return 'Waiting for the money to arrive'
+  if (status === 'cancelled') return 'The person cancelled this request before paying'
   if (status === 'not-paid') return 'Time ran out and no matching payment arrived'
   if (status === 'by-hand') return manualBy ? `Credited by hand by ${manualBy}` : 'Credited by hand'
   return 'Money arrived but couldn’t be credited'
@@ -147,7 +148,7 @@ export async function GET(req: NextRequest) {
       .map((i) => ({ who: whoOf(i), plan: i.planId ? pById.get(i.planId) ?? null : null, amount: i.amount, startedAt: i.createdAt.toISOString(), state: STATUS_LABEL[intentStatus(i, now)] }))
     rows.push({
       kind: 'alert', id: a.id, ref: a.txnId, at: a.alertAt.toISOString(), who: mi ? whoOf(mi) : null,
-      plan: mi?.planId ? pById.get(mi.planId) ?? null : null, amount: a.amount, status: s, statusLabel: STATUS_LABEL[s],
+      plan: mi?.planId ? pById.get(mi.planId) ?? null : null, amount: a.amount, status: s, statusLabel: a.status === 'Unmatched' ? HELD_LABEL : STATUS_LABEL[s],
       summary: a.status === 'Unmatched'
         ? `From ${a.senderName || 'an unknown sender'}. No open request had this exact amount.${lookalike ? ' Same amount as a payment credited by hand.' : ''}`
         : `Credited by hand by ${a.resolvedBy ?? 'staff'}`,
@@ -160,7 +161,7 @@ export async function GET(req: NextRequest) {
   }
   rows.sort((x, y) => (x.at < y.at ? 1 : -1))
 
-  const counts: Record<string, number> = { all: rows.length, paid: 0, waiting: 0, 'not-paid': 0, 'needs-review': 0, 'by-hand': 0 }
+  const counts: Record<string, number> = { all: rows.length, paid: 0, waiting: 0, 'not-paid': 0, cancelled: 0, 'needs-review': 0, 'by-hand': 0 }
   for (const r of rows) counts[r.status]++
 
   const shown = rows.filter((r) => {

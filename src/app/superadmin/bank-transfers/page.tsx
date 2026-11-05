@@ -7,7 +7,7 @@ import {
 } from '../_components/admin-ui'
 import NoAccess from '../_components/NoAccess'
 
-type Status = 'paid' | 'waiting' | 'not-paid' | 'needs-review' | 'by-hand'
+type Status = 'paid' | 'waiting' | 'not-paid' | 'cancelled' | 'needs-review' | 'by-hand'
 type Filter = 'all' | Status
 type Who = { type: 'customer' | 'agent'; name: string; code: string }
 
@@ -46,13 +46,14 @@ interface Page {
 interface Person { id: string; code: string; name: string; plans: { id: string; goal: string; balance: number }[] }
 
 const BADGE: Record<Status, string> = {
-  paid: 'bdg-g', waiting: 'bdg-b', 'not-paid': 'bdg-grey', 'needs-review': 'bdg-a', 'by-hand': 'bdg-p',
+  paid: 'bdg-g', waiting: 'bdg-b', 'not-paid': 'bdg-grey', cancelled: 'bdg-grey', 'needs-review': 'bdg-a', 'by-hand': 'bdg-p',
 }
 const FILTERS: { value: Filter; label: string }[] = [
   { value: 'all', label: 'All' },
   { value: 'needs-review', label: 'Needs review' },
   { value: 'waiting', label: 'Waiting' },
   { value: 'not-paid', label: 'Not paid' },
+  { value: 'cancelled', label: 'Cancelled' },
   { value: 'paid', label: 'Paid' },
   { value: 'by-hand', label: 'Credited by hand' },
 ]
@@ -215,6 +216,7 @@ function DetailDialog({ row, canManage, onClose, onAction }: {
     paid: 'The bank’s credit alert arrived with exactly this amount and it was credited automatically.',
     waiting: 'The person was shown this account and exact amount. We are waiting for the bank’s alert. Do not credit it until you have seen the money in the Moniepoint account.',
     'not-paid': 'The 30 minutes ran out and no alert for this exact amount arrived. If the person says they paid, check the Moniepoint account before crediting.',
+    cancelled: 'The person cancelled this request on their phone before paying. Nothing is owed. If they say they paid anyway, look for the money in the Moniepoint account; if it arrived it will show here as money received with no matching request.',
     'needs-review': 'Money reached the bank account, but it matched no open request, so nothing was credited. Find out who it belongs to, then credit it to them or dismiss it.',
     'by-hand': 'Staff credited this by hand.',
   }

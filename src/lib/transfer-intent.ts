@@ -2,7 +2,7 @@
 // matched to exactly one customer without a reference.
 import { randomBytes } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
-import { INTENT_PENDING, INTENT_SUPERSEDED, parseCoversKeys } from '@/lib/payment-intent'
+import { INTENT_CANCELLED, INTENT_PENDING, INTENT_SUPERSEDED, parseCoversKeys } from '@/lib/payment-intent'
 import { money } from '@/lib/wallet-guard'
 
 export const TRANSFER_METHOD = 'transfer'
@@ -97,8 +97,8 @@ export async function createTransferIntent(input: { actor: TransferActor; planId
       }
     }
 
-    // A closed (superseded) request still counts: its person may yet be looking at the amount, so nobody else gets it.
-    const open = await tx.paymentIntent.findMany({ where: { ...live, status: { in: [INTENT_PENDING, INTENT_SUPERSEDED] } }, select: { amount: true } })
+    // A closed (superseded or cancelled) request still counts: its person may yet be looking at the amount, so nobody else gets it.
+    const open = await tx.paymentIntent.findMany({ where: { ...live, status: { in: [INTENT_PENDING, INTENT_SUPERSEDED, INTENT_CANCELLED] } }, select: { amount: true } })
     const payAmount = pickUniqueKobo(input.baseAmount, open.map((o) => o.amount))
     if (payAmount === null) return null
     const expiresAt = new Date(now + TRANSFER_WINDOW_MS)
@@ -111,4 +111,19 @@ export async function createTransferIntent(input: { actor: TransferActor; planId
     })
     return { ref, payAmount, expiresAt }
   })
+}
+
+/**
+ * The person cancels their own open request. Only a request that is still Pending and not credited by hand can be
+ * cancelled, and only by its owner. Returns false when nothing changed (already paid, already closed, not theirs), so
+ * the caller can look again instead of telling them it was cancelled. The amount stays reserved for the grace period
+ * (see createTransferIntent) in case they sent it anyway; money that then arrives is held for staff, never lost.
+ */
+export async function cancelTransferIntent(ref: string, actor: TransferActor): Promise<boolean> {
+  const mine = 'customerId' in actor ? { customerId: actor.customerId } : { agentId: actor.agentId }
+  const res = await prisma.paymentIntent.updateMany({
+    where: { ref, method: TRANSFER_METHOD, status: INTENT_PENDING, manualBy: null, ...mine },
+    data: { status: INTENT_CANCELLED },
+  })
+  return res.count === 1
 }

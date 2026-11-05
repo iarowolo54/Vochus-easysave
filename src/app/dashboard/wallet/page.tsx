@@ -112,6 +112,7 @@ function WalletContent() {
               <TransferPanel
                 details={transfer}
                 statusUrl="/api/agent/transfer/status"
+                cancelUrl="/api/agent/transfer/cancel"
                 destination="your wallet"
                 balanceLabel="Your wallet"
                 doneHref="/dashboard"
@@ -159,7 +160,7 @@ function WalletContent() {
                 ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Getting account details…</>
                 : valid ? `Pay ${formatNaira(amt, { minor: false })} by transfer` : 'Enter an amount'}
             </button>
-            <p className="ui-note ui-note--center"><Icons.locked size={16} aria-hidden="true" /> You’ll get an account number and an exact amount to send.</p>
+            <p className="ui-note ui-note--center"><Icons.locked size={16} aria-hidden="true" /> Next you’ll see the exact amount to send. It has a few extra kobo. Send it exactly, kobo included.</p>
           </section>
           )}
         </div>

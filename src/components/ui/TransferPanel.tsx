@@ -12,15 +12,17 @@ export type TransferDetails = {
   account: { bank: string; number: string; name: string }
 }
 
-type Status = 'pending' | 'done' | 'review' | 'expired' | 'closed'
+type Status = 'pending' | 'done' | 'review' | 'expired' | 'closed' | 'cancelled'
 
 const POLL_MS = 5000
 
 /** Shows where to send the money and waits for the bank's credit alert to be matched on the server. */
-export default function TransferPanel({ details, statusUrl, destination, balanceLabel, doneHref, historyHref, onDone, onClose }: {
+export default function TransferPanel({ details, statusUrl, cancelUrl, destination, balanceLabel, doneHref, historyHref, onDone, onClose }: {
   details: TransferDetails
   /** The status route; the reference is added to it. */
   statusUrl: string
+  /** Closes the request on the server; the reference is sent in the body. */
+  cancelUrl: string
   /** Where the money went, e.g. a plan name or "your wallet". */
   destination: string
   balanceLabel: string
@@ -37,7 +39,12 @@ export default function TransferPanel({ details, statusUrl, destination, balance
   const [copied, setCopied] = useState('')
   const [checkFailed, setCheckFailed] = useState(false)
   const [checking, setChecking] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
+  const [cancelFailed, setCancelFailed] = useState(false)
+  // 'ask' = "did you include the kobo?" after tapping "I've sent it"; 'left-out' = they say they didn't.
+  const [sentCheck, setSentCheck] = useState<'idle' | 'ask' | 'left-out'>('idle')
   const alive = useRef(true)
+  const askRef = useRef<HTMLDivElement>(null)
   const notified = useRef(false)
   // Held in a ref so a parent that passes a new function each render can't restart the polling timer.
   const onDoneRef = useRef(onDone)
@@ -66,12 +73,36 @@ export default function TransferPanel({ details, statusUrl, destination, balance
     return () => { alive.current = false }
   }, [])
 
+  // On a phone the question opens below the fold; bring it up so it can't be missed.
+  useEffect(() => {
+    if (sentCheck !== 'idle') askRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+  }, [sentCheck])
+
   useEffect(() => {
     if (status !== 'pending') return
     const tick = setInterval(() => setLeft(Math.max(0, new Date(details.expiresAt).getTime() - Date.now())), 1000)
     const poll = setInterval(check, POLL_MS)
     return () => { clearInterval(tick); clearInterval(poll) }
   }, [status, check, details.expiresAt])
+
+  // The server closes the request first, so a late "I've sent it" can't be credited to a screen that has gone.
+  // If it says no (already paid, or closed another way) we look again instead of closing the screen on a lie.
+  async function cancel() {
+    setCancelling(true)
+    setCancelFailed(false)
+    try {
+      const res = await fetch(cancelUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ref: details.ref }) })
+      if (!res.ok) throw new Error('cancel')
+      const body: { cancelled: boolean } = await res.json()
+      if (!alive.current) return
+      if (body.cancelled) onClose()
+      else await check()
+    } catch {
+      if (alive.current) setCancelFailed(true)
+    } finally {
+      if (alive.current) setCancelling(false)
+    }
+  }
 
   async function copy(label: string, value: string) {
     try {
@@ -86,6 +117,9 @@ export default function TransferPanel({ details, statusUrl, destination, balance
   const mins = Math.floor(left / 60000)
   const secs = String(Math.floor((left % 60000) / 1000)).padStart(2, '0')
   const exact = formatNaira(details.payAmount)
+  // The whole naira and the kobo are drawn apart so the kobo, the part people leave out, can be the loudest thing on the screen.
+  const wholeNaira = Math.floor(details.payAmount + 1e-9)
+  const kobo = String(Math.round((details.payAmount - wholeNaira) * 100)).padStart(2, '0')
 
   if (status === 'done') {
     return (
@@ -121,6 +155,17 @@ export default function TransferPanel({ details, statusUrl, destination, balance
     )
   }
 
+  if (status === 'cancelled') {
+    return (
+      <EmptyState
+        icon="error"
+        title="This transfer was cancelled"
+        text="Don’t send money to this account for this request. If you already did, tell us and we’ll find it. Otherwise start again to get a fresh amount."
+        action={<button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={onClose}>Start again</button>}
+      />
+    )
+  }
+
   if (status === 'expired' || left === 0) {
     return (
       <EmptyState
@@ -146,19 +191,21 @@ export default function TransferPanel({ details, statusUrl, destination, balance
 
   return (
     <>
-      <section className="ui-review tp-amount" aria-label="Transfer details">
-        <p className="ui-review-kicker">Send this exact amount</p>
-        <div className="tp-amount-value">
-          <h2 className="ui-review-title ui-amount">{exact}</h2>
-          <button type="button" className="ui-link" onClick={() => copy('amount', details.payAmount.toFixed(2))}>
-            {copied === 'amount' ? 'Copied' : 'Copy amount'}
-          </button>
-        </div>
+      <section className="tp-hero" aria-label="Amount to send">
+        <p className="tp-hero-kicker">Send exactly this amount</p>
+        <p className="tp-figure" aria-label={exact}>
+          <span className="tp-whole" aria-hidden="true">{formatNaira(wholeNaira, { minor: false })}</span>
+          <span className="tp-kobo" aria-hidden="true">.{kobo}</span>
+        </p>
+        <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => copy('amount', details.payAmount.toFixed(2))}>
+          {copied === 'amount' ? 'Copied. Now paste it in your bank app' : `Copy ${exact}`}
+        </button>
       </section>
 
-      <p className="ui-note" role="alert">
-        <Icons.error size={14} aria-hidden="true" /> Send exactly {exact}, not a rounded figure. The extra kobo is not a fee; all of it goes into {destination}. Any other amount will be held for checking.
-      </p>
+      <div className="tp-callout" role="alert">
+        <p className="tp-callout-title">Don’t leave out the .{kobo}</p>
+        <p className="tp-callout-text">It’s how we know the payment is yours. It’s not a fee: all {exact} goes into {destination}. Without the .{kobo}, your money is held until our team checks it by hand.</p>
+      </div>
 
       <dl className="ui-card ui-card--list ui-review-rows">
         {rows.map(r => (
@@ -181,10 +228,30 @@ export default function TransferPanel({ details, statusUrl, destination, balance
       </p>
       {checkFailed && <p className="ui-note ui-note--center">We couldn’t check just now. We’ll keep trying.</p>}
 
-      <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={check} disabled={checking} aria-busy={checking}>
-        {checking ? 'Checking…' : 'I’ve sent it'}
+      {sentCheck === 'idle' && (
+        <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => { setSentCheck('ask'); void check() }} disabled={checking} aria-busy={checking}>
+          {checking ? 'Checking…' : 'I’ve sent it'}
+        </button>
+      )}
+      {sentCheck === 'ask' && (
+        <div ref={askRef} className="tp-callout tp-callout--ask" role="group" aria-label="Check the amount you sent">
+          <p className="tp-callout-title">Did the amount you sent end in .{kobo}?</p>
+          <p className="tp-callout-text">Look at your bank app’s receipt. It should say {exact}.</p>
+          <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => { setSentCheck('idle'); void check() }}>Yes, it ended in .{kobo}</button>
+          <button type="button" className="ui-btn ui-btn--secondary ui-btn--block ui-gap-top" onClick={() => setSentCheck('left-out')}>No, I left it out</button>
+        </div>
+      )}
+      {sentCheck === 'left-out' && (
+        <div ref={askRef} className="tp-callout" role="alert">
+          <p className="tp-callout-title">Don’t send it again</p>
+          <p className="tp-callout-text">Money sent without the .{kobo} can’t be matched to you automatically. Our team checks it by hand and credits it to {destination}, which takes longer than usual. Sending it twice would only leave you with two payments to sort out.</p>
+          <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => router.push(doneHref)}>OK</button>
+        </div>
+      )}
+      {cancelFailed && <p className="ui-note ui-note--center" role="alert">We couldn’t cancel just now. Check your connection and try again.</p>}
+      <button type="button" className="ui-btn ui-btn--secondary ui-btn--block ui-gap-top" onClick={cancel} disabled={cancelling} aria-busy={cancelling}>
+        {cancelling ? 'Cancelling…' : 'Cancel'}
       </button>
-      <button type="button" className="ui-btn ui-btn--secondary ui-btn--block ui-gap-top" onClick={onClose}>Cancel</button>
     </>
   )
 }
