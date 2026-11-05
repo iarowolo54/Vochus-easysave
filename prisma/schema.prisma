@@ -13,6 +13,7 @@ model Agent {
   phone         String       @unique
   email              String?      @unique
   emailVerified      Boolean      @default(false)
+  emailAlertsOn      Boolean      @default(true) // the agent's switch for sign-in and payment emails; acts only on a verified email
   emailVerifyToken   String?      @unique
   name          String
   location      String

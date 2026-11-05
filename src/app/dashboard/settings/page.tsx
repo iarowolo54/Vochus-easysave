@@ -13,7 +13,7 @@ import PhoneSettings from '@/components/agent/PhoneSettings'
 import { formatDate, formatNaira } from '@/lib/format'
 import { blockNonDigit, digitsOnly } from '@/lib/numeric'
 
-interface Agent { id: string; agentId: string; name: string; phone: string; location: string; walletBalance: number; createdAt: string; profileUnlocked: boolean; hasPin: boolean; photoUrl?: string | null }
+interface Agent { id: string; agentId: string; name: string; phone: string; location: string; walletBalance: number; createdAt: string; profileUnlocked: boolean; hasPin: boolean; photoUrl?: string | null; email?: string | null; emailVerified?: boolean; emailAlertsOn?: boolean }
 type Bank = { bankCode?: string; bankName?: string; accountNumber?: string; accountName?: string }
 
 const initials = (name: string) => name.split(' ').filter(Boolean).map(w => w[0]).join('').slice(0, 2).toUpperCase()
@@ -58,6 +58,19 @@ export default function SettingsPage() {
   const [pwTouched, setPwTouched] = useState(false)
   const [pwError, setPwError] = useState('')
   const [pwBusy, setPwBusy] = useState(false)
+  const [alertBusy, setAlertBusy] = useState(false)
+
+  async function toggleEmailAlerts() {
+    if (!agent) return
+    setAlertBusy(true)
+    const on = !agent.emailAlertsOn
+    try {
+      const res = await fetch('/api/agent/email-alerts', { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ on }) })
+      if (res.ok) setAgent({ ...agent, emailAlertsOn: on })
+      else setToast('That didn’t work. Check your connection and try again.')
+    } catch { setToast('That didn’t work. Check your connection and try again.') }
+    setAlertBusy(false)
+  }
 
   useEffect(() => {
     fetch('/api/agent')
@@ -287,6 +300,21 @@ export default function SettingsPage() {
         </div>
 
         <div className="ag-col">
+          {agent.email && agent.emailVerified && (
+            <>
+              <div className="ui-section-head"><h2>Notifications</h2></div>
+              <section className="ui-card ui-card--list">
+                <div className="ui-row">
+                  <div className="ui-row-main">
+                    <div className="ui-row-title" id="email-alerts-label">Email alerts</div>
+                    <div className="ui-row-sub">Get an email when someone signs in and when a wallet top-up reaches your wallet.</div>
+                  </div>
+                  <button type="button" role="switch" className="ui-switch" aria-checked={!!agent.emailAlertsOn} aria-labelledby="email-alerts-label" disabled={alertBusy} onClick={toggleEmailAlerts} />
+                </div>
+              </section>
+            </>
+          )}
+
           <div className="ui-section-head"><h2>Account</h2></div>
           <section className="ui-card ag-set-card">
             <dl className="ag-set-rows">

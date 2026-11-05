@@ -6,6 +6,7 @@ import { INTENT_PENDING, consumePaymentIntent, recordManualCredit, type ManualAc
 import { sendToReview } from '@/lib/customer-settle'
 import { money } from '@/lib/wallet-guard'
 import { sendPaymentAlert } from '@/lib/payment-alert'
+import { agentAlertEmailFor } from '@/lib/email-alerts'
 
 export type AgentSettleResult =
   | { kind: 'credited'; amount: number; newBalance: number }
@@ -71,7 +72,7 @@ export async function settleAgentTransfer(
     actorName: via,
   })
   sendPaymentAlert({
-    kind: 'wallet', email: agent.email, name: agent.name.split(' ')[0] || agent.name, amount, reference,
+    kind: 'wallet', email: agentAlertEmailFor(agent), name: agent.name.split(' ')[0] || agent.name, amount, reference,
     via, destination: 'your Vochus wallet', balanceAfter: newBalance,
   }).catch(() => {})
   return { kind: 'credited', amount, newBalance }

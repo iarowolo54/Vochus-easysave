@@ -4,3 +4,9 @@ export function alertEmailFor(c: { email: string | null; emailVerifiedAt: Date |
   const email = c.email?.trim()
   return email && c.emailVerifiedAt && c.emailAlertsOn ? email : null
 }
+
+/** Same rule for agents: their address is verified through the onboarding link, and they can switch alerts off. */
+export function agentAlertEmailFor(a: { email: string | null; emailVerified: boolean; emailAlertsOn: boolean }): string | null {
+  const email = a.email?.trim()
+  return email && a.emailVerified && a.emailAlertsOn ? email : null
+}

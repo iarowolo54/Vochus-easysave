@@ -9,7 +9,7 @@ export async function GET() {
 
   const agent = await prisma.agent.findFirst({
     where: { agentId: session.user.agentId },
-    select: { id: true, agentId: true, name: true, phone: true, location: true, walletBalance: true, commissionBalance: true, createdAt: true, profileUnlocked: true, transactionPin: true, photoUrl: true },
+    select: { id: true, agentId: true, name: true, phone: true, location: true, walletBalance: true, commissionBalance: true, createdAt: true, profileUnlocked: true, transactionPin: true, photoUrl: true, email: true, emailVerified: true, emailAlertsOn: true },
   })
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
 

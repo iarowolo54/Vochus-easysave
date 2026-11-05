@@ -6,6 +6,7 @@ import { prisma } from './prisma'
 import { isPastAbsoluteCap, IDLE_SECONDS } from '@/lib/session-policy'
 import { refundAttempt, reserveAgentAttempt, reserveAttempt } from '@/lib/login-attempt'
 import { sendLoginAlert } from '@/lib/login-alert'
+import { agentAlertEmailFor } from '@/lib/email-alerts'
 import { rightmostForwardedIp } from '@/lib/rate-limit'
 
 const AGENT_IP_FAIL_LIMIT = 20
@@ -165,7 +166,7 @@ export const authOptions: NextAuthOptions = {
           recordDeviceSession({ deviceId, app, agentId: agent.id, meta })
         }
 
-        void sendLoginAlert({ email: agent.email, name: agent.name }, biometricToken ? 'fingerprint' : 'password')
+        void sendLoginAlert({ email: agentAlertEmailFor(agent), name: agent.name }, biometricToken ? 'fingerprint' : 'password')
 
         return {
           id: agent.id,
