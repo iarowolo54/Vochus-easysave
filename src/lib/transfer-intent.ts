@@ -2,7 +2,7 @@
 // matched to exactly one customer without a reference.
 import { randomBytes } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
-import { INTENT_PENDING, parseCoversKeys } from '@/lib/payment-intent'
+import { INTENT_PENDING, INTENT_SUPERSEDED, parseCoversKeys } from '@/lib/payment-intent'
 import { money } from '@/lib/wallet-guard'
 
 export const TRANSFER_METHOD = 'transfer'
@@ -94,7 +94,8 @@ export async function createTransferIntent(input: { actor: TransferActor; planId
       }
     }
 
-    const open = await tx.paymentIntent.findMany({ where: live, select: { amount: true } })
+    // A closed (superseded) request still counts: its person may yet be looking at the amount, so nobody else gets it.
+    const open = await tx.paymentIntent.findMany({ where: { ...live, status: { in: [INTENT_PENDING, INTENT_SUPERSEDED] } }, select: { amount: true } })
     const payAmount = pickUniqueKobo(input.baseAmount, open.map((o) => o.amount))
     if (payAmount === null) return null
     const expiresAt = new Date(now + TRANSFER_WINDOW_MS)

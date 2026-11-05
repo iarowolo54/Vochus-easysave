@@ -205,26 +205,66 @@ test('crediting held money to a person closes their open request for the same fi
   assert.equal(await db.transaction.count({ where: { ref } }), 0)
 })
 
-test('crediting a request by hand needs a tick when the same figure was credited by hand recently', async () => {
+test('crediting a request by hand needs a tick when the same figure was credited by hand for someone else', async () => {
   const first = `VCHS-T-${rid}-9`
   const second = `VCHS-T-${rid}-10`
   await newIntent(first, { amount: 7000.37 })
-  await newIntent(second, { amount: 7000.62 })
+  // a different person (an agent) asks for about the same figure
+  await newIntent(second, { actorType: 'agent', agentId, customerId: null, planId: null, amount: 7000.62 })
   assert.equal((await creditRequestByHand(db, { ref: first, admin, note: 'paid, seen in bank app' })).ok, true)
   const refused = await creditRequestByHand(db, { ref: second, admin, note: 'paid too?' })
   assert.equal(refused.ok === false && refused.status, 409)
   assert.equal(await db.transaction.count({ where: { ref: second } }), 0)
-  assert.equal((await creditRequestByHand(db, { ref: second, admin, note: 'different customer, checked', ackLookalike: true })).ok, true)
+  assert.equal((await creditRequestByHand(db, { ref: second, admin, note: 'different person, checked', ackLookalike: true })).ok, true)
 })
 
-test('the hand-credit check is anchored to the alert’s own time', async () => {
-  // a hand credit from a week ago is not a lookalike for an alert that arrived then... but is for one that arrived with it
+test('a hand credit made AFTER the held money arrived is flagged, however long after', async () => {
   const ref = `VCHS-T-${rid}-11`
   await newIntent(ref, { amount: 8000.37 })
   assert.equal((await creditRequestByHand(db, { ref, admin, note: 'paid, seen in bank app' })).ok, true)
+  // held money that arrived 10 days before that credit: the credit may well have been this money
   const oldAlert = await db.bankAlert.create({
     data: { messageId: `m-${rid}-old`, txnId: `t-${rid}-old`, amount: 8000.0, senderName: 'TEST', narration: 'TEST', alertAt: new Date(Date.now() - 10 * 86_400_000), status: 'Unmatched' },
   })
-  const ok = await creditAlertByHand(db, { alertId: oldAlert.id, target: { kind: 'customer', customerId, planId }, admin, note: 'old unrelated payment' })
+  const refused = await creditAlertByHand(db, { alertId: oldAlert.id, target: { kind: 'customer', customerId, planId }, admin, note: 'old payment' })
+  assert.equal(refused.ok === false && refused.status, 409)
+})
+
+test('a hand credit made long BEFORE the held money arrived is not a lookalike', async () => {
+  const ref = `VCHS-T-${rid}-12`
+  await db.paymentIntent.create({
+    data: { ref, method: 'transfer', amount: 9000.37, actorType: 'customer', customerId, planId, status: 'Done', manualBy: 'Test Admin', manualNote: 'an old one',
+      consumedAt: new Date(Date.now() - 20 * 86_400_000), createdAt: new Date(Date.now() - 20 * 86_400_000), expiresAt: new Date(Date.now() - 20 * 86_400_000) },
+  })
+  const fresh = await newAlert('k', 9000.0)
+  const ok = await creditAlertByHand(db, { alertId: fresh.id, target: { kind: 'customer', customerId, planId }, admin, note: 'new unrelated payment' })
   assert.equal(ok.ok, true)
+})
+
+test('crediting held money closes only requests that could be that payment: same plan, started before it arrived', async () => {
+  const mine = `VCHS-T-${rid}-13`
+  const later = `VCHS-T-${rid}-14`
+  const otherPlan = await db.savingsPlan.findFirstOrThrow({ where: { customerId, NOT: { id: planId } } })
+  const other = `VCHS-T-${rid}-15`
+  const open = { expiresAt: new Date(Date.now() + 20 * 60_000) }
+  await newIntent(mine, { amount: 11000.37, createdAt: new Date(Date.now() - 5 * 60_000), ...open })
+  await newIntent(later, { amount: 11000.5, createdAt: new Date(Date.now() + 60_000), ...open }) // started after the money arrived
+  await newIntent(other, { amount: 11000.6, planId: otherPlan.id, createdAt: new Date(Date.now() - 4 * 60_000), ...open }) // another plan
+  const held = await newAlert('l', 11000.0)
+  assert.equal((await creditAlertByHand(db, { alertId: held.id, target: { kind: 'customer', customerId, planId }, admin, note: 'sender is this customer' })).ok, true)
+  assert.equal((await db.paymentIntent.findFirstOrThrow({ where: { ref: mine } })).status, 'Superseded')
+  assert.equal((await db.paymentIntent.findFirstOrThrow({ where: { ref: later } })).status, 'Pending')
+  assert.equal((await db.paymentIntent.findFirstOrThrow({ where: { ref: other } })).status, 'Pending')
+})
+
+test('crediting a request by hand closes the person’s other open requests for the same figure', async () => {
+  const kept = `VCHS-T-${rid}-16`
+  const older = `VCHS-T-${rid}-17`
+  await newIntent(older, { amount: 12000.37, expiresAt: new Date(Date.now() + 2 * 60_000) })
+  await newIntent(kept, { amount: 12000.62, expiresAt: new Date(Date.now() + 20 * 60_000) })
+  assert.equal((await creditRequestByHand(db, { ref: kept, admin, note: 'paid, seen in bank app' })).ok, true)
+  assert.equal((await db.paymentIntent.findFirstOrThrow({ where: { ref: older } })).status, 'Superseded')
+  const again = await creditRequestByHand(db, { ref: older, admin, note: 'same payment?', ackLookalike: true })
+  assert.equal(again.ok === false && again.status, 409)
+  assert.equal(await db.transaction.count({ where: { ref: older } }), 0)
 })

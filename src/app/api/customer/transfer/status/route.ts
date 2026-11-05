@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
-import { INTENT_DONE, INTENT_PENDING, INTENT_REVIEW } from '@/lib/payment-intent'
+import { INTENT_DONE, INTENT_PENDING, INTENT_REVIEW, INTENT_SUPERSEDED } from '@/lib/payment-intent'
 import { pollIfStale } from '@/lib/moniepoint-poll'
 import { TRANSFER_GRACE_MS, TRANSFER_METHOD } from '@/lib/transfer-intent'
 
@@ -27,6 +27,11 @@ export async function GET(req: NextRequest) {
   if (intent.status === INTENT_DONE) {
     const plan = intent.planId ? await prisma.savingsPlan.findUnique({ where: { id: intent.planId }, select: { balance: true } }) : null
     return NextResponse.json({ status: 'done', amount: intent.amount, newBalance: plan?.balance })
+  }
+  // Staff credited this person's money another way. Stop showing the pay-in amount; the credit is already in.
+  if (intent.status === INTENT_SUPERSEDED) {
+    const plan = intent.planId ? await prisma.savingsPlan.findUnique({ where: { id: intent.planId }, select: { balance: true } }) : null
+    return NextResponse.json({ status: 'closed', newBalance: plan?.balance })
   }
   if (intent.status === INTENT_REVIEW) return NextResponse.json({ status: 'review' })
   const closes = (intent.expiresAt?.getTime() ?? 0) + TRANSFER_GRACE_MS

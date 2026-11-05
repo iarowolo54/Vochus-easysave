@@ -3,7 +3,7 @@ import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { TRANSFER_METHOD } from '@/lib/transfer-intent'
 import { STATUS_LABEL, alertStatus, intentStatus, type TransferStatus } from '@/lib/transfer-status'
-import { HAND_WINDOW_MS, sameFigure } from '@/lib/transfer-figure'
+import { LATE_ALLOWANCE_MS, handCreditSince, sameFigure } from '@/lib/transfer-figure'
 import { INTENT_SUPERSEDED } from '@/lib/payment-intent'
 
 export const dynamic = 'force-dynamic'
@@ -12,8 +12,6 @@ const FETCH_LIMIT = 300
 const PAGE_SIZE = 25
 const FILTERS: readonly string[] = ['all', 'paid', 'waiting', 'not-paid', 'needs-review', 'by-hand']
 const DAY_MS = 86_400_000
-/** A held payment can belong to a request whose window closed a little earlier. */
-const LATE_ALLOWANCE_MS = 2 * 3_600_000
 
 type Who = { type: 'customer' | 'agent'; name: string; code: string }
 type Possible = { who: Who | null; plan: string | null; amount: number; startedAt: string; state: string }
@@ -76,16 +74,18 @@ export async function GET(req: NextRequest) {
     }),
     prisma.bankAlert.findMany({ where: { status: { in: ['Unmatched', 'Resolved', 'Dismissed'] } }, orderBy: { createdAt: 'desc' }, take: FETCH_LIMIT }),
   ])
-  // Payments staff credited by hand. Each held payment (and each open request) is compared with the ones within 3 days of
-  // its OWN time, not of today, so an older alert is checked against the hand credits that were around when it arrived.
-  const oldestAlert = alerts.filter((a) => a.status === 'Unmatched').reduce<Date | null>((m, a) => (!m || a.alertAt < m ? a.alertAt : m), null)
-  const since = new Date(Math.min(oldestAlert?.getTime() ?? Date.now(), Date.now()) - HAND_WINDOW_MS)
-  const handCredits = await prisma.paymentIntent.findMany({
-    where: { manualBy: { not: null }, status: 'Done', consumedAt: { gte: since } },
-    select: { amount: true, consumedAt: true },
-  })
-  const lookalikeNear = (amount: number, at: Date) =>
-    handCredits.some((h) => h.consumedAt && sameFigure(h.amount, amount) && Math.abs(h.consumedAt.getTime() - at.getTime()) <= HAND_WINDOW_MS)
+  // Payments staff credited by hand. A held payment (or open request) is compared with every hand credit from 3 days
+  // before its own time onward: one made later can still be the same money.
+  const anchors = [...alerts.filter((a) => a.status === 'Unmatched').map((a) => a.alertAt), ...intents.filter((i) => i.status === 'Pending').map((i) => i.createdAt)]
+  const oldest = anchors.reduce<Date | null>((m, d) => (!m || d < m ? d : m), null)
+  const handCredits = oldest
+    ? await prisma.paymentIntent.findMany({
+        where: { manualBy: { not: null }, status: 'Done', consumedAt: { gte: handCreditSince(oldest) } },
+        select: { amount: true, consumedAt: true },
+      })
+    : []
+  const lookalikeNear = (amount: number, anchor: Date) =>
+    handCredits.some((h) => h.consumedAt && sameFigure(h.amount, amount) && h.consumedAt >= handCreditSince(anchor))
   const manualRefs = alerts.map((a) => a.intentRef).filter((r): r is string => !!r)
   const manualIntents = manualRefs.length ? await prisma.paymentIntent.findMany({ where: { ref: { in: manualRefs } } }) : []
 
@@ -121,7 +121,7 @@ export async function GET(req: NextRequest) {
       startedAt: i.createdAt.toISOString(), expiresAt: iso(i.expiresAt), creditedAt: iso(i.consumedAt),
       by: i.manualBy, doneAt: i.manualBy ? iso(i.consumedAt) : null, note: i.manualNote,
       bank: null, possible: [], possibleMore: 0,
-      lookalike: i.status === 'Pending' && lookalikeNear(i.amount, new Date(now)),
+      lookalike: i.status === 'Pending' && lookalikeNear(i.amount, i.createdAt),
     })
   }
   const manualByRef = new Map(manualIntents.map((i) => [i.ref, i]))

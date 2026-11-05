@@ -9,7 +9,7 @@ import { INTENT_PENDING, INTENT_SUPERSEDED, type ManualActor } from '@/lib/payme
 import { settleIntentPayment } from '@/lib/customer-settle'
 import { settleAgentTransfer } from '@/lib/agent-settle'
 import { TRANSFER_METHOD } from '@/lib/transfer-intent'
-import { HAND_WINDOW_MS, nearAmount } from '@/lib/transfer-figure'
+import { LATE_ALLOWANCE_MS, handCreditSince, nearAmount } from '@/lib/transfer-figure'
 import { money } from '@/lib/wallet-guard'
 
 export type Admin = { id?: string; name: string }
@@ -51,16 +51,12 @@ const LOOKALIKE =
   'This is within ₦1 of a payment staff credited by hand within 3 days of it. It may be the same money. Tick the box to confirm you have checked it is not, then try again.'
 
 /**
- * A payment staff credited by hand within 3 days either side of `around`, for the same figure (within ₦1). Anchored to
- * the payment being looked at, so an old alert is compared with the hand credits from its own time, not today's.
+ * A payment staff credited by hand for the same figure (within ₦1), from 3 days before `anchor` onward. `anchor` is when the
+ * payment being looked at arrived (a held alert) or started (a request); later credits count too, with no upper limit.
  */
-export function findRecentHandCredit(client: PrismaClient, amount: number, around: Date = new Date()) {
+export function findRecentHandCredit(client: PrismaClient, amount: number, anchor: Date) {
   return client.paymentIntent.findFirst({
-    where: {
-      manualBy: { not: null }, status: 'Done',
-      consumedAt: { gte: new Date(around.getTime() - HAND_WINDOW_MS), lte: new Date(around.getTime() + HAND_WINDOW_MS) },
-      amount: nearAmount(amount),
-    },
+    where: { manualBy: { not: null }, status: 'Done', consumedAt: { gte: handCreditSince(anchor) }, amount: nearAmount(amount) },
     select: { ref: true },
   })
 }
@@ -82,11 +78,23 @@ export async function creditRequestByHand(
   if (held) return { ok: false, status: 409, error: HELD_SAME_AMOUNT }
 
   // Something for the same figure was already credited by hand (a request, or held money given to someone).
-  if (!input.ackLookalike && await findRecentHandCredit(client, intent.amount)) {
+  if (!input.ackLookalike && await findRecentHandCredit(client, intent.amount, intent.createdAt)) {
     return { ok: false, status: 409, error: LOOKALIKE }
   }
 
-  const result = await settle(client, intent, input.admin, input.note)
+  // The person's other open requests for the same figure (an older one left from asking again) are this same payment:
+  // close them in the same transaction as the credit.
+  const closeSiblings: InTx = async (tx) => {
+    await tx.paymentIntent.updateMany({
+      where: {
+        method: TRANSFER_METHOD, status: INTENT_PENDING, manualBy: null, ref: { not: intent.ref }, amount: nearAmount(intent.amount),
+        ...(intent.actorType === 'agent' ? { agentId: intent.agentId } : { customerId: intent.customerId, planId: intent.planId }),
+      },
+      data: { status: INTENT_SUPERSEDED },
+    })
+  }
+
+  const result = await settle(client, intent, input.admin, input.note, closeSiblings)
   if (result.kind === 'already') return { ok: false, status: 409, error: TAKEN }
   if (result.kind === 'review') return { ok: false, status: 422, error: CLOSED }
   return { ok: true, amount: intent.amount }
@@ -142,7 +150,9 @@ export async function creditAlertByHand(
     await tx.paymentIntent.updateMany({
       where: {
         method: TRANSFER_METHOD, status: INTENT_PENDING, manualBy: null, amount: nearAmount(alert.amount),
-        ...(input.target.kind === 'customer' ? { customerId: input.target.customerId } : { agentId: input.target.agentId }),
+        // Only requests that could really be this payment: started before it arrived, and still open (or just closed) then.
+        createdAt: { lte: alert.alertAt }, expiresAt: { gte: new Date(alert.alertAt.getTime() - LATE_ALLOWANCE_MS) },
+        ...(input.target.kind === 'customer' ? { customerId: input.target.customerId, planId: input.target.planId } : { agentId: input.target.agentId }),
       },
       data: { status: INTENT_SUPERSEDED },
     })

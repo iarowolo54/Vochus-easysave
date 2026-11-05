@@ -12,7 +12,7 @@ export type TransferDetails = {
   account: { bank: string; number: string; name: string }
 }
 
-type Status = 'pending' | 'done' | 'review' | 'expired'
+type Status = 'pending' | 'done' | 'review' | 'expired' | 'closed'
 
 const POLL_MS = 5000
 
@@ -53,7 +53,7 @@ export default function TransferPanel({ details, statusUrl, destination, balance
       setCheckFailed(false)
       if (body.newBalance !== undefined) setBalance(body.newBalance)
       setStatus(body.status)
-      if (body.status === 'done' && !notified.current) { notified.current = true; onDoneRef.current?.(body.newBalance ?? null) }
+      if ((body.status === 'done' || body.status === 'closed') && !notified.current) { notified.current = true; onDoneRef.current?.(body.newBalance ?? null) }
     } catch {
       if (alive.current) setCheckFailed(true)
     } finally {
@@ -93,6 +93,18 @@ export default function TransferPanel({ details, statusUrl, destination, balance
         icon="check"
         title={`${exact} received`}
         text={balance !== null ? `It’s in ${destination}. ${balanceLabel} is now ${formatNaira(balance)}.` : `It’s in ${destination}.`}
+        action={<button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => router.push(doneHref)}>Done</button>}
+      />
+    )
+  }
+
+  // Our team credited this payment another way (held money matched to this person). Don't show the pay-in amount again.
+  if (status === 'closed') {
+    return (
+      <EmptyState
+        icon="check"
+        title="Your payment has been credited"
+        text={balance !== null ? `Our team has credited your payment to ${destination}. ${balanceLabel} is now ${formatNaira(balance)}. You don’t need to send it again.` : `Our team has credited your payment to ${destination}. You don’t need to send it again.`}
         action={<button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => router.push(doneHref)}>Done</button>}
       />
     )
