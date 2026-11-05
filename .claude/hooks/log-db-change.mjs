@@ -13,7 +13,7 @@ import { projectDir, readInput } from './lib.mjs';
 const HEADING = '# Production database change log (written by a hook, newest last; leave these lines in place)';
 const KEEP = 60;
 const SERVER = /69\.197\.164\.193/;
-const DB_WORDS = /(\bsqlite3\b|prisma(?:\.cmd)?\s+(?:migrate|db|studio)|\bupdate\s+["'`\w]+\s+set\b|\bdelete\s+from\b|\binsert\s+into\b|\balter\s+table\b|\bdrop\s+(?:table|column|index)\b|\btruncate\b|\b(?:cp|mv|rm|scp|rsync)\b[^|;&]*\.(?:db|sqlite3?)\b)/i;
+const DB_WORDS = /(\bsqlite3\b|\bprisma\b|PrismaClient|\bmigrate\b|\bupdate\s+["'`\w]+\s+set\b|\bdelete\s+from\b|\binsert\s+into\b|\balter\s+table\b|\bdrop\s+(?:table|column|index)\b|\btruncate\b|\.(?:db|sqlite3?)\b)/i;
 const DEPLOY = /^(?:cd (\/[A-Za-z0-9_./-]+)\s*&&\s*)?(ALLOW_DB_PUSH=1 )?(?:\.\/)?scripts\/(deploy|rollback)\.sh$/;
 
 const input = readInput();
@@ -43,12 +43,15 @@ function responseText() {
 // `UPDATE Agent SET pin='1234'` is logged as `UPDATE Agent SET pin='?'`.
 function redact(text) {
   return text
-    .replace(/(bearer|authorization:?)\s+\S+/gi, '$1 [hidden]')
+    .replace(/^(.*?69\.197\.164\.193\s+)"([\s\S]*)"\s*$/, '$1$2')
+    .replace(/\b(authorization:?\s+)(?:(?:bearer|basic|token)\s+)?[^\s"'\\]+/gi, '$1[hidden]')
+    .replace(/\bbearer\s+[^\s"'\\]+/gi, 'bearer [hidden]')
     .replace(/(\s-[puP])\s*\S+/g, '$1 [hidden]')
-    .replace(/\b(password|passwd|pass|secret|token|key|pin|otp|bvn|nin|accountNumber|email|phone)(\s*[=:]\s*)\S+/gi, '$1$2[hidden]')
-    .replace(/\b(sk|pk)_(live|test)_\w+/g, '[hidden]')
     .replace(/\\?'[^']*\\?'/g, "'?'")
-    .replace(/\\?"[^"]*?\\"/g, '"?"')
+    .replace(/\\"[\s\S]*\\"/g, '"?"')
+    .replace(/\\?"[^"]*"/g, '"?"')
+    .replace(/([A-Za-z0-9_-]*(?:password|passwd|pass|secret|token|key|pin|otp|bvn|nin|accountNumber|email|phone))(\s*[=:]\s*)\S+/gi, '$1$2[hidden]')
+    .replace(/\b(sk|pk)_(live|test)_\w+/g, '[hidden]')
     .replace(/\d{4,}/g, '?')
     .replace(/\s+/g, ' ');
 }
