@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { LoadError, PageHeader, Segmented, TableSkeleton, useToast } from '../_components/admin-ui'
+import { PAYSTACK_ENABLED } from '@/lib/paystack-off'
 import { ManualModeBanner, parsePayoutModes, type PayoutModes, type PayoutModeValue } from '../_components/payout-mode'
 
 const OPTIONS: { value: PayoutModeValue; label: string }[] = [
@@ -69,6 +70,11 @@ export default function PayoutModePage() {
         : failed || !saved ? <LoadError what="the payout mode" onRetry={load} />
         : (
           <>
+            {!PAYSTACK_ENABLED && (
+              <div className="a-alert a-alert-a" role="status">
+                Paystack is closed, so every payout is Manual: pay the person from the bank app, then mark it as paid. Automatic can’t be turned on.
+              </div>
+            )}
             {anyManual && <ManualModeBanner />}
 
             <section className="card am-section" aria-labelledby="pm-agent">

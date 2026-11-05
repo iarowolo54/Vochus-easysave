@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { createPaymentIntent } from '@/lib/payment-intent'
 import { checkBulkSelection } from '@/lib/bulk-savings'
+import { PAYSTACK_ENABLED, paystackOff } from '@/lib/paystack-off'
 
 // Bulk Savings: a customer pays for missed, today's or upcoming days on their own
 // self-service plan. The server validates the selected day-keys against the
@@ -12,6 +13,8 @@ import { checkBulkSelection } from '@/lib/bulk-savings'
 // amount from the plan rate — the client amount is never trusted. The ref deliberately reuses the VCHS-CST- style so
 // /customer/save/callback routes it to the normal paystack/verify handler.
 export async function POST(req: NextRequest) {
+  // Paystack is closed (see src/lib/paystack-off.ts): nothing may start a card payment.
+  if (!PAYSTACK_ENABLED) return paystackOff()
   const session = await getCustomerSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 

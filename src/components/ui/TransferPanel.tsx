@@ -39,6 +39,9 @@ export default function TransferPanel({ details, statusUrl, destination, balance
   const [checking, setChecking] = useState(false)
   const alive = useRef(true)
   const notified = useRef(false)
+  // Held in a ref so a parent that passes a new function each render can't restart the polling timer.
+  const onDoneRef = useRef(onDone)
+  onDoneRef.current = onDone
 
   const check = useCallback(async () => {
     setChecking(true)
@@ -50,13 +53,13 @@ export default function TransferPanel({ details, statusUrl, destination, balance
       setCheckFailed(false)
       if (body.newBalance !== undefined) setBalance(body.newBalance)
       setStatus(body.status)
-      if (body.status === 'done' && !notified.current) { notified.current = true; onDone?.(body.newBalance ?? null) }
+      if (body.status === 'done' && !notified.current) { notified.current = true; onDoneRef.current?.(body.newBalance ?? null) }
     } catch {
       if (alive.current) setCheckFailed(true)
     } finally {
       if (alive.current) setChecking(false)
     }
-  }, [details.ref, statusUrl, onDone])
+  }, [details.ref, statusUrl])
 
   useEffect(() => {
     alive.current = true
@@ -131,12 +134,14 @@ export default function TransferPanel({ details, statusUrl, destination, balance
 
   return (
     <>
-      <section className="ui-review" aria-label="Transfer details">
+      <section className="ui-review tp-amount" aria-label="Transfer details">
         <p className="ui-review-kicker">Send this exact amount</p>
-        <h2 className="ui-review-title ui-amount">{exact}</h2>
-        <button type="button" className="ui-link" onClick={() => copy('amount', details.payAmount.toFixed(2))}>
-          {copied === 'amount' ? 'Copied' : 'Copy amount'}
-        </button>
+        <div className="tp-amount-value">
+          <h2 className="ui-review-title ui-amount">{exact}</h2>
+          <button type="button" className="ui-link" onClick={() => copy('amount', details.payAmount.toFixed(2))}>
+            {copied === 'amount' ? 'Copied' : 'Copy amount'}
+          </button>
+        </div>
       </section>
 
       <p className="ui-note" role="alert">

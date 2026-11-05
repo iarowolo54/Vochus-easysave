@@ -20,6 +20,7 @@ import ListRow from '@/components/ui/ListRow'
 import { Icons } from '@/components/ui/icons'
 import InterestNudge, { InterestCard, InterestChip, earnsInterest } from '@/components/customer/InterestNudge'
 import AutoFunding from '@/components/customer/AutoFunding'
+import { PAYSTACK_ENABLED } from '@/lib/paystack-off'
 import { displayName, formatDate, formatNaira } from '@/lib/format'
 import { getHideBalance, setHideBalance } from '@/lib/preferences'
 import { BULK_SAVINGS_LABEL, isEligiblePlan, selectableKeys } from '@/lib/catchup'
@@ -346,7 +347,7 @@ export default function CustomerDashboard() {
           <>
             <InterestCard plan={plan} hideAmounts={hideBalance} />
             <PlanDetails plan={plan} />
-            {!ended && <AutoFunding plan={plan} hideAmounts={hideBalance} />}
+            {PAYSTACK_ENABLED && !ended && <AutoFunding plan={plan} hideAmounts={hideBalance} />}
             <WeekStrip plan={plan} deposits={planTxs} paused={!!pending} onOpenCard={() => setCardOpen(true)} onSelect={setDaySel} />
           </>
         ) : (

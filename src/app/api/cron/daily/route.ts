@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { cronAuthorized as authorized } from '@/lib/cron-auth'
+import { PAYSTACK_ENABLED } from '@/lib/paystack-off'
 import { accruedInterestForPlan } from '@/lib/savings-interest-plan'
 import { runDueAutoDebits, reconcileProcessingAttempts } from '@/lib/auto-debit-run'
 import { sendWeeklySummaries } from '@/lib/weekly-summary-run'
@@ -40,7 +41,8 @@ export async function GET(req: Request) {
   let debitFailed = 0
   let pending = 0
   let settled = 0
-  try {
+  // Auto-debit charges cards through Paystack, which is closed (src/lib/paystack-off.ts): no charges, nothing to settle.
+  if (PAYSTACK_ENABLED) try {
     const run = await runDueAutoDebits(prisma, now)
     charged = run.charged
     skipped = run.skipped
@@ -49,7 +51,7 @@ export async function GET(req: Request) {
   } catch (err) {
     console.error('[cron/daily] auto-debit run failed', err instanceof Error ? err.message : 'unknown')
   }
-  try {
+  if (PAYSTACK_ENABLED) try {
     const rec = await reconcileProcessingAttempts(prisma, now)
     settled = rec.settled
   } catch (err) {

@@ -4,6 +4,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import { CatchupCalendar } from '@/components/customer/SavingsCard'
 import { useCustomerMe } from '@/components/customer/useCustomerMe'
 import EmptyState from '@/components/ui/EmptyState'
+import TransferPanel, { type TransferDetails } from '@/components/ui/TransferPanel'
 import { FormError } from '@/components/ui/FormErrors'
 import { Icons } from '@/components/ui/icons'
 import { FormSkeleton } from '@/components/ui/Skeleton'
@@ -26,6 +27,7 @@ function CatchupScreen() {
   const { data, loading, failed, reload } = useCustomerMe<Me>()
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [paying, setPaying] = useState(false)
+  const [transfer, setTransfer] = useState<TransferDetails | null>(null)
   const [error, setError] = useState('')
 
   const planId = params.get('planId')
@@ -38,13 +40,6 @@ function CatchupScreen() {
   )
   const selectable = useMemo(() => new Set(selectableKeys(slots)), [slots])
   const missed = useMemo(() => missedKeys(slots), [slots])
-
-  // Returning from Paystack via the back/forward cache restores this page with `paying` still true.
-  useEffect(() => {
-    const onShow = (e: PageTransitionEvent) => { if (e.persisted) setPaying(false) }
-    window.addEventListener('pageshow', onShow)
-    return () => window.removeEventListener('pageshow', onShow)
-  }, [])
 
   // After a reload (a day got paid or charged meanwhile), keep only the picks that can still be paid for.
   useEffect(() => {
@@ -134,15 +129,35 @@ function CatchupScreen() {
     if (!plan || count === 0 || paying) return
     setPaying(true)
     setError('')
-    const result = await postJson<{ authorizationUrl: string }>('/api/customer/catchup/init', { planId: plan.id, keys: [...selected] })
-    if (result.ok && result.data?.authorizationUrl) {
-      window.location.href = result.data.authorizationUrl
+    const result = await postJson<TransferDetails>('/api/customer/transfer/init', { planId: plan.id, keys: [...selected] })
+    setPaying(false)
+    if (result.ok && result.data?.ref) {
+      setTransfer(result.data)
       return
     }
-    setPaying(false)
     setError(result.ok ? 'Something went wrong. Please try again.' : describeFailure(result))
     // The calendar was out of date: refresh it so stale picks drop out.
     if (!result.ok && (result.status === 400 || result.status === 409)) reload()
+  }
+
+  if (transfer) {
+    return (
+      <div className="ui-screen">
+        {header}
+        <main className="ui-container">
+          <TransferPanel
+            details={transfer}
+            statusUrl="/api/customer/transfer/status"
+            destination={plan.goal}
+            balanceLabel="Your balance"
+            doneHref="/customer/dashboard"
+            historyHref="/customer/transactions"
+            onDone={() => { setSelected(new Set()); reload() }}
+            onClose={() => setTransfer(null)}
+          />
+        </main>
+      </div>
+    )
   }
 
   return (
@@ -175,9 +190,9 @@ function CatchupScreen() {
           {summary && <p className="ui-catchup-note">{summary}</p>}
           {atCap && <p className="ui-catchup-note">You can pay for up to {MAX_CATCHUP_KEYS} {unit}s at a time.</p>}
           <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={pay} disabled={count === 0 || paying}>
-            {paying ? 'Opening payment…' : count === 0 ? `Select a ${unit} to pay` : `Pay ${formatNaira(total)} by card`}
+            {paying ? 'Getting account details…' : count === 0 ? `Select a ${unit} to pay` : `Pay ${formatNaira(total)} by transfer`}
           </button>
-          <p className="ui-catchup-note">You’ll enter your card details on the next screen.</p>
+          <p className="ui-catchup-note">You’ll get an account number and an exact amount to send.</p>
         </div>
       </main>
     </div>

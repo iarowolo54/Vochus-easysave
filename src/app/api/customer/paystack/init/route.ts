@@ -6,8 +6,11 @@ import { logAudit } from '@/lib/audit'
 import { createPaymentIntent } from '@/lib/payment-intent'
 import { planHasEnded, PLAN_ENDED } from '@/lib/plan-credit'
 import { hasOpenRedemption } from '@/lib/redemption-balance'
+import { PAYSTACK_ENABLED, paystackOff } from '@/lib/paystack-off'
 
 export async function POST(req: NextRequest) {
+  // Paystack is closed (see src/lib/paystack-off.ts): nothing may start a card payment.
+  if (!PAYSTACK_ENABLED) return paystackOff()
   const session = await getCustomerSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 

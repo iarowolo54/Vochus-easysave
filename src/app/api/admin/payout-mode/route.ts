@@ -3,6 +3,7 @@ import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { getPayoutMode, type PayoutChannel, type PayoutMode } from '@/lib/payout-mode'
+import { PAYSTACK_ENABLED } from '@/lib/paystack-off'
 
 const SETTING_KEY = 'payoutMode'
 const CHANNELS: PayoutChannel[] = ['agent', 'customer']
@@ -32,6 +33,9 @@ export async function POST(req: NextRequest) {
     }
   }
   const value = { agent: next.agent as PayoutMode, customer: next.customer as PayoutMode }
+  if (!PAYSTACK_ENABLED && (value.agent === 'auto' || value.customer === 'auto')) {
+    return NextResponse.json({ error: 'Automatic payouts need Paystack, which is closed. Payouts stay on Manual.' }, { status: 409 })
+  }
 
   const before = await getPayoutMode()
 

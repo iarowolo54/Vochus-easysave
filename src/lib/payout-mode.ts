@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma'
+import { PAYSTACK_ENABLED } from '@/lib/paystack-off'
 
 export type PayoutChannel = 'agent' | 'customer'
 export type PayoutMode = 'auto' | 'manual'
@@ -27,6 +28,8 @@ export function parsePayoutMode(raw: string | null): Record<PayoutChannel, Payou
 // DB errors propagate on purpose: a failed read must not silently fall back to
 // "auto" for a channel the admin set to "manual". Callers fail closed.
 export async function getPayoutMode(): Promise<Record<PayoutChannel, PayoutMode>> {
+  // Automatic payouts go through Paystack, which is closed (src/lib/paystack-off.ts): staff pay and mark paid.
+  if (!PAYSTACK_ENABLED) return { agent: 'manual', customer: 'manual' }
   const setting = await prisma.platformSetting.findUnique({ where: { key: 'payoutMode' } })
   return parsePayoutMode(setting?.value ?? null)
 }
