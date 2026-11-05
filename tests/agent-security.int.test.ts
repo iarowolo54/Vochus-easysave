@@ -261,18 +261,18 @@ test('account lock: a parallel burst gets exactly 3 password checks, and ends in
   assert.equal(await authorize({ identifier: a.agentId, password: PASSWORD }), null, 'locked, even with the right password')
 })
 
-test('account lock: a burst as a lock expires still gets only 3 password checks', async () => {
+test('account lock: an old lock does not expire by itself, so a burst still gets no password checks', async () => {
   const a = await mkAgent({ loginAttempts: 3, lockedAt: new Date(Date.now() - 31 * 60_000) })
   const spy = bcrypt as unknown as { compare: typeof bcrypt.compare }
   const real = spy.compare
   let checks = 0
   spy.compare = ((...args: Parameters<typeof bcrypt.compare>) => { checks++; return real(...args) }) as typeof bcrypt.compare
   try {
-    await Promise.all(Array.from({ length: 30 }, () => authorize({ identifier: a.agentId, password: 'guess' }, fromIp(freshIp()))))
+    await Promise.all(Array.from({ length: 10 }, () => authorize({ identifier: a.agentId, password: 'guess' }, fromIp(freshIp()))))
   } finally {
     spy.compare = real
   }
-  assert.equal(checks, 3)
+  assert.equal(checks, 0)
   assert.ok((await prisma.agent.findUniqueOrThrow({ where: { id: a.id } })).lockedAt)
 })
 
@@ -286,9 +286,37 @@ test('account lock: resets on success, including a success on the third try', as
   assert.equal(row.lockedAt, null)
 })
 
-test('account lock: still expires on its own after 30 minutes', async () => {
+test('account lock: stays locked after 30 minutes, even with the right password, until a code unlocks it', async () => {
   const a = await mkAgent({ loginAttempts: 3, lockedAt: new Date(Date.now() - 31 * 60_000) })
+  assert.equal(await authorize({ identifier: a.agentId, password: PASSWORD }), null)
+  assert.equal(await authorize({ identifier: a.agentId, password: PASSWORD }), null)
+  assert.ok((await prisma.agent.findUniqueOrThrow({ where: { id: a.id } })).lockedAt)
+})
+
+test('account lock: the wrong password that locks the account ends sessions already open, once', async () => {
+  const a = await mkAgent()
+  await authorize({ identifier: a.agentId, password: 'guess' })
+  await authorize({ identifier: a.agentId, password: 'guess' })
+  assert.equal((await prisma.agent.findUniqueOrThrow({ where: { id: a.id } })).tokenVersion, a.tokenVersion)
+  await authorize({ identifier: a.agentId, password: 'guess' }) // third: locks
+  assert.equal((await prisma.agent.findUniqueOrThrow({ where: { id: a.id } })).tokenVersion, a.tokenVersion + 1)
+  await authorize({ identifier: a.agentId, password: 'guess' }) // refused, no further bump
+  assert.equal((await prisma.agent.findUniqueOrThrow({ where: { id: a.id } })).tokenVersion, a.tokenVersion + 1)
+})
+
+test('account lock: a right password on the third try keeps the owner signed in on their other devices', async () => {
+  const a = await mkAgent()
+  await authorize({ identifier: a.agentId, password: 'guess' })
+  await authorize({ identifier: a.agentId, password: 'guess' })
   assert.equal((await authorize({ identifier: a.agentId, password: PASSWORD }))?.id, a.id)
+  assert.equal((await prisma.agent.findUniqueOrThrow({ where: { id: a.id } })).tokenVersion, a.tokenVersion)
+})
+
+test('check-agent: a lock older than 30 minutes is still reported as locked', async () => {
+  const a = await mkAgent({ loginAttempts: 3, lockedAt: new Date(Date.now() - 31 * 60_000) })
+  const { POST } = await import('../src/app/api/auth/check-agent/route')
+  const res = await POST(new Request('http://localhost/api/auth/check-agent', { method: 'POST', headers: { 'content-type': 'application/json', 'x-forwarded-for': freshIp() }, body: JSON.stringify({ identifier: a.agentId }) }) as never)
+  assert.equal((await res.json()).locked, true)
 })
 
 test('a right password for a suspended agent is refused but does not build toward a lock', async () => {

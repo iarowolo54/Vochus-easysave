@@ -258,6 +258,12 @@ export async function reserveAgentAttempt(agentDbId: string, now: number = Date.
   return rows.length === 1
 }
 
+/** After a WRONG password: if that attempt locked the agent, end the sessions already open (the session version is
+ *  checked on every request). Refused attempts never get this far, so only the locking one does it. */
+export async function endAgentSessionsIfLocked(agentDbId: string): Promise<void> {
+  await prisma.agent.updateMany({ where: { id: agentDbId, lockedAt: { not: null } }, data: { tokenVersion: { increment: 1 } } })
+}
+
 // -------- Public API --------
 
 /** Blocked if the account is hard-locked OR the IP is spray-locked. */

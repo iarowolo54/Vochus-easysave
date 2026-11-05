@@ -4,7 +4,7 @@ import CredentialsProvider from 'next-auth/providers/credentials'
 import bcrypt from 'bcryptjs'
 import { prisma } from './prisma'
 import { isPastAbsoluteCap, IDLE_SECONDS } from '@/lib/session-policy'
-import { refundAttempt, reserveAgentAttempt, reserveAttempt } from '@/lib/login-attempt'
+import { endAgentSessionsIfLocked, refundAttempt, reserveAgentAttempt, reserveAttempt } from '@/lib/login-attempt'
 import { sendLoginAlert } from '@/lib/login-alert'
 import { agentAlertEmailFor } from '@/lib/email-alerts'
 import { rightmostForwardedIp } from '@/lib/rate-limit'
@@ -80,22 +80,11 @@ export const authOptions: NextAuthOptions = {
 
         if (!agent) return null
 
-        // Auto-unlock after 30 min
-        const LOCKOUT_MS = 30 * 60 * 1000
+        // A locked account stays locked until a code unlocks it (Forgot password) or an admin does. It never
+        // expires with time, so someone who only has the password can't wait it out.
         if (agent.lockedAt) {
-          if (Date.now() - new Date(agent.lockedAt).getTime() > LOCKOUT_MS) {
-            // Only a lock that's still the expired one. In a burst this read can be stale, and clearing unconditionally
-            // would wipe a new lock another attempt has just set.
-            await prisma.agent.updateMany({
-              where: { id: agent.id, lockedAt: { lte: new Date(Date.now() - LOCKOUT_MS) } },
-              data: { lockedAt: null, loginAttempts: 0 },
-            }).catch(logWriteFailure('auto-unlock'))
-            agent.lockedAt = null
-            agent.loginAttempts = 0
-          } else {
-            await refundIp()
-            return null
-          }
+          await refundIp()
+          return null
         }
 
         const deviceId = field('deviceId')
@@ -136,7 +125,12 @@ export const authOptions: NextAuthOptions = {
           }
         }
 
-        if (!valid) return null
+        if (!valid) {
+          // The wrong password that just locked the account also ends the sessions already open. Done here, after the
+          // check, so a right password on the last try never signs the owner out.
+          if (password && !biometricToken) await endAgentSessionsIfLocked(agent.id).catch(logWriteFailure('end sessions on lock'))
+          return null
+        }
 
         if (agent.email && !agent.emailVerified) return null
 

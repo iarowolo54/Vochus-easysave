@@ -89,7 +89,7 @@ export default function UnlockPage() {
             <div style={{ textAlign: 'center', marginBottom: 12, color: '#fff' }}><Icons.locked size={32} aria-hidden="true" /></div>
             <h2 style={{ textAlign: 'center', marginBottom: 6 }}>Unlock Your Account</h2>
             <p style={BODY}>
-              Enter your Agent ID or registered phone number. We'll send an unlock code via SMS.
+              Enter your Agent ID or registered phone number. We'll send an unlock code to your confirmed email, or by SMS if you have none.
             </p>
             {error && <div className="lerr">{error}</div>}
             <label className="lbl" style={LABEL} htmlFor="unlock-identifier">Agent ID / Phone Number</label>
@@ -124,7 +124,7 @@ export default function UnlockPage() {
             <div style={{ textAlign: 'center', marginBottom: 12, color: '#fff' }}><Icons.phone size={32} aria-hidden="true" /></div>
             <h2 style={{ textAlign: 'center', marginBottom: 6 }}>Enter Code and New Password</h2>
             <p style={BODY}>
-              If this account is locked, we’ve sent a 6-digit code to its phone number by SMS. It can take a minute to arrive, and expires in 10 minutes.
+              If this account is locked, we’ve sent it a 6-digit code, to its confirmed email or else by SMS. It can take a minute to arrive (check spam), and expires in 10 minutes.
             </p>
             {error && <div className="lerr" role="alert">{error}</div>}
             <label className="lbl" style={LABEL} htmlFor="unlock-code">Unlock Code</label>

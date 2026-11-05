@@ -4,7 +4,6 @@ import { agentLoginIpKey } from '@/lib/auth'
 import { checkLoginThrottle } from '@/lib/login-attempt'
 import { AGENT_LOOKUP_LIMIT, agentLookupRateLimiter, clientIp } from '@/lib/rate-limit'
 
-const LOCKOUT_MS = 30 * 60 * 1000
 
 export async function POST(req: NextRequest) {
   const limit = agentLookupRateLimiter.check(`check-agent:${clientIp(req)}`, AGENT_LOOKUP_LIMIT.perIp, AGENT_LOOKUP_LIMIT.windowMs)
@@ -34,15 +33,8 @@ export async function POST(req: NextRequest) {
     agent.boundDeviceId !== deviceId
   )
 
-  let locked = false
-  let lockedMinutesRemaining = 0
-  if (agent?.lockedAt) {
-    const remaining = LOCKOUT_MS - (Date.now() - new Date(agent.lockedAt).getTime())
-    if (remaining > 0) {
-      locked = true
-      lockedMinutesRemaining = Math.ceil(remaining / 60000)
-    }
-  }
+  // A lock never expires with time; only a code (Forgot password) or an admin clears it.
+  const locked = !!agent?.lockedAt
 
   const unverifiedEmail = !!(agent?.email && !agent.emailVerified)
 
@@ -56,7 +48,6 @@ export async function POST(req: NextRequest) {
     status: agent?.status ?? null,
     deviceMismatch,
     locked,
-    lockedMinutesRemaining,
     unverifiedEmail,
   })
 }

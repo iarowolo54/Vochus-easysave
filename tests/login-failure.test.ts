@@ -17,7 +17,7 @@ test('a pending agent is told to wait, by password or fingerprint', () => {
 
 test('account problems outrank status, in the same order for both', () => {
   for (const via of ['password', 'fingerprint'] as const) {
-    assert.match(loginFailure({ exists: true, status: 'Suspended', locked: true, lockedMinutesRemaining: 5 }, via).message, /locked.*5 min/i)
+    assert.match(loginFailure({ exists: true, status: 'Suspended', locked: true }, via).message, /locked/i)
     assert.match(loginFailure({ exists: true, status: 'Active', deviceMismatch: true }, via).message, /another phone/i)
     assert.match(loginFailure({ exists: true, status: 'Active', unverifiedEmail: true }, via).message, /verified/i)
   }
@@ -42,11 +42,13 @@ test('unknown account: password points at the identifier field, fingerprint stay
 })
 
 test('a locked account: fingerprint wording does not blame wrong passwords', () => {
-  const locked = { exists: true, status: 'Active', locked: true, lockedMinutesRemaining: 5 }
+  const locked = { exists: true, status: 'Active', locked: true }
   assert.match(loginFailure(locked, 'password').message, /too many wrong passwords/i)
+  assert.doesNotMatch(loginFailure(locked, 'password').message, /\d+ min/)
   const r = loginFailure(locked, 'fingerprint').message
   assert.match(r, /locked/i)
-  assert.match(r, /5 min/)
+  assert.match(r, /Forgot password/)
+  assert.doesNotMatch(r, /min/)
   assert.doesNotMatch(r, /wrong password/i)
 })
 

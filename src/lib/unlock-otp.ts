@@ -23,6 +23,12 @@ export function recoveryChannel(customer: { email?: string | null; emailVerified
   return pickChannel({ email: customer.emailVerifiedAt ? customer.email : null, phone: customer.phone })
 }
 
+/** Where an agent's unlock code goes: their email once they have confirmed it (SMS costs money), otherwise their phone. */
+export function agentRecoveryChannel(agent: { email?: string | null; emailVerified?: boolean | null; phone: string }) {
+  const email = agent.email?.trim()
+  return email && agent.emailVerified ? { channel: 'email' as const, target: email } : { channel: 'sms' as const, target: agent.phone }
+}
+
 export function maskTarget(channel: Channel, target: string): string {
   if (channel === 'email') {
     const [user, domain] = target.split('@')
