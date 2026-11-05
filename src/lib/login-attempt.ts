@@ -46,6 +46,12 @@ async function startWindow(key: string, now: number, lockedUntil: number | null)
 
 // -------- Per-account hard lock --------
 
+/** Sign out every session a customer already has open. Called the moment their account locks, so a lock
+ *  means locked for a session that was already signed in too, not only for the next sign-in. */
+async function endOpenSessions(phone: string): Promise<void> {
+  await prisma.customer.updateMany({ where: { phone }, data: { tokenVersion: { increment: 1 } } })
+}
+
 /** Record a failed password attempt against an account. Once the account is
  *  locked (failCount >= limit) further failures are ignored — it stays locked
  *  until an OTP unlock. The increment is atomic so a concurrent burst can't be
@@ -61,10 +67,12 @@ async function accountBump(key: string, now: number): Promise<void> {
     return
   }
   try {
-    await prisma.loginAttempt.update({
+    const row = await prisma.loginAttempt.update({
       where: { key },
       data: { failCount: { increment: 1 }, lastFailAt: toDate(now) },
     })
+    // Only the attempt that reaches the limit does this, so a burst bumps the version once.
+    if (row.failCount === ACCOUNT_FAIL_LIMIT) await endOpenSessions(key.slice('phone:'.length))
   } catch {
     await startWindow(key, now, null) // row vanished (concurrent success/unlock)
   }
@@ -93,11 +101,12 @@ export async function reserveAccountAttempt(phone: string, now: number = Date.no
     data: { failCount: 0 },
   })
   // Dates are epoch ms, which is how Prisma stores DateTime in this SQLite file.
-  const rows = await prisma.$queryRaw<unknown[]>`
+  const rows = await prisma.$queryRaw<{ failCount: number | bigint }[]>`
     UPDATE "LoginAttempt"
     SET "failCount" = "failCount" + 1, "lastFailAt" = ${now}, "updatedAt" = ${now}
     WHERE "key" = ${key} AND "failCount" < ${ACCOUNT_FAIL_LIMIT}
     RETURNING "failCount"`
+  if (rows.length > 0 && Number(rows[0].failCount) === ACCOUNT_FAIL_LIMIT) await endOpenSessions(phone.trim())
   return rows.length > 0
 }
 
