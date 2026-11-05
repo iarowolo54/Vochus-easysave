@@ -287,6 +287,8 @@ function ActionDialog({ dialog, onClose, onDone }: { dialog: Dialog; onClose: ()
           <input id="bt-pin" className="a-input am-pin" type="password" inputMode="numeric" maxLength={6} autoComplete="off" placeholder="••••"
             value={pin} onChange={e => { setPin(e.target.value); setError('') }} />
         </Field>
+        {/* Enter in a field submits: the Credit button lives in the dialog footer, outside this form. */}
+        <button type="submit" className="sr-only" tabIndex={-1} aria-hidden="true" disabled={busy || !ready}>Submit</button>
       </form>
     </Modal>
   )
