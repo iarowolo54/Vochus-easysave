@@ -1,11 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
+import { limitByIp } from '@/lib/password-reset'
 import { checkReopenable, REOPEN_COLLECTING, REOPEN_NOT_FINISHED, REOPEN_NOT_FOUND } from '@/lib/plan-reopen'
 import { requestReopenCode, REOPEN_CODE_NOT_SENT, REOPEN_CODE_WAIT } from '@/lib/plan-reopen-code'
 
 // Sends the customer a code by SMS to confirm they want to save into this finished plan again.
 export async function POST(req: NextRequest) {
+  const limited = limitByIp(req, 'request')
+  if (limited) return limited
   const session = await getCustomerSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 

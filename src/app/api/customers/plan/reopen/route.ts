@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { limitByIp } from '@/lib/password-reset'
 import { logAudit } from '@/lib/audit'
 import { confirmReopenCode, REOPEN_CODE_INVALID } from '@/lib/plan-reopen-code'
 import { checkReopenable, reopenPlan, REOPEN_COLLECTING, REOPEN_NOT_FINISHED, REOPEN_NOT_FOUND } from '@/lib/plan-reopen'
@@ -13,6 +14,8 @@ function failure(reason: 'not_found' | 'not_finished' | 'collecting') {
 }
 
 export async function POST(req: NextRequest) {
+  const limited = limitByIp(req, 'guess')
+  if (limited) return limited
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 

@@ -46,3 +46,13 @@ test('someone else cannot use the code, and a failed text leaves no usable code'
   assert.equal(await prisma.passwordResetOtp.count({ where: { actorId: cust3.id + 'x', consumedAt: null } }), 0)
   await prisma.passwordResetOtp.deleteMany({ where: { actorId: { startsWith: cust3.id } } })
 })
+
+test('codes across different plans share one daily cap per account', async () => {
+  const cust4 = { ...cust, id: cust.id + 'd' }
+  const c = capture()
+  let refused = 0
+  for (let i = 0; i < 22; i++) if (!(await requestReopenCode(cust4, `plan${i}`, false, c.send)).ok) refused++
+  assert.equal(c.sent.length, 20)
+  assert.equal(refused, 2)
+  await prisma.passwordResetOtp.deleteMany({ where: { actorId: cust4.id } })
+})
