@@ -30,16 +30,17 @@ interface Row {
   doneAt: string | null
   note: string | null
   bank: { sender: string; narration: string; txnId: string; bankTime: string; seenAt: string } | null
-  possible: { who: Who | null; plan: string | null; amount: number; startedAt: string; state: string }[]
+  possible: { who: Who | null; plan: string | null; amount: number; startedAt: string; state: string; leftOutKobo: boolean }[]
   possibleMore: number
   lookalike: boolean
+  leftOutKobo: boolean
 }
 interface Page {
   rows: Row[]
   total: number
   page: number
   pageSize: number
-  counts: Record<Filter, number>
+  counts: Record<Filter, number> & { leftOutKobo: number }
   truncated: boolean
   canManage: boolean
 }
@@ -117,6 +118,12 @@ export default function BankTransfersPage() {
       {counts && counts['needs-review'] > 0 && (
         <div className="a-alert a-alert-a" role="status">
           {counts['needs-review']} payment{counts['needs-review'] === 1 ? ' needs' : 's need'} a look. The money reached the bank but couldn’t be credited on its own.
+        </div>
+      )}
+
+      {counts && counts.leftOutKobo > 0 && (
+        <div className="a-alert a-alert-a" role="status">
+          {counts.leftOutKobo} {counts.leftOutKobo === 1 ? 'person says' : 'people say'} they sent money without the extra kobo. Look for it under “Needs review”, then credit it to them by hand.
         </div>
       )}
 
@@ -242,6 +249,9 @@ function DetailDialog({ row, canManage, onClose, onAction }: {
           Why it wasn’t matched: no open request had exactly {nairaKobo(r.amount)}. Usually the sender left out the extra kobo and sent a rounded figure instead of the exact amount shown, paid after the 30 minutes, or this isn’t a customer or agent payment.
         </p>
       )}
+      {r.leftOutKobo && (
+        <div className="a-alert a-alert-a" role="status">The person told us on their screen that they sent this without the extra kobo. Their money should be in “Needs review” as a payment that matched nothing. Check the Moniepoint account, then credit it to them by hand.</div>
+      )}
       {r.lookalike && (
         <div className="a-alert a-alert-a" role="status">This is within ₦1 of a payment staff credited by hand around the same time. It may be the same money, so check before crediting it again.</div>
       )}
@@ -294,7 +304,7 @@ function DetailDialog({ row, canManage, onClose, onAction }: {
             <Ledger>
               {r.possible.map((p, i) => (
                 <LedgerRow key={i} label={p.who ? `${p.who.name} · ${p.who.code}` : 'Unknown'}>
-                  <span style={wrap}>{nairaKobo(p.amount)} shown {dateTime(p.startedAt)} · {p.state}{p.plan ? ` · ${p.plan}` : ''}</span>
+                  <span style={wrap}>{nairaKobo(p.amount)} shown {dateTime(p.startedAt)} · {p.state}{p.plan ? ` · ${p.plan}` : ''}{p.leftOutKobo ? ' · says they left the kobo out' : ''}</span>
                 </LedgerRow>
               ))}
             </Ledger>

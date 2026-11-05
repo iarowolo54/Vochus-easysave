@@ -149,6 +149,7 @@ function CatchupScreen() {
             details={transfer}
             statusUrl="/api/customer/transfer/status"
             cancelUrl="/api/customer/transfer/cancel"
+            reportUrl="/api/customer/transfer/report-kobo"
             destination={plan.goal}
             balanceLabel="Your balance"
             doneHref="/customer/dashboard"

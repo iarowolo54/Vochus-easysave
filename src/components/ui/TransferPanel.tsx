@@ -17,12 +17,14 @@ type Status = 'pending' | 'done' | 'review' | 'expired' | 'closed' | 'cancelled'
 const POLL_MS = 5000
 
 /** Shows where to send the money and waits for the bank's credit alert to be matched on the server. */
-export default function TransferPanel({ details, statusUrl, cancelUrl, destination, balanceLabel, doneHref, historyHref, onDone, onClose }: {
+export default function TransferPanel({ details, statusUrl, cancelUrl, reportUrl, destination, balanceLabel, doneHref, historyHref, onDone, onClose }: {
   details: TransferDetails
   /** The status route; the reference is added to it. */
   statusUrl: string
   /** Closes the request on the server; the reference is sent in the body. */
   cancelUrl: string
+  /** Tells staff the person left the extra kobo out; the reference is sent in the body. */
+  reportUrl: string
   /** Where the money went, e.g. a plan name or "your wallet". */
   destination: string
   balanceLabel: string
@@ -102,6 +104,12 @@ export default function TransferPanel({ details, statusUrl, cancelUrl, destinati
     } finally {
       if (alive.current) setCancelling(false)
     }
+  }
+
+  // Best effort: the screen already tells them what to do, and staff find the money by its amount either way.
+  function leftOut() {
+    setSentCheck('left-out')
+    fetch(reportUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ref: details.ref }) }).catch(() => {})
   }
 
   async function copy(label: string, value: string) {
@@ -238,13 +246,13 @@ export default function TransferPanel({ details, statusUrl, cancelUrl, destinati
           <p className="tp-callout-title">Did the amount you sent end in .{kobo}?</p>
           <p className="tp-callout-text">Look at your bank app’s receipt. It should say {exact}.</p>
           <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => { setSentCheck('idle'); void check() }}>Yes, it ended in .{kobo}</button>
-          <button type="button" className="ui-btn ui-btn--secondary ui-btn--block ui-gap-top" onClick={() => setSentCheck('left-out')}>No, I left it out</button>
+          <button type="button" className="ui-btn ui-btn--secondary ui-btn--block ui-gap-top" onClick={leftOut}>No, I left it out</button>
         </div>
       )}
       {sentCheck === 'left-out' && (
         <div ref={askRef} className="tp-callout" role="alert">
           <p className="tp-callout-title">Don’t send it again</p>
-          <p className="tp-callout-text">Money sent without the .{kobo} can’t be matched to you automatically. Our team checks it by hand and credits it to {destination}, which takes longer than usual. Sending it twice would only leave you with two payments to sort out.</p>
+          <p className="tp-callout-text">Money sent without the .{kobo} can’t be matched to you automatically. We’ve told our team. They’ll check it by hand and credit it to {destination}, which takes longer than usual. Sending it twice would only leave you with two payments to sort out.</p>
           <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => router.push(doneHref)}>OK</button>
         </div>
       )}

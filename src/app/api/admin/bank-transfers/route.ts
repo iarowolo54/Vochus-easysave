@@ -5,6 +5,7 @@ import { TRANSFER_METHOD } from '@/lib/transfer-intent'
 import { HELD_LABEL, STATUS_LABEL, alertStatus, intentStatus, type TransferStatus } from '@/lib/transfer-status'
 import { LATE_ALLOWANCE_MS, handCreditSince, sameFigure } from '@/lib/transfer-figure'
 import { INTENT_SUPERSEDED } from '@/lib/payment-intent'
+import { KOBO_LEFT_OUT } from '@/lib/transfer-report'
 
 export const dynamic = 'force-dynamic'
 
@@ -14,7 +15,7 @@ const FILTERS: readonly string[] = ['all', 'paid', 'waiting', 'not-paid', 'cance
 const DAY_MS = 86_400_000
 
 type Who = { type: 'customer' | 'agent'; name: string; code: string }
-type Possible = { who: Who | null; plan: string | null; amount: number; startedAt: string; state: string }
+type Possible = { who: Who | null; plan: string | null; amount: number; startedAt: string; state: string; leftOutKobo: boolean }
 
 type Row = {
   kind: 'request' | 'alert'
@@ -46,6 +47,8 @@ type Row = {
   possibleMore: number
   /** Held money with the same amount as a payment staff credited by hand recently. */
   lookalike: boolean
+  /** The person told us they sent the amount without the extra kobo. */
+  leftOutKobo: boolean
 }
 
 const summaryFor = (status: TransferStatus, manualBy: string | null): string => {
@@ -90,6 +93,11 @@ export async function GET(req: NextRequest) {
   const manualRefs = alerts.map((a) => a.intentRef).filter((r): r is string => !!r)
   const manualIntents = manualRefs.length ? await prisma.paymentIntent.findMany({ where: { ref: { in: manualRefs } } }) : []
 
+  const reports = intents.length
+    ? await prisma.auditLog.findMany({ where: { action: KOBO_LEFT_OUT, entityId: { in: intents.map((i) => i.id) } }, select: { entityId: true } })
+    : []
+  const leftOut = new Set(reports.map((r) => r.entityId))
+
   const customerIds = [...new Set([...intents, ...manualIntents].map((i) => i.customerId).filter((x): x is string => !!x))]
   const agentIds = [...new Set([...intents, ...manualIntents].map((i) => i.agentId).filter((x): x is string => !!x))]
   const planIds = [...new Set([...intents, ...manualIntents].map((i) => i.planId).filter((x): x is string => !!x))]
@@ -117,12 +125,15 @@ export async function GET(req: NextRequest) {
     rows.push({
       kind: 'request', id: i.id, ref: i.ref, at: i.createdAt.toISOString(), who: whoOf(i),
       plan: i.planId ? pById.get(i.planId) ?? null : null, amount: i.amount, status, statusLabel: STATUS_LABEL[status],
-      summary: superseded ? 'Closed: this money was credited to the person another way by staff' : summaryFor(status, i.manualBy),
+      summary: superseded ? 'Closed: this money was credited to the person another way by staff'
+        : leftOut.has(i.id) && i.status === 'Pending' ? 'The person says they sent it without the extra kobo. Look for held money of about this amount.'
+        : summaryFor(status, i.manualBy),
       actionable: i.status === 'Pending' && (status === 'waiting' || status === 'not-paid'),
       startedAt: i.createdAt.toISOString(), expiresAt: iso(i.expiresAt), creditedAt: iso(i.consumedAt),
       by: i.manualBy, doneAt: i.manualBy ? iso(i.consumedAt) : null, note: i.manualNote,
       bank: null, possible: [], possibleMore: 0,
       lookalike: i.status === 'Pending' && lookalikeNear(i.amount, i.createdAt),
+      leftOutKobo: i.status === 'Pending' && leftOut.has(i.id),
     })
   }
   const manualByRef = new Map(manualIntents.map((i) => [i.ref, i]))
@@ -145,7 +156,7 @@ export async function GET(req: NextRequest) {
       return true
     })
     const possible: Possible[] = candidates.slice(0, 5)
-      .map((i) => ({ who: whoOf(i), plan: i.planId ? pById.get(i.planId) ?? null : null, amount: i.amount, startedAt: i.createdAt.toISOString(), state: STATUS_LABEL[intentStatus(i, now)] }))
+      .map((i) => ({ who: whoOf(i), plan: i.planId ? pById.get(i.planId) ?? null : null, amount: i.amount, startedAt: i.createdAt.toISOString(), state: STATUS_LABEL[intentStatus(i, now)], leftOutKobo: leftOut.has(i.id) }))
     rows.push({
       kind: 'alert', id: a.id, ref: a.txnId, at: a.alertAt.toISOString(), who: mi ? whoOf(mi) : null,
       plan: mi?.planId ? pById.get(mi.planId) ?? null : null, amount: a.amount, status: s, statusLabel: a.status === 'Unmatched' ? HELD_LABEL : STATUS_LABEL[s],
@@ -156,13 +167,15 @@ export async function GET(req: NextRequest) {
       startedAt: null, expiresAt: null, creditedAt: null,
       by: a.resolvedBy, doneAt: iso(a.resolvedAt), note: a.resolvedNote,
       bank: { sender: a.senderName, narration: a.narration, txnId: a.txnId, bankTime: a.alertAt.toISOString(), seenAt: a.createdAt.toISOString() },
-      possible, possibleMore: Math.max(0, candidates.length - possible.length), lookalike,
+      possible, possibleMore: Math.max(0, candidates.length - possible.length), lookalike, leftOutKobo: false,
     })
   }
   rows.sort((x, y) => (x.at < y.at ? 1 : -1))
 
   const counts: Record<string, number> = { all: rows.length, paid: 0, waiting: 0, 'not-paid': 0, cancelled: 0, 'needs-review': 0, 'by-hand': 0 }
   for (const r of rows) counts[r.status]++
+  // Open requests whose person says they left the kobo out: staff should look for the money.
+  counts.leftOutKobo = rows.filter((r) => r.leftOutKobo).length
 
   const shown = rows.filter((r) => {
     if (filter !== 'all' && r.status !== filter) return false

@@ -2651,8 +2651,17 @@ button.ui-cal-day:disabled:active { transform: none; }
 /* The reminder to tap "I've sent the money" must not be missed, so it reads as a notice and not as small print. */
 .ui-transfer-reminder { display: block; margin: var(--ui-s3) 0; padding: var(--ui-s3) var(--ui-s4); border-radius: var(--ui-r-md); background: var(--ui-warn-tint); color: var(--ui-ink); font-size: var(--ui-fs-sm); text-align: left; }
 
-/* Transfer panel: label and amount share one row, Copy sits under the amount */
-.tp-amount { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ui-s4); }
-.tp-amount .ui-review-kicker { margin: 0; flex: 1 1 0; min-width: 0; }
-.tp-amount-value { display: flex; flex-direction: column; align-items: flex-end; flex: none; }
-.tp-amount-value .ui-review-title { margin: 0; white-space: nowrap; }
+/* Transfer panel: the kobo is the part people leave out, so it is drawn as a solid chip, bigger than anything else. */
+.tp-hero { padding: var(--ui-s4) 0 var(--ui-s3); text-align: center; }
+.tp-hero-kicker { margin: 0 0 var(--ui-s2); color: var(--ui-ink-2); font-size: var(--ui-fs-sm); font-weight: 600; }
+.tp-figure { display: flex; align-items: center; justify-content: center; gap: 6px; margin: 0 0 var(--ui-s4); font-family: var(--ui-font-display); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tp-whole { font-size: clamp(30px, 10vw, 40px); font-weight: 800; letter-spacing: -1px; line-height: 1.1; }
+.tp-kobo { padding: 2px 10px 4px; border-radius: var(--ui-r-md); background: var(--ui-warn); color: #fff; font-size: clamp(30px, 10vw, 40px); font-weight: 800; line-height: 1.1; box-shadow: 0 0 0 4px var(--ui-warn-tint); }
+.tp-callout { margin: 0 0 var(--ui-s4); padding: var(--ui-s3) var(--ui-s4); border-radius: var(--ui-r-md); background: var(--ui-warn-tint); color: var(--ui-ink); }
+.tp-callout-title { margin: 0 0 var(--ui-s1); font-size: var(--ui-fs-md); font-weight: 800; color: var(--ui-warn); }
+.tp-callout-text { margin: 0 0 var(--ui-s3); font-size: var(--ui-fs-sm); line-height: 1.45; }
+.tp-callout > .tp-callout-text:last-child { margin-bottom: 0; }
+.tp-callout--ask { margin-bottom: 0; }
+
+.tp-kobo-hint { color: var(--ui-warn); font-size: var(--ui-fs-sm); font-weight: 700; }
+.tp-callout--pre { margin: var(--ui-s3) 0 0; }

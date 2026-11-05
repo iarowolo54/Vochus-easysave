@@ -113,6 +113,7 @@ function WalletContent() {
                 details={transfer}
                 statusUrl="/api/agent/transfer/status"
                 cancelUrl="/api/agent/transfer/cancel"
+                reportUrl="/api/agent/transfer/report-kobo"
                 destination="your wallet"
                 balanceLabel="Your wallet"
                 doneHref="/dashboard"
