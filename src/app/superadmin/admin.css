@@ -1497,3 +1497,60 @@
   .admin-root .tbl-stack tbody td .bt-actions { grid-column: 1 / -1; justify-self: stretch; justify-items: stretch; width: 100%; }
   .admin-root .bt-actions .btn, .admin-root .bt-actions .ui-link { width: 100%; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
 }
+
+/* Overview: savings deposits today / this week / this month */
+.admin-root .dep-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.admin-root .dep-item { animation: a-rise .45s cubic-bezier(.2,.7,.2,1) both; border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; min-width: 0; }
+.admin-root .dep-lbl { font-size: 13px; font-weight: 600; color: var(--text2); }
+.admin-root .dep-ic { display: inline-grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; background: rgba(26, 143, 60, .12); }
+.admin-root .dep-val { font-family: var(--display); font-size: 22px; font-weight: 800; letter-spacing: -.4px; margin-top: 10px; color: var(--text); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.admin-root .dep-sub { font-size: 13px; color: var(--text3); margin-top: 4px; }
+@media (max-width: 640px) { .admin-root .dep-grid { grid-template-columns: 1fr; gap: 8px; } }
+
+.admin-root .dep-chg { display: inline-block; margin-top: 8px; font-size: 12px; font-weight: 600; padding: 3px 8px; border-radius: 999px; background: var(--bg2, #f1f3f0); color: var(--text2); }
+.admin-root .dep-chg.is-up { background: var(--green-lt); color: var(--green); }
+.admin-root .dep-chg.is-down { background: #fdecea; color: var(--red); }
+.admin-root .dep-note { font-size: 13px; color: var(--text3); margin: 12px 0 8px; }
+.admin-root .dep-chart { margin-top: 8px; min-width: 0; }
+.admin-root .dep-legend { display: flex; gap: 16px; justify-content: center; font-size: 12px; color: var(--text2); margin-top: 4px; }
+.admin-root .dep-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; }
+
+/* Entry: the overview's cards rise in one after another; figures count up (see DepTotal). */
+@keyframes a-rise { from { opacity: 0; transform: translateY(10px); } }
+.admin-root .stats-grid > * { animation: a-rise .45s cubic-bezier(.2,.7,.2,1) both; }
+.admin-root .stats-grid > *:nth-child(2) { animation-delay: 60ms; }
+.admin-root .stats-grid > *:nth-child(3) { animation-delay: 120ms; }
+.admin-root .stats-grid > *:nth-child(4) { animation-delay: 180ms; }
+.admin-root .ov-row { animation: a-rise .5s cubic-bezier(.2,.7,.2,1) .2s both; }
+@media (prefers-reduced-motion: reduce) {
+  .admin-root .stats-grid > *, .admin-root .ov-row, .admin-root .dep-item { animation: none; }
+}
+
+.admin-root .an-h { font-family: var(--display); font-size: 15px; font-weight: 700; color: var(--text2); margin: 24px 0 12px; }
+.admin-root .an-h:first-child { margin-top: 0; }
+.admin-root .stats-grid.an-two { grid-template-columns: repeat(2, 1fr); }
+.admin-root .stats-grid .dep-chg { margin-top: 10px; }
+.admin-root .stats-grid.an-three { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 700px) { .admin-root .stats-grid.an-three { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 700px) { .admin-root .stats-grid.an-three > :last-child { grid-column: 1 / -1; } }
+
+/* Analytics: bar lists, flow bars, progress */
+.admin-root .an-h-note { font-size: 12px; font-weight: 500; color: var(--text3); margin-left: 8px; }
+.admin-root .an-track { height: 8px; border-radius: 999px; background: var(--surface2, #f1f3f0); overflow: hidden; }
+.admin-root .an-fill { height: 100%; border-radius: 999px; background: var(--accent); transform-origin: left; animation: a-grow .8s cubic-bezier(.2,.7,.2,1) both; transition: width .7s cubic-bezier(.2,.7,.2,1); }
+.admin-root .an-fill.is-out { background: #c9a227; }
+@keyframes a-grow { from { transform: scaleX(0); } }
+.admin-root .an-prog { margin-top: 12px; }
+.admin-root .an-bars, .admin-root .an-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 16px; }
+.admin-root .an-list { gap: 0; }
+.admin-root .an-list li { display: flex; justify-content: space-between; gap: 12px; padding: 12px 0; border-top: 1px solid var(--border); font-size: 14px; }
+.admin-root .an-list li:first-child { border-top: 0; }
+.admin-root .an-bar-hd { display: flex; justify-content: space-between; gap: 12px; margin-bottom: 6px; font-size: 14px; }
+.admin-root .an-bar-name { font-weight: 600; color: var(--text); min-width: 0; overflow-wrap: anywhere; }
+.admin-root .an-bar-val { font-variant-numeric: tabular-nums; font-weight: 600; }
+.admin-root .an-bar-sub { font-size: 13px; color: var(--text3); margin-top: 6px; }
+.admin-root .an-list .an-bar-sub { margin: 0; text-align: right; }
+.admin-root .an-flow { margin-bottom: 16px; }
+.admin-root .an-net { font-size: 14px; color: var(--text2); margin: 4px 0 0; }
+.admin-root .an-lead { font-size: 14px; color: var(--text2); margin: 0 0 12px; }
+@media (prefers-reduced-motion: reduce) { .admin-root .an-fill { animation: none; transition: none; } }

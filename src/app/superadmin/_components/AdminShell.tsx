@@ -21,7 +21,10 @@ type NavItem = { label: string; icon: IconName; href: string; badge?: 'pendingLo
 const navGroups: { label: string; items: NavItem[] }[] = [
   {
     label: '',
-    items: [{ label: 'Home', icon: 'home', href: '/superadmin' }],
+    items: [
+      { label: 'Home', icon: 'home', href: '/superadmin' },
+      { label: 'Analytics', screen: 'transactions', icon: 'reports', href: '/superadmin/analytics' },
+    ],
   },
   {
     label: 'Agents',

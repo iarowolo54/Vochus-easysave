@@ -3,6 +3,9 @@
 import { useState, useEffect, useCallback } from 'react'
 import Link from 'next/link'
 import { Icons, type IconName } from '@/components/ui/icons'
+import dynamic from 'next/dynamic'
+import { useCountUp } from '@/components/ui/Amount'
+import type { PeriodTotals, SeriesPoint } from '@/lib/deposit-periods'
 import { hasPermission, parsePermissions, type Perm, type ScreenKey } from '@/lib/permissions'
 
 interface Stats {
@@ -13,6 +16,7 @@ interface Stats {
   activeLoansPortfolio: number
   pendingLoans: number
   pendingRedemptions: number
+  deposits?: Record<'day' | 'week' | 'month', PeriodTotals> & { series: SeriesPoint[] }
 }
 
 interface Transaction {
@@ -45,6 +49,28 @@ interface Agent {
   commission: number
   status: string
   photoUrl?: string | null
+}
+
+// Loaded only when the card shows, so the chart library stays out of the page's first download.
+const DepositsChart = dynamic(() => import('./_components/DepositsChart'), { ssr: false, loading: () => <div className="skel" style={{ height: 220 }} /> })
+
+/** The figure counts up to its true value once (instantly when the device asks for reduced motion). */
+function DepTotal({ value }: { value: number }) {
+  const shown = useCountUp(value, true)
+  return (
+    <div className="dep-val">
+      <span className="sr-only">{fmt(value)}</span>
+      <span aria-hidden="true">{fmt(shown)}</span>
+    </div>
+  )
+}
+
+/** "+12% vs last week" against the same stretch of the period before; nothing to compare gets no figure. */
+function change(total: number, prev: number, vs: string): { text: string; tone: 'up' | 'down' | 'flat' } | null {
+  if (prev <= 0) return total > 0 ? { text: `New · nothing ${vs}`, tone: 'up' } : null
+  const pct = Math.round(((total - prev) / prev) * 100)
+  if (pct === 0) return { text: `Same as ${vs}`, tone: 'flat' }
+  return { text: `${pct > 0 ? '+' : '−'}${Math.abs(pct)}% vs ${vs}`, tone: pct > 0 ? 'up' : 'down' }
 }
 
 const fmt = (n: number) => `₦${Math.round(n).toLocaleString('en-NG')}`
@@ -144,6 +170,7 @@ export default function SuperAdminDashboard() {
       <div aria-busy="true">
         <div className="skel" style={{ width: 260, height: 34, marginBottom: 28 }} />
         <div className="stats-grid">{[0, 1, 2, 3].map(i => <div key={i} className="stat"><div className="skel" style={{ height: 64 }} /></div>)}</div>
+        <div className="card ov-row"><div className="skel" style={{ width: 160, height: 20, marginBottom: 16 }} /><div className="dep-grid">{[0, 1, 2].map(i => <div key={i} className="dep-item"><div className="skel" style={{ width: 70, height: 12 }} /><div className="skel" style={{ width: 120, height: 26, marginTop: 12 }} /><div className="skel" style={{ width: 90, height: 12, marginTop: 10 }} /></div>)}</div><div className="skel" style={{ height: 220, marginTop: 16 }} /></div>
         <div className="g65"><div className="card"><div className="skel" style={{ height: 280 }} /></div><div className="card"><div className="skel" style={{ height: 280 }} /></div></div>
       </div>
     )
@@ -218,6 +245,31 @@ export default function SuperAdminDashboard() {
           <div className="stat-sub">{stats.activeLoans} active loan{stats.activeLoans === 1 ? '' : 's'}</div>
         </Tile>
       </div>
+
+      {stats.deposits && has('customers') && (
+        <section className="card ov-row" aria-labelledby="ov-deposits">
+          <div className="card-hd">
+            <h3 id="ov-deposits">Savings deposits</h3>
+            <Link href="/superadmin/transactions" className="card-link">See all</Link>
+          </div>
+          <div className="dep-grid">
+            {([['day', 'Today', 'yesterday'], ['week', 'This week', 'last week'], ['month', 'This month', 'last month']] as const).map(([k, label, vs], i) => {
+              const p = stats.deposits![k]
+              const c = change(p.total, p.prevTotal, vs)
+              return (
+                <div key={k} className="dep-item" style={{ animationDelay: `${i * 70}ms` }}>
+                  <div className="dep-lbl">{label}</div>
+                  <DepTotal value={p.total} />
+                  <div className="dep-sub">{p.count.toLocaleString('en-NG')} deposit{p.count === 1 ? '' : 's'}{p.fees > 0 ? ` · ${fmt(p.fees)} in fees` : ''}</div>
+                  {c && <div className={`dep-chg is-${c.tone}`}>{c.text}</div>}
+                </div>
+              )
+            })}
+          </div>
+          <p className="dep-note">Full amounts customers paid in, before fees. Each period is compared with the same stretch of the one before.</p>
+          <DepositsChart data={stats.deposits.series} />
+        </section>
+      )}
 
       {(showTx || showLoans) && <div className="g65 ov-row">
         {showTx && <section className="card" aria-labelledby="ov-activity">
