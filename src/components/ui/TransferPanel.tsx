@@ -157,7 +157,7 @@ export default function TransferPanel({ details, statusUrl, destination, balance
       </section>
 
       <p className="ui-note" role="alert">
-        <Icons.error size={14} aria-hidden="true" /> Send exactly {exact}, not a rounded figure. Any other amount can’t be matched to you automatically and will be held for checking.
+        <Icons.error size={14} aria-hidden="true" /> Send exactly {exact}, not a rounded figure. The extra kobo is not a fee; all of it goes into {destination}. Any other amount will be held for checking.
       </p>
 
       <dl className="ui-card ui-card--list ui-review-rows">

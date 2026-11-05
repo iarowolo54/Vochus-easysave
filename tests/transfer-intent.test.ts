@@ -3,16 +3,16 @@ import { test } from 'node:test'
 import assert from 'node:assert/strict'
 import { pickUniqueKobo, matchAlertToIntent, canReuse, TRANSFER_WINDOW_MS, TRANSFER_GRACE_MS } from '../src/lib/transfer-intent'
 
-test('pickUniqueKobo takes the first free kobo from .01', () => {
-  assert.equal(pickUniqueKobo(13000, []), 13000.01)
-  assert.equal(pickUniqueKobo(13000, [13000.01, 13000.02]), 13000.03)
+test('pickUniqueKobo takes the first free kobo from .10', () => {
+  assert.equal(pickUniqueKobo(13000, []), 13000.1)
+  assert.equal(pickUniqueKobo(13000, [13000.1, 13000.11]), 13000.12)
 })
 
 test('pickUniqueKobo ignores taken amounts of other bases', () => {
-  assert.equal(pickUniqueKobo(500, [13000.01]), 500.01)
+  assert.equal(pickUniqueKobo(500, [13000.1]), 500.1)
 })
 
-test('pickUniqueKobo returns null when all 99 are taken', () => {
+test('pickUniqueKobo returns null when all 90 are taken', () => {
   const taken = Array.from({ length: 99 }, (_, i) => Number((13000 + (i + 1) / 100).toFixed(2)))
   assert.equal(pickUniqueKobo(13000, taken), null)
 })

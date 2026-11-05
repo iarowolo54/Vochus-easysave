@@ -17,10 +17,13 @@ export interface OpenIntent {
   expiresAt: Date | null
 }
 
-/** base + the first free kobo (.01 to .99) not in `taken`; null when all 99 are in use. */
+/** The smallest kobo we add. A 1-9 kobo difference looks like a mistake or a test to a customer, so we start at 10. */
+export const MIN_EXTRA_KOBO = 10
+
+/** base + the first free kobo (.10 to .99) not in `taken`; null when all 90 are in use. */
 export function pickUniqueKobo(base: number, taken: number[]): number | null {
   const used = new Set(taken.map((a) => money(a)))
-  for (let k = 1; k <= 99; k++) {
+  for (let k = MIN_EXTRA_KOBO; k <= 99; k++) {
     const candidate = money(base + k / 100)
     if (!used.has(candidate)) return candidate
   }
