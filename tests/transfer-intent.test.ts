@@ -50,6 +50,13 @@ test('canReuse: same plan, same base amount, still open', () => {
   assert.equal(canReuse({ amount: 13000.37, planId: 'P', expiresAt: future }, 'P', 13000), true)
 })
 
+test('canReuse works for a base amount that has kobo, and for the same days only', () => {
+  assert.equal(canReuse({ amount: 4285.72, planId: 'P', expiresAt: future, coversKeys: '["d1","d2"]' }, 'P', 4285.71, ['d2', 'd1']), true)
+  assert.equal(canReuse({ amount: 4285.72, planId: 'P', expiresAt: future, coversKeys: '["d1","d2"]' }, 'P', 4285.71, ['d1']), false)
+  assert.equal(canReuse({ amount: 4285.72, planId: 'P', expiresAt: future, coversKeys: null }, 'P', 4285.71, ['d1']), false)
+  assert.equal(canReuse({ amount: 13000, planId: 'P', expiresAt: future }, 'P', 13000), false) // no kobo added: not one of ours
+})
+
 test('canReuse: different plan, different amount or an expired intent is not reused', () => {
   assert.equal(canReuse({ amount: 13000.37, planId: 'Q', expiresAt: future }, 'P', 13000), false)
   assert.equal(canReuse({ amount: 13000.37, planId: 'P', expiresAt: future }, 'P', 12000), false)

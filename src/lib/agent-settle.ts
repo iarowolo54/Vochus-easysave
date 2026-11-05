@@ -1,8 +1,8 @@
 // One rule for crediting an agent's wallet from a bank transfer, whether the alert matched on its own or staff
 // credited it by hand. The server-side intent decides which agent; the bank only says what arrived.
-import type { PaymentIntent, PrismaClient } from '@prisma/client'
+import type { PaymentIntent, Prisma, PrismaClient } from '@prisma/client'
 import { logAudit } from '@/lib/audit'
-import { INTENT_PENDING, consumePaymentIntent } from '@/lib/payment-intent'
+import { INTENT_PENDING, consumePaymentIntent, recordManualCredit, type ManualActor } from '@/lib/payment-intent'
 import { sendToReview } from '@/lib/customer-settle'
 import { money } from '@/lib/wallet-guard'
 
@@ -13,7 +13,13 @@ export type AgentSettleResult =
 
 export async function settleAgentTransfer(
   client: PrismaClient,
-  input: { intent: PaymentIntent; reference: string; amountNaira: number; via: 'Moniepoint transfer' | 'Staff by hand'; note?: string },
+  input: {
+    intent: PaymentIntent; reference: string; amountNaira: number; via: 'Moniepoint transfer' | 'Staff by hand'
+    /** Set when staff credit this by hand; recorded inside the credit transaction. */
+    manual?: ManualActor
+    /** Extra writes that must succeed or fail together with the credit. Throw to roll everything back. */
+    inTx?: (tx: Prisma.TransactionClient) => Promise<void>
+  },
 ): Promise<AgentSettleResult> {
   const { intent, reference, via } = input
   if (intent.status !== INTENT_PENDING) return { kind: 'already' }
@@ -36,12 +42,14 @@ export async function settleAgentTransfer(
       // Atomically consume the intent; a losing or replayed call must not credit.
       const consumed = await consumePaymentIntent(tx, reference, { agentId: agent.id })
       if (!consumed) throw new Error('ALREADY_PROCESSED')
+      if (input.manual) await recordManualCredit(tx, { ref: reference, amount, who: `agent ${agent.agentId}`, manual: input.manual })
+      await input.inTx?.(tx)
       const updated = await tx.agent.update({ where: { id: agent.id }, data: { walletBalance: { increment: amount } } })
       newBalance = updated.walletBalance
       await tx.transaction.create({
         data: {
           ref: reference, agentId: agent.id, type: 'wallet_funding', amount, method: 'Transfer', status: 'Done',
-          note: input.note ?? `Wallet top-up by bank transfer — ${via}`, walletAfter: updated.walletBalance,
+          note: via === 'Staff by hand' ? 'Wallet top-up by bank transfer, credited by hand by staff' : 'Wallet top-up by bank transfer', walletAfter: updated.walletBalance,
         },
       })
     })

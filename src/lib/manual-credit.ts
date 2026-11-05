@@ -5,10 +5,10 @@
 import { randomBytes } from 'node:crypto'
 import type { PrismaClient } from '@prisma/client'
 import { logAudit } from '@/lib/audit'
-import { INTENT_PENDING } from '@/lib/payment-intent'
+import { INTENT_PENDING, type ManualActor } from '@/lib/payment-intent'
 import { settleIntentPayment } from '@/lib/customer-settle'
 import { settleAgentTransfer } from '@/lib/agent-settle'
-import { TRANSFER_METHOD, TRANSFER_WINDOW_MS } from '@/lib/transfer-intent'
+import { TRANSFER_METHOD } from '@/lib/transfer-intent'
 import { money } from '@/lib/wallet-guard'
 
 export type Admin = { id?: string; name: string }
@@ -30,16 +30,22 @@ function audit(admin: Admin, action: string, entityId: string, details: string) 
   return logAudit({ action, entity: 'Transfer', entityId, details, actorType: 'admin', actorId: admin.id, actorName: admin.name })
 }
 
-async function settle(client: PrismaClient, intent: Awaited<ReturnType<PrismaClient['paymentIntent']['findUniqueOrThrow']>>, note: string) {
+type Intent = Awaited<ReturnType<PrismaClient['paymentIntent']['findUniqueOrThrow']>>
+type InTx = NonNullable<Parameters<typeof settleAgentTransfer>[1]['inTx']>
+
+/** Settles through the automatic paths. Who did it and why is written in the same transaction as the credit. */
+function settle(client: PrismaClient, intent: Intent, admin: Admin, note: string, inTx?: InTx) {
+  const manual: ManualActor = { adminId: admin.id, adminName: admin.name, note }
   if (intent.actorType === 'agent') {
-    return settleAgentTransfer(client, {
-      intent, reference: intent.ref, amountNaira: intent.amount, via: 'Staff by hand', note: `Bank transfer credited by hand by staff — ${note}`,
-    })
+    return settleAgentTransfer(client, { intent, reference: intent.ref, amountNaira: intent.amount, via: 'Staff by hand', manual, inTx })
   }
   return settleIntentPayment(client, {
-    intent, reference: intent.ref, amountNaira: intent.amount, currency: intent.currency, channel: 'bank_transfer', via: 'Staff by hand',
+    intent, reference: intent.ref, amountNaira: intent.amount, currency: intent.currency, channel: 'bank_transfer', via: 'Staff by hand', manual, inTx,
   })
 }
+
+const HELD_SAME_AMOUNT =
+  'A held payment of exactly this amount is waiting on this screen. If it is the same money, credit that one (or dismiss it first), so it isn’t credited twice.'
 
 /** A started transfer the person says they paid. Credited at the amount they were shown. */
 export async function creditRequestByHand(client: PrismaClient, input: { ref: string; admin: Admin; note: string }): Promise<ManualResult> {
@@ -47,13 +53,16 @@ export async function creditRequestByHand(client: PrismaClient, input: { ref: st
   if (!intent) return { ok: false, status: 404, error: 'Transfer not found.' }
   if (intent.status !== INTENT_PENDING) return { ok: false, status: 409, error: TAKEN }
 
-  const result = await settle(client, intent, input.note)
+  // The bank may already have told us about this money. Crediting both would pay it twice.
+  const held = await client.bankAlert.findFirst({
+    where: { status: 'Unmatched', amount: intent.amount, alertAt: { gte: intent.createdAt } },
+    select: { id: true },
+  })
+  if (held) return { ok: false, status: 409, error: HELD_SAME_AMOUNT }
+
+  const result = await settle(client, intent, input.admin, input.note)
   if (result.kind === 'already') return { ok: false, status: 409, error: TAKEN }
   if (result.kind === 'review') return { ok: false, status: 422, error: CLOSED }
-
-  await client.paymentIntent.update({ where: { id: intent.id }, data: { manualBy: input.admin.name, manualNote: input.note } })
-  await audit(input.admin, 'bank_transfer_credited_by_hand', intent.ref,
-    `${input.admin.name} credited ₦${intent.amount} by hand (${intent.actorType}) — ref ${intent.ref} — note: ${input.note}`)
   return { ok: true, amount: intent.amount }
 }
 
@@ -76,18 +85,12 @@ export async function creditAlertByHand(
     if (!agent) return { ok: false, status: 404, error: 'That agent wasn’t found.' }
   }
 
-  // Claim it first. Only one caller can flip Unmatched to Resolved.
-  const claimed = await client.bankAlert.updateMany({
-    where: { id: alert.id, status: 'Unmatched' },
-    data: { status: 'Resolved', resolvedAt: new Date(), resolvedBy: input.admin.name, resolvedNote: input.note },
-  })
-  if (claimed.count !== 1) return { ok: false, status: 409, error: TAKEN }
-
   const amount = money(alert.amount)
   const ref = `VCHS-MAN-${Date.now()}-${randomBytes(5).toString('base64url').toUpperCase()}`
+  // Never open to the automatic matcher: it is dated an hour ago and marked as staff-made. It is consumed in one step below.
   const intent = await client.paymentIntent.create({
     data: {
-      ref, method: TRANSFER_METHOD, amount, expiresAt: new Date(Date.now() + TRANSFER_WINDOW_MS),
+      ref, method: TRANSFER_METHOD, amount, expiresAt: new Date(Date.now() - 3_600_000),
       manualBy: input.admin.name, manualNote: input.note,
       ...(input.target.kind === 'customer'
         ? { actorType: 'customer', customerId: input.target.customerId, planId: input.target.planId }
@@ -95,28 +98,27 @@ export async function creditAlertByHand(
     },
   })
 
-  const undo = async () => {
-    await client.paymentIntent.deleteMany({ where: { id: intent.id, status: { not: 'Done' } } })
-    await client.bankAlert.updateMany({
-      where: { id: alert.id, status: 'Resolved' },
-      data: { status: 'Unmatched', resolvedAt: null, resolvedBy: null, resolvedNote: null },
+  // The claim on the alert is part of the credit's own transaction: both happen, or neither does. Only one caller can
+  // flip Unmatched to Resolved, so two staff acting at once credit once.
+  const claim: InTx = async (tx) => {
+    const claimed = await tx.bankAlert.updateMany({
+      where: { id: alert.id, status: 'Unmatched' },
+      data: { status: 'Resolved', resolvedAt: new Date(), resolvedBy: input.admin.name, resolvedNote: input.note, intentRef: ref },
     })
+    if (claimed.count !== 1) throw new Error('ALREADY_PROCESSED')
   }
 
+  let result
   try {
-    const result = await settle(client, intent, input.note)
-    if (result.kind !== 'credited') {
-      await undo()
-      return { ok: false, status: 422, error: CLOSED }
-    }
+    result = await settle(client, intent, input.admin, input.note, claim)
   } catch (e) {
-    await undo()
+    await client.paymentIntent.deleteMany({ where: { id: intent.id, status: INTENT_PENDING } })
     throw e
   }
-
-  await client.bankAlert.update({ where: { id: alert.id }, data: { intentRef: ref } })
-  await audit(input.admin, 'bank_transfer_credited_by_hand', ref,
-    `${input.admin.name} credited a held ₦${amount} (bank txn ${alert.txnId}) to ${input.target.kind} ${input.target.kind === 'customer' ? input.target.customerId : input.target.agentId} — note: ${input.note}`)
+  if (result.kind !== 'credited') {
+    await client.paymentIntent.deleteMany({ where: { id: intent.id, status: { not: 'Done' } } })
+    return result.kind === 'already' ? { ok: false, status: 409, error: TAKEN } : { ok: false, status: 422, error: CLOSED }
+  }
   return { ok: true, amount }
 }
 

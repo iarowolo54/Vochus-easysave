@@ -1,8 +1,8 @@
 // One settlement rule for a customer's Paystack payment, whichever of the webhook and the browser's verify
 // callback arrives first. The server-side intent decides who and which plan; Paystack only says what arrived.
-import type { PaymentIntent, PrismaClient } from '@prisma/client'
+import type { PaymentIntent, Prisma, PrismaClient } from '@prisma/client'
 import { logAudit } from '@/lib/audit'
-import { INTENT_PENDING, INTENT_REVIEW, REVIEW_ACTION, consumePaymentIntent, parseCoversKeys } from '@/lib/payment-intent'
+import { INTENT_PENDING, INTENT_REVIEW, REVIEW_ACTION, consumePaymentIntent, parseCoversKeys, recordManualCredit, type ManualActor } from '@/lib/payment-intent'
 import { inFlightKeys } from '@/lib/pay-ahead'
 import { PlanClosedError, creditPlanBalance } from '@/lib/plan-credit'
 import { creditRegistrationReward } from '@/lib/reward'
@@ -22,6 +22,10 @@ type Input = {
   channel?: string
   /** Shown in the note and audit trail: which route settled it. */
   via: 'Paystack' | 'Paystack webhook' | 'Moniepoint transfer' | 'Staff by hand'
+  /** Set when staff credit this by hand; recorded inside the credit transaction. */
+  manual?: ManualActor
+  /** Extra writes that must succeed or fail together with the credit. Throw to roll everything back. */
+  inTx?: (tx: Prisma.TransactionClient) => Promise<void>
 }
 
 const SYSTEM_ACTOR = { actorType: 'system', actorName: 'Payment settlement' }
@@ -73,6 +77,8 @@ export async function settleIntentPayment(client: PrismaClient, input: Input): P
       // Atomically consume the intent; a losing/replayed call must not credit.
       const consumed = await consumePaymentIntent(tx, reference, { customerId })
       if (!consumed) throw new Error('ALREADY_PROCESSED')
+      if (input.manual) await recordManualCredit(tx, { ref: reference, amount, who: `customer ${customer.customerId}`, manual: input.manual })
+      await input.inTx?.(tx)
       const fee = await depositFeeOps(tx, { planId: plan.id, agentId: customer.agentId, customerId: customerId, amount, ref: reference })
       await tx.transaction.create({
         data: {

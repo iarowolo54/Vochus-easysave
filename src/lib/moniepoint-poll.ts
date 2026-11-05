@@ -33,10 +33,15 @@ async function processAlert(alert: ParsedAlert, messageId: string): Promise<'cre
 
   if (match === 'none' || match === 'ambiguous') {
     const row = await prisma.bankAlert.create({ data: { ...base, status: 'Unmatched' } })
+    // Money that looks like a payment staff already credited by hand is flagged, so it is dismissed and not credited twice.
+    const lookalike = await prisma.paymentIntent.findFirst({
+      where: { manualBy: { not: null }, status: 'Done', amount: alert.amount, consumedAt: { gte: new Date(Date.now() - 3 * 86_400_000) } },
+      select: { ref: true },
+    })
     await prisma.auditLog.create({
       data: {
         action: REVIEW_ACTION, entity: 'BankAlert', entityId: row.id,
-        details: `Not credited, needs manual review: ₦${alert.amount} from ${alert.senderName || 'unknown'} matched ${match === 'none' ? 'no open transfer' : 'more than one open transfer'} — bank txn ${alert.txnId}`,
+        details: `Not credited, needs manual review: ₦${alert.amount} from ${alert.senderName || 'unknown'} matched ${match === 'none' ? 'no open transfer' : 'more than one open transfer'} — bank txn ${alert.txnId}${lookalike ? ` — same amount as a payment already credited by hand (${lookalike.ref}); if it is the same money, dismiss it` : ''}`,
         ...SYSTEM_ACTOR,
       },
     })

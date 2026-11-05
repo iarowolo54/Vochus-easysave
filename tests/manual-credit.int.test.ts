@@ -58,6 +58,10 @@ test('a customer request is credited once, with a transaction and the staff note
   const intent = await db.paymentIntent.findFirstOrThrow({ where: { ref } })
   assert.equal(intent.status, 'Done')
   assert.equal(intent.manualBy, 'Test Admin')
+  assert.equal(intent.manualNote, 'seen in bank app')
+  // who and why are written with the credit, as an admin-attributed audit row
+  const audit = await db.auditLog.findFirst({ where: { action: 'bank_transfer_credited_by_hand', entityId: ref } })
+  assert.equal(audit?.actorName, 'Test Admin')
 
   const again = await creditRequestByHand(db, { ref, admin, note: 'again' })
   assert.equal(again.ok, false)
@@ -83,7 +87,10 @@ test('an agent request credits the wallet by the amount shown', async () => {
   assert.equal(r.ok, true)
   const after = (await db.agent.findUniqueOrThrow({ where: { id: agentId } })).walletBalance
   assert.equal(Math.round((after - before) * 100), 100004)
-  assert.equal((await db.transaction.findUniqueOrThrow({ where: { ref } })).type, 'wallet_funding')
+  const wf = await db.transaction.findUniqueOrThrow({ where: { ref } })
+  assert.equal(wf.type, 'wallet_funding')
+  // the staff's private note stays off the agent's own record
+  assert.ok(!wf.note?.includes('agent paid'))
 })
 
 test('a held alert is credited to the chosen plan once, then cannot be credited or dismissed', async () => {
@@ -120,4 +127,33 @@ test('a held alert can go to an agent wallet, or be dismissed with a note', asyn
   const row = await db.bankAlert.findUniqueOrThrow({ where: { id: toDismiss.id } })
   assert.equal(row.status, 'Dismissed')
   assert.equal(row.resolvedNote, 'not ours')
+})
+
+test('a request is not credited while a held payment of the same amount is waiting', async () => {
+  const ref = `VCHS-T-${rid}-4`
+  await newIntent(ref, { amount: 901.07 })
+  const held = await newAlert('e', 901.07)
+  const blocked = await creditRequestByHand(db, { ref, admin, note: 'customer says paid' })
+  assert.equal(blocked.ok === false && blocked.status, 409)
+  assert.equal(await db.transaction.count({ where: { ref } }), 0)
+  // once the held one is dismissed, the request can be credited
+  await dismissAlert(db, { alertId: held.id, admin, note: 'checked' })
+  assert.equal((await creditRequestByHand(db, { ref, admin, note: 'customer says paid' })).ok, true)
+})
+
+test('a failed credit leaves the held payment held and no stray request behind', async () => {
+  const alert = await newAlert('f')
+  // A plan past its maturity date cannot take money, so the credit fails inside its transaction.
+  const plan = await db.savingsPlan.findUniqueOrThrow({ where: { id: planId } })
+  await db.savingsPlan.update({ where: { id: planId }, data: { maturityDate: new Date(Date.now() - 86_400_000) } })
+  try {
+    const before = (await db.savingsPlan.findUniqueOrThrow({ where: { id: planId } })).balance
+    const r = await creditAlertByHand(db, { alertId: alert.id, target: { kind: 'customer', customerId, planId }, admin, note: 'closed plan' })
+    assert.equal(r.ok, false)
+    assert.equal((await db.bankAlert.findUniqueOrThrow({ where: { id: alert.id } })).status, 'Unmatched')
+    assert.equal(await db.paymentIntent.count({ where: { manualNote: 'closed plan', status: 'Done' } }), 0)
+    assert.equal((await db.savingsPlan.findUniqueOrThrow({ where: { id: planId } })).balance, before)
+  } finally {
+    await db.savingsPlan.update({ where: { id: planId }, data: { maturityDate: plan.maturityDate } })
+  }
 })

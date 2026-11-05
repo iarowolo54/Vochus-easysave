@@ -77,3 +77,20 @@ export async function consumePaymentIntent(
   })
   return res.count === 1
 }
+
+/** Who credited a payment by hand and why. Recorded in the SAME transaction as the credit, so one cannot exist without the other. */
+export interface ManualActor { adminId?: string; adminName: string; note: string }
+
+export async function recordManualCredit(
+  tx: Prisma.TransactionClient,
+  input: { ref: string; amount: number; who: string; manual: ManualActor },
+): Promise<void> {
+  await tx.paymentIntent.update({ where: { ref: input.ref }, data: { manualBy: input.manual.adminName, manualNote: input.manual.note } })
+  await tx.auditLog.create({
+    data: {
+      action: 'bank_transfer_credited_by_hand', entity: 'Transfer', entityId: input.ref,
+      details: `${input.manual.adminName} credited ₦${input.amount} by hand to ${input.who} — ref ${input.ref} — note: ${input.manual.note}`,
+      actorType: 'admin', actorId: input.manual.adminId, actorName: input.manual.adminName,
+    },
+  })
+}

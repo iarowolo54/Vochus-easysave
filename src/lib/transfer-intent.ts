@@ -2,7 +2,7 @@
 // matched to exactly one customer without a reference.
 import { randomBytes } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
-import { INTENT_PENDING } from '@/lib/payment-intent'
+import { INTENT_PENDING, parseCoversKeys } from '@/lib/payment-intent'
 import { money } from '@/lib/wallet-guard'
 
 export const TRANSFER_METHOD = 'transfer'
@@ -41,14 +41,20 @@ export function matchAlertToIntent(
   return hits.length === 1 ? hits[0] : 'ambiguous'
 }
 
-/** An open intent the customer can simply keep using: same plan, same base amount, not yet expired. */
+/**
+ * An open intent the person can simply keep using: same plan, same days, the same base amount (the amount shown is that
+ * base plus the kobo we added, never more than 99 kobo), and not yet expired.
+ */
 export function canReuse(
-  intent: { amount: number; planId: string | null; expiresAt: Date | null },
+  intent: { amount: number; planId: string | null; expiresAt: Date | null; coversKeys?: string | null },
   planId: string | null,
   baseAmount: number,
+  covers: string[] = [],
   now: number = Date.now(),
 ): boolean {
-  return intent.planId === planId && Math.floor(money(intent.amount)) === baseAmount && (intent.expiresAt?.getTime() ?? 0) > now
+  const extra = money(intent.amount - baseAmount)
+  const sameDays = parseCoversKeys(intent.coversKeys ?? null).sort().join(',') === [...covers].sort().join(',')
+  return intent.planId === planId && sameDays && extra > 0 && extra <= 0.99 && (intent.expiresAt?.getTime() ?? 0) > now
 }
 
 /** Open means still Pending and not past its grace; these are the amounts a new intent must avoid. */
@@ -57,6 +63,7 @@ export function openTransferIntents(now = Date.now()) {
     where: {
       method: TRANSFER_METHOD,
       status: INTENT_PENDING,
+      manualBy: null,
       expiresAt: { gt: new Date(now - TRANSFER_GRACE_MS) },
     },
     select: { ref: true, amount: true, createdAt: true, expiresAt: true },
@@ -71,7 +78,7 @@ export type TransferActor = { customerId: string } | { agentId: string }
  * anything else closes the old one (it still counts for the grace period, in case they pay it). So one account can't tie
  * up the kobo pool. `planId` is the savings plan for a customer and null for an agent's wallet.
  */
-export async function createTransferIntent(input: { actor: TransferActor; planId: string | null; baseAmount: number }) {
+export async function createTransferIntent(input: { actor: TransferActor; planId: string | null; baseAmount: number; coversKeys?: string[] }) {
   const ref = `VCHS-TRF-${Date.now()}-${randomBytes(6).toString('base64url').toUpperCase()}`
   const mineWhere = 'customerId' in input.actor ? { customerId: input.actor.customerId } : { agentId: input.actor.agentId }
   return prisma.$transaction(async (tx) => {
@@ -79,7 +86,7 @@ export async function createTransferIntent(input: { actor: TransferActor; planId
     const live = { method: TRANSFER_METHOD, status: INTENT_PENDING, expiresAt: { gt: new Date(now - TRANSFER_GRACE_MS) } }
 
     const mine = await tx.paymentIntent.findMany({ where: { ...live, ...mineWhere } })
-    const again = mine.find((i) => canReuse(i, input.planId, input.baseAmount, now))
+    const again = mine.find((i) => canReuse(i, input.planId, input.baseAmount, input.coversKeys ?? [], now))
     if (again && again.expiresAt) return { ref: again.ref, payAmount: again.amount, expiresAt: again.expiresAt }
     for (const old of mine) {
       if (old.expiresAt && old.expiresAt.getTime() > now) {
@@ -95,6 +102,7 @@ export async function createTransferIntent(input: { actor: TransferActor; planId
       data: {
         ref, actorType: 'customerId' in input.actor ? 'customer' : 'agent', planId: input.planId,
         ...mineWhere, amount: payAmount, method: TRANSFER_METHOD, expiresAt,
+        coversKeys: input.coversKeys && input.coversKeys.length > 0 ? JSON.stringify(input.coversKeys) : null,
       },
     })
     return { ref, payAmount, expiresAt }

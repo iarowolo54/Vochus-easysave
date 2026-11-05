@@ -43,6 +43,12 @@ export async function GET(req: NextRequest) {
     }),
     prisma.bankAlert.findMany({ where: { status: { in: ['Unmatched', 'Resolved', 'Dismissed'] } }, orderBy: { createdAt: 'desc' }, take: FETCH_LIMIT }),
   ])
+  // Held money with the same amount as something staff credited by hand in the last 3 days: likely the same payment.
+  const recentHand = await prisma.paymentIntent.findMany({
+    where: { manualBy: { not: null }, status: 'Done', consumedAt: { gte: new Date(Date.now() - 3 * 86_400_000) } },
+    select: { amount: true },
+  })
+  const handAmounts = new Set(recentHand.map((i) => i.amount.toFixed(2)))
   const manualRefs = alerts.map((a) => a.intentRef).filter((r): r is string => !!r)
   const manualIntents = manualRefs.length ? await prisma.paymentIntent.findMany({ where: { ref: { in: manualRefs } } }) : []
 
@@ -83,7 +89,9 @@ export async function GET(req: NextRequest) {
     rows.push({
       kind: 'alert', id: a.id, ref: a.txnId, at: a.alertAt.toISOString(), who: mi ? whoOf(mi) : null,
       plan: mi?.planId ? pById.get(mi.planId) ?? null : null, amount: a.amount, status: s, statusLabel: STATUS_LABEL[s],
-      detail: a.status === 'Unmatched' ? `Money from ${a.senderName || 'unknown'} that couldn’t be matched` : `${a.resolvedBy ?? ''}: ${a.resolvedNote ?? ''}`,
+      detail: a.status === 'Unmatched'
+        ? `Money from ${a.senderName || 'unknown'} that couldn’t be matched${handAmounts.has(a.amount.toFixed(2)) ? '. Same amount as a payment credited by hand, so it may be the same money: check before crediting.' : ''}`
+        : `${a.resolvedBy ?? ''}: ${a.resolvedNote ?? ''}`,
       actionable: a.status === 'Unmatched',
     })
   }
