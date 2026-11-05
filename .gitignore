@@ -66,3 +66,6 @@ next-env.d.ts
 
 # Temporary admin redesign previews (no sign-in): never commit or deploy
 src/app/dev-preview/
+
+# production database change log, one copy across worktrees
+/.claude/db-changes.md
