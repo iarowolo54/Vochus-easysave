@@ -5,7 +5,7 @@ import { sendMail } from '@/lib/mail'
 import { emailLogo } from '@/lib/email-brand'
 import { sendSMS } from '@/lib/kudisms'
 import { getCustomerSession } from '@/lib/customer-auth'
-import { checkLoginThrottle, clearLoginThrottle, recordLoginFailure, reserveAccountAttempt } from '@/lib/login-attempt'
+import { checkLoginThrottle, clearLoginThrottle, recordLoginFailure, reserveAccountAttempt, endSessionsIfLocked } from '@/lib/login-attempt'
 import { deliverInBackground, issueResetCode, readBody, text } from '@/lib/password-reset'
 import { clientIp } from '@/lib/rate-limit'
 import { maskTarget, recoveryChannel } from '@/lib/unlock-otp'
@@ -56,6 +56,7 @@ export async function POST(req: NextRequest) {
   if (!(await reserveAccountAttempt(customer.phone))) return lockedResponse()
   if (!(await bcrypt.compare(currentPassword, customer.password))) {
     if (ip !== 'unknown') await recordLoginFailure({ ip })
+    await endSessionsIfLocked(customer.phone)
     return NextResponse.json({ error: 'Current password is incorrect' }, { status: 400 })
   }
   await clearLoginThrottle({ phone: customer.phone })

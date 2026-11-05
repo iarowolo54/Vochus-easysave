@@ -66,15 +66,21 @@ async function accountBump(key: string, now: number): Promise<void> {
     await startWindow(key, now, null)
     return
   }
+  let failCount: number
   try {
     const row = await prisma.loginAttempt.update({
       where: { key },
       data: { failCount: { increment: 1 }, lastFailAt: toDate(now) },
     })
-    // Only the attempt that reaches the limit does this, so a burst bumps the version once.
-    if (row.failCount === ACCOUNT_FAIL_LIMIT) await endOpenSessions(key.slice('phone:'.length))
+    failCount = row.failCount
   } catch {
     await startWindow(key, now, null) // row vanished (concurrent success/unlock)
+    return
+  }
+  // Only the attempt that reaches the limit does this, so a burst bumps the version once. It is outside the try above
+  // so a failure here can never reset the lock; the lock stands and the failure is logged.
+  if (failCount === ACCOUNT_FAIL_LIMIT) {
+    await endOpenSessions(key.slice('phone:'.length)).catch(() => console.error('[login-throttle] could not end open sessions on lock'))
   }
 }
 
@@ -106,8 +112,15 @@ export async function reserveAccountAttempt(phone: string, now: number = Date.no
     SET "failCount" = "failCount" + 1, "lastFailAt" = ${now}, "updatedAt" = ${now}
     WHERE "key" = ${key} AND "failCount" < ${ACCOUNT_FAIL_LIMIT}
     RETURNING "failCount"`
-  if (rows.length > 0 && Number(rows[0].failCount) === ACCOUNT_FAIL_LIMIT) await endOpenSessions(phone.trim())
   return rows.length > 0
+}
+
+/** Call after a WRONG password was caught by reserveAccountAttempt. If that attempt was the one that locked the
+ *  account, end the sessions already open. Not done inside the reserve: it counts before the password is checked,
+ *  so a correct fourth try would sign the owner out. */
+export async function endSessionsIfLocked(phone: string): Promise<void> {
+  if (!(await isPhoneLocked(phone))) return
+  await endOpenSessions(phone.trim()).catch(() => console.error('[login-throttle] could not end open sessions on lock'))
 }
 
 /** Is this account currently hard-locked? (Used by the OTP-request endpoint.) */

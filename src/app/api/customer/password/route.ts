@@ -4,7 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { getCustomerSession, signCustomerToken, customerCookieOptions } from '@/lib/customer-auth'
 import { INVALID_CODE_MESSAGE, redeemResetCode, SIX_DIGITS } from '@/lib/password-reset'
-import { checkLoginThrottle, clearLoginThrottle, recordLoginFailure, reserveAccountAttempt } from '@/lib/login-attempt'
+import { checkLoginThrottle, clearLoginThrottle, recordLoginFailure, reserveAccountAttempt, endSessionsIfLocked } from '@/lib/login-attempt'
 import { clientIp } from '@/lib/rate-limit'
 
 // Step 2: change the password with the current one plus the emailed/SMS code from ./code. Wrong guesses
@@ -49,6 +49,7 @@ export async function POST(req: NextRequest) {
   }
   if (!(await bcrypt.compare(currentPassword, customer.password))) {
     if (ip !== 'unknown') await recordLoginFailure({ ip })
+    await endSessionsIfLocked(customer.phone)
     return NextResponse.json({ error: 'Current password is incorrect' }, { status: 400 })
   }
   await clearLoginThrottle({ phone: customer.phone })
