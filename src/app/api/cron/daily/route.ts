@@ -41,7 +41,7 @@ export async function GET(req: Request) {
   let debitFailed = 0
   let pending = 0
   let settled = 0
-  // Auto-debit charges cards through Paystack, which is closed (src/lib/paystack-off.ts): no charges, nothing to settle.
+  // No new card charges while Paystack is closed (src/lib/paystack-off.ts).
   if (PAYSTACK_ENABLED) try {
     const run = await runDueAutoDebits(prisma, now)
     charged = run.charged
@@ -51,7 +51,8 @@ export async function GET(req: Request) {
   } catch (err) {
     console.error('[cron/daily] auto-debit run failed', err instanceof Error ? err.message : 'unknown')
   }
-  if (PAYSTACK_ENABLED) try {
+  // Settling a charge that was already started stays on: it only looks up its outcome, and a stuck one must not hold days forever.
+  try {
     const rec = await reconcileProcessingAttempts(prisma, now)
     settled = rec.settled
   } catch (err) {

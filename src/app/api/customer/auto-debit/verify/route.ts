@@ -10,7 +10,6 @@ import { PlanClosedError, creditPlanBalance } from '@/lib/plan-credit'
 import { createMandateFromAuthorization } from '@/lib/auto-debit'
 import { ensureEnrolmentMandate, isEnrolmentRef } from '@/lib/auto-debit-enrol'
 import { depositFeeOps } from '@/lib/commission-ledger'
-import { PAYSTACK_ENABLED, paystackOff } from '@/lib/paystack-off'
 
 class RouteError extends Error {
   constructor(public code: 'ALREADY_PROCESSED' | 'NOT_SELF') {
@@ -36,8 +35,6 @@ async function replayResponse(planId: string | null, reference?: string) {
 }
 
 export async function POST(req: NextRequest) {
-  // Paystack is closed (see src/lib/paystack-off.ts): no new card can be enrolled.
-  if (!PAYSTACK_ENABLED) return paystackOff()
   const session = await getCustomerSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
