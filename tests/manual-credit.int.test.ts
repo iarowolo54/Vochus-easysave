@@ -241,7 +241,7 @@ test('a hand credit made long BEFORE the held money arrived is not a lookalike',
   assert.equal(ok.ok, true)
 })
 
-test('crediting held money closes only requests that could be that payment: same plan, started before it arrived', async () => {
+test('crediting held money closes only requests that could be that payment: started before it arrived, any plan of that person', async () => {
   const mine = `VCHS-T-${rid}-13`
   const later = `VCHS-T-${rid}-14`
   const otherPlan = await db.savingsPlan.findFirstOrThrow({ where: { customerId, NOT: { id: planId } } })
@@ -249,12 +249,13 @@ test('crediting held money closes only requests that could be that payment: same
   const open = { expiresAt: new Date(Date.now() + 20 * 60_000) }
   await newIntent(mine, { amount: 11000.37, createdAt: new Date(Date.now() - 5 * 60_000), ...open })
   await newIntent(later, { amount: 11000.5, createdAt: new Date(Date.now() + 60_000), ...open }) // started after the money arrived
-  await newIntent(other, { amount: 11000.6, planId: otherPlan.id, createdAt: new Date(Date.now() - 4 * 60_000), ...open }) // another plan
+  await newIntent(other, { amount: 11000.6, planId: otherPlan.id, createdAt: new Date(Date.now() - 4 * 60_000), ...open }) // another plan of the same person
   const held = await newAlert('l', 11000.0)
   assert.equal((await creditAlertByHand(db, { alertId: held.id, target: { kind: 'customer', customerId, planId }, admin, note: 'sender is this customer' })).ok, true)
   assert.equal((await db.paymentIntent.findFirstOrThrow({ where: { ref: mine } })).status, 'Superseded')
   assert.equal((await db.paymentIntent.findFirstOrThrow({ where: { ref: later } })).status, 'Pending')
-  assert.equal((await db.paymentIntent.findFirstOrThrow({ where: { ref: other } })).status, 'Pending')
+  // another plan of the same person started before the money arrived: one transfer could have been meant for either
+  assert.equal((await db.paymentIntent.findFirstOrThrow({ where: { ref: other } })).status, 'Superseded')
 })
 
 test('crediting a request by hand closes the person’s other open requests for the same figure', async () => {
@@ -267,4 +268,13 @@ test('crediting a request by hand closes the person’s other open requests for 
   const again = await creditRequestByHand(db, { ref: older, admin, note: 'same payment?', ackLookalike: true })
   assert.equal(again.ok === false && again.status, 409)
   assert.equal(await db.transaction.count({ where: { ref: older } }), 0)
+})
+
+test('crediting a request by hand leaves a NEWER request for the same figure open', async () => {
+  const credited = `VCHS-T-${rid}-18`
+  const newer = `VCHS-T-${rid}-19`
+  await newIntent(credited, { amount: 13000.37, createdAt: new Date(Date.now() - 10 * 60_000), expiresAt: new Date(Date.now() + 20 * 60_000) })
+  await newIntent(newer, { amount: 13000.62, createdAt: new Date(Date.now() - 1 * 60_000), expiresAt: new Date(Date.now() + 29 * 60_000) })
+  assert.equal((await creditRequestByHand(db, { ref: credited, admin, note: 'paid, seen in bank app' })).ok, true)
+  assert.equal((await db.paymentIntent.findFirstOrThrow({ where: { ref: newer } })).status, 'Pending')
 })

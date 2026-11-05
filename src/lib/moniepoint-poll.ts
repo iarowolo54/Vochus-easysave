@@ -60,6 +60,22 @@ async function processAlert(alert: ParsedAlert, messageId: string): Promise<'cre
       await prisma.bankAlert.update({ where: { id: row.id }, data: { status: 'Unmatched' } })
       return 'unmatched'
     }
+    if (result.kind === 'already') {
+      // The request was closed, or credited another way, between matching and settling (staff acted at the same moment).
+      // The money did arrive, so unless that request really was credited it must show up for staff, not vanish.
+      const now = await prisma.paymentIntent.findUnique({ where: { ref: match.ref }, select: { status: true } })
+      if (now?.status !== 'Done') {
+        await prisma.bankAlert.update({ where: { id: row.id }, data: { status: 'Unmatched', intentRef: null } })
+        await prisma.auditLog.create({
+          data: {
+            action: REVIEW_ACTION, entity: 'BankAlert', entityId: row.id,
+            details: `Not credited, needs manual review: ₦${alert.amount} matched a request that was closed at the same moment — bank txn ${alert.txnId}`,
+            ...SYSTEM_ACTOR,
+          },
+        })
+        return 'unmatched'
+      }
+    }
     return result.kind === 'credited' ? 'credited' : 'skipped'
   } catch (e) {
     // Nothing was credited, so take the claim back and let the next poll try again.

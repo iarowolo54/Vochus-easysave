@@ -88,6 +88,8 @@ export async function creditRequestByHand(
     await tx.paymentIntent.updateMany({
       where: {
         method: TRANSFER_METHOD, status: INTENT_PENDING, manualBy: null, ref: { not: intent.ref }, amount: nearAmount(intent.amount),
+        // Older requests only (up to a day before): a newer one is a new payment and must stay open.
+        createdAt: { gte: new Date(intent.createdAt.getTime() - 86_400_000), lte: intent.createdAt },
         ...(intent.actorType === 'agent' ? { agentId: intent.agentId } : { customerId: intent.customerId, planId: intent.planId }),
       },
       data: { status: INTENT_SUPERSEDED },
@@ -152,7 +154,8 @@ export async function creditAlertByHand(
         method: TRANSFER_METHOD, status: INTENT_PENDING, manualBy: null, amount: nearAmount(alert.amount),
         // Only requests that could really be this payment: started before it arrived, and still open (or just closed) then.
         createdAt: { lte: alert.alertAt }, expiresAt: { gte: new Date(alert.alertAt.getTime() - LATE_ALLOWANCE_MS) },
-        ...(input.target.kind === 'customer' ? { customerId: input.target.customerId, planId: input.target.planId } : { agentId: input.target.agentId }),
+        // Any plan of the same person: one transfer could have been meant for either.
+        ...(input.target.kind === 'customer' ? { customerId: input.target.customerId } : { agentId: input.target.agentId }),
       },
       data: { status: INTENT_SUPERSEDED },
     })
