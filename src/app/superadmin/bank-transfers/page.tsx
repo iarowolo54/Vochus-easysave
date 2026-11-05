@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, type ReactNode } from 'react'
 import {
   AmountHero, Empty, Field, Ledger, LedgerRow, LoadError, Modal, PageHeader, Pager, SearchField, Segmented, TableSkeleton,
   dateTime, nairaKobo, useDebounced, useToast,
@@ -9,19 +9,29 @@ import NoAccess from '../_components/NoAccess'
 
 type Status = 'paid' | 'waiting' | 'not-paid' | 'needs-review' | 'by-hand'
 type Filter = 'all' | Status
+type Who = { type: 'customer' | 'agent'; name: string; code: string }
 
 interface Row {
   kind: 'request' | 'alert'
   id: string
   ref: string
   at: string
-  who: { type: 'customer' | 'agent'; name: string; code: string } | null
+  who: Who | null
   plan: string | null
   amount: number
   status: Status
   statusLabel: string
-  detail: string | null
+  summary: string
   actionable: boolean
+  startedAt: string | null
+  expiresAt: string | null
+  creditedAt: string | null
+  by: string | null
+  doneAt: string | null
+  note: string | null
+  bank: { sender: string; narration: string; txnId: string; bankTime: string; seenAt: string } | null
+  possible: { who: Who | null; plan: string | null; amount: number; startedAt: string; state: string }[]
+  lookalike: boolean
 }
 interface Page {
   rows: Row[]
@@ -47,9 +57,16 @@ const FILTERS: { value: Filter; label: string }[] = [
 ]
 
 type Dialog =
+  | { type: 'detail'; row: Row }
   | { type: 'request'; row: Row }
   | { type: 'alert'; row: Row }
   | { type: 'dismiss'; row: Row }
+
+/** Long text that must wrap, not run past the edge or get cut off. */
+const wrap = { whiteSpace: 'normal', overflowWrap: 'anywhere', textAlign: 'right' } as const
+const wrapLeft = { whiteSpace: 'normal', overflowWrap: 'anywhere' } as const
+
+const whoLabel = (w: Who | null) => (w ? `${w.name} · ${w.code} (${w.type === 'agent' ? 'agent' : 'customer'})` : 'Not known yet')
 
 export default function BankTransfersPage() {
   const [data, setData] = useState<Page | null>(null)
@@ -93,7 +110,7 @@ export default function BankTransfersPage() {
 
   return (
     <>
-      <PageHeader title="Bank transfers" sub="Money that customers and agents send to the Moniepoint account. Credit a payment by hand if it didn’t arrive on its own." />
+      <PageHeader title="Bank transfers" sub="Money that customers and agents send to the Moniepoint account. Select a row to see everything about it, and credit a payment by hand if it didn’t arrive on its own." />
 
       {counts && counts['needs-review'] > 0 && (
         <div className="a-alert a-alert-a" role="status">
@@ -102,7 +119,7 @@ export default function BankTransfersPage() {
       )}
 
       <div className="toolbar">
-        <SearchField value={search} onChange={setSearch} placeholder="Name, ID, plan or amount" label="Search bank transfers" />
+        <SearchField value={search} onChange={setSearch} placeholder="Name, ID, plan, sender or amount" label="Search bank transfers" />
         <Segmented label="Status" value={filter} options={options} onChange={setFilter} />
       </div>
 
@@ -120,31 +137,38 @@ export default function BankTransfersPage() {
               <div className="tbl-wrap tbl-stack">
                 <table>
                   <thead>
-                    <tr><th>When</th><th>Who</th><th>For</th><th className="num">Amount</th><th>Status</th><th className="td-pin-end"><span className="sr-only">Actions</span></th></tr>
+                    <tr><th>When</th><th>Who</th><th>For</th><th className="num">Amount</th><th>Status</th><th>Action</th></tr>
                   </thead>
                   <tbody>
                     {data.rows.map(r => (
-                      <tr key={`${r.kind}-${r.id}`}>
-                        <td data-label="When" className="cm-nowrap cm-sub2">{dateTime(r.at)}</td>
+                      <tr key={`${r.kind}-${r.id}`} style={{ cursor: 'pointer' }} onClick={() => setDialog({ type: 'detail', row: r })}>
+                        <td data-label="When" className="cm-nowrap cm-sub2">
+                          <button type="button" className="cm-cell-btn" aria-label={`See details of the ${nairaKobo(r.amount)} transfer`}
+                            onClick={e => { e.stopPropagation(); setDialog({ type: 'detail', row: r }) }}>
+                            {dateTime(r.at)}
+                          </button>
+                        </td>
                         <td data-label="Who">
                           {r.who ? (<><div className="td-name">{r.who.name}</div><div className="td-sub">{r.who.type === 'agent' ? 'Agent' : 'Customer'} · {r.who.code}</div></>)
-                            : <span className="cm-muted">{r.kind === 'alert' ? 'Unknown sender' : '—'}</span>}
+                            : <><span className="cm-muted">{r.kind === 'alert' ? 'Not assigned yet' : '—'}</span>{r.bank?.sender && <div className="td-sub">Sent by {r.bank.sender}</div>}</>}
                         </td>
                         <td data-label="For" className="cm-sub2">{r.who?.type === 'agent' ? 'Wallet top-up' : r.plan ?? (r.kind === 'alert' ? '—' : 'Savings')}</td>
                         <td data-label="Amount" className="num cm-strong">{nairaKobo(r.amount)}</td>
-                        <td data-label="Status">
+                        <td data-label="Status" style={{ minWidth: 220 }}>
                           <span className={`bdg ${BADGE[r.status]}`}>{r.statusLabel}</span>
-                          {r.detail && <div className="td-sub">{r.detail}</div>}
+                          <div className="td-sub" style={wrapLeft}>{r.summary}</div>
                         </td>
-                        <td className="td-pin-end">
-                          {data.canManage && r.actionable && (
-                            r.kind === 'request'
-                              ? <button type="button" className="btn btn-outline btn-sm" onClick={() => setDialog({ type: 'request', row: r })}>Credit by hand</button>
-                              : <>
-                                  <button type="button" className="btn btn-outline btn-sm" onClick={() => setDialog({ type: 'alert', row: r })}>Credit to…</button>{' '}
-                                  <button type="button" className="btn btn-outline btn-sm" onClick={() => setDialog({ type: 'dismiss', row: r })}>Dismiss</button>
-                                </>
-                          )}
+                        <td data-label="Action" onClick={e => e.stopPropagation()} style={{ minWidth: 150 }}>
+                          {data.canManage && r.actionable ? (
+                            <div style={{ display: 'grid', gap: 6, justifyItems: 'start' }}>
+                              {r.kind === 'request'
+                                ? <button type="button" className="btn btn-outline btn-sm" onClick={() => setDialog({ type: 'request', row: r })}>Credit this payment</button>
+                                : <>
+                                    <button type="button" className="btn btn-outline btn-sm" onClick={() => setDialog({ type: 'alert', row: r })}>Credit to someone</button>
+                                    <button type="button" className="btn btn-outline btn-sm" onClick={() => setDialog({ type: 'dismiss', row: r })}>Dismiss</button>
+                                  </>}
+                            </div>
+                          ) : <button type="button" className="ui-link" onClick={() => setDialog({ type: 'detail', row: r })}>View details</button>}
                         </td>
                       </tr>
                     ))}
@@ -156,7 +180,11 @@ export default function BankTransfersPage() {
           )}
       </section>
 
-      {dialog && (
+      {dialog?.type === 'detail' && (
+        <DetailDialog row={dialog.row} canManage={!!data?.canManage} onClose={() => setDialog(null)}
+          onAction={type => setDialog({ type, row: dialog.row })} />
+      )}
+      {dialog && dialog.type !== 'detail' && (
         <ActionDialog
           dialog={dialog}
           onClose={() => setDialog(null)}
@@ -168,14 +196,121 @@ export default function BankTransfersPage() {
   )
 }
 
-function ActionDialog({ dialog, onClose, onDone }: { dialog: Dialog; onClose: () => void; onDone: (msg: string) => void }) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <div className="cm-sec">
+      <h3 className="cm-sec-title">{title}</h3>
+      {children}
+    </div>
+  )
+}
+
+/** Everything the system knows about one transfer, in plain words, with the actions it allows. */
+function DetailDialog({ row, canManage, onClose, onAction }: {
+  row: Row; canManage: boolean; onClose: () => void; onAction: (type: 'request' | 'alert' | 'dismiss') => void
+}) {
+  const r = row
+  const explain: Record<Status, string> = {
+    paid: 'The bank’s credit alert arrived with exactly this amount and it was credited automatically.',
+    waiting: 'The person was shown this account and exact amount. We are waiting for the bank’s alert. Do not credit it until you have seen the money in the Moniepoint account.',
+    'not-paid': 'The 30 minutes ran out and no alert for this exact amount arrived. If the person says they paid, check the Moniepoint account before crediting.',
+    'needs-review': 'Money reached the bank account, but it matched no open request, so nothing was credited. Find out who it belongs to, then credit it to them or dismiss it.',
+    'by-hand': 'Staff credited this by hand.',
+  }
+  const unmatched = r.kind === 'alert' && r.status === 'needs-review'
+
+  return (
+    <Modal title="Transfer details" size="lg" icon="deposit" onClose={onClose}
+      sub={<span className={`bdg ${BADGE[r.status]}`}>{r.statusLabel}</span>}
+      footer={<>
+        <button type="button" className="btn btn-outline" onClick={onClose}>Close</button>
+        {canManage && r.actionable && (r.kind === 'request'
+          ? <button type="button" className="btn btn-green" onClick={() => onAction('request')}>Credit this payment by hand</button>
+          : <>
+              <button type="button" className="btn btn-outline" onClick={() => onAction('dismiss')}>Dismiss: not a deposit</button>
+              <button type="button" className="btn btn-green" onClick={() => onAction('alert')}>Credit to a customer or agent</button>
+            </>)}
+      </>}>
+      <AmountHero label={r.kind === 'alert' ? 'Amount that arrived' : 'Amount to send'} amount={nairaKobo(r.amount)} />
+      <p style={wrapLeft}>{explain[r.status]}</p>
+
+      {unmatched && (
+        <p className="a-hint" style={wrapLeft}>
+          Why it wasn’t matched: no open request had exactly {nairaKobo(r.amount)}. Usually the sender left out the extra kobo and sent a rounded figure instead of the exact amount shown, paid after the 30 minutes, or this isn’t a customer or agent payment.
+        </p>
+      )}
+      {r.lookalike && (
+        <div className="a-alert a-alert-a" role="status">This is the same amount as a payment staff credited by hand recently. It may be the same money, so check before crediting it again.</div>
+      )}
+
+      <Section title="Who">
+        <Ledger>
+          <LedgerRow label={r.kind === 'alert' && !r.who ? 'Assigned to' : 'Person'}><span style={wrap}>{whoLabel(r.who)}</span></LedgerRow>
+          <LedgerRow label="For"><span style={wrap}>{r.who?.type === 'agent' ? 'Agent wallet top-up' : r.plan ? `Savings plan: ${r.plan}` : r.kind === 'alert' ? 'Not assigned yet' : 'Savings'}</span></LedgerRow>
+        </Ledger>
+      </Section>
+
+      {r.bank && (
+        <Section title="What the bank told us">
+          <Ledger>
+            <LedgerRow label="Sent by"><span style={wrap}>{r.bank.sender || 'Not shown'}</span></LedgerRow>
+            <LedgerRow label="Bank narration"><span style={wrap}>{r.bank.narration || 'Not shown'}</span></LedgerRow>
+            <LedgerRow label="Bank transaction ID"><span className="cm-ref" style={wrap}>{r.bank.txnId}</span></LedgerRow>
+            <LedgerRow label="Money arrived"><span style={wrap}>{dateTime(r.bank.bankTime)}</span></LedgerRow>
+            <LedgerRow label="We saw the alert"><span style={wrap}>{dateTime(r.bank.seenAt)}</span></LedgerRow>
+          </Ledger>
+        </Section>
+      )}
+
+      {r.kind === 'request' && (
+        <Section title="The request">
+          <Ledger>
+            <LedgerRow label="Reference"><span className="cm-ref" style={wrap}>{r.ref}</span></LedgerRow>
+            <LedgerRow label="Started"><span style={wrap}>{r.startedAt ? dateTime(r.startedAt) : '—'}</span></LedgerRow>
+            <LedgerRow label="Window closes"><span style={wrap}>{r.expiresAt ? dateTime(r.expiresAt) : '—'}</span></LedgerRow>
+            <LedgerRow label="Credited"><span style={wrap}>{r.creditedAt ? dateTime(r.creditedAt) : 'Not credited'}</span></LedgerRow>
+          </Ledger>
+        </Section>
+      )}
+
+      {(r.by || r.note) && (
+        <Section title="Staff action">
+          <Ledger>
+            <LedgerRow label="By"><span style={wrap}>{r.by ?? '—'}</span></LedgerRow>
+            <LedgerRow label="When"><span style={wrap}>{r.doneAt ? dateTime(r.doneAt) : '—'}</span></LedgerRow>
+            <LedgerRow label="Note"><span style={wrap}>{r.note ?? '—'}</span></LedgerRow>
+          </Ledger>
+        </Section>
+      )}
+
+      {unmatched && (
+        <Section title="Requests that were started for about this amount">
+          {r.possible.length === 0 ? (
+            <p className="a-hint">None in the day before this money arrived.</p>
+          ) : (
+            <Ledger>
+              {r.possible.map((p, i) => (
+                <LedgerRow key={i} label={p.who ? `${p.who.name} · ${p.who.code}` : 'Unknown'}>
+                  <span style={wrap}>{nairaKobo(p.amount)} shown {dateTime(p.startedAt)} · {p.state}{p.plan ? ` · ${p.plan}` : ''}</span>
+                </LedgerRow>
+              ))}
+            </Ledger>
+          )}
+          <p className="a-hint">If one of these is the sender, choose “Credit to a customer or agent” and pick them. The amount credited is the amount that arrived.</p>
+        </Section>
+      )}
+    </Modal>
+  )
+}
+
+function ActionDialog({ dialog, onClose, onDone }: { dialog: Exclude<Dialog, { type: 'detail' }>; onClose: () => void; onDone: (msg: string) => void }) {
   const { row } = dialog
   const [note, setNote] = useState('')
   const [pin, setPin] = useState('')
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
 
-  // "Credit to…" only: who gets the money.
+  // "Credit to someone" only: who gets the money.
   const [kind, setKind] = useState<'customer' | 'agent'>('customer')
   const [search, setSearch] = useState('')
   const q = useDebounced(search.trim())
@@ -237,7 +372,11 @@ function ActionDialog({ dialog, onClose, onDone }: { dialog: Dialog; onClose: ()
         </button>
       </>}>
       <AmountHero label={dialog.type === 'dismiss' ? 'Held payment' : 'You’re crediting'} amount={nairaKobo(row.amount)}
-        sub={row.who ? <>for <strong>{row.who.name}</strong> · {row.who.code}</> : row.detail} />
+        sub={row.who ? <>for <strong>{row.who.name}</strong> · {row.who.code}</> : row.bank ? <>sent by <strong>{row.bank.sender || 'an unknown sender'}</strong></> : null} />
+
+      {row.bank && dialog.type !== 'request' && (
+        <p className="a-hint" style={wrapLeft}>Bank narration: {row.bank.narration || 'not shown'}</p>
+      )}
 
       {dialog.type === 'alert' && (
         <>
