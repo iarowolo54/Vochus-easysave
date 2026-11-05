@@ -20,7 +20,7 @@ const PROMPTS: Record<string, string> = {
   'Customer Complaint': 'Include the customer’s name or ID and what they’re unhappy about.',
   'Card Problem': 'Include the card serial or customer ID and what the card is doing.',
   'System Error': 'Say which screen you were on, what you tapped, and any message you saw.',
-  'Wallet Funding Issue': 'Include the amount, the time you paid, and the Paystack reference if you have it.',
+  'Wallet Funding Issue': 'Include the amount, the time you paid, and the payment reference if you have it.',
   Other: 'Tell us what happened and what you expected.',
 }
 const FILTERS = ['All', 'Open', 'In Review', 'Resolved'] as const

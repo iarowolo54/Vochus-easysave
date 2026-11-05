@@ -49,7 +49,7 @@ export function depositIcon(tx: Pick<ReceiptTx, 'method' | 'type'>): IconName {
 /** How the money moved, said plainly. Cash names the agent when we know who it was. */
 export function depositMethod(tx: Pick<ReceiptTx, 'method' | 'recordedBy'>): string {
   const m = (tx.method ?? 'Cash').toLowerCase()
-  if (m === 'paystack') return 'Card or transfer via Paystack'
+  if (m === 'paystack') return 'Card or bank transfer'
   if (m === 'cash') return tx.recordedBy ? `Cash, collected by ${tx.recordedBy}` : 'Cash'
   return tx.recordedBy ? `${tx.method}, recorded by ${tx.recordedBy}` : `${tx.method}`
 }

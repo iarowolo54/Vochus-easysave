@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
       } catch (err) {
         const error = err instanceof PaystackRejected || (err instanceof Error && err.message === MISMATCHED_ACCOUNT)
           ? 'Could not verify that bank account. Check the account number and bank.'
-          : 'Paystack is unavailable right now, so we can’t check this account. Try again shortly, or pay in cash.'
+          : 'We can’t check this account right now. Try again shortly, or pay in cash.'
         return NextResponse.json({ error }, { status: 400 })
       }
       if (!resolvedBankName) return NextResponse.json({ error: 'Could not verify that bank account. Check the account number and bank.' }, { status: 400 })

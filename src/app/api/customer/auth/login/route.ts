@@ -166,8 +166,17 @@ export async function POST(req: NextRequest) {
     actorName: `${customer.firstName} ${customer.lastName}`,
   })
 
-  // Only an address the customer proved is theirs gets the alert (agent-typed emails are unverified).
-  void sendLoginAlert({ email: customer.emailVerifiedAt ? customer.email : null, name: `${customer.firstName} ${customer.lastName}` }, biometricToken ? 'fingerprint' : 'password')
+  // Only an address that is really the customer's gets the alert. Agent-typed emails on offline accounts are
+  // unverified. Online customers registered themselves with an emailed code, and accounts made before
+  // `emailVerifiedAt` existed have it null, so a self-created plan counts as proof too.
+  void (async () => {
+    let email = customer.emailVerifiedAt ? customer.email : null
+    if (!email && customer.email) {
+      const selfPlan = await prisma.savingsPlan.findFirst({ where: { customerId: customer.id, source: 'self' }, select: { id: true } })
+      if (selfPlan) email = customer.email
+    }
+    await sendLoginAlert({ email, name: `${customer.firstName} ${customer.lastName}` }, biometricToken ? 'fingerprint' : 'password')
+  })().catch(() => {})
 
   if (app && deviceId) {
     recordDeviceSession({

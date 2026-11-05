@@ -16,6 +16,8 @@ export type EmailContent = {
   /** The headline figure, already formatted, e.g. "₦12,500.00". */
   amount?: string
   amountLabel?: string
+  /** Shows the amount on a full-width dark banner (the bank-alert look) instead of beside the heading. */
+  banner?: boolean
   /** Label / value pairs. A row with an empty value is dropped. Values are plain text and escaped here. */
   rows: [string, string | null | undefined][]
   /** An extra line under the details, e.g. what happens next. */
@@ -49,7 +51,12 @@ export function renderEmail(c: EmailContent): string {
         `<td style="padding:12px 0;${i ? `border-top:1px solid ${LINE};` : ''}font-size:14px;font-weight:600;color:${INK};text-align:right;vertical-align:top;word-break:break-word">${e(value)}</td></tr>`,
     )
     .join('')
-  const amountHtml = c.amount
+  const bannerHtml = c.amount && c.banner
+    ? `<div style="margin:22px -24px 0;padding:28px 24px;background:#0f2a1d;text-align:center">` +
+      (c.amountLabel ? `<div style="font-size:15px;color:#cfe3d6">${e(c.amountLabel)}</div>` : '') +
+      `<div style="margin-top:8px;font-size:36px;line-height:42px;font-weight:700;color:#ffffff">${e(c.amount)}</div></div>`
+    : ''
+  const amountHtml = c.amount && !c.banner
     ? `${c.amountLabel ? `<div style="margin-top:18px;font-size:13px;color:${MUTED}">${e(c.amountLabel)}</div>` : ''}` +
       `<div style="margin-top:${c.amountLabel ? 4 : 18}px;font-size:34px;line-height:40px;font-weight:700;color:${INK}">${e(c.amount)}</div>`
     : ''
@@ -60,18 +67,20 @@ export function renderEmail(c: EmailContent): string {
     `<div style="display:none;max-height:0;overflow:hidden;opacity:0;color:transparent">${e(c.preheader)}</div>` +
     `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#f2f3f1"><tr><td align="center" style="padding:24px 12px">` +
     `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px">` +
-    `<tr><td style="padding:0 4px 16px"><table role="presentation" cellpadding="0" cellspacing="0"><tr>` +
+    (c.banner ? '' : `<tr><td style="padding:0 4px 16px"><table role="presentation" cellpadding="0" cellspacing="0"><tr>` +
     `<td style="vertical-align:middle">${emailLogo(40)}</td>` +
-    `<td style="vertical-align:middle;padding-left:10px;font-size:16px;font-weight:700;color:${INK}">Vochus Easy Save</td></tr></table></td></tr>` +
+    `<td style="vertical-align:middle;padding-left:10px;font-size:16px;font-weight:700;color:${INK}">Vochus Easy Save</td></tr></table></td></tr>`) +
     `<tr><td style="background:#ffffff;border-radius:16px;padding:28px 24px">` +
+    (c.banner ? `<div style="text-align:center">${emailLogo(56)}</div><p style="margin:14px 0 18px;text-align:center;font-size:13px;line-height:20px;color:${MUTED}">${e(c.note ?? '')}</p>` : '') +
     `<div><span style="display:inline-block;padding:5px 12px;border-radius:999px;background:${t.pillBg};color:${t.pillInk};font-size:12px;font-weight:700">${e(c.statusLabel)}</span></div>` +
     `<h1 style="margin:14px 0 0;font-size:22px;line-height:28px;font-weight:700;color:${INK}">${e(c.heading)}</h1>` +
     `<p style="margin:10px 0 0;font-size:15px;line-height:22px;color:${MUTED}">${e(c.intro)}</p>` +
     amountHtml +
+    bannerHtml +
     (rowsHtml
       ? `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin-top:22px;border-top:2px solid ${t.accent}">${rowsHtml}</table>`
       : '') +
-    (c.note
+    (c.note && !c.banner
       ? `<div style="margin-top:20px;padding:14px 16px;border-radius:12px;background:#f6f7f5;font-size:13px;line-height:20px;color:${MUTED}">${e(c.note)}</div>`
       : '') +
     `</td></tr>` +

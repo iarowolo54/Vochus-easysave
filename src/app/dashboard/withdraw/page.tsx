@@ -45,7 +45,7 @@ const statusOf = (s: string) => STATUS[s] ?? { label: s, tone: 'neutral' as cons
 const STEPS = [
   { label: 'Requested', hint: 'The amount is held from your commission.' },
   { label: 'Admin approval', hint: 'An admin checks your request. You’ll see the decision here.' },
-  { label: 'Sent to your bank', hint: 'Paystack transfers the money once it’s approved.' },
+  { label: 'Sent to your bank', hint: 'We send the money to your bank once it’s approved.' },
 ]
 
 const last4 = (n?: string | null) => (n ? `•••• ${n.slice(-4)}` : '')

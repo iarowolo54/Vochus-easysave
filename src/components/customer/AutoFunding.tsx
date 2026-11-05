@@ -55,7 +55,7 @@ export default function AutoFunding({ plan, hideAmounts }: { plan: AutoFundingPl
   }, [eligible, load])
 
   // A WebView restoring this page from bfcache (e.g. the user hits Back from Paystack) would otherwise
-  // leave the button stuck on "Opening Paystack…". Clear the busy state whenever the page is shown again.
+  // leave the button stuck on "Opening payment page…". Clear the busy state whenever the page is shown again.
   useEffect(() => {
     const onShow = (e: PageTransitionEvent) => { if (e.persisted) setBusy('') }
     window.addEventListener('pageshow', onShow)
@@ -74,7 +74,7 @@ export default function AutoFunding({ plan, hideAmounts }: { plan: AutoFundingPl
     }
     setBusy('')
     if (!r.ok && r.status === 409) { load(); return }
-    setError(r.ok ? 'We couldn’t reach Paystack. Please try again.' : describeFailure(r))
+    setError(r.ok ? 'We couldn’t reach the payment service. Please try again.' : describeFailure(r))
   }
 
   async function cancel() {
@@ -90,7 +90,7 @@ export default function AutoFunding({ plan, hideAmounts }: { plan: AutoFundingPl
 
   const amount = (n: number) => hideAmounts ? '₦ ••••' : formatNaira(n, { minor: false })
   const startLabel = busy === 'start'
-    ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Opening Paystack…</>
+    ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Opening payment page…</>
     : null
 
   let body
@@ -138,7 +138,7 @@ export default function AutoFunding({ plan, hideAmounts }: { plan: AutoFundingPl
         </dl>
         <p className="ui-nudge">
           <Icons.card size={16} aria-hidden="true" />
-          <span>Paystack’s fee is added on top, so the full amount is saved. It stops when this plan ends.</span>
+          <span>The card fee is added on top, so the full amount is saved. It stops when this plan ends.</span>
         </p>
         <div className="ui-autofund-body">
           {confirmOff ? (
@@ -165,7 +165,7 @@ export default function AutoFunding({ plan, hideAmounts }: { plan: AutoFundingPl
           <span>Auto-funding is paused. Payments from your card{card ? ` (${card})` : ''} didn’t go through a few times, so we stopped trying. Your plan is still running.</span>
         </p>
         <p className="ui-row-sub">Set it up again with the same card or a different one.</p>
-        <p className="ui-card-note">Setting up again takes a ₦50 first payment to re-link your card. It’s added to this plan, and Paystack’s fee is added on top of each payment.</p>
+        <p className="ui-card-note">Setting up again takes a ₦50 first payment to re-link your card. It’s added to this plan, and The card fee is added on top of each payment.</p>
         <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={busy === 'start'} onClick={start}>
           {startLabel ?? 'Set up auto-funding again'}
         </button>
@@ -177,9 +177,9 @@ export default function AutoFunding({ plan, hideAmounts }: { plan: AutoFundingPl
       <div className="ui-autofund-body">
         <p className="ui-row-sub">
           {mandate.status === 'cancelled' ? 'Auto-funding is off. ' : ''}
-          We’ll save {cycleAmt ? <strong>{cycleAmt}</strong> : 'your plan amount'} {everyCycle(plan.cadence)} from your card — no transfer needed. Paystack’s fee is added on top, so the full amount is saved. It stops when this plan ends, and you can turn it off anytime.
+          We’ll save {cycleAmt ? <strong>{cycleAmt}</strong> : 'your plan amount'} {everyCycle(plan.cadence)} from your card — no transfer needed. The card fee is added on top, so the full amount is saved. It stops when this plan ends, and you can turn it off anytime.
         </p>
-        <p className="ui-card-note">To link your card, Paystack takes a ₦50 first payment now. It’s added to this plan.</p>
+        <p className="ui-card-note">To link your card, we take a ₦50 first payment now. It’s added to this plan.</p>
         <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={busy === 'start'} onClick={start}>
           {startLabel ?? (mandate.status === 'cancelled' ? 'Turn auto-funding back on' : 'Turn on auto-funding')}
         </button>

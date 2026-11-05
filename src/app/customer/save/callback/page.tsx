@@ -194,7 +194,7 @@ function CallbackContent() {
         icon="error"
         tone="danger"
         title="Payment didn’t go through"
-        text="Paystack didn’t complete this payment, so nothing was added to your savings. You can try again, or use another card or bank."
+        text="This payment wasn’t completed, so nothing was added to your savings. You can try again, or use another card or bank."
         action={
           <div className="ui-stack">
             <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => router.push('/customer/save')}>Try again</button>
@@ -211,7 +211,7 @@ function CallbackContent() {
       <EmptyState
         icon="pending"
         title="We’re still confirming this payment"
-        text="We couldn’t get an answer just now. If money left your account, don’t pay again — it will be added to your savings once Paystack confirms it."
+        text="We couldn’t get an answer just now. If money left your account, don’t pay again — it will be added to your savings once the payment is confirmed."
         action={
           <div className="ui-stack">
             <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={check}>

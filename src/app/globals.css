@@ -2650,3 +2650,9 @@ button.ui-cal-day:disabled:active { transform: none; }
 
 /* The reminder to tap "I've sent the money" must not be missed, so it reads as a notice and not as small print. */
 .ui-transfer-reminder { display: block; margin: var(--ui-s3) 0; padding: var(--ui-s3) var(--ui-s4); border-radius: var(--ui-r-md); background: var(--ui-warn-tint); color: var(--ui-ink); font-size: var(--ui-fs-sm); text-align: left; }
+
+/* Transfer panel: label and amount share one row, Copy sits under the amount */
+.tp-amount { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--ui-s4); }
+.tp-amount .ui-review-kicker { margin: 0; flex: 1 1 0; min-width: 0; }
+.tp-amount-value { display: flex; flex-direction: column; align-items: flex-end; flex: none; }
+.tp-amount-value .ui-review-title { margin: 0; white-space: nowrap; }
