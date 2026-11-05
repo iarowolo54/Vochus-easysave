@@ -35,7 +35,7 @@ async function processAlert(alert: ParsedAlert, messageId: string): Promise<'cre
   if (match === 'none' || match === 'ambiguous') {
     const row = await prisma.bankAlert.create({ data: { ...base, status: 'Unmatched' } })
     // Money that looks like a payment staff already credited by hand is flagged, so it is dismissed and not credited twice.
-    const lookalike = await findRecentHandCredit(prisma, alert.amount)
+    const lookalike = await findRecentHandCredit(prisma, alert.amount, alert.at)
     await prisma.auditLog.create({
       data: {
         action: REVIEW_ACTION, entity: 'BankAlert', entityId: row.id,

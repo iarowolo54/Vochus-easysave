@@ -3,6 +3,8 @@ import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { TRANSFER_METHOD } from '@/lib/transfer-intent'
 import { STATUS_LABEL, alertStatus, intentStatus, type TransferStatus } from '@/lib/transfer-status'
+import { HAND_WINDOW_MS, sameFigure } from '@/lib/transfer-figure'
+import { INTENT_SUPERSEDED } from '@/lib/payment-intent'
 
 export const dynamic = 'force-dynamic'
 
@@ -74,12 +76,16 @@ export async function GET(req: NextRequest) {
     }),
     prisma.bankAlert.findMany({ where: { status: { in: ['Unmatched', 'Resolved', 'Dismissed'] } }, orderBy: { createdAt: 'desc' }, take: FETCH_LIMIT }),
   ])
-  // Held money with the same naira figure as something staff credited by hand in the last 3 days: likely the same payment.
-  const recentHand = await prisma.paymentIntent.findMany({
-    where: { manualBy: { not: null }, status: 'Done', consumedAt: { gte: new Date(Date.now() - 3 * DAY_MS) } },
-    select: { amount: true },
+  // Payments staff credited by hand. Each held payment (and each open request) is compared with the ones within 3 days of
+  // its OWN time, not of today, so an older alert is checked against the hand credits that were around when it arrived.
+  const oldestAlert = alerts.filter((a) => a.status === 'Unmatched').reduce<Date | null>((m, a) => (!m || a.alertAt < m ? a.alertAt : m), null)
+  const since = new Date(Math.min(oldestAlert?.getTime() ?? Date.now(), Date.now()) - HAND_WINDOW_MS)
+  const handCredits = await prisma.paymentIntent.findMany({
+    where: { manualBy: { not: null }, status: 'Done', consumedAt: { gte: since } },
+    select: { amount: true, consumedAt: true },
   })
-  const handFigures = new Set(recentHand.map((i) => Math.floor(i.amount)))
+  const lookalikeNear = (amount: number, at: Date) =>
+    handCredits.some((h) => h.consumedAt && sameFigure(h.amount, amount) && Math.abs(h.consumedAt.getTime() - at.getTime()) <= HAND_WINDOW_MS)
   const manualRefs = alerts.map((a) => a.intentRef).filter((r): r is string => !!r)
   const manualIntents = manualRefs.length ? await prisma.paymentIntent.findMany({ where: { ref: { in: manualRefs } } }) : []
 
@@ -106,13 +112,16 @@ export async function GET(req: NextRequest) {
   const rows: Row[] = []
   for (const i of intents) {
     const status = intentStatus(i, now)
+    const superseded = i.status === INTENT_SUPERSEDED
     rows.push({
       kind: 'request', id: i.id, ref: i.ref, at: i.createdAt.toISOString(), who: whoOf(i),
       plan: i.planId ? pById.get(i.planId) ?? null : null, amount: i.amount, status, statusLabel: STATUS_LABEL[status],
-      summary: summaryFor(status, i.manualBy), actionable: status === 'waiting' || status === 'not-paid',
+      summary: superseded ? 'Closed: this money was credited to the person another way by staff' : summaryFor(status, i.manualBy),
+      actionable: i.status === 'Pending' && (status === 'waiting' || status === 'not-paid'),
       startedAt: i.createdAt.toISOString(), expiresAt: iso(i.expiresAt), creditedAt: iso(i.consumedAt),
       by: i.manualBy, doneAt: i.manualBy ? iso(i.consumedAt) : null, note: i.manualNote,
-      bank: null, possible: [], possibleMore: 0, lookalike: false,
+      bank: null, possible: [], possibleMore: 0,
+      lookalike: i.status === 'Pending' && lookalikeNear(i.amount, new Date(now)),
     })
   }
   const manualByRef = new Map(manualIntents.map((i) => [i.ref, i]))
@@ -120,13 +129,13 @@ export async function GET(req: NextRequest) {
     const s = alertStatus(a)
     if (s === 'dismissed') continue
     const mi = a.intentRef ? manualByRef.get(a.intentRef) : undefined
-    const lookalike = a.status === 'Unmatched' && handFigures.has(Math.floor(a.amount))
+    const lookalike = a.status === 'Unmatched' && lookalikeNear(a.amount, a.alertAt)
     // Requests for about this naira figure whose window was open (or had just closed) when the money arrived, one per
     // person so nobody can crowd the list. Ones staff already credited by hand are included so a repeat is noticed.
     const seen = new Set<string>()
     const candidates = a.status !== 'Unmatched' ? [] : intents.filter((i) => {
       if (!(i.status === 'Pending' || (i.status === 'Done' && i.manualBy))) return false
-      if (Math.floor(i.amount) !== Math.floor(a.amount)) return false
+      if (!sameFigure(i.amount, a.amount)) return false
       const closes = (i.expiresAt ?? new Date(i.createdAt.getTime() + 30 * 60_000)).getTime() + LATE_ALLOWANCE_MS
       if (a.alertAt.getTime() < i.createdAt.getTime() || a.alertAt.getTime() > closes) return false
       const who = i.customerId ?? i.agentId ?? i.ref

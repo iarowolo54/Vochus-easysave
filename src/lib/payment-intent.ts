@@ -11,6 +11,8 @@ import { prisma } from './prisma'
 
 export const INTENT_PENDING = 'Pending'
 export const INTENT_DONE = 'Done'
+/** Closed because the same money was credited another way (held money credited by hand to this person). Never credited, never matched. */
+export const INTENT_SUPERSEDED = 'Superseded'
 /** Money arrived that can't be credited as it stands (wrong currency, closed plan). Staff resolve it from the audit log. */
 export const INTENT_REVIEW = 'Review'
 /** Audit action for money that arrived but wasn't credited. Staff work from these rows. */

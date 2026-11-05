@@ -148,7 +148,7 @@ test('a failed credit leaves the held payment held and no stray request behind',
   await db.savingsPlan.update({ where: { id: planId }, data: { maturityDate: new Date(Date.now() - 86_400_000) } })
   try {
     const before = (await db.savingsPlan.findUniqueOrThrow({ where: { id: planId } })).balance
-    const r = await creditAlertByHand(db, { alertId: alert.id, target: { kind: 'customer', customerId, planId }, admin, note: 'closed plan' })
+    const r = await creditAlertByHand(db, { alertId: alert.id, target: { kind: 'customer', customerId, planId }, admin, note: 'closed plan', ackLookalike: true })
     assert.equal(r.ok, false)
     assert.equal((await db.bankAlert.findUniqueOrThrow({ where: { id: alert.id } })).status, 'Unmatched')
     assert.equal(await db.paymentIntent.count({ where: { manualNote: 'closed plan', status: 'Done' } }), 0)
@@ -182,5 +182,49 @@ test('held money with the same naira figure as a recent hand credit needs an exp
   assert.equal((await db.bankAlert.findUniqueOrThrow({ where: { id: late.id } })).status, 'Unmatched')
 
   const ok = await creditAlertByHand(db, { alertId: late.id, target: { kind: 'customer', customerId, planId }, admin, note: 'checked: a different sender', ackLookalike: true })
+  assert.equal(ok.ok, true)
+})
+
+test('a round-up payment is caught too: ₦5,000.99 credited by hand, then ₦5,001.00 arrives', async () => {
+  const ref = `VCHS-T-${rid}-7`
+  await newIntent(ref, { amount: 5000.99 })
+  assert.equal((await creditRequestByHand(db, { ref, admin, note: 'paid, seen in bank app' })).ok, true)
+  const late = await newAlert('i', 5001.0)
+  const refused = await creditAlertByHand(db, { alertId: late.id, target: { kind: 'customer', customerId, planId }, admin, note: 'maybe the same' })
+  assert.equal(refused.ok === false && refused.status, 409)
+})
+
+test('crediting held money to a person closes their open request for the same figure', async () => {
+  const ref = `VCHS-T-${rid}-8`
+  await newIntent(ref, { amount: 6000.37, expiresAt: new Date(Date.now() + 20 * 60_000) })
+  const held = await newAlert('j', 6000.0)
+  assert.equal((await creditAlertByHand(db, { alertId: held.id, target: { kind: 'customer', customerId, planId }, admin, note: 'sender is this customer' })).ok, true)
+  assert.equal((await db.paymentIntent.findFirstOrThrow({ where: { ref } })).status, 'Superseded')
+  const again = await creditRequestByHand(db, { ref, admin, note: 'paid', ackLookalike: true })
+  assert.equal(again.ok === false && again.status, 409)
+  assert.equal(await db.transaction.count({ where: { ref } }), 0)
+})
+
+test('crediting a request by hand needs a tick when the same figure was credited by hand recently', async () => {
+  const first = `VCHS-T-${rid}-9`
+  const second = `VCHS-T-${rid}-10`
+  await newIntent(first, { amount: 7000.37 })
+  await newIntent(second, { amount: 7000.62 })
+  assert.equal((await creditRequestByHand(db, { ref: first, admin, note: 'paid, seen in bank app' })).ok, true)
+  const refused = await creditRequestByHand(db, { ref: second, admin, note: 'paid too?' })
+  assert.equal(refused.ok === false && refused.status, 409)
+  assert.equal(await db.transaction.count({ where: { ref: second } }), 0)
+  assert.equal((await creditRequestByHand(db, { ref: second, admin, note: 'different customer, checked', ackLookalike: true })).ok, true)
+})
+
+test('the hand-credit check is anchored to the alert’s own time', async () => {
+  // a hand credit from a week ago is not a lookalike for an alert that arrived then... but is for one that arrived with it
+  const ref = `VCHS-T-${rid}-11`
+  await newIntent(ref, { amount: 8000.37 })
+  assert.equal((await creditRequestByHand(db, { ref, admin, note: 'paid, seen in bank app' })).ok, true)
+  const oldAlert = await db.bankAlert.create({
+    data: { messageId: `m-${rid}-old`, txnId: `t-${rid}-old`, amount: 8000.0, senderName: 'TEST', narration: 'TEST', alertAt: new Date(Date.now() - 10 * 86_400_000), status: 'Unmatched' },
+  })
+  const ok = await creditAlertByHand(db, { alertId: oldAlert.id, target: { kind: 'customer', customerId, planId }, admin, note: 'old unrelated payment' })
   assert.equal(ok.ok, true)
 })

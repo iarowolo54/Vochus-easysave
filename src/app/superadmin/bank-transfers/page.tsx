@@ -138,7 +138,7 @@ export default function BankTransfersPage() {
               <div className="tbl-wrap tbl-stack">
                 <table>
                   <thead>
-                    <tr><th>When</th><th>Who</th><th>For</th><th className="num">Amount</th><th>Status</th><th>Action</th></tr>
+                    <tr><th>When</th><th>Who</th><th className="num">Amount</th><th>Status and next step</th></tr>
                   </thead>
                   <tbody>
                     {data.rows.map(r => (
@@ -150,17 +150,18 @@ export default function BankTransfersPage() {
                           </button>
                         </td>
                         <td data-label="Who">
-                          {r.who ? (<><div className="td-name">{r.who.name}</div><div className="td-sub">{r.who.type === 'agent' ? 'Agent' : 'Customer'} · {r.who.code}</div></>)
-                            : <><span className="cm-muted">{r.kind === 'alert' ? 'Not assigned yet' : '—'}</span>{r.bank?.sender && <div className="td-sub">Sent by {r.bank.sender}</div>}</>}
+                          {r.who ? (<>
+                            <div className="td-name">{r.who.name}</div>
+                            <div className="td-sub">{r.who.type === 'agent' ? 'Agent' : 'Customer'} · {r.who.code}</div>
+                            <div className="td-sub">{r.who.type === 'agent' ? 'Wallet top-up' : r.plan ?? 'Savings'}</div>
+                          </>)
+                            : <><span className="cm-muted">{r.kind === 'alert' ? 'Not assigned yet' : '—'}</span>{r.bank?.sender && <div className="td-sub bt-note">Sent by {r.bank.sender}</div>}</>}
                         </td>
-                        <td data-label="For" className="cm-sub2">{r.who?.type === 'agent' ? 'Wallet top-up' : r.plan ?? (r.kind === 'alert' ? '—' : 'Savings')}</td>
                         <td data-label="Amount" className="num cm-strong">{nairaKobo(r.amount)}</td>
                         <td data-label="Status">
                           <span className={`bdg ${BADGE[r.status]}`}>{r.statusLabel}</span>
                           <div className="td-sub bt-note">{r.summary}</div>
-                        </td>
-                        <td data-label="" onClick={e => e.stopPropagation()}>
-                          <div className="bt-actions">
+                          <div className="bt-actions" onClick={e => e.stopPropagation()}>
                             {data.canManage && r.actionable && (r.kind === 'request'
                               ? <button type="button" className="btn btn-outline btn-sm" onClick={() => setDialog({ type: 'request', row: r })}>Credit this payment</button>
                               : <>
@@ -240,7 +241,7 @@ function DetailDialog({ row, canManage, onClose, onAction }: {
         </p>
       )}
       {r.lookalike && (
-        <div className="a-alert a-alert-a" role="status">This is the same amount as a payment staff credited by hand recently. It may be the same money, so check before crediting it again.</div>
+        <div className="a-alert a-alert-a" role="status">This is within ₦1 of a payment staff credited by hand around the same time. It may be the same money, so check before crediting it again.</div>
       )}
 
       <Section title="Who">
@@ -320,7 +321,7 @@ function ActionDialog({ dialog, onClose, onDone }: { dialog: Exclude<Dialog, { t
   const [planId, setPlanId] = useState('')
   // Held money that looks like a payment already credited by hand needs a tick to say it was checked.
   const [ack, setAck] = useState(false)
-  const needsAck = dialog.type === 'alert' && row.lookalike
+  const needsAck = (dialog.type === 'alert' || dialog.type === 'request') && row.lookalike
 
   useEffect(() => {
     if (dialog.type !== 'alert' || q.length < 2) { setPeople([]); return }
@@ -382,12 +383,14 @@ function ActionDialog({ dialog, onClose, onDone }: { dialog: Exclude<Dialog, { t
         <p className="a-hint" style={{ ...wrapLeft, marginBottom: 14 }}>Bank narration: {row.bank.narration || 'not shown'}</p>
       )}
       {needsAck && (
-        <div className="a-alert a-alert-a" role="alert">
-          <p style={wrapLeft}>This is the same naira figure as a payment staff credited by hand in the last 3 days. It may be the same money.</p>
-          <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: 8 }}>
-            <input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)} style={{ marginTop: 3 }} />
-            <span style={wrapLeft}>I have checked it is not the same payment.</span>
-          </label>
+        <div className="a-alert a-alert-a" role="alert" style={{ marginBottom: 14 }}>
+          <div style={{ minWidth: 0 }}>
+            <p style={wrapLeft}>This is within ₦1 of a payment staff credited by hand around the same time. It may be the same money.</p>
+            <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', marginTop: 10, minHeight: 32 }}>
+              <input type="checkbox" checked={ack} onChange={e => setAck(e.target.checked)} style={{ marginTop: 3, width: 18, height: 18, flex: 'none' }} />
+              <span style={wrapLeft}>I have checked it is not the same payment.</span>
+            </label>
+          </div>
         </div>
       )}
 

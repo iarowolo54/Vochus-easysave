@@ -18,6 +18,6 @@ export async function POST(req: NextRequest) {
   const admin = { id: adminActor(guard.session).actorId, name: guard.actor.name }
 
   if (typeof b.ref !== 'string' || !b.ref) return NextResponse.json({ error: 'Missing transfer.' }, { status: 400 })
-  const r = await creditRequestByHand(prisma, { ref: b.ref, admin, note })
+  const r = await creditRequestByHand(prisma, { ref: b.ref, admin, note, ackLookalike: b.ackLookalike === true })
   return r.ok ? NextResponse.json({ ok: true, amount: r.amount }) : NextResponse.json({ error: r.error }, { status: r.status })
 }

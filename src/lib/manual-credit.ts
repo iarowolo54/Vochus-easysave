@@ -5,10 +5,11 @@
 import { randomBytes } from 'node:crypto'
 import type { PrismaClient } from '@prisma/client'
 import { logAudit } from '@/lib/audit'
-import { INTENT_PENDING, type ManualActor } from '@/lib/payment-intent'
+import { INTENT_PENDING, INTENT_SUPERSEDED, type ManualActor } from '@/lib/payment-intent'
 import { settleIntentPayment } from '@/lib/customer-settle'
 import { settleAgentTransfer } from '@/lib/agent-settle'
 import { TRANSFER_METHOD } from '@/lib/transfer-intent'
+import { HAND_WINDOW_MS, nearAmount } from '@/lib/transfer-figure'
 import { money } from '@/lib/wallet-guard'
 
 export type Admin = { id?: string; name: string }
@@ -45,34 +46,45 @@ function settle(client: PrismaClient, intent: Intent, admin: Admin, note: string
 }
 
 const HELD_SAME_AMOUNT =
-  'Money for about this amount is already held on this screen (the same naira figure, without the extra kobo). If it is the same payment, credit the held money to this person instead, or dismiss it first, so it isn’t credited twice.'
+  'Money for about this amount is already held on this screen (within ₦1 of it). If it is the same payment, credit the held money to this person instead, or dismiss it first, so it isn’t credited twice.'
 const LOOKALIKE =
-  'This is the same naira figure as a payment staff credited by hand in the last 3 days. It may be the same money. Tick the box to confirm you have checked it is not, then try again.'
+  'This is within ₦1 of a payment staff credited by hand within 3 days of it. It may be the same money. Tick the box to confirm you have checked it is not, then try again.'
 
-const HAND_LOOKBACK_MS = 3 * 86_400_000
-
-/** A payment staff credited by hand in the last 3 days for the same naira figure (kobo ignored, since a rounded payment lands on it). */
-export function findRecentHandCredit(client: PrismaClient, amount: number) {
-  const floor = Math.floor(money(amount))
+/**
+ * A payment staff credited by hand within 3 days either side of `around`, for the same figure (within ₦1). Anchored to
+ * the payment being looked at, so an old alert is compared with the hand credits from its own time, not today's.
+ */
+export function findRecentHandCredit(client: PrismaClient, amount: number, around: Date = new Date()) {
   return client.paymentIntent.findFirst({
-    where: { manualBy: { not: null }, status: 'Done', consumedAt: { gte: new Date(Date.now() - HAND_LOOKBACK_MS) }, amount: { gte: floor, lt: floor + 1 } },
+    where: {
+      manualBy: { not: null }, status: 'Done',
+      consumedAt: { gte: new Date(around.getTime() - HAND_WINDOW_MS), lte: new Date(around.getTime() + HAND_WINDOW_MS) },
+      amount: nearAmount(amount),
+    },
     select: { ref: true },
   })
 }
 
 /** A started transfer the person says they paid. Credited at the amount they were shown. */
-export async function creditRequestByHand(client: PrismaClient, input: { ref: string; admin: Admin; note: string }): Promise<ManualResult> {
+export async function creditRequestByHand(
+  client: PrismaClient,
+  input: { ref: string; admin: Admin; note: string; ackLookalike?: boolean },
+): Promise<ManualResult> {
   const intent = await client.paymentIntent.findFirst({ where: { ref: input.ref, method: TRANSFER_METHOD } })
   if (!intent) return { ok: false, status: 404, error: 'Transfer not found.' }
   if (intent.status !== INTENT_PENDING) return { ok: false, status: 409, error: TAKEN }
 
   // The bank may already have told us about this money. Crediting both would pay it twice.
-  const floor = Math.floor(money(intent.amount))
   const held = await client.bankAlert.findFirst({
-    where: { status: 'Unmatched', amount: { gte: floor, lt: floor + 1 }, alertAt: { gte: intent.createdAt } },
+    where: { status: 'Unmatched', amount: nearAmount(intent.amount), alertAt: { gte: intent.createdAt } },
     select: { id: true },
   })
   if (held) return { ok: false, status: 409, error: HELD_SAME_AMOUNT }
+
+  // Something for the same figure was already credited by hand (a request, or held money given to someone).
+  if (!input.ackLookalike && await findRecentHandCredit(client, intent.amount)) {
+    return { ok: false, status: 409, error: LOOKALIKE }
+  }
 
   const result = await settle(client, intent, input.admin, input.note)
   if (result.kind === 'already') return { ok: false, status: 409, error: TAKEN }
@@ -100,7 +112,7 @@ export async function creditAlertByHand(
   }
 
   // Money that looks like a payment already credited by hand needs the staff member to say they checked.
-  if (!input.ackLookalike && alert.status === 'Unmatched' && await findRecentHandCredit(client, alert.amount)) {
+  if (!input.ackLookalike && alert.status === 'Unmatched' && await findRecentHandCredit(client, alert.amount, alert.alertAt)) {
     return { ok: false, status: 409, error: LOOKALIKE }
   }
 
@@ -125,6 +137,15 @@ export async function creditAlertByHand(
       data: { status: 'Resolved', resolvedAt: new Date(), resolvedBy: input.admin.name, resolvedNote: input.note, intentRef: ref },
     })
     if (claimed.count !== 1) throw new Error('ALREADY_PROCESSED')
+    // This money is now the person's credit. Their still-open requests for the same figure are the same payment, so
+    // close them in the same transaction; otherwise one could be credited again by hand.
+    await tx.paymentIntent.updateMany({
+      where: {
+        method: TRANSFER_METHOD, status: INTENT_PENDING, manualBy: null, amount: nearAmount(alert.amount),
+        ...(input.target.kind === 'customer' ? { customerId: input.target.customerId } : { agentId: input.target.agentId }),
+      },
+      data: { status: INTENT_SUPERSEDED },
+    })
   }
 
   let result
