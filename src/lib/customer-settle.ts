@@ -21,7 +21,7 @@ type Input = {
   currency?: string
   channel?: string
   /** Shown in the note and audit trail: which route settled it. */
-  via: 'Paystack' | 'Paystack webhook' | 'Moniepoint transfer'
+  via: 'Paystack' | 'Paystack webhook' | 'Moniepoint transfer' | 'Staff by hand'
 }
 
 const SYSTEM_ACTOR = { actorType: 'system', actorName: 'Payment settlement' }
@@ -82,10 +82,10 @@ export async function settleIntentPayment(client: PrismaClient, input: Input): P
           planId: plan.id,
           type: 'saving',
           amount,
-          method: via === 'Moniepoint transfer' ? 'Transfer' : 'Paystack',
+          method: via === 'Moniepoint transfer' || via === 'Staff by hand' ? 'Transfer' : 'Paystack',
           status: 'Done',
           feeTaken: fee,
-          note: `Customer self-pay via ${via} — ${channel ?? 'card'}`,
+          note: via === 'Staff by hand' ? 'Bank transfer credited by hand by staff' : `Customer self-pay via ${via} — ${channel ?? 'card'}`,
         },
       })
       await creditPlanBalance(tx, plan.id, money(amount - fee))
@@ -141,7 +141,7 @@ export async function settleIntentPayment(client: PrismaClient, input: Input): P
     details: `${customer.firstName} ${customer.lastName} (${customer.customerId}) paid ₦${amount.toLocaleString()} via ${via} — ref ${reference}`,
     ...(via === 'Paystack'
       ? { actorType: 'customer', actorId: customer.id, actorName: `${customer.firstName} ${customer.lastName}` }
-      : { actorType: 'system', actorName: via === 'Moniepoint transfer' ? 'Moniepoint transfer' : 'Paystack Webhook' }),
+      : { actorType: 'system', actorName: via === 'Moniepoint transfer' || via === 'Staff by hand' ? via : 'Paystack Webhook' }),
   })
   if (priorSavings === 0) creditRegistrationReward(customer).catch(() => {})
 
