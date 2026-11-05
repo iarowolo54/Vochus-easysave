@@ -47,12 +47,6 @@ function transferRefusal(httpStatus: number, message: string): Error {
   return refused ? new PaystackRejected(message) : new Error(message)
 }
 
-export async function listBanks(): Promise<{ code: string; name: string }[]> {
-  const data = await call('GET', '/bank?currency=NGN&perPage=200&use_cursor=false')
-  if (!data.status) throw new Error(data.message ?? 'Failed to fetch banks')
-  return (data.data as any[]).map(b => ({ code: b.code, name: b.name }))
-}
-
 export async function resolveAccount(accountNumber: string, bankCode: string) {
   if (bankCode === '001') {
     return { accountName: 'Test Account', accountNumber }
@@ -78,43 +72,6 @@ export async function createRecipient(name: string, accountNumber: string, bankC
   })
   if (!data.status) throw new Error(data.message ?? 'Failed to create transfer recipient')
   return data.data.recipient_code as string
-}
-
-export interface BvnResolution {
-  bvn: string
-  firstName: string
-  lastName: string
-  middleName?: string | null
-  dob?: string | null
-  phone?: string | null
-  gender?: string | null
-}
-
-/** Keeps the HTTP status, so a wrong key (401) can be told from an unknown BVN without logging anything from the reply. */
-export class BvnLookupFailed extends Error {
-  constructor(public httpStatus: number, message: string) {
-    super(message)
-    this.name = 'BvnLookupFailed'
-  }
-}
-
-export async function resolveBvn(bvn: string): Promise<BvnResolution> {
-  if (isTestMode()) {
-    // Paystack test mode doesn't validate real BVNs — return a deterministic dummy
-    return { bvn, firstName: 'TEST', lastName: 'CUSTOMER', dob: '1990-01-01', phone: null, gender: 'M' }
-  }
-  const { httpStatus, data } = await request('GET', `/bank/resolve_bvn/${bvn}`)
-  if (!data.status) throw new BvnLookupFailed(httpStatus, data.message ?? 'Could not verify BVN')
-  const d = data.data ?? {}
-  return {
-    bvn: d.bvn ?? bvn,
-    firstName: (d.first_name ?? '').toString(),
-    lastName: (d.last_name ?? '').toString(),
-    middleName: d.middle_name ?? null,
-    dob: d.formatted_dob ?? d.dob ?? null,
-    phone: d.mobile ?? null,
-    gender: d.gender ?? null,
-  }
 }
 
 export async function initiateTransfer(amountNaira: number, recipientCode: string, reason: string, reference: string) {

@@ -697,22 +697,6 @@ test('loan repay: paying the rounded balance closes a loan whose total has a thi
   stubbedAgentId = null
 })
 
-// ── resolve-account ─────────────────────────────────────────────────────────
-
-test('resolve-account needs a session and valid input', async () => {
-  const { GET, POST } = await import('../src/app/api/paystack/resolve-account/route')
-  const get = (q: string) => GET(new NextRequest(`http://localhost/api/paystack/resolve-account?${q}`))
-  stubbedAgentId = null
-  currentToken = ''
-  assert.equal((await get('accountNumber=0123456789&bankCode=058')).status, 401)
-  assert.equal((await POST(req({ accountNumber: '0123456789', bankCode: '058' }) as never)).status, 401)
-  stubbedAgentId = agentCode
-  assert.equal((await get('accountNumber=12ab&bankCode=058')).status, 400)
-  assert.equal((await get('accountNumber=0123456789&bankCode=05%208')).status, 400)
-  assert.equal((await POST(req({ accountNumber: { not: '' }, bankCode: '058' }) as never)).status, 400)
-  stubbedAgentId = null
-})
-
 // ── Admin recovery ──────────────────────────────────────────────────────────
 
 test('admin code skips the limits, needs admin and PIN, is audited, and works on the normal reset', async () => {

@@ -26,7 +26,8 @@ export default function BottomSheet({ open, onClose, title, children }: Props) {
       ref={ref}
       className="ui-sheet"
       aria-labelledby={titleId}
-      onClose={onClose}
+      // A sheet opened inside this one (a bank list, say) closes without closing this one.
+      onClose={e => { if (e.target === ref.current) onClose() }}
       // A click on the dialog element itself (not its content) is a click on the backdrop.
       onClick={e => { if (e.target === ref.current) onClose() }}
     >

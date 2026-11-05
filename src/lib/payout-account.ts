@@ -41,3 +41,17 @@ export const payoutDestination = (bankName: string, accountNumber: string) => `P
 
 /** For the customer about to give out their code: an agent has asked to pay this to an account in another name. */
 export const otherNameWarning = (accountName: string) => `This account is in the name ${accountName}, not yours. Don't share this code unless you agreed to this.`
+
+/**
+ * The account name as the person typed it. Nothing checks it with the bank, so it is only what they said: staff compare
+ * it with the name their own bank app shows before paying. Returns null unless it looks like a real name.
+ */
+export function cleanAccountName(raw: unknown): string | null {
+  if (typeof raw !== 'string') return null
+  const name = raw.normalize('NFC').replace(/\s+/g, ' ').trim()
+  if (name.length < 3 || name.length > 80) return null
+  if (!/^[\p{L}\p{M}][\p{L}\p{M} .,'’&-]*$/u.test(name) || !/\p{L}.*\p{L}/u.test(name)) return null
+  return name
+}
+
+export const ACCOUNT_NAME_PROMPT = 'Enter the account name exactly as it is on the bank account.'

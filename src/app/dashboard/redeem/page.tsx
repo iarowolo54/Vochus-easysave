@@ -2,9 +2,11 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import BankSelect from '@/components/ui/BankSelect'
+import { NIGERIAN_BANKS } from '@/lib/banks'
+import { cleanAccountName } from '@/lib/payout-account'
 import CodeBoxes from '@/components/ui/CodeBoxes'
 import EmptyState from '@/components/ui/EmptyState'
-import { FieldError, FormError } from '@/components/ui/FormErrors'
+import { FormError } from '@/components/ui/FormErrors'
 import Toast from '@/components/ui/Toast'
 import { Icons } from '@/components/ui/icons'
 import { avatarTint } from '@/lib/avatar'
@@ -33,7 +35,7 @@ interface PendingRequest {
 
 interface Bank { code: string; name: string }
 
-type Step = 'select' | 'token-issued' | 'verify' | 'direct-verify' | 'submitted'
+type Step = 'select' | 'review' | 'token-issued' | 'verify' | 'direct-verify' | 'submitted'
 
 /** Same fee rule the payout preview has always used: a day's saving per 31 days on daily plans, 20% otherwise. */
 function payoutFor(p: Plan) {
@@ -64,13 +66,9 @@ export default function RedeemPage() {
   const [nameCheckNote, setNameCheckNote] = useState('')
 
   // Bank transfer fields
-  const [banks, setBanks] = useState<Bank[]>([])
-  const [banksLoading, setBanksLoading] = useState(false)
   const [selectedBank, setSelectedBank] = useState<Bank | null>(null)
   const [accountNumber, setAccountNumber] = useState('')
   const [accountName, setAccountName] = useState('')
-  const [resolvingAccount, setResolvingAccount] = useState(false)
-  const [accountError, setAccountError] = useState('')
 
   const [issuedRef, setIssuedRef] = useState('')
   const [issuedNetPayout, setIssuedNetPayout] = useState(0)
@@ -162,38 +160,6 @@ export default function RedeemPage() {
     } finally { setApproving(null) }
   }
 
-  // Load bank list when Bank Transfer selected
-  useEffect(() => {
-    if (payoutMethod === 'Bank Transfer' && banks.length === 0) {
-      setBanksLoading(true)
-      fetch('/api/paystack/banks').then(r => r.json()).then(d => setBanks(d.banks ?? [])).catch(() => {}).finally(() => setBanksLoading(false))
-    }
-  }, [payoutMethod, banks.length])
-
-  // Auto-resolve account name when 10 digits entered
-  useEffect(() => {
-    if (accountNumber.length === 10 && selectedBank) {
-      setResolvingAccount(true)
-      setAccountName('')
-      setAccountError('')
-      fetch('/api/paystack/resolve-account', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ accountNumber, bankCode: selectedBank.code }),
-      })
-        .then(r => r.json())
-        .then(d => {
-          setResolvingAccount(false)
-          if (d.accountName) setAccountName(d.accountName)
-          else setAccountError(d.error ?? 'We couldn’t confirm this account. Check the number and bank.')
-        })
-        .catch(() => { setResolvingAccount(false); setAccountError('We couldn’t confirm this account. Check your connection.') })
-    } else {
-      setAccountName('')
-      setAccountError('')
-    }
-  }, [accountNumber, selectedBank])
-
   const withMoney = selected?.savingsPlans?.filter(p => p.status !== 'Redeemed' && p.balance > 0) ?? []
   // Online customers collect in their own app, so those plans aren't offered here.
   const eligiblePlans = withMoney.filter(p => p.source !== 'self')
@@ -201,13 +167,13 @@ export default function RedeemPage() {
   const preview = selectedPlan ? payoutFor(selectedPlan) : null
   const planMatured = selectedPlan ? (selectedPlan.status === 'Matured' || new Date(selectedPlan.maturityDate) <= new Date()) : false
 
-  const bankTransferReady = payoutMethod !== 'Bank Transfer' || (!!selectedBank && accountNumber.length === 10 && !!accountName)
+  const bankTransferReady = payoutMethod !== 'Bank Transfer' || (!!selectedBank && accountNumber.length === 10 && !!cleanAccountName(accountName))
 
   function resetAll() {
     setStep('select')
     setQuery(''); setResults([]); setSelected(null); setSelectedPlanId('')
     setPayoutMethod('Cash')
-    setSelectedBank(null); setAccountNumber(''); setAccountName(''); setAccountError('')
+    setSelectedBank(null); setAccountNumber(''); setAccountName('')
     setIssuedRef(''); setIssuedNetPayout(0); setTokenExpiry(''); setIssuedCustomerName(''); setSentToPhone(''); setSentToEmail(null)
     setEnteredToken(''); setVerifiedRecord(null)
     setError('')
@@ -223,7 +189,7 @@ export default function RedeemPage() {
     if (!selected) { setError('Choose a customer first.'); return }
     const planId = selectedPlan?.id
     if (!planId) { setError('This customer has no savings plan that can be collected.'); return }
-    if (!bankTransferReady) { setError('Confirm the bank account before continuing.'); return }
+    if (!bankTransferReady) { setError('Choose the bank, enter the 10-digit account number and the account name.'); return }
     setLoading(true); setError('')
     let res: Response
     let data: { error?: string; ref?: string; nameCheckNote?: string; netPayout?: number; tokenExpiry?: string; customerName?: string; sentTo?: { phone?: string; email?: string } }
@@ -235,7 +201,7 @@ export default function RedeemPage() {
           planId, customerId: selected.id, payoutMethod,
           ...(payoutMethod === 'Bank Transfer' && {
             accountNumber,
-            accountName,
+            accountName: accountName.trim(),
             bankCode: selectedBank?.code,
             bankName: selectedBank?.name,
           }),
@@ -320,7 +286,7 @@ export default function RedeemPage() {
     }
   }
 
-  const stepNo = step === 'select' ? 1 : step === 'submitted' ? 3 : 2
+  const stepNo = step === 'select' || step === 'review' ? 1 : step === 'submitted' ? 3 : 2
   const formattedPhone = sentToPhone.replace(/(\d{4})(\d{3})(\d{4})/, '$1 $2 $3')
 
   return (
@@ -364,7 +330,7 @@ export default function RedeemPage() {
           <div className="ag-panel">
             <header className="ag-flow-head ag-panel-head">
               <div className="ag-flow-nav">
-                {step === 'token-issued' || step === 'direct-verify' || (step === 'select' && selected)
+                {step === 'token-issued' || step === 'review' || step === 'direct-verify' || (step === 'select' && selected)
                   ? <button type="button" className="ui-icon-btn ui-icon-btn--soft" aria-label="Back"
                       onClick={() => { setError(''); if (step === 'select') { setSelected(null); setQuery('') } else { setStep('select'); setEnteredToken('') } }}>
                       <Icons.back size={20} aria-hidden="true" />
@@ -372,7 +338,7 @@ export default function RedeemPage() {
                   : step === 'verify'
                     ? <button type="button" className="ui-icon-btn ui-icon-btn--soft" aria-label="Back" onClick={() => { setError(''); setStep('token-issued') }}><Icons.back size={20} aria-hidden="true" /></button>
                     : <span className="ag-flow-nav-gap" />}
-                <span className="ag-flow-count">Pay out savings · {stepNo === 1 ? 'Details' : stepNo === 2 ? 'Customer’s code' : 'Done'}</span>
+                <span className="ag-flow-count">Pay out savings · {step === 'review' ? 'Check details' : stepNo === 1 ? 'Details' : stepNo === 2 ? 'Customer’s code' : 'Done'}</span>
                 <span className="ag-flow-nav-gap" />
               </div>
               <div className="ag-flow-line" aria-hidden="true"><span style={{ width: `${(stepNo / 3) * 100}%` }} /></div>
@@ -479,7 +445,7 @@ export default function RedeemPage() {
                           const Icon = Icons[o.icon]
                           return (
                             <button key={o.v} type="button" role="radio" aria-checked={payoutMethod === o.v} className="ag-radio"
-                              onClick={() => { setPayoutMethod(o.v); setSelectedBank(null); setAccountNumber(''); setAccountName(''); setAccountError('') }}>
+                              onClick={() => { setPayoutMethod(o.v); setSelectedBank(null); setAccountNumber(''); setAccountName('') }}>
                               <span className="ag-radio-icon" aria-hidden="true"><Icon size={20} /></span>
                               <span className="ag-payee-main">
                                 <span className="ui-row-title ui-block">{o.t}</span>
@@ -493,37 +459,57 @@ export default function RedeemPage() {
 
                       {payoutMethod === 'Bank Transfer' && (
                         <div className="ag-bank-fields">
-                          <BankSelect banks={banks} loading={banksLoading} value={selectedBank}
+                          <BankSelect banks={NIGERIAN_BANKS} value={selectedBank}
                             onChange={b => { setSelectedBank(b); setAccountNumber(''); setAccountName('') }} />
                           <div className="ag-tf-wrap">
-                            <div className={`ag-tf${accountError ? ' is-invalid' : ''}${!selectedBank ? ' is-disabled' : ''}`}>
+                            <div className={`ag-tf${!selectedBank ? ' is-disabled' : ''}`}>
                               <label className="ag-tf-label" htmlFor="acct">Account number</label>
-                              <input id="acct" className="ag-tf-input ag-tf-num" inputMode="numeric" maxLength={10} placeholder="10 digits" disabled={!selectedBank}
-                                value={accountNumber} aria-invalid={!!accountError || undefined} aria-describedby={accountError ? 'acct-error' : undefined}
+                              <input id="acct" className="ag-tf-input ag-tf-num" type="tel" inputMode="numeric" maxLength={10} placeholder="10 digits" disabled={!selectedBank}
+                                value={accountNumber}
                                 onChange={e => setAccountNumber(e.target.value.replace(/\D/g, '').slice(0, 10))} />
                             </div>
-                            {resolvingAccount && <p className="ag-fineprint"><span className="ui-spinner ui-spinner--sm ag-spin-dark ag-inline-spin" aria-hidden="true" /> Checking the account…</p>}
-                            <FieldError id="acct-error" message={!resolvingAccount ? accountError : ''} />
                           </div>
-                          {accountName && !resolvingAccount && (
-                            <div className="ag-verified ag-verified--sm">
-                              <span className="ag-verified-icon" aria-hidden="true"><Icons.check size={18} /></span>
-                              <div>
-                                <p className="ui-row-sub">Account name</p>
-                                <p className="ui-row-title">{accountName}</p>
-                              </div>
+                          <div className="ag-tf-wrap">
+                            <div className={`ag-tf${!selectedBank ? ' is-disabled' : ''}`}>
+                              <label className="ag-tf-label" htmlFor="acct-name">Account name</label>
+                              <input id="acct-name" className="ag-tf-input" autoComplete="off" autoCapitalize="characters" maxLength={80} placeholder="As it is on the account" disabled={!selectedBank}
+                                value={accountName} onChange={e => setAccountName(e.target.value)} />
                             </div>
-                          )}
+                            <p className="ag-fineprint">Type it exactly as the bank shows it. A name that isn’t the customer’s is held for a super admin to check before it is paid.</p>
+                          </div>
                         </div>
                       )}
 
                       <div className="ag-flow-actions">
-                        <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" disabled={loading || !bankTransferReady} onClick={generateToken}>
-                          {loading ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Sending code…</> : 'Send code to customer'}
+                        <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" disabled={loading || !bankTransferReady}
+                          onClick={() => { if (payoutMethod === 'Bank Transfer') { setError(''); setStep('review'); window.scrollTo({ top: 0 }) } else generateToken() }}>
+                          {loading ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Sending code…</> : payoutMethod === 'Bank Transfer' ? 'Review details' : 'Send code to customer'}
                         </button>
                       </div>
                     </>
                   )}
+                </>
+              )}
+
+              {/* Check the account before the code goes out */}
+              {step === 'review' && selected && (
+                <>
+                  <h2 className="ag-q">Check these details</h2>
+                  <p className="ag-q-lead">A wrong digit sends the money to someone else. Make sure each line is right before we send the code.</p>
+                  <dl className="ag-breakdown">
+                    <div><dt>Customer</dt><dd>{selected.firstName} {selected.lastName}</dd></div>
+                    <div><dt>Bank</dt><dd>{selectedBank?.name}</dd></div>
+                    <div><dt>Account number</dt><dd className="ag-mono">{accountNumber}</dd></div>
+                    <div><dt>Account name</dt><dd>{accountName.trim()}</dd></div>
+                    <div className="ag-breakdown-total"><dt>They’ll receive</dt><dd>{formatNaira(preview?.net ?? 0)}</dd></div>
+                  </dl>
+                  <FormError message={error} />
+                  <div className="ag-flow-actions">
+                    <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" disabled={loading} onClick={generateToken}>
+                      {loading ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Sending code…</> : 'Looks right, send code'}
+                    </button>
+                    <button type="button" className="ui-btn ui-btn--secondary ag-flow-cta" disabled={loading} onClick={() => { setError(''); setStep('select') }}>Change details</button>
+                  </div>
                 </>
               )}
 

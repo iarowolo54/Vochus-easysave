@@ -892,6 +892,7 @@ export default function RedemptionsPage() {
               <div className="dlg-hero-extra"><span className="dlg-hero-lbl">Payout method</span><strong>{pinModal.payoutMethod}</strong></div>
             )}
           </div>
+          {isBank(pinModal.payoutMethod) && pinModal.bankName && <p className="a-hint cm-gap">The account name is what was typed, not checked with the bank. Compare it with the name your bank app shows before you pay.</p>}
           {pinModal.nameMismatch && <p className="a-alert a-alert-r cm-gap" role="alert">The names don’t match. Customer: <strong>{pinModal.customerName}</strong>. Name on the account: <strong>{pinModal.accountName ?? '—'}</strong>. Your PIN confirms you’ve checked this, and it’s recorded.</p>}
           <p className="a-hint cm-gap">
             {(manual && isBank(pinModal.payoutMethod))

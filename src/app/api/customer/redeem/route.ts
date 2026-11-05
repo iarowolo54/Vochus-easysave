@@ -7,7 +7,8 @@ import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { collectionFee } from '@/lib/commission-ledger'
 import { money } from '@/lib/wallet-guard'
 import { accruedInterestForPlan } from '@/lib/savings-interest-plan'
-import { resolveAccount } from '@/lib/paystack'
+import { bankByCode } from '@/lib/banks'
+import { cleanAccountName } from '@/lib/payout-account'
 import { sendSMS } from '@/lib/kudisms'
 import { sendMail } from '@/lib/mail'
 import { redemptionTokenMatches } from '@/lib/redemption-token'
@@ -61,7 +62,7 @@ export async function POST(req: NextRequest) {
   if (pending) return NextResponse.json({ error: 'You already have a pending redemption request' }, { status: 409 })
 
   const body = await req.json()
-  const { reason, accountNumber, accountName, bankCode, bankName } = body
+  const { reason, accountNumber, bankCode } = body
 
   if (!reason) return NextResponse.json({ error: 'Reason required' }, { status: 400 })
 
@@ -75,19 +76,18 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Verify the bank account server-side and store the RESOLVED name, so a payout
-  // can't be redirected via a spoofed account name (finding #5).
-  let resolvedAccountName: string | null = accountName || null
+  // Nothing checks the account with the bank: the bank comes from our list and the name is what the customer typed.
+  // Staff compare it with their own bank app before paying.
+  let resolvedAccountName: string | null = null
+  let resolvedBankName: string | null = null
   if (payoutMethod === 'BankTransfer') {
-    if (!accountNumber || !bankCode) {
-      return NextResponse.json({ error: 'Bank code and account number are required' }, { status: 400 })
+    const bank = bankByCode(bankCode)
+    if (!bank || !/^\d{10}$/.test(String(accountNumber))) {
+      return NextResponse.json({ error: 'Choose your bank and enter your 10-digit account number.' }, { status: 400 })
     }
-    try {
-      const resolved = await resolveAccount(String(accountNumber), String(bankCode))
-      resolvedAccountName = resolved.accountName
-    } catch {
-      return NextResponse.json({ error: 'Could not verify that bank account. Check the account number and bank.' }, { status: 400 })
-    }
+    resolvedAccountName = cleanAccountName(body.accountName)
+    if (!resolvedAccountName) return NextResponse.json({ error: 'Enter the account name exactly as it is on the bank account.' }, { status: 400 })
+    resolvedBankName = bank.name
   }
 
   const hasCashDeposit = await planHasCashDeposit(prisma, plan.id)
@@ -117,10 +117,10 @@ export async function POST(req: NextRequest) {
     token: tokenHash,
     tokenExpiry,
     payoutMethod,
-    accountNumber: accountNumber || null,
+    accountNumber: payoutMethod === 'BankTransfer' ? String(accountNumber) : null,
     accountName: resolvedAccountName,
-    bankCode: bankCode || null,
-    bankName: bankName || null,
+    bankCode: payoutMethod === 'BankTransfer' ? String(bankCode) : null,
+    bankName: resolvedBankName,
   }))
 
   logAudit({

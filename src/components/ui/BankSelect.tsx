@@ -6,7 +6,7 @@ import { Icons } from './icons'
 type Bank = { code: string; name: string }
 
 type Props = {
-  banks: Bank[]
+  banks: readonly Bank[]
   value: Bank | null
   onChange: (bank: Bank) => void
   loading?: boolean

@@ -425,6 +425,7 @@ export default function AgentWithdrawalsPage() {
             <LedgerRow label="Bank">{pinModal.bankName ?? '—'}</LedgerRow>
             <LedgerRow label="Account number"><span className="am-acct">{pinModal.accountNumber ?? '—'}</span></LedgerRow>
           </Ledger>
+          <p className="a-hint cm-gap">The account name is what was typed, not checked with the bank. Compare it with the name your bank app shows before you pay.</p>
           <form onSubmit={e => { e.preventDefault(); confirmApprove() }} noValidate>
             {manual && (
               <Field id="wd-ref" label="Transfer reference (optional)" hint="Your bank transfer reference. It is saved with the payout.">

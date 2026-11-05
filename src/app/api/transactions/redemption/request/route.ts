@@ -11,10 +11,8 @@ import { collectionFee } from '@/lib/commission-ledger'
 import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
 import { escapeHtml } from '@/lib/escape-html'
-import { listBanks, PaystackRejected, resolveAccount } from '@/lib/paystack'
-import { accountNameMatches, AGENT_REQUEST_PREFIX, otherNameWarning, payoutDestination } from '@/lib/payout-account'
-
-const MISMATCHED_ACCOUNT = 'Paystack resolved a different account'
+import { bankByCode } from '@/lib/banks'
+import { accountNameMatches, AGENT_REQUEST_PREFIX, cleanAccountName, otherNameWarning, payoutDestination } from '@/lib/payout-account'
 
 export async function POST(req: NextRequest) {
   try {
@@ -26,6 +24,8 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json()
     const { planId, customerId, payoutMethod, accountNumber, bankCode } = body
+    const typedAccountName = cleanAccountName(body.accountName)
+    const listedBank = bankByCode(bankCode)
     if (typeof planId !== 'string' || !planId || typeof customerId !== 'string' || !customerId) {
       return NextResponse.json({ error: 'Missing fields: planId and customerId required' }, { status: 400 })
     }
@@ -34,8 +34,11 @@ export async function POST(req: NextRequest) {
     if (isBank && (!accountNumber || !bankCode)) {
       return NextResponse.json({ error: 'Bank account details required for Bank Transfer payout' }, { status: 400 })
     }
-    if (isBank && (!/^\d{10}$/.test(String(accountNumber)) || !/^\w+$/.test(String(bankCode)))) {
+    if (isBank && (!/^\d{10}$/.test(String(accountNumber)) || !listedBank)) {
       return NextResponse.json({ error: 'Account numbers have 10 digits. Check the account number and bank.' }, { status: 400 })
+    }
+    if (isBank && !typedAccountName) {
+      return NextResponse.json({ error: 'Enter the account name exactly as it is on the bank account.' }, { status: 400 })
     }
 
     const plan = await prisma.savingsPlan.findFirst({
@@ -49,27 +52,11 @@ export async function POST(req: NextRequest) {
     if (!['Active', 'Matured'].includes(plan.status)) return NextResponse.json({ error: `Plan status is "${plan.status}" — must be Active or Matured` }, { status: 400 })
     if (plan.balance <= 0) return NextResponse.json({ error: 'No balance to redeem' }, { status: 400 })
 
-    // The account and its name come from Paystack, never the request, and must be the customer's own: the agent
-    // chooses where this goes, and the customer's code doesn't check it.
-    let resolvedAccountName: string | null = null
-    let resolvedBankName: string | null = null
-    let nameCheckHeld = false
-    if (isBank) {
-      try {
-        const resolved = await resolveAccount(String(accountNumber), String(bankCode))
-        if (resolved.accountNumber !== String(accountNumber)) throw new Error(MISMATCHED_ACCOUNT)
-        resolvedAccountName = resolved.accountName
-        resolvedBankName = (await listBanks()).find(b => b.code === String(bankCode))?.name ?? null
-      } catch (err) {
-        const error = err instanceof PaystackRejected || (err instanceof Error && err.message === MISMATCHED_ACCOUNT)
-          ? 'Could not verify that bank account. Check the account number and bank.'
-          : 'We can’t check this account right now. Try again shortly, or pay in cash.'
-        return NextResponse.json({ error }, { status: 400 })
-      }
-      if (!resolvedBankName) return NextResponse.json({ error: 'Could not verify that bank account. Check the account number and bank.' }, { status: 400 })
-      // Not refused, because real names differ on bank records: held for a super admin, who sees both names. See heldForNameCheck.
-      nameCheckHeld = !accountNameMatches(resolvedAccountName, plan.customer)
-    }
+    // Nothing checks the account with the bank, so the name is what the agent typed. A name that isn't the customer's is
+    // held for a super admin, who sees both names and checks the account in their own bank app before paying. See heldForNameCheck.
+    const resolvedAccountName: string | null = isBank ? typedAccountName : null
+    const resolvedBankName: string | null = isBank ? listedBank!.name : null
+    const nameCheckHeld = isBank && !accountNameMatches(typedAccountName!, plan.customer)
 
     const existing = await prisma.earlyRedemption.findFirst({
       where: { savingsPlanId: planId, status: { in: IN_FLIGHT_REDEMPTION_STATUSES }, ...excludeExpiredPending() },

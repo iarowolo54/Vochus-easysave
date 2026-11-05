@@ -3,6 +3,8 @@ import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import CustomerBottomNav from '@/components/customer/CustomerBottomNav'
 import BankSelect from '@/components/ui/BankSelect'
+import { NIGERIAN_BANKS } from '@/lib/banks'
+import { cleanAccountName } from '@/lib/payout-account'
 import CodeBoxes from '@/components/ui/CodeBoxes'
 import EmptyState from '@/components/ui/EmptyState'
 import { FormError } from '@/components/ui/FormErrors'
@@ -12,7 +14,6 @@ import { Icons } from '@/components/ui/icons'
 import { formatDate, formatNaira } from '@/lib/format'
 import { IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
 
-type Bank = { code: string; name: string }
 type Redemption = {
   id: string; ref: string; status: string; balance: number; penalty: number
   netPayout: number; requestedAt: string; token?: string; tokenExpiry?: string
@@ -53,13 +54,10 @@ export default function CustomerRedeemPage() {
   const [step, setStep] = useState<'idle' | 'form' | 'token' | 'done' | 'resume-token' | 'awaiting'>('idle')
   const [reason, setReason] = useState('')
   const [useBankTransfer, setUseBankTransfer] = useState(false)
-  const [banks, setBanks] = useState<Bank[]>([])
   const [bankCode, setBankCode] = useState('')
   const [accountNumber, setAccountNumber] = useState('')
   const [accountName, setAccountName] = useState('')
   const [bankName, setBankName] = useState('')
-  const [resolving, setResolving] = useState(false)
-  const [resolveFailed, setResolveFailed] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [token, setToken] = useState('')
   const [tokenInput, setTokenInput] = useState('')
@@ -79,38 +77,12 @@ export default function CustomerRedeemPage() {
       .then(d => { if (d.redemptions) setRedemptions(d.redemptions) })
       .catch(() => {})
       .finally(() => setLoading(false))
-
-    fetch('/api/paystack/banks')
-      .then(r => r.json())
-      .then(d => { if (d.banks) setBanks(d.banks) })
-      .catch(() => {})
   }, [router])
-
-  async function resolveAccount(acctNum = accountNumber, code = bankCode) {
-    if (!acctNum || acctNum.length < 10 || !code) return
-    setResolving(true)
-    setAccountName('')
-    setResolveFailed(false)
-    try {
-      const res = await fetch(`/api/paystack/resolve-account?accountNumber=${acctNum}&bankCode=${code}`)
-      const data = await res.json()
-      if (data.accountName) {
-        setAccountName(data.accountName)
-        const b = banks.find(b => b.code === code)
-        setBankName(b?.name ?? '')
-      } else {
-        setResolveFailed(true)
-      }
-    } catch {
-      setResolveFailed(true)
-    }
-    finally { setResolving(false) }
-  }
 
   async function submitRequest() {
     setError('')
     if (!reason) { setError('Choose why you’re collecting.'); return }
-    if (useBankTransfer && !accountName) { setError('Add your bank account, or choose cash from your agent.'); return }
+    if (useBankTransfer && (!bankCode || accountNumber.length !== 10 || !cleanAccountName(accountName))) { setError('Choose your bank, enter your 10-digit account number and the account name, or choose cash from your agent.'); return }
     setSubmitting(true)
     try {
       const res = await fetch('/api/customer/redeem', {
@@ -118,7 +90,7 @@ export default function CustomerRedeemPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           reason,
-          ...(useBankTransfer && accountNumber && accountName ? { accountNumber, accountName, bankCode, bankName } : {}),
+          ...(useBankTransfer ? { accountNumber, accountName: accountName.trim(), bankCode } : {}),
         }),
       })
       const data = await res.json()
@@ -297,33 +269,23 @@ export default function CustomerRedeemPage() {
 
               {useBankTransfer && (
                 <div className="ag-bank-fields">
-                  <BankSelect banks={banks} loading={banks.length === 0} placeholder="Choose your bank" value={bankCode ? { code: bankCode, name: bankName || banks.find(b => b.code === bankCode)?.name || '' } : null}
-                    onChange={b => { setBankCode(b.code); setBankName(b.name); setAccountName(''); if (accountNumber.length === 10) resolveAccount(accountNumber, b.code) }} />
+                  <BankSelect banks={NIGERIAN_BANKS} placeholder="Choose your bank" value={bankCode ? { code: bankCode, name: bankName } : null}
+                    onChange={b => { setBankCode(b.code); setBankName(b.name) }} />
                   <div className="ag-tf-wrap">
-                    <div className={`ag-tf${resolveFailed ? ' is-invalid' : ''}${!bankCode ? ' is-disabled' : ''}`}>
+                    <div className={`ag-tf${!bankCode ? ' is-disabled' : ''}`}>
                       <label className="ag-tf-label" htmlFor="acct">Account number</label>
                       <input id="acct" className="ag-tf-input ag-tf-num" type="tel" inputMode="numeric" maxLength={10} placeholder="10 digits" disabled={!bankCode}
-                        value={accountNumber} aria-invalid={resolveFailed || undefined}
-                        onChange={e => {
-                          const v = e.target.value.replace(/\D/g, '').slice(0, 10)
-                          setAccountNumber(v)
-                          setAccountName('')
-                          setResolveFailed(false)
-                          if (v.length === 10 && bankCode) resolveAccount(v)
-                        }} />
+                        value={accountNumber} onChange={e => setAccountNumber(e.target.value.replace(/\D/g, '').slice(0, 10))} />
                     </div>
-                    {resolving && <p className="ag-fineprint"><span className="ui-spinner ui-spinner--sm ag-spin-dark ag-inline-spin" aria-hidden="true" /> Checking the account…</p>}
-                    {resolveFailed && !resolving && <p className="ui-field-error"><Icons.error size={16} aria-hidden="true" /> We couldn’t find this account. Check the number and bank.</p>}
                   </div>
-                  {accountName && !resolving && (
-                    <div className="ag-verified ag-verified--sm">
-                      <span className="ag-verified-icon" aria-hidden="true"><Icons.check size={18} /></span>
-                      <div>
-                        <p className="ui-row-sub">Account name</p>
-                        <p className="ui-row-title">{accountName}</p>
-                      </div>
+                  <div className="ag-tf-wrap">
+                    <div className={`ag-tf${!bankCode ? ' is-disabled' : ''}`}>
+                      <label className="ag-tf-label" htmlFor="acct-name">Account name</label>
+                      <input id="acct-name" className="ag-tf-input" autoComplete="off" autoCapitalize="characters" maxLength={80} placeholder="As it is on the account" disabled={!bankCode}
+                        value={accountName} onChange={e => setAccountName(e.target.value)} />
                     </div>
-                  )}
+                    <p className="ag-fineprint">Type it exactly as your bank shows it. We check it before we pay.</p>
+                  </div>
                 </div>
               )}
 

@@ -3,6 +3,8 @@
 import { useState, useEffect, type ReactNode } from 'react'
 import Link from 'next/link'
 import BankSelect from '@/components/ui/BankSelect'
+import { NIGERIAN_BANKS } from '@/lib/banks'
+import { cleanAccountName } from '@/lib/payout-account'
 import BottomSheet from '@/components/ui/BottomSheet'
 import EmptyState from '@/components/ui/EmptyState'
 import { FieldError, FormError } from '@/components/ui/FormErrors'
@@ -33,13 +35,9 @@ export default function SettingsPage() {
 
   // Bank
   const [bank, setBank] = useState<Bank | null>(null)
-  const [banks, setBanks] = useState<{ code: string; name: string }[]>([])
-  const [banksLoading, setBanksLoading] = useState(true)
   const [pick, setPick] = useState<{ code: string; name: string } | null>(null)
   const [accountNumber, setAccountNumber] = useState('')
-  const [resolved, setResolved] = useState('')
-  const [resolving, setResolving] = useState(false)
-  const [resolveError, setResolveError] = useState('')
+  const [accountName, setAccountName] = useState('')
   const [bankError, setBankError] = useState('')
   const [bankBusy, setBankBusy] = useState(false)
 
@@ -78,28 +76,7 @@ export default function SettingsPage() {
       .then(d => setAgent(d.agent))
       .catch(() => setFailed(true))
     fetch('/api/agent/bank').then(r => r.json()).then(d => { if (d.bank) setBank(d.bank) }).catch(() => {})
-    fetch('/api/paystack/banks').then(r => r.json()).then(d => setBanks(d.banks ?? [])).catch(() => {}).finally(() => setBanksLoading(false))
   }, [])
-
-  // Look up the account name as soon as a bank and 10 digits are in.
-  useEffect(() => {
-    setResolved(''); setResolveError('')
-    if (sheet !== 'bank' || !pick || !/^\d{10}$/.test(accountNumber)) return
-    setResolving(true)
-    const t = setTimeout(async () => {
-      try {
-        const res = await fetch(`/api/paystack/resolve-account?accountNumber=${accountNumber}&bankCode=${pick.code}`)
-        const d = await res.json()
-        if (res.ok && d.accountName) setResolved(d.accountName)
-        else setResolveError(d.error ?? 'We couldn’t confirm this account with the bank.')
-      } catch {
-        setResolveError('No connection. We couldn’t confirm this account.')
-      } finally {
-        setResolving(false)
-      }
-    }, 400)
-    return () => { clearTimeout(t); setResolving(false) }
-  }, [sheet, pick, accountNumber])
 
   function openProfile() {
     if (!agent) return
@@ -110,6 +87,7 @@ export default function SettingsPage() {
   function openBank() {
     setPick(bank?.bankCode ? { code: bank.bankCode, name: bank.bankName ?? '' } : null)
     setAccountNumber(bank?.accountNumber ?? '')
+    setAccountName(bank?.accountName ?? '')
     setBankError('')
     setSheet('bank')
   }
@@ -173,15 +151,15 @@ export default function SettingsPage() {
     }
   }
 
-  async function saveBank(confirmedUnverified = false) {
+  async function saveBank() {
     if (!pick || !/^\d{10}$/.test(accountNumber)) { setBankError('Choose your bank and enter your 10-digit account number.'); return }
-    if (!resolved && !confirmedUnverified) return
+    if (!cleanAccountName(accountName)) { setBankError('Enter the account name exactly as it is on the bank account.'); return }
     setBankBusy(true); setBankError('')
     try {
       const res = await fetch('/api/agent/bank', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bankCode: pick.code, bankName: pick.name, accountNumber }),
+        body: JSON.stringify({ bankCode: pick.code, accountNumber, accountName: accountName.trim() }),
       })
       const text = await res.text()
       const d = text ? JSON.parse(text) : {}
@@ -228,7 +206,7 @@ export default function SettingsPage() {
   }
   if (!agent) return <div className="ag-page"><ListSkeleton count={5} /></div>
 
-  const verified = !!bank?.accountName
+  const hasName = !!bank?.accountName
   const savedBank = !!bank?.accountNumber
 
   return (
@@ -258,21 +236,21 @@ export default function SettingsPage() {
           </section>
 
           <div className="ui-section-head"><h2>Payout account</h2>
-            <span className={`ag-crow-tag ${verified ? 'ag-crow-tag--ok' : savedBank ? 'ag-crow-tag--soon' : 'ag-crow-tag--due'}`}>{verified ? 'Confirmed' : savedBank ? 'Not confirmed' : 'Not added'}</span>
+            <span className={`ag-crow-tag ${hasName ? 'ag-crow-tag--ok' : savedBank ? 'ag-crow-tag--soon' : 'ag-crow-tag--due'}`}>{hasName ? 'Added' : savedBank ? 'Name missing' : 'Not added'}</span>
           </div>
           <section className="ui-card ag-set-card">
             {savedBank ? (
               <div className="ag-set-bank">
                 <span className="ag-topup-icon" aria-hidden="true"><Icons.loan size={20} /></span>
                 <div className="ag-crow-main">
-                  <p className="ag-crow-name">{bank?.accountName || 'Name not confirmed'}</p>
+                  <p className="ag-crow-name">{bank?.accountName || 'Account name missing'}</p>
                   <p className="ui-row-sub">{bank?.bankName} · <span className="ag-mono">{bank?.accountNumber}</span></p>
                 </div>
               </div>
             ) : (
               <p className="ui-row-sub">Add the bank account your commission is paid into.</p>
             )}
-            {savedBank && !verified && <p className="ag-set-note ag-set-note--warn"><Icons.error size={16} aria-hidden="true" /> The bank didn’t confirm the name on this account. Save it again to retry.</p>}
+            {savedBank && !hasName && <p className="ag-set-note ag-set-note--warn"><Icons.error size={16} aria-hidden="true" /> This account has no name on it. Change the account and add the name so your payout can be sent.</p>}
             <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={openBank}>{savedBank ? 'Change account' : 'Add bank account'}</button>
           </section>
 
@@ -347,31 +325,23 @@ export default function SettingsPage() {
       </BottomSheet>
 
       <BottomSheet open={sheet === 'bank'} onClose={() => { if (!bankBusy) setSheet(null) }} title={savedBank ? 'Change payout account' : 'Add payout account'}>
-        <p className="ag-sheet-text">Your commission is paid into this account. Use an account in your own name.</p>
+        <p className="ag-sheet-text">Your commission is paid into this account. Use an account in your own name, and type the account name exactly as your bank shows it.</p>
         <div className="ag-tf-wrap">
-          <BankSelect banks={banks} loading={banksLoading} placeholder="Choose your bank" value={pick} onChange={b => { setPick(b); setBankError('') }} />
+          <BankSelect banks={NIGERIAN_BANKS} placeholder="Choose your bank" value={pick} onChange={b => { setPick(b); setBankError('') }} />
         </div>
         <Field id="bk-acct" label="Account number">
           <input id="bk-acct" className="ag-tf-input ag-tf-num" type="tel" inputMode="numeric" maxLength={10} placeholder="10 digits"
             value={accountNumber} onKeyDown={blockNonDigit} onChange={e => { setAccountNumber(digitsOnly(e.target.value).slice(0, 10)); setBankError('') }} />
         </Field>
-        {resolving && <p className="ag-fineprint"><span className="ui-spinner ui-spinner--sm ag-spin-dark ag-inline-spin" aria-hidden="true" /> Checking with the bank…</p>}
-        {resolved && (
-          <div className="ag-verified ag-verified--sm">
-            <span className="ag-verified-icon" aria-hidden="true"><Icons.check size={18} /></span>
-            <div><p className="ui-row-sub">Account name</p><p className="ui-row-title">{resolved}</p></div>
-          </div>
-        )}
-        {resolveError && <p className="ag-set-note ag-set-note--warn"><Icons.error size={16} aria-hidden="true" /> {resolveError} Check the number, or save it anyway and we’ll retry later.</p>}
+        <Field id="bk-name" label="Account name">
+          <input id="bk-name" className="ag-tf-input" autoComplete="off" autoCapitalize="characters" maxLength={80} placeholder="As it is on the account"
+            value={accountName} onChange={e => { setAccountName(e.target.value); setBankError('') }} />
+        </Field>
         <FormError message={bankError} />
         <div className="ui-stack">
-          {resolved || !resolveError
-            ? <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={bankBusy || resolving || !resolved} onClick={() => saveBank()}>
-                {bankBusy ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Saving…</> : 'Save account'}
-              </button>
-            : <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={bankBusy} onClick={() => saveBank(true)}>
-                {bankBusy ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Saving…</> : 'Save without confirming'}
-              </button>}
+          <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={bankBusy} onClick={() => saveBank()}>
+            {bankBusy ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Saving…</> : 'Save account'}
+          </button>
           <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" disabled={bankBusy} onClick={() => setSheet(null)}>Cancel</button>
         </div>
       </BottomSheet>

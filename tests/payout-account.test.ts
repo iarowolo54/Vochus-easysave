@@ -52,3 +52,20 @@ test('only an agent\'s bank payout in another name is held', () => {
 test('the warning names the account and tells the customer not to share the code', () => {
   assert.equal(otherNameWarning('SOME AGENT'), "This account is in the name SOME AGENT, not yours. Don't share this code unless you agreed to this.")
 })
+
+test('an account name is kept as typed, with spacing tidied, and refused when it is not a name', async () => {
+  const { cleanAccountName } = await import('../src/lib/payout-account')
+  assert.equal(cleanAccountName('  Ada   OBI '), 'Ada OBI')
+  assert.equal(cleanAccountName("JOHN O’NEIL-ADE"), "JOHN O’NEIL-ADE")
+  assert.equal(cleanAccountName('Adébáyọ̀ Ọlá'), 'Adébáyọ̀ Ọlá')
+  for (const bad of ['', 'ab', '12345', 'Ada <b>', 'Ada\u0000Obi', 'x'.repeat(81), null, undefined, 42]) assert.equal(cleanAccountName(bad), null, String(bad))
+})
+
+test('banks come from our own list and only a listed code is accepted', async () => {
+  const { bankByCode, NIGERIAN_BANKS } = await import('../src/lib/banks')
+  assert.equal(bankByCode('058')?.name, 'Guaranty Trust Bank')
+  assert.equal(bankByCode('nope'), null)
+  assert.equal(bankByCode(undefined), null)
+  assert.equal(new Set(NIGERIAN_BANKS.map(b => b.code)).size, NIGERIAN_BANKS.length, 'codes are unique')
+  assert.equal(new Set(NIGERIAN_BANKS.map(b => b.name)).size, NIGERIAN_BANKS.length, 'names are unique')
+})
