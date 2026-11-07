@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { randomBytes } from 'node:crypto'
 import { getCustomerSession } from '@/lib/customer-auth'
+import { isFlexible } from '@/lib/flexible-savings'
 import { prisma } from '@/lib/prisma'
 import { createPaymentIntent } from '@/lib/payment-intent'
 import { initCardAuthorization } from '@/lib/paystack'
@@ -34,6 +35,7 @@ export async function POST(req: NextRequest) {
     where: { id: planId, customerId: customer.id, status: 'Active', source: 'self' },
   })
   if (!plan) return NextResponse.json({ error: 'Auto-debit is only available on active online plans' }, { status: 400 })
+  if (isFlexible(plan.cadence)) return NextResponse.json({ error: 'Automatic saving isn’t available on flexible plans.' }, { status: 400 })
 
   if (await hasOpenRedemption(prisma, plan.id)) {
     return NextResponse.json({ error: 'You’ve asked to collect from this plan. You can’t set up auto-debit until that request is finished.' }, { status: 409 })

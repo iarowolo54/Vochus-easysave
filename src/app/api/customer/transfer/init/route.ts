@@ -3,6 +3,7 @@ import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { requireEnv } from '@/lib/env'
+import { getFlexibleSettings, isFlexible } from '@/lib/flexible-savings'
 import { planHasEnded, PLAN_ENDED } from '@/lib/plan-credit'
 import { hasOpenRedemption } from '@/lib/redemption-balance'
 import { createTransferIntent } from '@/lib/transfer-intent'
@@ -37,6 +38,12 @@ export async function POST(req: NextRequest) {
   if (planHasEnded(plan)) return NextResponse.json({ error: PLAN_ENDED }, { status: 409 })
   if (await hasOpenRedemption(prisma, plan.id)) {
     return NextResponse.json({ error: 'You’ve asked to collect from this plan. You can’t add money until that request is finished.' }, { status: 409 })
+  }
+
+  // Flexible plans: the super admin's smallest deposit, never below the ₦100 every transfer needs.
+  if (!catchup && isFlexible(plan.cadence)) {
+    const min = Math.max(100, (await getFlexibleSettings(prisma)).minDeposit)
+    if (amount < min) return NextResponse.json({ error: `The smallest deposit is ₦${min.toLocaleString('en-NG')}.` }, { status: 400 })
   }
 
   if (catchup) {

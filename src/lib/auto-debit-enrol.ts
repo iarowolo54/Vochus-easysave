@@ -3,6 +3,7 @@
 // mandate side, so the webhook winning the race no longer leaves the money saved with no mandate.
 import type { PrismaClient } from '@prisma/client'
 import { createMandateFromAuthorization } from '@/lib/auto-debit'
+import { isFlexible } from '@/lib/flexible-savings'
 import type { PaystackAuthorization } from '@/lib/paystack'
 
 export const isEnrolmentRef = (reference: string) => reference.startsWith('addenroll-')
@@ -31,6 +32,8 @@ export async function ensureEnrolmentMandate(
     client.savingsPlan.findFirst({ where: { id: credit.planId, customerId: credit.customerId, source: 'self' } }),
   ])
   if (!customer || !plan) return 'not-self'
+  // Flexible plans have no set amount to charge.
+  if (isFlexible(plan.cadence)) return 'not-self'
 
   try {
     const made = await createMandateFromAuthorization(client, {

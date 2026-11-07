@@ -10,6 +10,7 @@ import { selectActivePlan, depositCreatedAt, hasSavingOnDay, ALREADY_SAVED_TODAY
 import { planHasEnded, PLAN_ENDED } from '@/lib/plan-credit'
 import { creditOpenPlan, hasOpenRedemption, PLAN_CLOSED, PlanClosedError, SAVING_BLOCKED } from '@/lib/redemption-balance'
 import { depositFeeOps } from '@/lib/commission-ledger'
+import { getFlexibleSettings, isFlexible } from '@/lib/flexible-savings'
 
 class AlreadySavedError extends Error {}
 
@@ -42,12 +43,18 @@ export async function POST(req: NextRequest) {
   }
   const plan = selected.plan
 
-  const dates = await prisma.savingsPlan.findUnique({ where: { id: plan.id }, select: { maturityDate: true } })
+  const dates = await prisma.savingsPlan.findUnique({ where: { id: plan.id }, select: { maturityDate: true, cadence: true } })
   if (!dates || planHasEnded(dates)) return NextResponse.json({ error: PLAN_ENDED }, { status: 409 })
 
   if (await hasOpenRedemption(prisma, plan.id)) return NextResponse.json({ error: SAVING_BLOCKED }, { status: 409 })
 
   const rounded = money(amt)
+  // Flexible plans: any amount from the smallest deposit up, as often as the customer likes (no one-a-day rule).
+  const flexible = isFlexible(dates.cadence)
+  if (flexible) {
+    const { minDeposit } = await getFlexibleSettings(prisma)
+    if (rounded < minDeposit) return NextResponse.json({ error: `The smallest deposit is ₦${minDeposit.toLocaleString('en-NG')}.` }, { status: 400 })
+  }
   // SR-3: ignore a client backdate on online (self) plans.
   const createdAt = depositCreatedAt(plan.source, date)
 
@@ -71,7 +78,7 @@ export async function POST(req: NextRequest) {
   try {
     txn = await prisma.$transaction(async (tx) => {
       // One saving per plan per day. Checked inside the write so two quick taps can't both pass.
-      if (await hasSavingOnDay(tx, plan.id, createdAt ?? new Date())) throw new AlreadySavedError()
+      if (!flexible && await hasSavingOnDay(tx, plan.id, createdAt ?? new Date())) throw new AlreadySavedError()
       // Atomically debit the agent's wallet; concurrent savings can't overdraw.
       const debited = await debitAgentBalance(tx, agent.id, 'walletBalance', rounded)
       if (!debited) throw new InsufficientFundsError('Agent wallet', agent.walletBalance, rounded)

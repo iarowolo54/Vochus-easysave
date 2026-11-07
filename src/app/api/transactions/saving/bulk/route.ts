@@ -6,6 +6,7 @@ import { logAudit } from '@/lib/audit'
 import { insufficientResponse, InsufficientFundsError, money } from '@/lib/wallet-guard'
 import { debitAgentBalance } from '@/lib/wallet-debit'
 import { creditRegistrationReward } from '@/lib/reward'
+import { isFlexible } from '@/lib/flexible-savings'
 import { selectActivePlan, hasSavingOnDay, ALREADY_SAVED_TODAY } from '@/lib/saving-plan'
 import { creditOpenPlan, hasOpenRedemption, PLAN_CLOSED, PlanClosedError, SAVING_BLOCKED } from '@/lib/redemption-balance'
 import { chargingKeys, checkBulkSelection, liveSlots } from '@/lib/bulk-savings'
@@ -79,6 +80,7 @@ export async function POST(req: NextRequest) {
   }
   const plan = await prisma.savingsPlan.findUnique({ where: { id: selected.plan.id } })
   if (!plan) return NextResponse.json({ error: 'No active savings plan' }, { status: 400 })
+  if (isFlexible(plan.cadence)) return NextResponse.json({ error: 'Flexible plans don’t use set days. Record one deposit of any amount instead.' }, { status: 400 })
   if (await hasOpenRedemption(prisma, plan.id)) return NextResponse.json({ error: SAVING_BLOCKED }, { status: 409 })
 
   // Online plans follow the same rules as the customer's own Bulk Savings: WAT slot keys, a week costs 7 days,
