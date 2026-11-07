@@ -26,7 +26,7 @@ interface CustomerTile {
 
 interface DayData { amount: number; ref: string; time: string }
 interface CalCustomer { id: string; customerId: string; name: string; phone: string }
-interface CalPlan { id: string; goal?: string; dailyAmount: number; periodDays: number; startDate: string; maturityDate: string; balance: number }
+interface CalPlan { id: string; goal?: string; dailyAmount: number; periodDays: number; cadence?: string | null; startDate: string; maturityDate: string; balance: number }
 
 /** ₦500 → "500", ₦12,500 → "12.5k": fits inside a calendar day. */
 function compact(n: number) {
@@ -133,13 +133,20 @@ function CalendarPage() {
   const planStart = plan?.startDate ? new Date(plan.startDate) : null
   const startKey = planStart ? new Date(planStart.getFullYear(), planStart.getMonth(), planStart.getDate()).getTime() : null
   const beforePlan = (d: number) => startKey !== null && new Date(calYear, calMonth, d).getTime() < startKey
+  // From the plan's end date on, a day can't be saved for, so it is neither missed nor offered as a late saving.
+  const planEnd = plan?.maturityDate ? new Date(plan.maturityDate) : null
+  const endKey = planEnd ? new Date(planEnd.getFullYear(), planEnd.getMonth(), planEnd.getDate()).getTime() : null
+  const afterPlan = (d: number) => endKey !== null && new Date(calYear, calMonth, d).getTime() >= endKey
+  /** Flexible plans have no set days, so a day without a saving isn't a missed day. */
+  const flexCal = plan?.cadence === 'flexible'
+  const planRate = (p: { dailyAmount: number; cadence?: string | null }) => p.cadence === 'flexible' ? 'flexible' : `${formatNaira(p.dailyAmount, { minor: false })} a day`
 
   let savedCount = 0, missedCount = 0, totalSaved = 0, bestStreak = 0, cur = 0
   for (let d = 1; d <= maxDay; d++) {
     const v = days[d]?.amount ?? 0
-    if (v <= 0 && beforePlan(d)) continue
+    if (v <= 0 && (beforePlan(d) || afterPlan(d))) continue
     if (v > 0) { savedCount++; totalSaved += v; cur++; bestStreak = Math.max(bestStreak, cur) }
-    else if (!(isCurMo && d === today.getDate())) { missedCount++; cur = 0 }
+    else if (!flexCal && !(isCurMo && d === today.getDate())) { missedCount++; cur = 0 }
   }
   const counted = savedCount + missedCount
   const pct = counted > 0 ? Math.round(savedCount / counted * 100) : 0
@@ -247,7 +254,7 @@ function CalendarPage() {
         <span className={`ui-avatar ag-av ag-av--${avatarTint(selected.customerId)}`} aria-hidden="true">{initials(selected.name)}</span>
         <div className="ag-payee-main">
           <p className="ui-row-title">{displayName(selected.name)}</p>
-          <p className="ui-row-sub">{selected.customerId}{plan ? ` · ${formatNaira(plan.dailyAmount, { minor: false })} a day · ${plan.periodDays}-day plan` : ' · No active plan'}</p>
+          <p className="ui-row-sub">{selected.customerId}{plan ? ` · ${planRate(plan)} · ${plan.periodDays}-day plan` : ' · No active plan'}</p>
         </div>
         <Link href={`/dashboard/savings?cid=${encodeURIComponent(selected.customerId)}`} className="ui-btn ui-btn--primary ag-cal-record">
           <Icons.add size={18} aria-hidden="true" /> Record saving
@@ -259,13 +266,14 @@ function CalendarPage() {
           {plans.map(p => (
             <button key={p.id} type="button" className="ui-chip" aria-pressed={p.id === plan?.id}
               onClick={() => { setPlanId(p.id); setActiveDay(null) }}>
-              {p.goal ? `${p.goal} · ` : ''}{formatNaira(p.dailyAmount, { minor: false })} a day
+              {p.goal ? `${p.goal} · ` : ''}{planRate(p)}
             </button>
           ))}
         </div>
       )}
 
-      {plan && (
+      {/* Only while the plan is still running: an ended plan can't be saved into (Save again on Record saving reopens it). */}
+      {plan && !flexCal && (endKey === null || endKey > Date.now()) && (
         <Link href={`/dashboard/savings?cid=${encodeURIComponent(selected.customerId)}&bulk=1`}
           className="ui-btn ui-btn--secondary ui-btn--block ag-cal-catchup">
           <Icons.calendar size={18} aria-hidden="true" /> Catch up or pay ahead
@@ -288,12 +296,13 @@ function CalendarPage() {
               const d = i + 1
               const isToday = isCurMo && d === today.getDate()
               const isFuture = isFutureMonth || (isCurMo && d > today.getDate())
-              const before = beforePlan(d)
+              const after = afterPlan(d)
+              const before = beforePlan(d) || after
               const v = days[d]?.amount ?? 0
               // A day with money on it is always "saved", even before the current plan started (an earlier plan's saving).
-              const state = v > 0 ? 'saved' : before ? 'before' : isFuture ? 'future' : isToday ? 'today' : 'missed'
-              const clickable = state !== 'future' && state !== 'before'
-              const label = `${d} ${MONTHS[calMonth]}: ${state === 'saved' ? `saved ${formatNaira(v, { minor: false })}` : state === 'missed' ? 'missed' : state === 'today' ? 'today, not saved yet' : state === 'before' ? 'before the plan started' : 'upcoming'}`
+              const state = v > 0 ? 'saved' : before ? 'before' : isFuture ? 'future' : isToday ? 'today' : flexCal ? 'none' : 'missed'
+              const clickable = state !== 'future' && state !== 'before' && state !== 'none'
+              const label = `${d} ${MONTHS[calMonth]}: ${state === 'saved' ? `saved ${formatNaira(v, { minor: false })}` : state === 'missed' ? 'missed' : state === 'today' ? 'today, not saved yet' : state === 'before' ? (after ? 'after the plan ended' : 'before the plan started') : state === 'none' ? 'no saving' : 'upcoming'}`
               return (
                 <button key={d} type="button" className={`ag-cell ag-cell--${state}${isToday ? ' is-today' : ''}${activeDay === d ? ' is-active' : ''}`}
                   disabled={!clickable} aria-label={label} aria-pressed={activeDay === d} onClick={() => setActiveDay(d)}>
@@ -309,7 +318,7 @@ function CalendarPage() {
             <li><span className="ag-key ag-key--saved" aria-hidden="true" /> Saved</li>
             <li><span className="ag-key ag-key--missed" aria-hidden="true" /> Missed</li>
             <li><span className="ag-key ag-key--today" aria-hidden="true" /> Today</li>
-            {startKey !== null && <li><span className="ag-key ag-key--before" aria-hidden="true" /> Before plan</li>}
+            {startKey !== null && <li><span className="ag-key ag-key--before" aria-hidden="true" /> Outside the plan</li>}
           </ul>
         </section>
 
@@ -352,7 +361,7 @@ function CalendarPage() {
         {showLog && (
           <div className="ui-card ui-card--list">
             {maxDay === 0 && <p className="ui-note ui-note--center">Nothing yet for this month.</p>}
-            {Array.from({ length: maxDay }, (_, i) => maxDay - i).filter(d => (days[d]?.amount ?? 0) > 0 || !beforePlan(d)).map(d => {
+            {Array.from({ length: maxDay }, (_, i) => maxDay - i).filter(d => (days[d]?.amount ?? 0) > 0 || (!flexCal && !beforePlan(d) && !afterPlan(d))).map(d => {
               const v = days[d]?.amount ?? 0
               const isToday = isCurMo && d === today.getDate()
               const date = new Date(calYear, calMonth, d)

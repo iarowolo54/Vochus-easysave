@@ -29,6 +29,8 @@ export async function GET(req: NextRequest) {
 
   return NextResponse.json({
     planStartDate: toLocalDateStr(new Date(plan.startDate)),
+    // The last day a saving can be recorded for: the day before the plan's end date.
+    planLastDate: toLocalDateStr(new Date(plan.maturityDate.getFullYear(), plan.maturityDate.getMonth(), plan.maturityDate.getDate() - 1)),
     paidDates,
   })
 }

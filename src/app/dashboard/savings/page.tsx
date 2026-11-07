@@ -131,6 +131,8 @@ function SavingsContent() {
   // Online plans price and pick by slot, from the server's calendar. Null for offline plans.
   const [onlineCal, setOnlineCal] = useState<OnlineCalendar | null>(null)
   const [planStartDate, setPlanStartDate] = useState<string | null>(null)
+  /** Last day the plan runs (yyyy-mm-dd); days after it can't be picked. */
+  const [planLastDate, setPlanLastDate] = useState<string | null>(null)
   const [paidDatesLoading, setPaidDatesLoading] = useState(false)
   const [calendarView, setCalendarView] = useState<{ year: number; month: number }>(() => {
     const n = new Date(); return { year: n.getFullYear(), month: n.getMonth() }
@@ -151,7 +153,7 @@ function SavingsContent() {
   }, [refreshKey])
 
   useEffect(() => {
-    if (!planId) { setPlanStartDate(null); setPaidDates([]); setSelectedDates([]); setOnlineCal(null) }
+    if (!planId) { setPlanStartDate(null); setPlanLastDate(null); setPaidDates([]); setSelectedDates([]); setOnlineCal(null) }
     if (!bulkMode || !planId) return
     setPaidDatesLoading(true)
     const n = new Date()
@@ -165,14 +167,16 @@ function SavingsContent() {
           setOnlineCal(online)
           setPaidDates(online.slots.filter(s => s.state === 'saved').map(s => s.key))
           setPlanStartDate(online.slots[0]?.key ?? null)
+          setPlanLastDate(online.slots[online.slots.length - 1]?.key ?? null)
           return
         }
         setOnlineCal(null)
         const d = await fetch(`/api/transactions/saving/paid-dates?planId=${planId}`).then(r => r.json())
         setPaidDates(d.paidDates ?? [])
         setPlanStartDate(d.planStartDate ?? null)
+        setPlanLastDate(d.planLastDate ?? null)
       })
-      .catch(() => setPlanStartDate(null))
+      .catch(() => { setPlanStartDate(null); setPlanLastDate(null) })
       .finally(() => setPaidDatesLoading(false))
   }, [bulkMode, planId])
 
@@ -678,6 +682,7 @@ function SavingsContent() {
                     ) : <DayPicker
                       loading={paidDatesLoading}
                       planStartDate={planStartDate}
+                      planLastDate={planLastDate}
                       paidDates={paidDates}
                       selectedDates={selectedDates}
                       setSelectedDates={setSelectedDates}
@@ -833,9 +838,10 @@ function toDS(y: number, m: number, d: number) {
 
 type OnlineCalendar = { eligible: boolean; weekly: boolean; perSlot: number; slots: { key: string; state: string }[] }
 
-function DayPicker({ loading, planStartDate, paidDates, selectedDates, setSelectedDates, view, setView, dailyAmount, online }: {
+function DayPicker({ loading, planStartDate, planLastDate, paidDates, selectedDates, setSelectedDates, view, setView, dailyAmount, online }: {
   loading: boolean
   planStartDate: string | null
+  planLastDate: string | null
   paidDates: string[]
   selectedDates: string[]
   setSelectedDates: (fn: (prev: string[]) => string[]) => void
@@ -860,6 +866,8 @@ function DayPicker({ loading, planStartDate, paidDates, selectedDates, setSelect
   const selectedSet = new Set(selectedDates)
   const planStart = new Date(planStartDate + 'T00:00:00')
   const canGoPrev = new Date(year, month, 1) > new Date(planStart.getFullYear(), planStart.getMonth(), 1)
+  const planLast = planLastDate ? new Date(planLastDate + 'T00:00:00') : null
+  const canGoNext = !planLast || new Date(year, month + 1, 1) <= planLast
   const numDays = new Date(year, month + 1, 0).getDate()
   const offset = (new Date(year, month, 1).getDay() + 6) % 7
   const cells: (number | null)[] = [...Array(offset).fill(null), ...Array.from({ length: numDays }, (_, i) => i + 1)]
@@ -885,7 +893,7 @@ function DayPicker({ loading, planStartDate, paidDates, selectedDates, setSelect
           <Icons.back size={20} aria-hidden="true" />
         </button>
         <span className="ui-cal-title" aria-live="polite">{MONTHS[month]} {year}</span>
-        <button type="button" className="ui-icon-btn ui-icon-btn--soft" onClick={() => nav(1)} aria-label="Next month">
+        <button type="button" className="ui-icon-btn ui-icon-btn--soft" onClick={() => nav(1)} disabled={!canGoNext} aria-label="Next month">
           <Icons.next size={20} aria-hidden="true" />
         </button>
       </div>
@@ -897,7 +905,8 @@ function DayPicker({ loading, planStartDate, paidDates, selectedDates, setSelect
           if (!day) return <li key={idx} aria-hidden="true" />
           const ds = toDS(year, month, day)
           const slot = slotOf(ds)
-          const beforeStart = new Date(year, month, day) < planStart || slot === null
+          const afterEnd = !!planLast && new Date(year, month, day) > planLast
+          const beforeStart = new Date(year, month, day) < planStart || slot === null || afterEnd
           const isPaid = slot !== null && paidSet.has(slot)
           const isSel = slot !== null && selectedSet.has(slot)
           const isToday = ds === todayStr
@@ -913,7 +922,7 @@ function DayPicker({ loading, planStartDate, paidDates, selectedDates, setSelect
                 className={cls}
                 disabled={beforeStart || isPaid}
                 aria-pressed={isPaid ? undefined : isSel}
-                aria-label={`${label}${isPaid ? ', already paid' : beforeStart ? ', before the plan started' : ''}${isToday ? ', today' : ''}`}
+                aria-label={`${label}${isPaid ? ', already paid' : afterEnd ? ', after the plan ends' : beforeStart ? ', before the plan started' : ''}${isToday ? ', today' : ''}`}
                 onClick={() => { if (slot) setSelectedDates(prev => prev.includes(slot) ? prev.filter(x => x !== slot) : [...prev, slot]) }}
               >
                 {day}

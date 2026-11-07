@@ -28,7 +28,7 @@ export async function GET(req: NextRequest) {
     const plans = await prisma.savingsPlan.findMany({
       where: { customerId: customer.id, status: 'Active' },
       orderBy: { startDate: 'desc' },
-      select: { id: true, goal: true, dailyAmount: true, periodDays: true, startDate: true, maturityDate: true, balance: true },
+      select: { id: true, goal: true, dailyAmount: true, periodDays: true, cadence: true, startDate: true, maturityDate: true, balance: true },
     })
 
     const transactions = await prisma.transaction.findMany({
