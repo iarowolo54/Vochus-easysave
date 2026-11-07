@@ -13,7 +13,7 @@ export async function GET(req: NextRequest) {
   if (!planId) return NextResponse.json({ error: 'planId required' }, { status: 400 })
   const plan = await prisma.savingsPlan.findUnique({ where: { id: planId } })
   if (!plan) return NextResponse.json({ error: 'Savings plan not found' }, { status: 404 })
-  const fee = await collectionFee(prisma, { id: plan.id, cadence: plan.cadence, dailyAmount: plan.dailyAmount, source: plan.source, feeCollected: plan.feeCollected }, plan.balance, new Date())
+  const fee = await collectionFee(prisma, { id: plan.id, cadence: plan.cadence, dailyAmount: plan.dailyAmount, source: plan.source, feeCollected: plan.feeCollected, maturityDate: plan.maturityDate }, plan.balance, new Date())
   const legacy = redemptionDeduction({
     balance: plan.balance, dailyAmount: plan.dailyAmount, cadence: plan.cadence,
     hasCashDeposit: await planHasCashDeposit(prisma, plan.id), periodDays: plan.periodDays, initiator: 'admin', source: plan.source,

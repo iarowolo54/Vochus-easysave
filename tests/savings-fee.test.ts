@@ -70,3 +70,24 @@ test('feeSentence for a live weekly or monthly plan names the percentage', () =>
   assert.equal(feeSentence({ live: true, cadence: 'weekly', amountPerPayment: 10000, periodicFeePct: 7.5 }), 'A platform fee of 7.5% is taken from each deposit.')
   assert.equal(feeSentence({ live: true, cadence: 'monthly', amountPerPayment: 10000, periodicFeePct: 5 }), 'A platform fee of 5% is taken from each deposit.')
 })
+
+const flex = { cadence: 'flexible', dailyAmount: 0, feeCollected: 0 }
+
+test('a flexible deposit takes no fee, even though it is not daily', () => {
+  assert.deepEqual(depositFee({ ...flex, deposit: 2000 }, R), { fee: 0, agent: 0, platform: 0 })
+})
+
+test('settle-up on a flexible plan owes nothing here (its charge is worked out from the end date)', () => {
+  assert.deepEqual(settleUpFee({ ...flex, balance: 30000, preGoLiveDeposits: 30000 }, R), { fee: 0, agent: 0, platform: 0 })
+})
+
+test('a flexible plan preview has no per-deposit fee', () => {
+  assert.deepEqual(planFeePreview({ cadence: 'flexible', amountPerPayment: 0, totalSaved: 0, periodicFeePct: 7.5 }), { kind: 'flexible', total: 0 })
+})
+
+test('feeSentence for flexible names the commission and the penalty (cash) or only the penalty (online)', () => {
+  const base = { live: true, cadence: 'flexible', amountPerPayment: 0, periodicFeePct: 7.5 }
+  assert.equal(feeSentence({ ...base, flexible: { cashCommissionPct: 5, penaltyPct: 5, online: false } }), '5% is taken when they collect, plus 5% if they stop before the end date.')
+  assert.equal(feeSentence({ ...base, flexible: { cashCommissionPct: 5, penaltyPct: 5, online: true } }), 'No charge if you keep it to the end date. Stopping early costs 5%.')
+  assert.equal(feeSentence({ ...base, live: false, flexible: { cashCommissionPct: 5, penaltyPct: 5, online: true } }), 'No charge if you keep it to the end date. Stopping early costs 5%.')
+})

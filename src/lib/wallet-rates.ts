@@ -31,7 +31,8 @@ export function redemptionDeduction(opts: {
 }) {
   const { balance, dailyAmount, cadence, hasCashDeposit, periodDays, initiator, source } = opts
 
-  if (source === 'self') {
+  // Old (v1) rule only. Flexible plans are always charged through collectionFee / flexibleDeduction.
+  if (source === 'self' || cadence === 'flexible') {
     return { total: 0, platform: 0, agent: 0 }
   }
 

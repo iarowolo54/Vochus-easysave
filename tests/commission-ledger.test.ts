@@ -160,3 +160,44 @@ test('legacyPlatformShare counts the platform part (2/5) of earlier approved fee
   assert.equal(legacyPlatformShare(rows, new Set(['RED-1'])), 200)
   assert.equal(legacyPlatformShare([], new Set()), 0)
 })
+
+const FLEX = { id: 'p1', cadence: 'flexible', dailyAmount: 0, source: 'agent', feeCollected: 0 }
+const END = new Date(2027, 1, 10)
+
+test('a cash flexible plan collected early owes commission and penalty, agent part 60% and 40%', async () => {
+  const { client } = stubTx({ goLive: LIVE })
+  assert.deepEqual(await collectionFee(client, { ...FLEX, maturityDate: END }, 10000, new Date(2027, 0, 1)), { feeRule: 'v2', penalty: 1000, feeAgent: 500 })
+})
+
+test('a cash flexible plan collected on its end date owes the commission only', async () => {
+  const { client } = stubTx({ goLive: LIVE })
+  assert.deepEqual(await collectionFee(client, { ...FLEX, maturityDate: END }, 10000, new Date(2027, 1, 10, 9)), { feeRule: 'v2', penalty: 500, feeAgent: 300 })
+})
+
+test('an online flexible plan owes the penalty when stopped early, nothing at the end', async () => {
+  const { client } = stubTx({ goLive: LIVE })
+  const online = { ...FLEX, source: 'self', maturityDate: END }
+  assert.deepEqual(await collectionFee(client, online, 10000, new Date(2027, 0, 1)), { feeRule: 'v2', penalty: 500, feeAgent: 200 })
+  assert.deepEqual(await collectionFee(client, online, 10000, new Date(2027, 1, 11)), { feeRule: 'v2', penalty: 0, feeAgent: 0 })
+})
+
+test('flexible charges apply even before the savings go-live date (a new plan type has no old rule)', async () => {
+  const { client } = stubTx()
+  assert.deepEqual(await collectionFee(client, { ...FLEX, maturityDate: END }, 10000, new Date(2027, 0, 1)), { feeRule: 'v2', penalty: 1000, feeAgent: 500 })
+})
+
+test('flexible charges use the saved settings', async () => {
+  const { client } = stubTx({ goLive: LIVE })
+  const c = client as unknown as { platformSetting: { findUnique: (a: { where: { key: string } }) => Promise<unknown> } }
+  const orig = c.platformSetting.findUnique
+  c.platformSetting.findUnique = async (a) => a.where.key === 'flexibleSavings'
+    ? { value: JSON.stringify({ minTermMonths: 3, minDeposit: 100, cashCommissionPct: 2, cashCommissionAgentPct: 50, penaltyPct: 10, penaltyAgentPct: 0 }) }
+    : orig(a)
+  assert.deepEqual(await collectionFee(client, { ...FLEX, maturityDate: END }, 10000, new Date(2027, 0, 1)), { feeRule: 'v2', penalty: 1200, feeAgent: 100 })
+})
+
+test('a flexible deposit takes no fee', async () => {
+  const { tx, calls } = stubTx({ goLive: LIVE, plan: { cadence: 'flexible', dailyAmount: 0, source: 'agent', feeCollected: 0 } })
+  assert.equal(await depositFeeOps(tx, dep({ amount: 2000 })), 0)
+  assert.equal(calls.ledger.length + calls.planUpdates.length + calls.agentUpdates.length, 0)
+})

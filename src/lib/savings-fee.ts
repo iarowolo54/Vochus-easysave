@@ -1,5 +1,6 @@
 import { money } from '@/lib/money'
 import { pct } from '@/lib/commission-rates'
+import { isFlexible } from '@/lib/flexible-savings'
 
 /** The three Super Admin settings that decide every savings fee. All percent. */
 export interface FeeRules {
@@ -14,6 +15,7 @@ export interface FeeRules {
 export interface FeeSplit { fee: number; agent: number; platform: number }
 
 const isDaily = (cadence: string | null) => !cadence || cadence === 'daily'
+const NONE: FeeSplit = { fee: 0, agent: 0, platform: 0 }
 
 function split(fee: number, agentPct: number): FeeSplit {
   const f = money(fee)
@@ -26,6 +28,8 @@ function split(fee: number, agentPct: number): FeeSplit {
  * taken from the first deposit(s) until it has been collected; weekly and monthly plans take a percentage of each deposit.
  */
 export function depositFee(i: { cadence: string | null; dailyAmount: number; feeCollected: number; deposit: number }, r: FeeRules): FeeSplit {
+  // Flexible plans pay nothing per deposit; their charge is taken at collection (flexibleDeduction).
+  if (isFlexible(i.cadence)) return { ...NONE }
   if (isDaily(i.cadence)) {
     const owed = Math.max(0, i.dailyAmount - i.feeCollected)
     return split(Math.min(i.deposit, owed), r.dailyFirstAgentPct)
@@ -38,6 +42,7 @@ export function settleUpFee(
   i: { cadence: string | null; dailyAmount: number; feeCollected: number; balance: number; preGoLiveDeposits: number },
   r: FeeRules,
 ): FeeSplit {
+  if (isFlexible(i.cadence)) return { ...NONE }
   if (isDaily(i.cadence)) {
     return split(Math.max(0, Math.min(i.dailyAmount - i.feeCollected, i.balance)), r.dailyFirstAgentPct)
   }
@@ -46,13 +51,24 @@ export function settleUpFee(
 }
 
 /** The fee line on a new plan's preview: the first day's amount (daily) or a percentage of everything saved. */
-export function planFeePreview(i: { cadence: string | null; amountPerPayment: number; totalSaved: number; periodicFeePct: number }): { kind: 'first-day' | 'percent'; total: number } {
+export function planFeePreview(i: { cadence: string | null; amountPerPayment: number; totalSaved: number; periodicFeePct: number }): { kind: 'first-day' | 'percent' | 'flexible'; total: number } {
+  if (isFlexible(i.cadence)) return { kind: 'flexible', total: 0 }
   if (isDaily(i.cadence)) return { kind: 'first-day', total: money(i.amountPerPayment) }
   return { kind: 'percent', total: pct(i.totalSaved, i.periodicFeePct) }
 }
 
 /** The one-line fee note shown while a plan is being set up. Before go-live it keeps today's wording. */
-export function feeSentence(i: { live: boolean; cadence: string | null; amountPerPayment: number; periodicFeePct: number }): string {
+export function feeSentence(i: {
+  live: boolean; cadence: string | null; amountPerPayment: number; periodicFeePct: number
+  flexible?: { cashCommissionPct: number; penaltyPct: number; online: boolean }
+}): string {
+  // Flexible is new, so it has no "before go-live" wording.
+  if (isFlexible(i.cadence) && i.flexible) {
+    const f = i.flexible
+    return f.online
+      ? `No charge if you keep it to the end date. Stopping early costs ${f.penaltyPct}%.`
+      : `${f.cashCommissionPct}% is taken when they collect, plus ${f.penaltyPct}% if they stop before the end date.`
+  }
   if (!i.live) return 'A platform fee is taken when they collect.'
   if (isDaily(i.cadence)) {
     return `The first day's savings (₦${money(i.amountPerPayment).toLocaleString('en-NG', { maximumFractionDigits: 2 })}) is the platform fee, taken from their first deposit.`

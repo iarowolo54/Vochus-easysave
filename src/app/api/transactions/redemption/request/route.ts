@@ -68,7 +68,7 @@ export async function POST(req: NextRequest) {
     const customerName = `${plan.customer.firstName} ${plan.customer.lastName}`
 
     const hasCashDeposit = await planHasCashDeposit(prisma, plan.id)
-    const fee = await collectionFee(prisma, { id: plan.id, cadence: plan.cadence, dailyAmount: plan.dailyAmount, source: plan.source, feeCollected: plan.feeCollected }, plan.balance, new Date())
+    const fee = await collectionFee(prisma, { id: plan.id, cadence: plan.cadence, dailyAmount: plan.dailyAmount, source: plan.source, feeCollected: plan.feeCollected, maturityDate: plan.maturityDate }, plan.balance, new Date())
     const rates = redemptionDeduction({ balance: plan.balance, dailyAmount: plan.dailyAmount, cadence: plan.cadence, hasCashDeposit, periodDays: plan.periodDays, initiator: 'admin', source: (plan as any).source })
     const deduction = money(fee.feeRule === 'v2' ? fee.penalty : rates.total)
     const netPayout = money(plan.balance - deduction)

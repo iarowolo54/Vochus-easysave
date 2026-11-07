@@ -2,6 +2,7 @@ import type { Prisma, PrismaClient } from '@prisma/client'
 import { money } from '@/lib/money'
 import { feeRulesOf, getCommissionRates, pct, type CommissionRates } from '@/lib/commission-rates'
 import { depositFee, settleUpFee } from '@/lib/savings-fee'
+import { flexibleDeduction, getFlexibleSettings, isFlexible } from '@/lib/flexible-savings'
 
 export const GO_LIVE_KEY = 'commissionGoLive'
 
@@ -91,10 +92,16 @@ export async function depositFeeOps(
  */
 export async function collectionFee(
   client: Pick<PrismaClient, 'platformSetting' | 'transaction'>,
-  plan: { id: string; cadence: string | null; dailyAmount: number; source: string | null; feeCollected: number },
+  plan: { id: string; cadence: string | null; dailyAmount: number; source: string | null; feeCollected: number; maturityDate?: Date },
   balance: number,
   at: Date,
 ): Promise<{ feeRule: 'v1' } | { feeRule: 'v2'; penalty: number; feeAgent: number }> {
+  // Flexible plans: commission (cash) and, before the end date, a penalty (cash and online). New plan type, so no v1 rule.
+  if (isFlexible(plan.cadence)) {
+    if (!plan.maturityDate) throw new Error('collectionFee: flexible plan needs maturityDate')
+    const d = flexibleDeduction({ source: plan.source, balance, maturityDate: plan.maturityDate, at }, await getFlexibleSettings(client))
+    return { feeRule: 'v2', penalty: d.deduction, feeAgent: d.feeAgent }
+  }
   const goLive = await getGoLive(client)
   if (!goLive || at.getTime() < goLive.getTime()) return { feeRule: 'v1' }
   if (plan.source === 'self') return { feeRule: 'v2', penalty: 0, feeAgent: 0 }
