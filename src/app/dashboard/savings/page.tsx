@@ -35,7 +35,7 @@ interface Customer {
   savingsPlans?: SavingsPlan[]
 }
 /** `dailyAmount` is stored as a per-day equivalent; weekly / monthly plans pay 7 or 30 times that each time. */
-interface SavingsPlan { id: string; goal: string; status: string; startDate?: string | null; maturityDate: string | null; dailyAmount: number; cadence?: string | null; balance: number }
+interface SavingsPlan { id: string; goal: string; status: string; startDate?: string | null; maturityDate: string | null; dailyAmount: number; cadence?: string | null; balance: number; periodDays: number }
 const UNIT_DAYS: Record<string, number> = { daily: 1, weekly: 7, monthly: 30 }
 const perPayment = (p: SavingsPlan) => Math.round(p.dailyAmount * (UNIT_DAYS[p.cadence ?? 'daily'] ?? 1) * 100) / 100
 const planUnit = (p: SavingsPlan) => p.cadence === 'weekly' ? 'week' : p.cadence === 'monthly' ? 'month' : 'day'
@@ -350,11 +350,12 @@ function SavingsContent() {
   }
 
   // Matured or collected plans can be reopened, but only once the customer has read the code texted to them to the agent.
-  const [reopenFor, setReopenFor] = useState<{ id: string; name: string } | null>(null)
+  const [reopenFor, setReopenFor] = useState<{ id: string; name: string; kind: 'rollover' | 'again'; rollover?: { balance: number; periodDays: number } } | null>(null)
   function reopenDone() {
     if (!selected) return
+    const kind = reopenFor?.kind
     setReopenFor(null)
-    setToast(`Plan reopened for ${selected.firstName} ${selected.lastName}`)
+    setToast(kind === 'rollover' ? `Rolled over for ${selected.firstName}. The money stays and a new term has started.` : `Plan reopened for ${selected.firstName} ${selected.lastName}`)
     reset()
     setRefreshKey(k => k + 1)
     update()
@@ -508,6 +509,8 @@ function SavingsContent() {
           onClose={() => setReopenFor(null)}
           who={{ kind: 'agent', customerName: selected.firstName }}
           planName={reopenFor.name}
+          kind={reopenFor.kind}
+          rollover={reopenFor.rollover}
           sendUrl="/api/customers/plan/reopen/code"
           confirmUrl="/api/customers/plan/reopen"
           body={{ customerId: selected.id, planId: reopenFor.id }}
@@ -637,7 +640,12 @@ function SavingsContent() {
                         <span className="ui-row-title ui-block">{p.goal}</span>
                         <span className="ui-row-sub ui-block">{isFlexible(p.cadence) ? 'Flexible' : `${formatNaira(perPayment(p), { minor: false })} a ${planUnit(p)}`} · {p.status === 'Redeemed' ? 'collected' : (p.maturityDate ? `ended ${formatDate(p.maturityDate)}` : 'ended')}</span>
                       </span>
-                      <button type="button" className="ui-btn ui-btn--secondary" disabled={loading} onClick={() => setReopenFor({ id: p.id, name: p.goal })}>Save again</button>
+                      <button type="button" className="ui-btn ui-btn--secondary" disabled={loading}
+                        onClick={() => setReopenFor(p.status === 'Redeemed'
+                          ? { id: p.id, name: p.goal, kind: 'again' }
+                          : { id: p.id, name: p.goal, kind: 'rollover', rollover: { balance: p.balance, periodDays: p.periodDays } })}>
+                        {p.status === 'Redeemed' ? 'Save again' : 'Roll over'}
+                      </button>
                     </div>
                   ))}
                 </section>

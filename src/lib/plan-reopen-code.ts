@@ -1,6 +1,7 @@
-// The code that proves a customer agreed to save into a finished plan again. It goes by SMS to the phone on file
-// (the verified email if the text can't be sent), for online and cash customers alike. For a cash customer the agent
-// asks for it; for an online customer it confirms the person holding the phone is the one asking.
+// The code that proves a customer agreed to roll over a matured plan, or to save into a collected plan again.
+// Online customers (a plan they opened themselves) get it by email first when their email is confirmed, with SMS as
+// the backup. Cash customers (a plan their agent opened) always get it by SMS — they are with their agent, who asks
+// for it — with a confirmed email only if the text can't be sent.
 // It is stored in PasswordResetOtp (hashed, 5 tries, 10 minutes, one use) under a purpose that names the plan, so a
 // code for one plan can't restart another, and using it retires no other kind of code.
 import { sendMail } from './mail'
@@ -23,44 +24,58 @@ const ownCodes = (customerId: string, now: number) => ({ actorType: 'customer', 
 const purposeFor = (planId: string): ResetPurpose => `plan_reopen:${planId}`
 
 type Customer = { id: string; phone: string; firstName: string; email?: string | null; emailVerifiedAt?: Date | null }
-type Sender = (c: Customer, code: string, byAgent: boolean) => Promise<boolean>
+export type CodeChannel = 'email' | 'sms'
+/** What the code is for: a matured plan rolling over, or a collected plan starting again. */
+export type ReopenKind = 'rollover' | 'again'
+type Sender = (c: Customer, code: string, byAgent: boolean, channels: CodeChannel[], kind: ReopenKind) => Promise<CodeChannel | null>
 
-async function deliver(c: Customer, code: string, byAgent: boolean): Promise<boolean> {
-  const text = byAgent
-    ? `Vochus Easy Save: your code to save into your plan again is ${code}. Give it to your agent only if you asked to restart your plan. Valid 10 minutes.`
-    : `Vochus Easy Save: your code to save into your plan again is ${code}. Valid 10 minutes. Do not share it.`
-  const sms = await sendSMS(c.phone, text).catch(() => ({ success: false }))
-  if (sms.success) return true
-  if (!c.email || !c.emailVerifiedAt) return false
-  try {
-    await sendMail({
-      to: c.email,
-      subject: 'Your Vochus Easy Save code to save again',
-      html: `<p>Hi ${escapeHtml(c.firstName)},</p><p>Your code to save into your plan again is:</p><p><strong style="font-size:24px;letter-spacing:4px">${code}</strong></p><p>Valid for 10 minutes. ${byAgent ? 'Give it to your agent only if you asked to restart your plan.' : 'Do not share it.'}</p>`,
-    })
-    return true
-  } catch {
-    return false
-  }
+/** The order to try: online + confirmed email → email then SMS; otherwise SMS first, email only as the backup. */
+export function codeChannels(c: { online: boolean; hasConfirmedEmail: boolean }): CodeChannel[] {
+  if (c.online && c.hasConfirmedEmail) return ['email', 'sms']
+  return c.hasConfirmedEmail ? ['sms', 'email'] : ['sms']
 }
 
-/** Sends a code for this plan. `reason` says why nothing was sent. */
+async function deliver(c: Customer, code: string, byAgent: boolean, channels: CodeChannel[], kind: ReopenKind): Promise<CodeChannel | null> {
+  const what = kind === 'rollover' ? 'roll over your plan' : 'save into your plan again'
+  const warn = byAgent ? `Give it to your agent only if you asked to ${what}.` : 'Do not share it.'
+  for (const ch of channels) {
+    if (ch === 'sms') {
+      const sms = await sendSMS(c.phone, `Vochus Easy Save: your code to ${what} is ${code}. Valid 10 minutes. ${warn}`).catch(() => ({ success: false }))
+      if (sms.success) return 'sms'
+    } else if (c.email && c.emailVerifiedAt) {
+      try {
+        await sendMail({
+          to: c.email,
+          subject: kind === 'rollover' ? 'Your Vochus Easy Save code to roll over your plan' : 'Your Vochus Easy Save code to save again',
+          html: `<p>Hi ${escapeHtml(c.firstName)},</p><p>Your code to ${what} is:</p><p><strong style="font-size:24px;letter-spacing:4px">${code}</strong></p><p>Valid for 10 minutes. ${warn}</p>`,
+        })
+        return 'email'
+      } catch { /* try the next channel */ }
+    }
+  }
+  return null
+}
+
+/** Sends a code for this plan, by the right channel for the customer. `reason` says why nothing was sent. */
 export async function requestReopenCode(
   customer: Customer,
   planId: string,
   byAgent: boolean,
   send: Sender = deliver, // injectable for tests
   now: number = Date.now(),
-): Promise<{ ok: true; resetId: string; sentTo: string } | { ok: false; reason: 'wait' | 'not_sent' }> {
+): Promise<{ ok: true; resetId: string; sentTo: string; sentBy: CodeChannel } | { ok: false; reason: 'wait' | 'not_sent' }> {
   if ((await prisma.passwordResetOtp.count({ where: ownCodes(customer.id, now) })) >= MAX_SENDS_PER_DAY) return { ok: false, reason: 'wait' }
+  const plan = await prisma.savingsPlan.findFirst({ where: { id: planId, customerId: customer.id }, select: { source: true, status: true } })
+  const channels = codeChannels({ online: plan?.source === 'self', hasConfirmedEmail: !!customer.email && !!customer.emailVerifiedAt })
+  const kind: ReopenKind = plan?.status === 'Redeemed' ? 'again' : 'rollover'
   const issued = await issueResetCode('customer', customer.id, now, purposeFor(planId))
   if (!issued) return { ok: false, reason: 'wait' }
-  const sent = await send(customer, issued.code, byAgent).catch(() => false)
-  if (!sent) {
+  const sentBy = await send(customer, issued.code, byAgent, channels, kind).catch(() => null)
+  if (!sentBy) {
     await cancelResetCode(issued.id)
     return { ok: false, reason: 'not_sent' }
   }
-  return { ok: true, resetId: issued.resetId, sentTo: maskTarget('sms', customer.phone) }
+  return { ok: true, resetId: issued.resetId, sentBy, sentTo: sentBy === 'email' && customer.email ? maskTarget('email', customer.email) : maskTarget('sms', customer.phone) }
 }
 
 /** True once, for the right code on this plan. */

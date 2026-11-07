@@ -8,7 +8,7 @@ after(async () => { await prisma.passwordResetOtp.deleteMany({ where: { actorId:
 
 function capture() {
   const sent: string[] = []
-  return { sent, send: async (_c: unknown, code: string) => { sent.push(code); return true } }
+  return { sent, send: async (_c: unknown, code: string) => { sent.push(code); return 'sms' as const } }
 }
 
 test('the right code works once, for its own plan only', async () => {
@@ -41,7 +41,7 @@ test('someone else cannot use the code, and a failed text leaves no usable code'
   assert.ok(r.ok)
   if (!r.ok) return
   assert.equal(await confirmReopenCode('someone-else', 'planA', r.resetId, c.sent[0]), false)
-  const failed = await requestReopenCode({ ...cust3, id: cust3.id + 'x' }, 'planA', false, async () => false)
+  const failed = await requestReopenCode({ ...cust3, id: cust3.id + 'x' }, 'planA', false, async () => null)
   assert.deepEqual(failed, { ok: false, reason: 'not_sent' })
   assert.equal(await prisma.passwordResetOtp.count({ where: { actorId: cust3.id + 'x', consumedAt: null } }), 0)
   await prisma.passwordResetOtp.deleteMany({ where: { actorId: { startsWith: cust3.id } } })

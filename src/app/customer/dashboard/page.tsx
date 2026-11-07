@@ -105,10 +105,14 @@ export default function CustomerDashboard() {
   useEffect(() => { try { setEmailAsk(sessionStorage.getItem('ves.emailAlertsAsk') !== 'no') } catch { setEmailAsk(true) } }, [])
   function dismissEmailAsk() { setEmailAsk(false); try { sessionStorage.setItem('ves.emailAlertsAsk', 'no') } catch {} }
   const [bioOffer, setBioOffer] = useState(false)
-  const [reopenFor, setReopenFor] = useState<{ id: string; name: string } | null>(null)
+  const [reopenFor, setReopenFor] = useState<{ id: string; name: string; kind: 'rollover' | 'again'; rollover?: { balance: number; periodDays: number } } | null>(null)
 
-  // A finished plan goes back to Active only after the customer types the code texted to them; then the normal save screen takes over.
-  function saveAgain(planId: string, name: string) { setReopenFor({ id: planId, name }) }
+  // A collected plan starts again only after the customer types the code sent to them; then the normal save screen takes over.
+  function saveAgain(planId: string, name: string) { setReopenFor({ id: planId, name, kind: 'again' }) }
+  // A matured plan that wasn't collected rolls over: the money stays and a new term of the same length starts.
+  function rollOver(p: { id: string; goal: string; balance: number; periodDays: number }) {
+    setReopenFor({ id: p.id, name: p.goal, kind: 'rollover', rollover: { balance: p.balance, periodDays: p.periodDays } })
+  }
 
   async function acceptBiometric() {
     setBioOffer(false)
@@ -328,7 +332,7 @@ export default function CustomerDashboard() {
 
         {plan && finished && (
           <div className="ui-actions">
-            <ActionButton icon="add" label="Save again" onClick={() => saveAgain(plan.id, plan.goal)} />
+            <ActionButton icon="history" label="Roll over" onClick={() => rollOver(plan)} />
           </div>
         )}
 
@@ -510,10 +514,15 @@ export default function CustomerDashboard() {
           onClose={() => setReopenFor(null)}
           who={{ kind: 'customer' }}
           planName={reopenFor.name}
+          kind={reopenFor.kind}
+          rollover={reopenFor.rollover}
           sendUrl="/api/customer/plan/reopen/code"
           confirmUrl="/api/customer/plan/reopen"
           body={{ planId: reopenFor.id }}
-          onDone={() => router.push(`/customer/save?planId=${encodeURIComponent(reopenFor.id)}`)}
+          onDone={() => {
+            if (reopenFor.kind === 'rollover') { setReopenFor(null); setToast('Rolled over. Your money stays in the plan and a new term has started.'); reload(); return }
+            router.push(`/customer/save?planId=${encodeURIComponent(reopenFor.id)}`)
+          }}
         />
       )}
       {data.email && <EmailAlertsSheet open={emailSheet} onClose={() => setEmailSheet(false)} email={data.email} onConfirmed={() => { setEmailSheet(false); setToast('Email alerts are on.'); reload() }} />}

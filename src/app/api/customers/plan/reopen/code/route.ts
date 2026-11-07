@@ -34,5 +34,5 @@ export async function POST(req: NextRequest) {
 
   const sent = await requestReopenCode(customer, planId, true)
   if (!sent.ok) return NextResponse.json({ error: sent.reason === 'wait' ? REOPEN_CODE_WAIT : REOPEN_CODE_NOT_SENT }, { status: sent.reason === 'wait' ? 429 : 502 })
-  return NextResponse.json({ resetId: sent.resetId, sentTo: sent.sentTo })
+  return NextResponse.json({ resetId: sent.resetId, sentTo: sent.sentTo, sentBy: sent.sentBy })
 }
