@@ -1,6 +1,8 @@
 'use client'
 import { feeSentence } from '@/lib/savings-fee'
 import { usePlanFees } from '@/lib/use-plan-fees'
+import { useFlexibleTerms } from '@/lib/use-flexible-terms'
+import { earliestEnd } from '@/lib/flexible-savings'
 import { useEffect, useState, Suspense, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useSearchParams, useRouter } from 'next/navigation'
@@ -14,7 +16,7 @@ import { Icons } from '@/components/ui/icons'
 import { avatarTint } from '@/lib/avatar'
 import { displayName, formatDate, formatNaira } from '@/lib/format'
 import { blockMinus, nonNegativeString } from '@/lib/numeric'
-import { addDays, isoDate, parseDateInput, today, type Cadence } from '@/lib/plan-dates'
+import { addDays, isoDate, MAX_PLAN_DAYS, parseDateInput, today, type Cadence } from '@/lib/plan-dates'
 
 interface Customer {
   id: string; customerId: string; firstName: string; lastName: string; phone: string; photoUrl?: string | null
@@ -45,7 +47,11 @@ function AddPlanContent() {
   const [touched, setTouched] = useState(false)
 
   const [cadence, setCadence] = useState<Cadence>('daily')
+  /** Flexible: any amount, any day, until an end date. Kept apart from `cadence`, which drives the fixed-plan fields. */
+  const [flexible, setFlexible] = useState(false)
+  const [flexEnd, setFlexEnd] = useState('')
   const fees = usePlanFees()
+  const terms = useFlexibleTerms()
   const [amount, setAmount] = useState('')
   const [periodDays, setPeriodDays] = useState('')
   const [goal, setGoal] = useState('')
@@ -72,14 +78,18 @@ function AddPlanContent() {
   const days = parseInt(periodDays || '0')
   const total = raw && days ? Math.round((raw / UNIT_DAYS[cadence]) * days) : 0
   const ends = days ? addDays(planStart, days) : null
+  const minEnd = earliestEnd(planStart, terms)
+  const flexEndDate = parseDateInput(flexEnd)
   const errs = {
-    amount: !raw ? `Enter how much they’ll save ${PER[cadence]}` : '',
-    period: !days ? (customEnd ? 'Pick a valid end date' : 'Choose how long the plan runs') : '',
+    amount: !flexible && !raw ? `Enter how much they’ll save ${PER[cadence]}` : '',
+    period: flexible
+      ? (!flexEndDate ? 'Choose when the plan ends' : flexEndDate < minEnd ? `Pick ${formatDate(minEnd)} or later (at least ${terms.minTermMonths} months)` : '')
+      : (!days ? (customEnd ? 'Pick a valid end date' : 'Choose how long the plan runs') : ''),
     goal: !goal ? 'Choose what they’re saving for' : '',
   }
 
   function changeCadence(c: Cadence) {
-    setCadence(c); setPeriodDays(''); setCustomEnd('')
+    setFlexible(false); setCadence(c); setPeriodDays(''); setCustomEnd('')
   }
 
   async function submit() {
@@ -91,7 +101,11 @@ function AddPlanContent() {
     try {
       const res = await fetch('/api/customers/plan', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+        body: JSON.stringify(flexible ? {
+          customerId: customer.id, cadence: 'flexible', goal,
+          startDate: startDate || undefined, endDate: flexEnd,
+          notes: notes.trim() || undefined,
+        } : {
           customerId: customer.id,
           dailyAmount: String(raw / UNIT_DAYS[cadence]),
           periodDays: String(days), goal, cadence,
@@ -143,10 +157,22 @@ function AddPlanContent() {
         <p className="ag-label" id="cad">How often?</p>
         <div className="ui-segment ag-seg" role="group" aria-labelledby="cad">
           {(['daily', 'weekly', 'monthly'] as const).map(c => (
-            <button key={c} type="button" aria-pressed={cadence === c} onClick={() => changeCadence(c)}>{c === 'daily' ? 'Daily' : c === 'weekly' ? 'Weekly' : 'Monthly'}</button>
+            <button key={c} type="button" aria-pressed={!flexible && cadence === c} onClick={() => changeCadence(c)}>{c === 'daily' ? 'Daily' : c === 'weekly' ? 'Weekly' : 'Monthly'}</button>
           ))}
+          <button type="button" aria-pressed={flexible} onClick={() => { setFlexible(true); setTouched(false) }}>Flexible</button>
         </div>
 
+        {flexible ? (
+          <div className="ui-field">
+            <label className="ui-label" htmlFor="ap-flex-end">Ends on</label>
+            <DatePicker id="ap-flex-end" ariaLabel="Plan end date" sheetTitle="Pick an end date" allowEmpty placeholder="Choose a date"
+              minIso={isoDate(minEnd)} maxIso={isoDate(addDays(planStart, MAX_PLAN_DAYS))} emptyViewIso={isoDate(minEnd)}
+              value={flexEnd} onChange={setFlexEnd} />
+            {touched && errs.period
+              ? <FieldError id="ap-flex-end-error" message={errs.period} />
+              : <p className="ag-fineprint">Any amount, any day, until this date. At least {terms.minTermMonths} months.</p>}
+          </div>
+        ) : (<>
         <div className="ag-grid-2">
           <Field id="ap-amt" label={`Amount ${PER[cadence]}`} error={touched ? errs.amount : ''}>
             <span className="ag-tf-money">
@@ -174,6 +200,7 @@ function AddPlanContent() {
           <EndDateField picker start={planStart} cadence={cadence} value={customEnd}
             onChange={(v, d) => { setCustomEnd(v); setPeriodDays(d ? String(d) : '') }} />
         )}
+        </>)}
 
         <p className="ag-label" id="goal-l">What are they saving for?</p>
         <div className="ag-goal-chips" role="group" aria-labelledby="goal-l">
@@ -198,7 +225,15 @@ function AddPlanContent() {
           </Field>
         </div>
 
-        {total > 0 && ends && (
+        {flexible && flexEndDate && !errs.period && (
+          <div className="ag-target">
+            <span className="ui-row-sub ui-block">Saving until</span>
+            <span className="ag-target-amount">{formatDate(flexEndDate)}</span>
+            <span className="ui-row-sub ui-block">{feeSentence({ live: true, cadence: 'flexible', amountPerPayment: 0, periodicFeePct: 0, flexible: { cashCommissionPct: terms.cashCommissionPct, penaltyPct: terms.penaltyPct, online: false } })}</span>
+          </div>
+        )}
+
+        {!flexible && total > 0 && ends && (
           <div className="ag-target">
             <span className="ui-row-sub ui-block">They’ll have saved</span>
             <span className="ag-target-amount">{formatNaira(total, { minor: false })}</span>
@@ -208,7 +243,7 @@ function AddPlanContent() {
 
         <button type="button" role="checkbox" aria-checked={agreed} className={`ag-agree${agreed ? ' is-on' : ''}`} onClick={() => { setAgreed(a => !a); setError('') }}>
           <span className="ag-agree-box" aria-hidden="true">{agreed && <Icons.check size={16} />}</span>
-          <span>The customer has agreed to this plan and its terms, including the platform fee.</span>
+          <span>{flexible ? 'The customer has agreed to this plan and its terms, including the charges when they collect.' : 'The customer has agreed to this plan and its terms, including the platform fee.'}</span>
         </button>
 
         <FormError message={error} />

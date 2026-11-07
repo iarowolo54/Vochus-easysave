@@ -15,7 +15,10 @@ import { Icons } from '@/components/ui/icons'
 import { formatDate, formatNaira } from '@/lib/format'
 import { describeFailure, postJson } from '@/lib/http'
 import { blockMinus, nonNegativeString } from '@/lib/numeric'
-import { addDays, isoDate, lengthLabel, parseDateInput, today } from '@/lib/plan-dates'
+import { addDays, isoDate, lengthLabel, MAX_PLAN_DAYS, parseDateInput, today } from '@/lib/plan-dates'
+import { earliestEnd, isFlexible } from '@/lib/flexible-savings'
+import { feeSentence } from '@/lib/savings-fee'
+import { useFlexibleTerms } from '@/lib/use-flexible-terms'
 
 type Cadence = 'daily' | 'weekly' | 'monthly'
 
@@ -99,6 +102,13 @@ function SavePageInner() {
   const [goal, setGoal] = useState('General Savings')
   const [amountError, setAmountError] = useState('')
   const [creating, setCreating] = useState(false)
+  /** Flexible picked in the new-plan form: no set amount; runs until `flexEnd`. */
+  const [flexible, setFlexible] = useState(false)
+  const [flexEnd, setFlexEnd] = useState('')
+  /** What they type to pay into a flexible plan (whole naira). */
+  const [payText, setPayText] = useState('')
+  const terms = useFlexibleTerms()
+  const flexMin = Math.max(100, terms.minDeposit)
 
   useEffect(() => {
     if (!data) return
@@ -125,9 +135,16 @@ function SavePageInner() {
   async function pay() {
     setError('')
     if (!selectedPlan) { setError('Choose a savings plan first.'); return }
+    const flex = isFlexible(selectedPlan.cadence)
+    const typed = Number(payText)
+    if (flex && !(Number.isInteger(typed) && typed >= flexMin)) {
+      setError(`Enter a whole amount of ${formatNaira(flexMin, { minor: false })} or more.`)
+      document.getElementById('pay-amount')?.focus()
+      return
+    }
     setPaying(true)
     const result = await postJson<TransferDetails>('/api/customer/transfer/init', {
-      amount: periodAmount(selectedPlan), planId: selectedPlan.id,
+      amount: flex ? typed : periodAmount(selectedPlan), planId: selectedPlan.id,
     })
     setPaying(false)
     if (result.ok) { setTransfer(result.data); return }
@@ -137,6 +154,20 @@ function SavePageInner() {
   async function createPlan(e: FormEvent) {
     e.preventDefault()
     setError('')
+    if (flexible) {
+      const end = parseDateInput(flexEnd)
+      if (!end) { setError('Pick the day your plan ends.'); return }
+      if (end < earliestEnd(parseDateInput(planStart) ?? today(), terms)) { setError(`A flexible plan runs at least ${terms.minTermMonths} months. Pick a later end date.`); return }
+      setCreating(true)
+      const made = await postJson<{ plan: Plan }>('/api/customer/plan', { cadence: 'flexible', goal, endDate: flexEnd, ...(planStart ? { startDate: planStart } : {}) })
+      setCreating(false)
+      if (!made.ok) { setError(describeFailure(made)); return }
+      setPlans(prev => [made.data.plan, ...prev])
+      setSelectedPlanId(made.data.plan.id)
+      setPayText('')
+      setMode('pay')
+      return
+    }
     const raw = parseFloat(amountText)
     if (!raw || raw < MINIMUM[cadence]) {
       setAmountError(`The minimum is ${formatNaira(MINIMUM[cadence], { minor: false })} a ${UNIT[cadence]}.`)
@@ -178,6 +209,11 @@ function SavePageInner() {
   const startDay = parseDateInput(planStart) ?? today()
   const finishDate = addDays(startDay, periodDays)
   const duration = DURATIONS[cadence].find(d => d.days === periodDays)
+  const flexMinEnd = earliestEnd(startDay, terms)
+  const flexEndDay = parseDateInput(flexEnd)
+  const flexEndError = flexEndDay && flexEndDay < flexMinEnd ? `Pick ${formatDate(flexMinEnd)} or later. A flexible plan runs at least ${terms.minTermMonths} months.` : ''
+  const selectedFlex = !!selectedPlan && isFlexible(selectedPlan.cadence)
+  const payAmount = selectedPlan ? (selectedFlex ? (Number(payText) || 0) : periodAmount(selectedPlan)) : 0
 
   return (
     <div className="ui-screen">
@@ -227,11 +263,25 @@ function SavePageInner() {
           <>
             {/* Review layout (Cash App style): the sentence says exactly what will happen before the account details show. */}
             <section className="ui-review" aria-label="Payment summary">
-              <p className="ui-review-kicker">Your {ADJ[cadenceOf(selectedPlan)]} savings</p>
+              <p className="ui-review-kicker">Your {selectedFlex ? 'flexible' : ADJ[cadenceOf(selectedPlan)]} savings</p>
               <h2 className="ui-review-title">
-                Save {formatNaira(periodAmount(selectedPlan), { minor: false })} into {selectedPlan.goal}
+                {selectedFlex && !payAmount ? `Save into ${selectedPlan.goal}` : `Save ${formatNaira(payAmount, { minor: false })} into ${selectedPlan.goal}`}
               </h2>
             </section>
+
+            {selectedFlex && (
+              <div className="ui-field">
+                <label className="ui-label" htmlFor="pay-amount">How much?</label>
+                <div className="ui-input-wrap">
+                  <span className="ui-input-prefix" aria-hidden="true">₦</span>
+                  <input id="pay-amount" className="ui-input ui-input--number ui-input--prefixed" value={payText}
+                    onChange={e => { setPayText(nonNegativeString(e.target.value).replace(/\D/g, '')); setError('') }}
+                    onKeyDown={blockMinus} type="text" inputMode="numeric" autoComplete="off" placeholder={String(flexMin)}
+                    aria-describedby="pay-amount-hint" />
+                </div>
+                <p id="pay-amount-hint" className="ui-field-hint">Any amount from {formatNaira(flexMin, { minor: false })}, as often as you like. Ends {formatDate(selectedPlan.maturityDate)}.</p>
+              </div>
+            )}
 
             <dl className="ui-card ui-card--list ui-review-rows">
               <div className="ui-row">
@@ -245,7 +295,7 @@ function SavePageInner() {
               </div>
               <div className="ui-row">
                 <dt className="ui-row-main ui-row-sub">You’ll send</dt>
-                <dd className="ui-review-value ui-amount">{formatNaira(periodAmount(selectedPlan), { minor: false })} <span className="tp-kobo-hint">+ a few kobo</span></dd>
+                <dd className="ui-review-value ui-amount">{formatNaira(payAmount, { minor: false })} <span className="tp-kobo-hint">+ a few kobo</span></dd>
               </div>
               <div className="ui-row">
                 <dt className="ui-row-main ui-row-sub">Pay with</dt>
@@ -260,7 +310,7 @@ function SavePageInner() {
             </button>
             <div className="tp-callout tp-callout--pre">
               <p className="tp-callout-title">Next you’ll see the exact amount</p>
-              <p className="tp-callout-text">It has a few extra kobo, like {formatNaira(periodAmount(selectedPlan) + 0.37)}. Send it exactly, kobo included, so we can tell the payment is yours. The kobo is not a fee. All of it goes into your savings.</p>
+              <p className="tp-callout-text">It has a few extra kobo, like {formatNaira((payAmount || flexMin) + 0.37)}. Send it exactly, kobo included, so we can tell the payment is yours. The kobo is not a fee. All of it goes into your savings.</p>
             </div>
 
             <button type="button" className="ui-btn ui-btn--secondary ui-btn--block ui-gap-top" onClick={() => { setMode('new'); setError('') }}>
@@ -278,14 +328,18 @@ function SavePageInner() {
                   <button
                     key={c}
                     type="button"
-                    aria-pressed={cadence === c}
-                    onClick={() => { setCadence(c); setPeriodDays(DEFAULT_DAYS[c]); setCustomEnd(''); setAmountError('') }}
+                    aria-pressed={!flexible && cadence === c}
+                    onClick={() => { setFlexible(false); setCadence(c); setPeriodDays(DEFAULT_DAYS[c]); setCustomEnd(''); setAmountError('') }}
                   >
                     {c[0].toUpperCase() + c.slice(1)}
                   </button>
                 ))}
+                <button type="button" aria-pressed={flexible} onClick={() => { setFlexible(true); setCustomEnd(''); setAmountError(''); setError('') }}>Flexible</button>
               </div>
+              {flexible && <p className="ui-field-hint">Any amount, any day, until the end date you pick.</p>}
             </div>
+
+            {!flexible && (
 
             <div className="ui-field">
               <label className="ui-label" htmlFor="plan-amount">How much each {UNIT[cadence]}?</label>
@@ -308,6 +362,7 @@ function SavePageInner() {
                 ? <FieldError id="plan-amount-error" message={amountError} />
                 : <p id="plan-amount-hint" className="ui-field-hint">Minimum {formatNaira(MINIMUM[cadence], { minor: false })} a {UNIT[cadence]}</p>}
             </div>
+            )}
 
             <div className="ui-field">
               <label className="ui-label" htmlFor="plan-start">Starts on</label>
@@ -322,6 +377,17 @@ function SavePageInner() {
               <p className="ui-field-hint">{planStart ? `Your plan starts on ${formatDate(startDay)}.` : 'Starts today. Pick a later day if you’d rather.'}</p>
             </div>
 
+            {flexible ? (
+              <div className="ui-field">
+                <label className="ui-label" htmlFor="flex-end">Ends on</label>
+                <DatePicker id="flex-end" ariaLabel="Plan end date" sheetTitle="Pick an end date" allowEmpty placeholder="Choose a date"
+                  minIso={isoDate(flexMinEnd)} maxIso={isoDate(addDays(startDay, MAX_PLAN_DAYS))} emptyViewIso={isoDate(flexMinEnd)}
+                  value={flexEnd} onChange={v => { setFlexEnd(v); setError('') }} />
+                {flexEndError
+                  ? <FieldError id="flex-end-error" message={flexEndError} />
+                  : <p className="ui-field-hint">At least {terms.minTermMonths} months. The earliest is {formatDate(flexMinEnd)}.</p>}
+              </div>
+            ) : (
             <div className="ui-field">
               <p className="ui-label" id="duration-label">For how long?</p>
               <div className="ui-card ui-card--list" role="radiogroup" aria-labelledby="duration-label">
@@ -361,6 +427,7 @@ function SavePageInner() {
                 </div>
               )}
             </div>
+            )}
 
             <div className="ui-field">
               <label className="ui-label" htmlFor="plan-goal">What is it for?</label>
@@ -369,7 +436,15 @@ function SavePageInner() {
               </select>
             </div>
 
-            {raw > 0 && (
+            {flexible && flexEndDay && !flexEndError && (
+              <section className="ui-card ui-plan-summary" aria-label="Plan summary">
+                <span className="ui-row-sub">Saving until</span>
+                <span className="ui-amount ui-plan-summary-amount">{formatDate(flexEndDay)}</span>
+                <span className="ui-row-sub">{feeSentence({ live: true, cadence: 'flexible', amountPerPayment: 0, periodicFeePct: 0, flexible: { cashCommissionPct: terms.cashCommissionPct, penaltyPct: terms.penaltyPct, online: true } })}</span>
+              </section>
+            )}
+
+            {!flexible && raw > 0 && (
               <section className="ui-card ui-plan-summary" aria-label="Plan summary">
                 <span className="ui-row-sub">You’ll have</span>
                 <span className="ui-amount ui-plan-summary-amount">{formatNaira(Math.round(dailyEquiv * periodDays), { minor: false })}</span>
@@ -403,7 +478,7 @@ function SavePageInner() {
                 <span className="ui-row-main">
                   <span className="ui-row-title ui-block">{p.goal}</span>
                   <span className="ui-row-sub ui-block">
-                    {locked ? 'Collection in progress' : `${formatNaira(periodAmount(p), { minor: false })} a ${UNIT[cadenceOf(p)]}`}
+                    {locked ? 'Collection in progress' : isFlexible(p.cadence) ? 'Flexible, any amount' : `${formatNaira(periodAmount(p), { minor: false })} a ${UNIT[cadenceOf(p)]}`}
                   </span>
                 </span>
                 <span className="ui-row-value">{formatNaira(p.balance)}</span>

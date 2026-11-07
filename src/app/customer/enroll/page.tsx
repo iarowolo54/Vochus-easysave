@@ -13,11 +13,16 @@ import { FieldError, FormError } from '@/components/ui/FormErrors'
 import { Icons, type IconName } from '@/components/ui/icons'
 import { formatDate, formatNaira } from '@/lib/format'
 import { NG_STATES, lgasOf } from '@/lib/ng-lgas'
-import { addDays, isoDate, parseDateInput, today } from '@/lib/plan-dates'
+import { addDays, isoDate, MAX_PLAN_DAYS, parseDateInput, today } from '@/lib/plan-dates'
+import { earliestEnd } from '@/lib/flexible-savings'
+import { feeSentence } from '@/lib/savings-fee'
+import { useFlexibleTerms } from '@/lib/use-flexible-terms'
 
 type Cadence = 'daily' | 'weekly' | 'monthly'
-/** `start` is a chosen start date ("yyyy-mm-dd"); missing or empty means the plan starts today. */
-type PlanDraft = { daily: number; period: number; goal: string; cadence: Cadence; start?: string }
+/** `start` is a chosen start date ("yyyy-mm-dd"); missing or empty means the plan starts today.
+ *  `flexEnd` is set only on a flexible plan (any amount, any day): its end date, "" until one is picked. */
+type PlanDraft = { daily: number; period: number; goal: string; cadence: Cadence; start?: string; flexEnd?: string }
+const isFlexPlan = (p: PlanDraft) => p.flexEnd !== undefined
 
 const DURATIONS = [31, 62, 93, 186, 365] // in days; shown as weeks / months for those cadences
 /** What people save for. `value` is what the API stores; `label` is how we say it to them. */
@@ -43,7 +48,7 @@ const UNIT: Record<Cadence, { per: string; every: string; plural: string; days: 
 const perPayment = (p: PlanDraft) => p.daily * UNIT[p.cadence].days
 const totalSaved = (p: PlanDraft) => p.daily * p.period * UNIT[p.cadence].days
 const startOf = (p: PlanDraft) => parseDateInput(p.start ?? '') ?? today()
-const endDate = (p: PlanDraft) => addDays(startOf(p), p.period * UNIT[p.cadence].days)
+const endDate = (p: PlanDraft) => isFlexPlan(p) ? (parseDateInput(p.flexEnd ?? '') ?? startOf(p)) : addDays(startOf(p), p.period * UNIT[p.cadence].days)
 const money2 = (n: number) => Math.round(n * 100) / 100
 
 /** One question per screen, grouped into four sections; the hub screens show where you are between sections. */
@@ -109,6 +114,10 @@ function EnrollContent() {
   /** The goal they tapped on the welcome screen; their first plan is named after it. */
   const [startGoal, setStartGoal] = useState('')
   const [cadence, setCadence] = useState<Cadence>('daily')
+  /** Flexible picked: no set amount; the plan runs until `flexEnd`. */
+  const [flexible, setFlexible] = useState(false)
+  const [flexEnd, setFlexEnd] = useState('')
+  const flexTerms = useFlexibleTerms()
   const [plans, setPlans] = useState<PlanDraft[]>([])
   /** A chosen end date ("yyyy-mm-dd") instead of one of the set lengths; "" when a set length is picked. */
   const [customEnd, setCustomEnd] = useState('')
@@ -190,10 +199,10 @@ function EnrollContent() {
     const t = setTimeout(() => writeDraft({
       v: 1, savedAt: Date.now(), aid, ref, screen,
       firstName, lastName, phone, email, verifiedEmail: emailVerified ? email : '', dob, gender, address, state, lga,
-      nokName, nokRelation, nokPhone, plans, plan: { daily, period, goal, cadence, start: planStart }, startGoal,
+      nokName, nokRelation, nokPhone, plans, plan: { daily, period, goal, cadence, start: planStart, ...(flexible ? { flexEnd } : {}) }, startGoal,
     }), 400)
     return () => clearTimeout(t)
-  }, [aid, ref, screen, firstName, lastName, phone, email, emailVerified, dob, gender, address, state, lga, nokName, nokRelation, nokPhone, plans, daily, period, goal, cadence, startGoal, result])
+  }, [aid, ref, screen, firstName, lastName, phone, email, emailVerified, dob, gender, address, state, lga, nokName, nokRelation, nokPhone, plans, daily, period, goal, cadence, flexible, flexEnd, startGoal, result])
 
   function continueDraft(d: Draft) {
     setFirstName(d.firstName); setLastName(d.lastName); setPhone(d.phone); setEmail(d.email)
@@ -212,8 +221,11 @@ function EnrollContent() {
     setResume(null)
   }
 
-  const draft: PlanDraft = { daily, period, goal, cadence, start: planStart || undefined }
+  const draft: PlanDraft = { daily, period, goal, cadence, start: planStart || undefined, ...(flexible ? { flexEnd } : {}) }
   const startDay = startOf(draft)
+  const flexMin = earliestEnd(startDay, flexTerms)
+  const flexEndDay = parseDateInput(flexEnd)
+  const flexEndError = flexible && flexEndDay && flexEndDay < flexMin ? `Pick ${formatDate(flexMin)} or later. A flexible plan runs at least ${flexTerms.minTermMonths} months.` : ''
   const endDateInvalid = !!customEnd && endDateDays(customEnd, startDay, cadence) === null
 
   function go(next: Screen) {
@@ -244,6 +256,7 @@ function EnrollContent() {
 
   function loadPlan(p: PlanDraft) {
     setDaily(p.daily); setPeriod(p.period); setGoal(p.goal); setCadence(p.cadence); setPlanStart(p.start ?? '')
+    setFlexible(isFlexPlan(p)); setFlexEnd(p.flexEnd ?? '')
     // A length that isn't one of the set options was a chosen end date; show it as one.
     const preset = DURATIONS.some(d => Math.round(d / UNIT[p.cadence].days) === p.period)
     setCustomEnd(preset ? '' : isoDate(endDate(p)))
@@ -431,6 +444,7 @@ function EnrollContent() {
     setPeriod(Math.max(1, Math.round(days / UNIT[next].days)))
     setCadence(next)
     setCustomEnd('')
+    setFlexible(false)
   }
 
   async function createAccount() {
@@ -447,9 +461,13 @@ function EnrollContent() {
           nokName, nokRelation, nokPhone, photoUrl: photo, password,
           // This API takes the amount per payment and divides weekly / monthly amounts itself. It reads the first
           // plan's length as days but the other plans' lengths in weeks or months, so send each the way it reads it.
-          dailyAmount: money2(perPayment(first)), periodDays: first.period * UNIT[first.cadence].days, goal: first.goal, cadence: first.cadence,
+          ...(isFlexPlan(first)
+            ? { cadence: 'flexible', endDate: first.flexEnd, goal: first.goal }
+            : { dailyAmount: money2(perPayment(first)), periodDays: first.period * UNIT[first.cadence].days, goal: first.goal, cadence: first.cadence }),
           startDate: first.start || undefined,
-          plans: plans.map(p => ({ daily: money2(perPayment(p)), period: p.period, goal: p.goal, cadence: p.cadence, startDate: p.start || undefined })),
+          plans: plans.map(p => isFlexPlan(p)
+            ? { goal: p.goal, cadence: 'flexible', startDate: p.start || undefined, endDate: p.flexEnd }
+            : { daily: money2(perPayment(p)), period: p.period, goal: p.goal, cadence: p.cadence, startDate: p.start || undefined }),
         }),
       })
       const data = await res.json()
@@ -477,7 +495,7 @@ function EnrollContent() {
           <dl className="cu-receipt">
             <div><dt>Customer ID</dt><dd className="ag-mono">{result.customerId}</dd></div>
             <div><dt>Your agent</dt><dd>{result.agentName}</dd></div>
-            {p && <div><dt>{goalMeta(p.goal).label}</dt><dd>{formatNaira(perPayment(p), { minor: false })} {UNIT[p.cadence].per}</dd></div>}
+            {p && <div><dt>{goalMeta(p.goal).label}</dt><dd>{isFlexPlan(p) ? 'Flexible, any amount' : `${formatNaira(perPayment(p), { minor: false })} ${UNIT[p.cadence].per}`}</dd></div>}
             {p && <div><dt>Plan ends</dt><dd>{formatDate(endDate(p))}</dd></div>}
           </dl>
           <p className="cu-note cu-center">Keep your customer ID. Your agent may ask for it.</p>
@@ -839,14 +857,18 @@ function EnrollContent() {
         {screen === 'amount' && (
           <>
             <h1 className="cu-q">How much will you save?</h1>
-            <p className="cu-lead">You give this to your agent {UNIT[cadence].every}.</p>
+            <p className="cu-lead">{flexible ? 'Any amount, any day, until the end date you pick.' : `You give this to your agent ${UNIT[cadence].every}.`}</p>
             <div className="ui-segment cu-seg" role="group" aria-label="How often">
               {(['daily', 'weekly', 'monthly'] as const).map(c => (
-                <button key={c} type="button" aria-pressed={cadence === c} onClick={() => setCadenceKeepingLength(c)}>
+                <button key={c} type="button" aria-pressed={!flexible && cadence === c} onClick={() => setCadenceKeepingLength(c)}>
                   {c === 'daily' ? 'Daily' : c === 'weekly' ? 'Weekly' : 'Monthly'}
                 </button>
               ))}
+              <button type="button" aria-pressed={flexible} onClick={() => { setFlexible(true); setCustomEnd('') }}>Flexible</button>
             </div>
+            {flexible ? (
+              <p className="cu-note">No set amount. Save from {formatNaira(Math.max(100, flexTerms.minDeposit), { minor: false })} whenever you can. {feeSentence({ live: true, cadence: 'flexible', amountPerPayment: 0, periodicFeePct: 0, flexible: { cashCommissionPct: flexTerms.cashCommissionPct, penaltyPct: flexTerms.penaltyPct, online: true } })}</p>
+            ) : (<>
             <div className="cu-amount">
               <AmountField
                 value={String(Math.round(perPayment(draft)) || '')}
@@ -862,14 +884,15 @@ function EnrollContent() {
                 </button>
               ))}
             </div>
-            <div className="cu-actions">{cta('Continue', () => go('length'), daily <= 0)}</div>
+            </>)}
+            <div className="cu-actions">{cta('Continue', () => go('length'), !flexible && daily <= 0)}</div>
           </>
         )}
 
         {screen === 'length' && (
           <>
             <h1 className="cu-q">For how long?</h1>
-            <p className="cu-lead">Saving {formatNaira(perPayment(draft), { minor: false })} {UNIT[cadence].per}. Pick when you want to collect.</p>
+            <p className="cu-lead">{flexible ? `Pick when you want to collect. At least ${flexTerms.minTermMonths} months.` : `Saving ${formatNaira(perPayment(draft), { minor: false })} ${UNIT[cadence].per}. Pick when you want to collect.`}</p>
             <div className="ag-tf-wrap cu-start">
               <div className="ui-field">
                 <label className="ui-label" htmlFor="plan-start">Starts on</label>
@@ -884,6 +907,17 @@ function EnrollContent() {
               </div>
               <p className="ag-fineprint">{planStart ? `Your plan starts on ${formatDate(startDay)}.` : 'Starts today. Pick a later day if you’d rather.'}</p>
             </div>
+            {flexible ? (
+              <div className="ag-tf-wrap cu-start">
+                <div className="ui-field">
+                  <label className="ui-label" htmlFor="flex-end">Ends on</label>
+                  <DatePicker id="flex-end" ariaLabel="Plan end date" sheetTitle="Pick an end date" allowEmpty placeholder="Choose a date"
+                    minIso={isoDate(flexMin)} maxIso={isoDate(addDays(startDay, MAX_PLAN_DAYS))} emptyViewIso={isoDate(flexMin)}
+                    value={flexEnd} onChange={setFlexEnd} />
+                </div>
+                {flexEndError ? <FieldError id="flex-end-error" message={flexEndError} /> : <p className="ag-fineprint">{flexEndDay ? `You can collect from ${formatDate(flexEndDay)}. Stopping before then costs ${flexTerms.penaltyPct}%.` : `The earliest is ${formatDate(flexMin)}.`}</p>}
+              </div>
+            ) : (<>
             <div className="cu-options" role="radiogroup" aria-label="How long">
               {DURATIONS.map(days => {
                 const value = Math.round(days / UNIT[cadence].days)
@@ -916,7 +950,8 @@ function EnrollContent() {
               </div>
             )}
             <p className="cu-note">The amount on the right is what you’ll have saved.</p>
-            <div className="cu-actions">{cta('Continue', () => { if (startGoal && plans.length === 0 && editing < 0) savePlan(); else go('goal') }, !!customEnd && endDateInvalid)}</div>
+            </>)}
+            <div className="cu-actions">{cta('Continue', () => { if (startGoal && plans.length === 0 && editing < 0) savePlan(); else go('goal') }, flexible ? (!flexEndDay || !!flexEndError) : (!!customEnd && endDateInvalid))}</div>
           </>
         )}
 
@@ -971,8 +1006,8 @@ function EnrollContent() {
                   {(() => { const m = goalMeta(p.goal); const Icon = Icons[m.icon]; return <span className="cu-goal-icon" aria-hidden="true"><Icon size={20} strokeWidth={1.75} /></span> })()}
                   <span className="cu-option-main">
                     <span className="cu-option-title">{goalMeta(p.goal).label}</span>
-                    <span className="cu-option-sub">{formatNaira(perPayment(p), { minor: false })} {UNIT[p.cadence].per} · {p.start ? `${formatDate(startOf(p))} to ` : 'until '}{formatDate(endDate(p))}</span>
-                    <span className="cu-plan-total">{formatNaira(totalSaved(p), { minor: false })} saved by the end</span>
+                    <span className="cu-option-sub">{isFlexPlan(p) ? 'Flexible, any amount' : `${formatNaira(perPayment(p), { minor: false })} ${UNIT[p.cadence].per}`} · {p.start ? `${formatDate(startOf(p))} to ` : 'until '}{formatDate(endDate(p))}</span>
+                    {!isFlexPlan(p) && <span className="cu-plan-total">{formatNaira(totalSaved(p), { minor: false })} saved by the end</span>}
                   </span>
                   <span className="cu-plan-acts">
                     <button type="button" className="cu-edit" onClick={() => editPlan(i)}>Edit</button>

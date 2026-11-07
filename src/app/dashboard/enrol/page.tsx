@@ -2,13 +2,15 @@
 
 import { feeSentence } from '@/lib/savings-fee'
 import { usePlanFees } from '@/lib/use-plan-fees'
+import { useFlexibleTerms } from '@/lib/use-flexible-terms'
+import { earliestEnd } from '@/lib/flexible-savings'
 import { useState, useRef, useEffect, useCallback, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { blockMinus, blockNonDigit, digitsOnly, nonNegativeString } from '@/lib/numeric'
 import { displayName, formatNaira } from '@/lib/format'
-import { addDays, isoDate, parseDateInput, today } from '@/lib/plan-dates'
+import { addDays, isoDate, MAX_PLAN_DAYS, parseDateInput, today } from '@/lib/plan-dates'
 import EmptyState from '@/components/ui/EmptyState'
 import { NG_STATES, lgasOf } from '@/lib/ng-lgas'
 import DatePicker from '@/components/ui/DatePicker'
@@ -16,17 +18,20 @@ import EndDateField, { endDateDays } from '@/components/ui/EndDateField'
 import { FieldError, FormError } from '@/components/ui/FormErrors'
 import { Icons } from '@/components/ui/icons'
 
-type Cadence = 'daily' | 'weekly' | 'monthly'
+type Cadence = 'daily' | 'weekly' | 'monthly' | 'flexible'
+type FixedCadence = Exclude<Cadence, 'flexible'>
 
 interface PlanDraft {
   dailyAmount: string; periodDays: string; goal: string; startDate: string; notes: string; cadence: Cadence
+  /** Flexible plans only: the chosen end date, yyyy-mm-dd. */
+  endDate: string
 }
 
 interface FormData {
   firstName: string; lastName: string; gender: string; phone: string; email: string; dob: string
   address: string; state: string; lga: string; language: string; bvn: string
   nokName: string; nokRelation: string; nokPhone: string
-  dailyAmount: string; periodDays: string; goal: string; startDate: string; notes: string; cadence: Cadence
+  dailyAmount: string; periodDays: string; goal: string; startDate: string; notes: string; cadence: Cadence; endDate: string
   plans: PlanDraft[]
   agreed: boolean
   nfcCard: string; registrationFee: string; feeMethod: string
@@ -36,7 +41,7 @@ const empty: FormData = {
   firstName: '', lastName: '', gender: '', phone: '', email: '', dob: '',
   address: '', state: '', lga: '', language: 'English', bvn: '',
   nokName: '', nokRelation: 'Spouse', nokPhone: '',
-  dailyAmount: '', periodDays: '', goal: '', startDate: '', notes: '', cadence: 'daily',
+  dailyAmount: '', periodDays: '', goal: '', startDate: '', notes: '', cadence: 'daily', endDate: '',
   plans: [],
   agreed: false,
   nfcCard: '', registrationFee: '500', feeMethod: 'cash',
@@ -44,12 +49,12 @@ const empty: FormData = {
 
 const STEPS = ['Personal details', 'Verify phone', 'Photo', 'Savings plan', 'Card and fee', 'Review']
 const GOALS = ['School Fees', 'Business Capital', 'House Rent', 'Medical Expenses', 'Wedding / Event', 'Other']
-const PERIODS: Record<Cadence, [string, string][]> = {
+const PERIODS: Record<FixedCadence, [string, string][]> = {
   daily: [['31', '31 days'], ['62', '62 days'], ['93', '93 days'], ['186', '186 days'], ['365', '365 days']],
   weekly: [['28', '4 weeks'], ['56', '8 weeks'], ['84', '12 weeks'], ['168', '24 weeks'], ['364', '52 weeks']],
   monthly: [['30', '1 month'], ['60', '2 months'], ['90', '3 months'], ['180', '6 months'], ['365', '12 months']],
 }
-const UNIT: Record<Cadence, string> = { daily: 'a day', weekly: 'a week', monthly: 'a month' }
+const UNIT: Record<Cadence, string> = { daily: 'a day', weekly: 'a week', monthly: 'a month', flexible: '' }
 
 /** Plans are entered per day / week / month; the API stores the daily equivalent. */
 function dailyEquiv(amount: string, cadence: Cadence) {
@@ -57,13 +62,18 @@ function dailyEquiv(amount: string, cadence: Cadence) {
   return cadence === 'weekly' ? ra / 7 : cadence === 'monthly' ? ra / 30 : ra
 }
 function planTarget(p: Pick<PlanDraft, 'dailyAmount' | 'periodDays' | 'cadence'>) {
+  if (p.cadence === 'flexible') return 0
   return Math.round(dailyEquiv(p.dailyAmount, p.cadence) * parseInt(p.periodDays || '0'))
 }
 function periodLabel(p: Pick<PlanDraft, 'periodDays' | 'cadence'>) {
   const days = parseInt(p.periodDays || '0')
   return p.cadence === 'weekly' ? `${days / 7} weeks` : p.cadence === 'monthly' ? `${Math.round(days / 30)} months` : `${days} days`
 }
-function maturity(p: Pick<PlanDraft, 'startDate' | 'periodDays'>) {
+function maturity(p: Pick<PlanDraft, 'startDate' | 'periodDays' | 'cadence' | 'endDate'>) {
+  if (p.cadence === 'flexible') {
+    const end = parseDateInput(p.endDate)
+    return end ? end.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : ''
+  }
   if (!p.periodDays) return ''
   const d = p.startDate ? new Date(p.startDate) : new Date()
   d.setDate(d.getDate() + parseInt(p.periodDays))
@@ -72,6 +82,7 @@ function maturity(p: Pick<PlanDraft, 'startDate' | 'periodDays'>) {
 
 export default function EnrolPage() {
   const fees = usePlanFees()
+  const terms = useFlexibleTerms()
   const router = useRouter()
   const { data: session, status: sessionStatus } = useSession()
   const walletBalance = (session?.user as { walletBalance?: number } | undefined)?.walletBalance ?? 0
@@ -293,14 +304,31 @@ export default function EnrolPage() {
   }
 
   const planStart = parseDateInput(form.startDate) ?? today()
-  const draftHasAny = !!(form.dailyAmount || form.periodDays || form.goal)
-  const draftValid = !!(form.dailyAmount && form.periodDays && form.goal)
+  const isFlex = form.cadence === 'flexible'
+  /** The fixed-plan cadence the amount and length fields use (unused while Flexible is picked). */
+  const fixed: FixedCadence = form.cadence === 'flexible' ? 'daily' : form.cadence
+  const minEnd = earliestEnd(planStart, terms)
+  const flexEnd = parseDateInput(form.endDate)
+  const flexEndError = !flexEnd ? '' : flexEnd < minEnd ? `Pick ${maturity({ ...form, endDate: isoDate(minEnd) })} or later (at least ${terms.minTermMonths} months).` : ''
+  const draftHasAny = !!(form.dailyAmount || form.periodDays || form.goal || form.endDate)
+  const draftValid = isFlex ? !!(form.goal && flexEnd && !flexEndError) : !!(form.dailyAmount && form.periodDays && form.goal)
+
+  // The terms line on the review step: the fee of the first fixed plan (as before), and the flexible charges if any plan is flexible.
+  const firstFixed = form.plans.find(p => p.cadence !== 'flexible')
+  const reviewFees = [
+    firstFixed ? feeSentence({ live: fees.live, cadence: firstFixed.cadence, amountPerPayment: parseFloat(firstFixed.dailyAmount) || 0, periodicFeePct: fees.periodicFeePct }) : '',
+    form.plans.some(p => p.cadence === 'flexible')
+      ? `${firstFixed ? 'On the flexible plan: ' : ''}${feeSentence({ live: true, cadence: 'flexible', amountPerPayment: 0, periodicFeePct: 0, flexible: { cashCommissionPct: terms.cashCommissionPct, penaltyPct: terms.penaltyPct, online: false } })}`
+      : '',
+  ].filter(Boolean).join(' ')
 
   function addDraftPlan() {
     setForm(f => ({
       ...f,
-      plans: [...f.plans, { dailyAmount: f.dailyAmount, periodDays: f.periodDays, goal: f.goal, startDate: f.startDate || isoDate(today()), notes: f.notes, cadence: f.cadence }],
-      dailyAmount: '', periodDays: '', goal: '', startDate: '', notes: '', cadence: 'daily',
+      plans: [...f.plans, f.cadence === 'flexible'
+        ? { dailyAmount: '', periodDays: '', goal: f.goal, startDate: f.startDate || isoDate(today()), notes: f.notes, cadence: f.cadence, endDate: f.endDate }
+        : { dailyAmount: f.dailyAmount, periodDays: f.periodDays, goal: f.goal, startDate: f.startDate || isoDate(today()), notes: f.notes, cadence: f.cadence, endDate: '' }],
+      dailyAmount: '', periodDays: '', goal: '', startDate: '', notes: '', cadence: 'daily', endDate: '',
     }))
     setCustomEnd('')
   }
@@ -320,6 +348,7 @@ export default function EnrolPage() {
           ...form,
           photoUrl: photoDataUrl,
           plans: form.plans.map(p => ({ ...p, dailyAmount: String(dailyEquiv(p.dailyAmount, p.cadence)) })),
+          endDate: first?.endDate ?? form.endDate,
           // legacy single-plan fields — populated from first plan for API back-compat
           dailyAmount: String(dailyEquiv((first?.dailyAmount ?? form.dailyAmount) || '0', first?.cadence ?? form.cadence)),
           periodDays: first?.periodDays ?? form.periodDays,
@@ -637,7 +666,7 @@ export default function EnrolPage() {
                         <span className="ag-added-icon" aria-hidden="true"><Icons.plan size={20} /></span>
                         <span className="ag-payee-main">
                           <span className="ui-row-title ui-block">{p.goal}</span>
-                          <span className="ui-row-sub ui-block">{formatNaira(parseFloat(p.dailyAmount || '0'), { minor: false })} {UNIT[p.cadence]} · {periodLabel(p)} · {formatNaira(planTarget(p), { minor: false })} target</span>
+                          <span className="ui-row-sub ui-block">{p.cadence === 'flexible' ? `Flexible · any amount until ${maturity(p)}` : `${formatNaira(parseFloat(p.dailyAmount || '0'), { minor: false })} ${UNIT[p.cadence]} · ${periodLabel(p)} · ${formatNaira(planTarget(p), { minor: false })} target`}</span>
                         </span>
                         <button type="button" className="ui-icon-btn ui-icon-btn--soft" aria-label={`Remove ${p.goal} plan`}
                           onClick={() => setForm(f => ({ ...f, plans: f.plans.filter((_, j) => j !== i) }))}>
@@ -657,13 +686,24 @@ export default function EnrolPage() {
 
                 <p className="ag-label" id="cad">How often?</p>
                 <div className="ui-segment ag-seg" role="group" aria-labelledby="cad">
-                  {(['daily', 'weekly', 'monthly'] as const).map(c => (
-                    <button key={c} type="button" aria-pressed={form.cadence === c} onClick={() => { setForm(f => ({ ...f, cadence: c, periodDays: '' })); setCustomEnd('') }}>
-                      {c === 'daily' ? 'Daily' : c === 'weekly' ? 'Weekly' : 'Monthly'}
+                  {(['daily', 'weekly', 'monthly', 'flexible'] as const).map(c => (
+                    <button key={c} type="button" aria-pressed={form.cadence === c} onClick={() => { setForm(f => ({ ...f, cadence: c, periodDays: '' })); setCustomEnd(''); setError('') }}>
+                      {c === 'daily' ? 'Daily' : c === 'weekly' ? 'Weekly' : c === 'monthly' ? 'Monthly' : 'Flexible'}
                     </button>
                   ))}
                 </div>
 
+                {isFlex ? (
+                  <div className="ui-field">
+                    <label className="ui-label" htmlFor="flex-end">Ends on</label>
+                    <DatePicker id="flex-end" ariaLabel="Plan end date" sheetTitle="Pick an end date" allowEmpty placeholder="Choose a date"
+                      minIso={isoDate(minEnd)} maxIso={isoDate(addDays(planStart, MAX_PLAN_DAYS))} emptyViewIso={isoDate(minEnd)}
+                      value={form.endDate} onChange={iso => set('endDate', iso)} />
+                    {flexEndError
+                      ? <FieldError id="flex-end-error" message={flexEndError} />
+                      : <p className="ag-fineprint">Any amount, any day, until this date. At least {terms.minTermMonths} months.</p>}
+                  </div>
+                ) : (
                 <div className="ag-grid-2">
                   <Field id="amt" label={`Amount ${UNIT[form.cadence]}`}>
                     <span className="ag-tf-money">
@@ -676,17 +716,18 @@ export default function EnrolPage() {
                   <Field id="per" label="For how long">
                     <select id="per" className="ag-tf-input ag-tf-select" value={customEnd ? 'custom' : form.periodDays} onChange={e => {
                       if (e.target.value === 'custom') {
-                        const end = isoDate(addDays(planStart, parseInt(form.periodDays || PERIODS[form.cadence][1][0])))
+                        const end = isoDate(addDays(planStart, parseInt(form.periodDays || PERIODS[fixed][1][0])))
                         setCustomEnd(end)
-                        set('periodDays', String(endDateDays(end, planStart, form.cadence) ?? ''))
+                        set('periodDays', String(endDateDays(end, planStart, fixed) ?? ''))
                       } else { setCustomEnd(''); set('periodDays', e.target.value) }
                     }}>
                       <option value="">Choose</option>
-                      {PERIODS[form.cadence].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+                      {PERIODS[fixed].map(([v, l]) => <option key={v} value={v}>{l}</option>)}
                       <option value="custom">Choose an end date…</option>
                     </select>
                   </Field>
                 </div>
+                )}
                 <div className="ag-grid-2">
                   <div className="ui-field">
                     <label className="ui-label" htmlFor="sd">Start date</label>
@@ -695,7 +736,7 @@ export default function EnrolPage() {
                         const v = iso === isoDate(today()) ? '' : iso
                         set('startDate', v)
                         // Keep a chosen end date where it is; the length changes instead.
-                        if (customEnd) set('periodDays', String(endDateDays(customEnd, parseDateInput(v) ?? today(), form.cadence) ?? ''))
+                        if (customEnd) set('periodDays', String(endDateDays(customEnd, parseDateInput(v) ?? today(), fixed) ?? ''))
                       }} />
                     <p className="ag-fineprint">Starts today unless you pick another day.</p>
                   </div>
@@ -704,12 +745,19 @@ export default function EnrolPage() {
                   </Field>
                 </div>
 
-                {customEnd && (
-                  <EndDateField picker start={planStart} cadence={form.cadence} value={customEnd}
+                {customEnd && !isFlex && (
+                  <EndDateField picker start={planStart} cadence={fixed} value={customEnd}
                     onChange={(v, days) => { setCustomEnd(v); set('periodDays', days ? String(days) : '') }} />
                 )}
 
-                {draftValid && (
+                {draftValid && isFlex && flexEnd && (
+                  <div className="ag-target">
+                    <span className="ui-row-sub ui-block">Saving until</span>
+                    <span className="ag-target-amount">{maturity(form)}</span>
+                    <span className="ui-row-sub ui-block">{feeSentence({ live: true, cadence: 'flexible', amountPerPayment: 0, periodicFeePct: 0, flexible: { cashCommissionPct: terms.cashCommissionPct, penaltyPct: terms.penaltyPct, online: false } })}</span>
+                  </div>
+                )}
+                {draftValid && !isFlex && (
                   <div className="ag-target">
                     <span className="ui-row-sub ui-block">They’ll have saved</span>
                     <span className="ag-target-amount">{formatNaira(planTarget(form), { minor: false })}</span>
@@ -722,7 +770,7 @@ export default function EnrolPage() {
                 </button>
 
                 <FlowActions primary={<button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={() => {
-                  if (draftHasAny && !draftValid) { setError('Finish this plan (goal, amount and length), or clear it to continue.'); return }
+                  if (draftHasAny && !draftValid) { setError(isFlex ? 'Finish this plan (goal and end date), or clear it to continue.' : 'Finish this plan (goal, amount and length), or clear it to continue.'); return }
                   if (!draftValid && form.plans.length === 0) { setError('Add at least one savings plan.'); return }
                   if (draftValid) addDraftPlan()
                   go(5)
@@ -804,9 +852,9 @@ export default function EnrolPage() {
                     <div key={i} className="ag-rv-plan">
                       <div>
                         <span className="ui-row-title ui-block">{p.goal}</span>
-                        <span className="ui-row-sub ui-block">{formatNaira(parseFloat(p.dailyAmount || '0'), { minor: false })} {UNIT[p.cadence]} · {periodLabel(p)} · ends {maturity(p)}</span>
+                        <span className="ui-row-sub ui-block">{p.cadence === 'flexible' ? `Flexible · any amount, any day · ends ${maturity(p)}` : `${formatNaira(parseFloat(p.dailyAmount || '0'), { minor: false })} ${UNIT[p.cadence]} · ${periodLabel(p)} · ends ${maturity(p)}`}</span>
                       </div>
-                      <span className="ag-rv-target">{formatNaira(planTarget(p), { minor: false })}</span>
+                      {p.cadence !== 'flexible' && <span className="ag-rv-target">{formatNaira(planTarget(p), { minor: false })}</span>}
                     </div>
                   ))}
                 </ReviewSection>
@@ -818,7 +866,7 @@ export default function EnrolPage() {
 
                 <button type="button" role="checkbox" aria-checked={form.agreed} className={`ag-agree${form.agreed ? ' is-on' : ''}`} onClick={() => { set('agreed', !form.agreed); setError('') }}>
                   <span className="ag-agree-box" aria-hidden="true">{form.agreed && <Icons.check size={16} />}</span>
-                  <span>The customer agrees to the terms. They understand how much they save, for how long, when the plan ends, the withdrawal rules. {feeSentence({ live: fees.live, cadence: form.cadence, amountPerPayment: parseFloat(form.dailyAmount) || 0, periodicFeePct: fees.periodicFeePct })}</span>
+                  <span>The customer agrees to the terms. They understand how much they save, for how long, when the plan ends, the withdrawal rules. {reviewFees}</span>
                 </button>
 
                 <FlowActions primary={<button type="button" className="ui-btn ui-btn--primary ag-flow-cta" disabled={loading || !form.agreed} onClick={submit}>
