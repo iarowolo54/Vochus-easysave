@@ -11,7 +11,7 @@ import {
 
 type Plan = { startDate: string; maturityDate: string; periodDays: number; cadence?: string; balance: number; dailyAmount: number; coveredKeys?: string[]; coveredRefs?: string[] }
 
-export type Deposit = { id: string; ref?: string; amount: number; createdAt: string; method: string | null; recordedBy: string }
+export type Deposit = { id: string; ref?: string; amount: number; createdAt: string; method: string | null; recordedBy: string; confirmedByStaff?: boolean }
 
 /** What the day-details sheet shows for a tapped day (or week). */
 export type DaySelection = { title: string; state: SlotState; deposits: Deposit[]; ended: boolean; coveredOnly: boolean }

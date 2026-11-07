@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
 import { listedStatuses } from '@/lib/receipt-payout'
+import { isHandCredit } from '@/lib/hand-receipt'
 
 export async function GET() {
   const session = await getCustomerSession()
@@ -24,6 +25,7 @@ export async function GET() {
       amount: t.amount,
       feeTaken: t.feeTaken,
       method: t.method,
+      confirmedByStaff: isHandCredit(t.note),
       status: statuses.get(t.id) ?? t.status,
       createdAt: t.createdAt,
       planGoal: t.plan?.goal ?? null,

@@ -38,7 +38,7 @@ type Plan = {
 }
 type Tx = {
   id: string; amount: number; ref: string; createdAt: string; method: string | null
-  planId: string | null; recordedBy: string
+  planId: string | null; recordedBy: string; confirmedByStaff?: boolean
 }
 type CustomerData = {
   customerId: string; name: string; phone: string; email: string | null; emailVerified?: boolean; photoUrl: string | null

@@ -8,6 +8,7 @@
 // (src/lib/notification-sweep.ts) can't create a duplicate.
 import type { Prisma } from '@prisma/client'
 import { displayName, formatNaira, formatTime } from '@/lib/format'
+import { receiptHref } from '@/lib/hand-receipt'
 
 export type RecipientType = 'agent' | 'customer'
 export interface Recipient { type: RecipientType; id: string }
@@ -47,7 +48,7 @@ export const notifications = {
     const out: NotificationEvent[] = [{
       recipient: customer(f.customerId), kind: 'saving_received', title: `${naira(f.amount)} saved into ${f.planGoal}`,
       body: fee ? `${naira(fee)} was the platform fee. ${naira(Math.max(0, Math.round((f.amount - fee) * 100) / 100))} was added to your balance.` : undefined,
-      href: '/customer/dashboard', dedupeKey: `saving:${f.ref}`,
+      href: receiptHref(f.ref), dedupeKey: `saving:${f.ref}`,
     }]
     if (f.onlineTransfer) out.push({
       recipient: agent(f.agentId), kind: 'online_saving_by_transfer', title: `${name(f.customerName)} saved ${naira(f.amount)} by transfer`,

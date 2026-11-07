@@ -11,6 +11,8 @@ import { depositFeeOps } from '@/lib/commission-ledger'
 import { sendPaymentAlert } from '@/lib/payment-alert'
 import { notifications, notify } from '@/lib/notifications'
 import { alertEmailFor } from '@/lib/email-alerts'
+import { HAND_CREDIT_NOTE, handReceiptSms, wantsHandReceiptSms } from '@/lib/hand-receipt'
+import { sendSMS } from '@/lib/kudisms'
 
 export type SettleResult =
   | { kind: 'credited'; amount: number; planId: string; notBought: number }
@@ -94,7 +96,7 @@ export async function settleIntentPayment(client: PrismaClient, input: Input): P
           method: via === 'Moniepoint transfer' || via === 'Staff by hand' ? 'Transfer' : 'Paystack',
           status: 'Done',
           feeTaken: fee,
-          note: via === 'Staff by hand' ? 'Bank transfer credited by hand by staff' : `Customer self-pay via ${via} — ${channel ?? 'card'}`,
+          note: via === 'Staff by hand' ? HAND_CREDIT_NOTE : `Customer self-pay via ${via} — ${channel ?? 'card'}`,
         },
       })
       // notify: savingsReceived
@@ -158,12 +160,21 @@ export async function settleIntentPayment(client: PrismaClient, input: Input): P
       : { actorType: 'system', actorName: via === 'Moniepoint transfer' || via === 'Staff by hand' ? via : 'Paystack Webhook' }),
   })
   if (priorSavings === 0) creditRegistrationReward(customer).catch(() => {})
-  // Best effort: the money is already credited, so a failed email must never change the result.
+  // Best effort: the money is already credited, so a failed email or SMS must never change the result.
+  const sms = wantsHandReceiptSms({ via, planSource: plan.source }) && customer.phone ? customer.phone : null
   client.savingsPlan.findUnique({ where: { id: plan.id }, select: { balance: true, goal: true } })
-    .then(p => sendPaymentAlert({
-      kind: 'saving', email: alertEmailFor(customer), name: customer.firstName, amount, reference,
-      via, destination: p?.goal || 'your savings plan', balanceAfter: p?.balance ?? null,
-    }))
+    .then(async p => {
+      const balanceAfter = p?.balance ?? null
+      await sendPaymentAlert({
+        kind: 'saving', email: alertEmailFor(customer), name: customer.firstName, amount, reference,
+        via, destination: p?.goal || 'your savings plan', balanceAfter,
+      })
+      // A cash customer whose transfer staff approved by hand gets one SMS receipt (most don't open the app or email).
+      if (sms) {
+        const r = await sendSMS(sms, handReceiptSms({ name: customer.firstName, amount, goal: p?.goal ?? '', balanceAfter, reference }))
+        if (!r.success) console.error('[hand-receipt] SMS not sent:', r.error ?? 'unknown')
+      }
+    })
     .catch(() => {})
 
   return { kind: 'credited', amount, planId: plan.id, notBought: wanted.length - bought }

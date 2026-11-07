@@ -42,6 +42,7 @@ export function paymentAlertEmail(a: PaymentAlert): { subject: string; html: str
       ['Reference', a.reference],
       ['Date', loginTimeLabel(at)],
       ['Paid by', a.via.startsWith('Paystack') ? 'Card or bank transfer' : 'Bank transfer'],
+      ['Confirmed by', a.via === 'Staff by hand' ? 'Vochus staff' : null],
       [wallet ? 'Credited to' : 'Saved to', a.destination],
       [wallet ? 'Wallet balance' : 'Plan balance', a.balanceAfter == null ? null : formatNaira(a.balanceAfter)],
     ],

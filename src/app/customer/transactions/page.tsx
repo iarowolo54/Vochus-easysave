@@ -18,6 +18,7 @@ type Tx = {
   method: string | null; status: string; createdAt: string
   planGoal?: string | null
   cadence?: string | null
+  confirmedByStaff?: boolean
 }
 type Me = { transactions: { id: string; recordedBy: string }[] }
 
@@ -71,6 +72,18 @@ export default function TransactionsPage() {
   }, [router])
 
   useEffect(() => { load() }, [load])
+
+  // A notice links here with ?ref=<reference>: open that receipt once the list arrives, then drop the ref from the
+  // address so going back or refreshing doesn't open it again.
+  const [linkedRef, setLinkedRef] = useState<string | null>(null)
+  useEffect(() => { setLinkedRef(new URLSearchParams(window.location.search).get('ref')) }, [])
+  useEffect(() => {
+    if (!linkedRef || !txs) return
+    const hit = txs.find(t => t.ref === linkedRef)
+    if (hit) setSelected(hit)
+    setLinkedRef(null)
+    window.history.replaceState(null, '', window.location.pathname)
+  }, [linkedRef, txs])
   useEffect(() => { setShown(PAGE_SIZE) }, [group, plan])
 
   const recordedBy = useMemo(
@@ -117,7 +130,7 @@ export default function TransactionsPage() {
       rows: [
         ['Date', `${formatDate(tx.createdAt)}, ${formatTime(tx.createdAt)}`],
         ...(tx.planGoal ? [[meta.planLabel, tx.planGoal] as [string, string]] : []),
-        ['Method', depositMethod({ method: tx.method, recordedBy: recordedBy.get(tx.id) })],
+        ['Method', depositMethod({ method: tx.method, recordedBy: recordedBy.get(tx.id), confirmedByStaff: tx.confirmedByStaff })],
         ...(tx.feeTaken ? [['Platform fee', `−${formatNaira(tx.feeTaken)}`] as [string, string]] : []),
       ] as [string, string][],
     }
