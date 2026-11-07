@@ -27,6 +27,7 @@ import { PAYSTACK_ENABLED } from '@/lib/paystack-off'
 import { displayName, formatDate, formatNaira } from '@/lib/format'
 import { getHideBalance, setHideBalance } from '@/lib/preferences'
 import { BULK_SAVINGS_LABEL, isEligiblePlan, selectableKeys } from '@/lib/catchup'
+import NotificationBell from '@/components/ui/NotificationBell'
 import { buildSlots, currentSlot, dateKey, dayDeposits, hasEnded, isWeekly } from '@/lib/savings-card'
 
 type Plan = {
@@ -249,6 +250,7 @@ export default function CustomerDashboard() {
           <div className="ui-topbar-sub ui-topbar-sub--above">{greeting}</div>
           <div className="ui-topbar-title">{firstName}</div>
         </div>
+        <NotificationBell countUrl="/api/customer/notifications?count=1" href="/customer/notifications" />
       </header>
 
       <main className="ui-container">

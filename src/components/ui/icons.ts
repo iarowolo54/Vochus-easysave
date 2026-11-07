@@ -1,7 +1,7 @@
 // The one place UI concepts map to icons. Use these names — not emoji, not ad-hoc lucide imports —
 // so "save" or "withdraw" looks the same on every screen.
 import {
-  ArrowDownLeft, Award, Banknote, CalendarDays, ClipboardList, HandCoins, Landmark, Menu, Network, Percent, Repeat, TriangleAlert, Wallet, ArrowUpRight, Check, ChevronDown, CreditCard, ChevronLeft, ChevronRight, CircleAlert, Clock, Download, Eye, EyeOff, Fingerprint,
+  ArrowDownLeft, Award, Bell, Banknote, CalendarDays, ClipboardList, HandCoins, Landmark, Menu, Network, Percent, Repeat, TriangleAlert, Wallet, ArrowUpRight, Check, ChevronDown, CreditCard, ChevronLeft, ChevronRight, CircleAlert, Clock, Download, Eye, EyeOff, Fingerprint,
   GraduationCap, HeartPulse, PartyPopper, Sprout, Store,
   Activity, ArrowLeftRight, Calculator, ChartColumn, Ellipsis, Gift, Palette, QrCode, ScrollText, Smartphone, UserCog, Vault,
   Headset, House, ImagePlus, LayoutGrid, Lock, LogOut, MessageCircle, Phone, PiggyBank, Plus, Printer, Search, Receipt, RefreshCw, SendHorizontal, Settings, Share2, Users, X,
@@ -13,6 +13,7 @@ export const Icons = {
   plan: PiggyBank,
   history: Receipt,
   chat: MessageCircle,
+  bell: Bell,
   support: Headset,
   settings: Settings,
   customers: Users,

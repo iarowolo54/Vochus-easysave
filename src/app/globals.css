@@ -2665,3 +2665,29 @@ button.ui-cal-day:disabled:active { transform: none; }
 
 .tp-kobo-hint { color: var(--ui-warn); font-size: var(--ui-fs-sm); font-weight: 700; }
 .tp-callout--pre { margin: var(--ui-s3) 0 0; }
+
+/* ── In-app notifications (agent + customer): bell, badge, list. Big text and taps for the phone apps. ── */
+.nt-bell { position: relative; margin-left: auto; background: none; }
+.ag-topbar .nt-bell { margin-left: auto; margin-right: var(--ui-s2); }
+.nt-badge { position: absolute; top: 4px; right: 2px; min-width: 20px; height: 20px; padding: 0 6px; border-radius: var(--ui-r-pill); background: var(--ui-danger); color: #fff; font-size: 12px; font-weight: 700; line-height: 20px; text-align: center; box-shadow: 0 0 0 2px var(--ui-surface); }
+.nt-wrap { display: flex; flex-direction: column; gap: var(--ui-s5); padding-bottom: var(--ui-s6); }
+.nt-group-title { font-size: var(--ui-fs-sm); font-weight: 700; color: var(--ui-ink-2); text-transform: uppercase; letter-spacing: .04em; margin: 0 0 var(--ui-s2); }
+.nt-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: var(--ui-s2); }
+.nt-row { display: flex; align-items: flex-start; gap: var(--ui-s3); min-height: 64px; padding: var(--ui-s3) var(--ui-s4); border-radius: var(--ui-r-md); background: var(--ui-surface); color: var(--ui-ink); text-decoration: none; border: 1px solid var(--ui-line); }
+.nt-row.is-new { background: var(--ui-brand-tint); border-color: transparent; }
+.nt-row--skel { height: 72px; background: var(--ui-canvas); border: none; }
+.nt-icon { flex: 0 0 40px; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+.nt-icon--in { background: var(--ui-brand-tint); color: var(--ui-positive); }
+.nt-row.is-new .nt-icon--in { background: var(--ui-surface); }
+.nt-icon--out { background: var(--ui-info-tint); color: var(--ui-info); }
+.nt-icon--attention { background: var(--ui-warn-tint); color: var(--ui-warn); }
+.nt-icon--security { background: var(--ui-danger-tint); color: var(--ui-danger); }
+.nt-text { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.nt-title { font-size: var(--ui-fs-md); font-weight: 600; line-height: 1.35; }
+.nt-row.is-new .nt-title { font-weight: 700; }
+.nt-body { font-size: var(--ui-fs-sm); color: var(--ui-ink-2); line-height: 1.4; }
+.nt-time { font-size: var(--ui-fs-sm); color: var(--ui-ink-3); margin-top: 2px; }
+.nt-dot { flex: 0 0 10px; width: 10px; height: 10px; margin-top: 6px; border-radius: 50%; background: var(--ui-danger); }
+.nt-state { display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--ui-s2); padding: var(--ui-s6) var(--ui-s4); }
+.nt-state-icon { width: 56px; height: 56px; border-radius: 50%; background: var(--ui-canvas); color: var(--ui-ink-2); display: flex; align-items: center; justify-content: center; }
+.nt-state-title { font-size: var(--ui-fs-lg); font-weight: 700; margin: 0; }

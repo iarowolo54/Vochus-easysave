@@ -12,6 +12,7 @@ import SessionKeepAlive from '@/components/SessionKeepAlive'
 import IdleSignOut from '@/components/IdleSignOut'
 import Logo from '@/components/Logo'
 import { Icons, type IconName } from '@/components/ui/icons'
+import NotificationBell from '@/components/ui/NotificationBell'
 import { displayName, formatNaira } from '@/lib/format'
 
 const navItems: { section: string; items: { label: string; icon: IconName; href: string }[] }[] = [
@@ -64,6 +65,7 @@ const pageTitles: Record<string, string> = {
   '/dashboard/subagents': 'Sub-agents',
   '/dashboard/chat': 'Customer chat',
   '/dashboard/settings': 'Settings',
+  '/dashboard/notifications': 'Notifications',
   '/dashboard/report': 'Report an issue',
   '/dashboard/documents': 'Documents',
   '/dashboard/cards': 'Cards',
@@ -271,6 +273,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <Icons.menu size={22} aria-hidden="true" />
           </button>
           <h1 className="ag-title">{pageTitle}</h1>
+          <NotificationBell countUrl="/api/agent/notifications?count=1" href="/dashboard/notifications" />
           <Link href="/dashboard/settings" className="ui-avatar ag-topbar-av" aria-label="Your settings">{avatarNode}</Link>
         </header>
 
