@@ -44,6 +44,8 @@ model Agent {
   bankName           String?
   accountNumber      String?
   accountName        String?
+  /// When the agent last opened their notifications; newer ones count as new on the bell.
+  notificationsSeenAt DateTime?
   createdAt          DateTime     @default(now())
   customers     Customer[]
   transactions  Transaction[]
@@ -103,6 +105,8 @@ model Customer {
   password     String?
   inviteToken  String?      @unique
   tokenVersion Int          @default(0)
+  /// When the customer last opened their notifications; newer ones count as new on the bell.
+  notificationsSeenAt DateTime?
   boundDeviceId String?
   createdAt    DateTime     @default(now())
   savingsPlans SavingsPlan[]
@@ -732,6 +736,22 @@ model AutoDebitAttempt {
   updatedAt      DateTime @updatedAt
 
   @@index([status, createdAt])
+}
+
+/// In-app notifications for agents and customers. Written in the same transaction as the change it describes, through the
+/// catalogue in src/lib/notifications.ts only. dedupeKey makes retries and the nightly safety net harmless.
+model Notification {
+  id            String   @id @default(cuid())
+  recipientType String   // 'agent' | 'customer'
+  recipientId   String
+  kind          String
+  title         String
+  body          String?
+  href          String?
+  dedupeKey     String   @unique
+  createdAt     DateTime @default(now())
+
+  @@index([recipientType, recipientId, createdAt])
 }
 
 model NotificationLog {
