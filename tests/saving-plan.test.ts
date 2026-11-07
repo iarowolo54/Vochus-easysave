@@ -35,3 +35,36 @@ test('a malformed date is rejected', () => {
     assert.ok('error' in resolvePlanStartDate(bad, today), `"${bad}" should error`)
   }
 })
+
+// selectActivePlan with no planId: only plans still open for saving count, so an ended plan neither gets picked
+// nor makes the choice ambiguous.
+import { selectActivePlan } from '../src/lib/saving-plan'
+
+function stub(rows: { id: string; source: string }[]) {
+  const seen: unknown[] = []
+  return {
+    seen,
+    client: {
+      savingsPlan: {
+        findMany: async (a: { where: unknown }) => { seen.push(a.where); return rows },
+        findFirst: async (a: { where: unknown }) => { seen.push(a.where); return rows[0] ?? null },
+      },
+    } as unknown as Parameters<typeof selectActivePlan>[0],
+  }
+}
+
+test('without a planId, plans past their end date are left out of the choice', async () => {
+  const s = stub([{ id: 'open', source: 'agent' }])
+  const r = await selectActivePlan(s.client, 'c1')
+  assert.deepEqual(r, { plan: { id: 'open', source: 'agent' } })
+  const where = s.seen[0] as { status: string; maturityDate?: { gt: Date } }
+  assert.equal(where.status, 'Active')
+  assert.ok(where.maturityDate?.gt instanceof Date, 'filters on the end date')
+})
+
+test('with a planId, an ended plan is still found so the route can say it has ended', async () => {
+  const s = stub([{ id: 'p1', source: 'agent' }])
+  await selectActivePlan(s.client, 'c1', 'p1')
+  const where = s.seen[0] as { maturityDate?: unknown }
+  assert.equal(where.maturityDate, undefined)
+})

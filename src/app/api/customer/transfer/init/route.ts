@@ -31,10 +31,15 @@ export async function POST(req: NextRequest) {
   if (!customer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const plan = await prisma.savingsPlan.findFirst({
-    where: { customerId: customer.id, status: 'Active', ...(typeof input.planId === 'string' ? { id: input.planId } : {}) },
+    // A named plan is looked up as is (so an ended one gets the clear 'matured' message); with no planId only an open plan is picked.
+    where: { customerId: customer.id, status: 'Active', ...(typeof input.planId === 'string' ? { id: input.planId } : { maturityDate: { gt: new Date() } }) },
     orderBy: { startDate: 'desc' },
   })
-  if (!plan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 })
+  if (!plan) {
+    return typeof input.planId === 'string'
+      ? NextResponse.json({ error: 'Plan not found' }, { status: 404 })
+      : NextResponse.json({ error: 'You have no plan open for saving. Start a new plan, or save into an ended one again from Home.' }, { status: 409 })
+  }
   if (planHasEnded(plan)) return NextResponse.json({ error: PLAN_ENDED }, { status: 409 })
   if (await hasOpenRedemption(prisma, plan.id)) {
     return NextResponse.json({ error: 'You’ve asked to collect from this plan. You can’t add money until that request is finished.' }, { status: 409 })

@@ -17,6 +17,7 @@ import { describeFailure, postJson } from '@/lib/http'
 import { blockMinus, nonNegativeString } from '@/lib/numeric'
 import { addDays, isoDate, lengthLabel, MAX_PLAN_DAYS, parseDateInput, today } from '@/lib/plan-dates'
 import { earliestEnd, isFlexible } from '@/lib/flexible-savings'
+import { isOpenForSaving } from '@/lib/plan-credit'
 import { feeSentence } from '@/lib/savings-fee'
 import { useFlexibleTerms } from '@/lib/use-flexible-terms'
 
@@ -102,6 +103,8 @@ function SavePageInner() {
   const [goal, setGoal] = useState('General Savings')
   const [amountError, setAmountError] = useState('')
   const [creating, setCreating] = useState(false)
+  /** The customer has plans, but every one has ended: nothing to pay into here. */
+  const [endedOnly, setEndedOnly] = useState(false)
   /** Flexible picked in the new-plan form: no set amount; runs until `flexEnd`. */
   const [flexible, setFlexible] = useState(false)
   const [flexEnd, setFlexEnd] = useState('')
@@ -113,8 +116,11 @@ function SavePageInner() {
   useEffect(() => {
     if (!data) return
     const all = data.plans ?? (data.plan ? [data.plan] : [])
-    setPlans(all)
-    setSelectedPlanId(id => (id && all.some(p => p.id === id) ? id : all[0]?.id ?? null))
+    // Only plans still open for saving can be paid into; an ended plan is saved into again from Home (Save again).
+    const open = all.filter(p => isOpenForSaving(p))
+    setPlans(open)
+    setSelectedPlanId(id => (id && open.some(p => p.id === id) ? id : open[0]?.id ?? null))
+    setEndedOnly(open.length === 0 && all.length > 0)
     if (all.length === 0) setMode('new')
   }, [data])
 
@@ -163,6 +169,7 @@ function SavePageInner() {
       setCreating(false)
       if (!made.ok) { setError(describeFailure(made)); return }
       setPlans(prev => [made.data.plan, ...prev])
+      setEndedOnly(false)
       setSelectedPlanId(made.data.plan.id)
       setPayText('')
       setMode('pay')
@@ -184,6 +191,7 @@ function SavePageInner() {
     setCreating(false)
     if (!result.ok) { setError(describeFailure(result)); return }
     setPlans(prev => [result.data.plan, ...prev])
+    setEndedOnly(false)
     setSelectedPlanId(result.data.plan.id)
     setMode('pay')
   }
@@ -218,17 +226,31 @@ function SavePageInner() {
   return (
     <div className="ui-screen">
       <header className="ui-topbar">
-        {mode === 'new' && plans.length > 0 && (
+        {mode === 'new' && (plans.length > 0 || endedOnly) && (
           <button type="button" className="ui-icon-btn" onClick={goBack} aria-label="Back to saving">
             <Icons.back size={22} aria-hidden="true" />
           </button>
         )}
         <div className="ui-topbar-main">
-          <h1 className={mode === 'new' && plans.length > 0 ? 'ui-topbar-title' : 'ui-page-title'}>{mode === 'new' ? 'New savings plan' : 'Save'}</h1>
+          <h1 className={mode === 'new' && (plans.length > 0 || endedOnly) ? 'ui-topbar-title' : 'ui-page-title'}>{mode === 'new' ? 'New savings plan' : 'Save'}</h1>
         </div>
       </header>
 
       <main className="ui-container">
+        {mode === 'pay' && endedOnly && !selectedPlan && (
+          <EmptyState
+            icon="plan"
+            title="Your plan has ended"
+            text="It can’t take more savings. Collect it, save into it again from Home, or start a new plan."
+            action={
+              <div className="ui-stack">
+                <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => router.push('/customer/dashboard')}>Go to Home</button>
+                <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => { setMode('new'); setError('') }}>Start a new plan</button>
+              </div>
+            }
+          />
+        )}
+
         {mode === 'pay' && selectedPlan && pending && (
           <EmptyState
             icon="locked"

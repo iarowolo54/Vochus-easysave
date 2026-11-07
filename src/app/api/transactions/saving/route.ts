@@ -7,7 +7,7 @@ import { assertSufficient, insufficientResponse, InsufficientFundsError, money }
 import { debitAgentBalance } from '@/lib/wallet-debit'
 import { creditRegistrationReward } from '@/lib/reward'
 import { selectActivePlan, depositCreatedAt, hasSavingOnDay, ALREADY_SAVED_TODAY } from '@/lib/saving-plan'
-import { planHasEnded, PLAN_ENDED } from '@/lib/plan-credit'
+import { depositDayInPlan, outsidePlanMessage, planHasEnded, PLAN_ENDED } from '@/lib/plan-credit'
 import { creditOpenPlan, hasOpenRedemption, PLAN_CLOSED, PlanClosedError, SAVING_BLOCKED } from '@/lib/redemption-balance'
 import { depositFeeOps } from '@/lib/commission-ledger'
 import { getFlexibleSettings, isFlexible } from '@/lib/flexible-savings'
@@ -37,13 +37,13 @@ export async function POST(req: NextRequest) {
   // instead of money silently landing on "the newest plan".
   const selected = await selectActivePlan(prisma, customer.id, planId)
   if ('error' in selected) {
-    if (selected.error === 'none') return NextResponse.json({ error: 'No active savings plan' }, { status: 400 })
+    if (selected.error === 'none') return NextResponse.json({ error: 'This customer has no plan open for saving. If their plan has ended, use Save again or start a new plan.' }, { status: 400 })
     if (selected.error === 'not_found') return NextResponse.json({ error: 'Plan not found for this customer' }, { status: 404 })
     return NextResponse.json({ error: 'This customer has more than one active plan — choose which plan to save into' }, { status: 400 })
   }
   const plan = selected.plan
 
-  const dates = await prisma.savingsPlan.findUnique({ where: { id: plan.id }, select: { maturityDate: true, cadence: true } })
+  const dates = await prisma.savingsPlan.findUnique({ where: { id: plan.id }, select: { startDate: true, maturityDate: true, cadence: true } })
   if (!dates || planHasEnded(dates)) return NextResponse.json({ error: PLAN_ENDED }, { status: 409 })
 
   if (await hasOpenRedemption(prisma, plan.id)) return NextResponse.json({ error: SAVING_BLOCKED }, { status: 409 })
@@ -57,6 +57,8 @@ export async function POST(req: NextRequest) {
   }
   // SR-3: ignore a client backdate on online (self) plans.
   const createdAt = depositCreatedAt(plan.source, date)
+  // A cash saving recorded for a chosen day must be for a day the plan runs (not past its end, not before its start).
+  if (createdAt && !depositDayInPlan(dates, createdAt)) return NextResponse.json({ error: outsidePlanMessage(dates) }, { status: 400 })
 
   const priorSavings = await prisma.transaction.count({
     where: { customerId: customer.id, type: 'saving' },

@@ -19,7 +19,7 @@ export async function POST(req: NextRequest) {
   if (!customer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const plan = await prisma.savingsPlan.findFirst({
-    where: { customerId: customer.id, status: 'Active' },
+    where: { customerId: customer.id, status: 'Active', maturityDate: { gt: new Date() } },
     orderBy: { startDate: 'desc' },
   })
   if (!plan) return NextResponse.json({ error: 'No active savings plan' }, { status: 400 })

@@ -55,8 +55,9 @@ export async function selectActivePlan(
     })
     return plan ? { plan } : { error: 'not_found' }
   }
+  // Only plans still open for saving count; an ended plan must not be picked or make the choice ambiguous.
   const active = await client.savingsPlan.findMany({
-    where: { customerId, status: 'Active' },
+    where: { customerId, status: 'Active', maturityDate: { gt: new Date() } },
     select: { id: true, source: true },
     take: 2,
   })

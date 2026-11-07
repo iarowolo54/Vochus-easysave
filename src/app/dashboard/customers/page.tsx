@@ -12,6 +12,7 @@ import { Icons, type IconName } from '@/components/ui/icons'
 import { avatarTint } from '@/lib/avatar'
 import { displayName, formatDate, formatNaira, formatTime } from '@/lib/format'
 import { isFlexible } from '@/lib/flexible-savings'
+import { isOpenForSaving } from '@/lib/plan-credit'
 
 interface Plan {
   id: string; goal: string; status: string; balance: number; dailyAmount: number
@@ -630,12 +631,14 @@ function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, g
         const pct = planProgress(p)
         const target = p.dailyAmount * p.periodDays
         const left = daysLeft(p.maturityDate)
-        const isActive = p.status === 'Active'
+        // Past its end date but not yet collected: the stored status still says Active, so say Ended instead.
+        const isActive = p.status === 'Active' && isOpenForSaving(p)
+        const ended = p.status === 'Active' && !isActive
         return (
           <div key={p.id} className={`ag-plan${isActive ? '' : ' ag-plan--past'}`}>
             <div className="ag-plan-top">
               <span className="ui-row-title">{p.goal}</span>
-              <span className={`ui-status ui-status--sm ${isActive ? 'ui-status--success' : 'ui-status--neutral'}`}>{p.status}</span>
+              <span className={`ui-status ui-status--sm ${isActive ? 'ui-status--success' : 'ui-status--neutral'}`}>{ended ? 'Ended' : p.status}</span>
             </div>
             <div className="ag-plan-figures">
               <span className="ag-plan-balance">{formatNaira(p.balance, { minor: false })}</span>

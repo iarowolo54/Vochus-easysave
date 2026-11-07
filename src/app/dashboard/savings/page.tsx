@@ -4,6 +4,7 @@ import { planFeePreview } from '@/lib/savings-fee'
 import { usePlanFees } from '@/lib/use-plan-fees'
 import { useFlexibleTerms } from '@/lib/use-flexible-terms'
 import { isFlexible } from '@/lib/flexible-savings'
+import { isOpenForSaving } from '@/lib/plan-credit'
 import { useState, useEffect, useCallback, useRef, Suspense } from 'react'
 import { useSession } from 'next-auth/react'
 import { useSearchParams, useRouter } from 'next/navigation'
@@ -216,7 +217,8 @@ function SavingsContent() {
     return () => clearTimeout(t)
   }, [search, selected])
 
-  const activePlans = (selected?.savingsPlans ?? []).filter(p => p.status === 'Active')
+  // Only plans still open for saving (Active and before their end date). Ended ones are offered as Save again above.
+  const activePlans = (selected?.savingsPlans ?? []).filter(p => isOpenForSaving(p))
   const plan = activePlans.find(p => p.id === planId) ?? null
   /** Flexible plan: any amount the agent types, as often as the customer pays; no Bulk Savings, no one-a-day rule. */
   const flexPlan = !!plan && isFlexible(plan.cadence)
@@ -224,7 +226,7 @@ function SavingsContent() {
 
   // A new customer: pick their plan if there's only one, otherwise make the agent choose.
   useEffect(() => {
-    const active = (selected?.savingsPlans ?? []).filter(p => p.status === 'Active')
+    const active = (selected?.savingsPlans ?? []).filter(p => isOpenForSaving(p))
     setPlanId(active.length === 1 ? active[0].id : null)
   }, [selected])
 
@@ -477,6 +479,8 @@ function SavingsContent() {
     </a>
   )
   const redeemed = selected?.planStatus === 'Redeemed'
+  /** Every plan has ended (or been collected) but the customer isn't on the new-plan form: nothing to save into. */
+  const nothingOpen = !!selected && !redeemed && activePlans.length === 0
   const finishedPlans = (selected?.savingsPlans ?? [])
     .filter(p => p.status === 'Redeemed' || (p.status === 'Active' && p.maturityDate !== null && new Date(p.maturityDate).getTime() <= Date.now()))
     .slice(0, 3)
@@ -626,8 +630,8 @@ function SavingsContent() {
                   {finishedPlans.map(p => (
                     <div key={p.id} className="ui-row">
                       <span className="ui-row-main">
-                        <span className="ui-row-title">{p.goal}</span>
-                        <span className="ui-row-sub">{formatNaira(perPayment(p), { minor: false })} a {planUnit(p)} · {p.status === 'Redeemed' ? 'collected' : 'matured'}</span>
+                        <span className="ui-row-title ui-block">{p.goal}</span>
+                        <span className="ui-row-sub ui-block">{isFlexible(p.cadence) ? 'Flexible' : `${formatNaira(perPayment(p), { minor: false })} a ${planUnit(p)}`} · {p.status === 'Redeemed' ? 'collected' : (p.maturityDate ? `ended ${formatDate(p.maturityDate)}` : 'ended')}</span>
                       </span>
                       <button type="button" className="ui-btn ui-btn--secondary" disabled={loading} onClick={() => setReopenFor({ id: p.id, name: p.goal })}>Save again</button>
                     </div>
@@ -637,6 +641,12 @@ function SavingsContent() {
 
               {redeemed ? (
                 <NewPlanForm plan={newPlan} setPlan={setNewPlan} />
+              ) : nothingOpen ? (
+                <section className="ui-card">
+                  <EmptyState icon="plan" title="No plan open for saving"
+                    text={finishedPlans.length > 0 ? 'Their plan has ended. Tap Save again above to keep saving into it, or start a new plan.' : 'Start a new plan for them to keep saving.'}
+                    action={<Link href={`/dashboard/add-plan?cid=${encodeURIComponent(selected.customerId)}`} className="ui-btn ui-btn--secondary">Start a new plan</Link>} />
+                </section>
               ) : (
                 <section className="ui-card" aria-labelledby="saving-title">
                   <h2 id="saving-title" className="ui-card-title ag-card-title">What are they paying for?</h2>
@@ -736,7 +746,7 @@ function SavingsContent() {
                   <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={loading} onClick={createPlan}>
                     {loading ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Creating plan…</> : 'Create savings plan'}
                   </button>
-                ) : (
+                ) : nothingOpen ? null : (
                   <button
                     type="button"
                     className="ui-btn ui-btn--primary ui-btn--block"
