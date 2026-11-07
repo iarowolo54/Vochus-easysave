@@ -5,11 +5,14 @@ import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { requireEnv } from '@/lib/env'
 import { createTransferIntent } from '@/lib/transfer-intent'
+import { getFundingMode, TRANSFER_NOT_IN_USE } from '@/lib/funding-mode'
 import { money } from '@/lib/wallet-guard'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Super admin chose card for agents (Payouts & top-ups): no new bank transfers. Ones already started still credit.
+  if ((await getFundingMode(prisma)).agent === 'card') return NextResponse.json({ error: TRANSFER_NOT_IN_USE }, { status: 410 })
 
   const agent = await prisma.agent.findFirst({ where: { agentId: session.user.agentId } })
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })

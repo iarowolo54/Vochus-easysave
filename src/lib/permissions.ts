@@ -33,7 +33,7 @@ export const SCREENS = [
   { key: 'treasury', label: 'Treasury', group: 'Money', actions: VM, handlesMoney: true, manageNote: 'Fund wallets, inject capital, commission payout' },
   { key: 'bank-transfers', label: 'Bank transfers', group: 'Money', actions: VM, handlesMoney: true, manageNote: 'Credit a transfer by hand' },
   { key: 'transactions', label: 'Transactions', group: 'Money', actions: V },
-  { key: 'payout-mode', label: 'Payout mode', group: 'Money', actions: VM, handlesMoney: true, manageNote: 'Switch payouts between Auto and Manual' },
+  { key: 'payout-mode', label: 'Payouts & top-ups', group: 'Money', actions: VM, handlesMoney: true, manageNote: 'Switch payouts between Auto and Manual, and top-ups between bank transfer and card' },
   { key: 'cards', label: 'Cards', group: 'Cards', actions: VM, manageNote: 'Generate cards, gift-card design' },
   { key: 'devices', label: 'Devices', group: 'Oversight', actions: VM, manageNote: 'Reset a device' },
   { key: 'audit', label: 'Audit log', group: 'Oversight', actions: V },

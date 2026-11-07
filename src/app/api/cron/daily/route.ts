@@ -6,6 +6,7 @@ import { accruedInterestForPlan } from '@/lib/savings-interest-plan'
 import { runDueAutoDebits, reconcileProcessingAttempts } from '@/lib/auto-debit-run'
 import { sendWeeklySummaries } from '@/lib/weekly-summary-run'
 import { isSummaryDay } from '@/lib/summary-day'
+import { getFundingMode } from '@/lib/funding-mode'
 import { runNotificationSweep } from '@/lib/notification-sweep'
 
 export const dynamic = 'force-dynamic'
@@ -43,7 +44,8 @@ export async function GET(req: Request) {
   let pending = 0
   let settled = 0
   // No new card charges while Paystack is closed (src/lib/paystack-off.ts).
-  if (PAYSTACK_ENABLED) try {
+  // Card charges only while Paystack is on AND super admin has customers on card (Payouts & top-ups).
+  if (PAYSTACK_ENABLED && (await getFundingMode(prisma)).customer === 'card') try {
     const run = await runDueAutoDebits(prisma, now)
     charged = run.charged
     skipped = run.skipped

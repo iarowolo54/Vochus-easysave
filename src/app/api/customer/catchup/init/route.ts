@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { createPaymentIntent } from '@/lib/payment-intent'
 import { checkBulkSelection } from '@/lib/bulk-savings'
+import { CARD_NOT_IN_USE, getFundingMode } from '@/lib/funding-mode'
 import { PAYSTACK_ENABLED, paystackOff } from '@/lib/paystack-off'
 
 // Bulk Savings: a customer pays for missed, today's or upcoming days on their own
@@ -15,6 +16,8 @@ import { PAYSTACK_ENABLED, paystackOff } from '@/lib/paystack-off'
 export async function POST(req: NextRequest) {
   // Paystack is closed (see src/lib/paystack-off.ts): nothing may start a card payment.
   if (!PAYSTACK_ENABLED) return paystackOff()
+  // Super admin chose bank transfer for customers (Payouts & top-ups): no new card payments.
+  if ((await getFundingMode(prisma)).customer !== 'card') return NextResponse.json({ error: CARD_NOT_IN_USE }, { status: 410 })
   const session = await getCustomerSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 

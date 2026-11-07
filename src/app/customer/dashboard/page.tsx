@@ -28,6 +28,7 @@ import { displayName, formatDate, formatNaira } from '@/lib/format'
 import { getHideBalance, setHideBalance } from '@/lib/preferences'
 import { BULK_SAVINGS_LABEL, isEligiblePlan, selectableKeys } from '@/lib/catchup'
 import NotificationBell from '@/components/ui/NotificationBell'
+import { useFundingMode } from '@/lib/use-funding-mode'
 import { buildSlots, currentSlot, dateKey, dayDeposits, hasEnded, isWeekly } from '@/lib/savings-card'
 
 type Plan = {
@@ -159,6 +160,9 @@ export default function CustomerDashboard() {
     setActivePlanIdx(i)
     setPickerOpen(false)
   }
+
+  /** Automatic saving charges a card, so it is offered only while customers are on card. */
+  const byCard = useFundingMode().customer === 'card'
 
   if (loading) return <HomeSkeleton />
 
@@ -355,7 +359,7 @@ export default function CustomerDashboard() {
           <>
             <InterestCard plan={plan} hideAmounts={hideBalance} />
             <PlanDetails plan={plan} />
-            {PAYSTACK_ENABLED && !ended && !flex && <AutoFunding plan={plan} hideAmounts={hideBalance} />}
+            {PAYSTACK_ENABLED && byCard && !ended && !flex && <AutoFunding plan={plan} hideAmounts={hideBalance} />}
             {!flex && <WeekStrip plan={plan} deposits={planTxs} paused={!!pending} onOpenCard={() => setCardOpen(true)} onSelect={setDaySel} />}
           </>
         ) : (

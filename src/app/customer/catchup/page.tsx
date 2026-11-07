@@ -11,6 +11,7 @@ import { FormSkeleton } from '@/components/ui/Skeleton'
 import { BULK_SAVINGS_LABEL, MAX_CATCHUP_KEYS, allMissedChosen, isEligiblePlan, missedKeys, perSlotAmount, selectableKeys, selectionTotal, slotSummary, toggleAllMissed } from '@/lib/catchup'
 import { formatNaira } from '@/lib/format'
 import { describeFailure, postJson } from '@/lib/http'
+import { useFundingMode } from '@/lib/use-funding-mode'
 import { buildSlots, dayDeposits, hasEnded, isWeekly } from '@/lib/savings-card'
 
 type Plan = {
@@ -27,6 +28,8 @@ function CatchupScreen() {
   const { data, loading, failed, reload } = useCustomerMe<Me>()
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [paying, setPaying] = useState(false)
+  /** Bank transfer or card, as super admin set it for customers. */
+  const byCard = useFundingMode().customer === 'card'
   const [transfer, setTransfer] = useState<TransferDetails | null>(null)
   const [error, setError] = useState('')
 
@@ -129,6 +132,13 @@ function CatchupScreen() {
     if (!plan || count === 0 || paying) return
     setPaying(true)
     setError('')
+    if (byCard) {
+      const card = await postJson<{ authorizationUrl: string }>('/api/customer/catchup/init', { planId: plan.id, keys: [...selected] })
+      if (card.ok) { window.location.href = card.data.authorizationUrl; return }
+      setPaying(false)
+      setError(describeFailure(card))
+      return
+    }
     const result = await postJson<TransferDetails>('/api/customer/transfer/init', { planId: plan.id, keys: [...selected] })
     setPaying(false)
     if (result.ok && result.data?.ref) {

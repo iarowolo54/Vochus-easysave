@@ -5,11 +5,14 @@ import { randomBytes } from 'crypto'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { createPaymentIntent } from '@/lib/payment-intent'
+import { CARD_NOT_IN_USE, getFundingMode } from '@/lib/funding-mode'
 import { PAYSTACK_ENABLED, paystackOff } from '@/lib/paystack-off'
 
 export async function POST(req: NextRequest) {
   // Paystack is closed (see src/lib/paystack-off.ts): nothing may start a card payment.
   if (!PAYSTACK_ENABLED) return paystackOff()
+  // Super admin chose bank transfer for agents (Payouts & top-ups): no new card payments.
+  if ((await getFundingMode(prisma)).agent !== 'card') return NextResponse.json({ error: CARD_NOT_IN_USE }, { status: 410 })
   const session = await getServerSession(authOptions)
   if (!session?.user) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 

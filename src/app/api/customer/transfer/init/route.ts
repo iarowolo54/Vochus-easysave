@@ -8,11 +8,14 @@ import { planHasEnded, PLAN_ENDED } from '@/lib/plan-credit'
 import { hasOpenRedemption } from '@/lib/redemption-balance'
 import { createTransferIntent } from '@/lib/transfer-intent'
 import { checkBulkSelection } from '@/lib/bulk-savings'
+import { getFundingMode, TRANSFER_NOT_IN_USE } from '@/lib/funding-mode'
 import { money } from '@/lib/wallet-guard'
 
 export async function POST(req: NextRequest) {
   const session = await getCustomerSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Super admin chose card for customers (Payouts & top-ups): no new bank transfers. Ones already started still credit.
+  if ((await getFundingMode(prisma)).customer === 'card') return NextResponse.json({ error: TRANSFER_NOT_IN_USE }, { status: 410 })
 
   const body: unknown = await req.json().catch(() => null)
   const input = (body && typeof body === 'object' ? body : {}) as { amount?: unknown; planId?: unknown; keys?: unknown }

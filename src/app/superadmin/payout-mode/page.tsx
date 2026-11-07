@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { LoadError, PageHeader, Segmented, TableSkeleton, useToast } from '../_components/admin-ui'
 import { PAYSTACK_ENABLED } from '@/lib/paystack-off'
+import { FundingModeCard } from '../_components/funding-mode-card'
 import { ManualModeBanner, parsePayoutModes, type PayoutModes, type PayoutModeValue } from '../_components/payout-mode'
 
 const OPTIONS: { value: PayoutModeValue; label: string }[] = [
@@ -59,8 +60,8 @@ export default function PayoutModePage() {
   return (
     <>
       <PageHeader
-        title="Payout mode"
-        sub="Choose whether payouts go through Paystack automatically, or you pay recipients yourself and mark them as paid."
+        title="Payouts & top-ups"
+        sub="How money comes in (top-ups and online savings) and how it goes out (payouts)."
       />
 
       {loading ? <TableSkeleton rows={3} cols={2} />
@@ -75,6 +76,8 @@ export default function PayoutModePage() {
                 Paystack is closed, so every payout is Manual: pay the person from the bank app, then mark it as paid. Automatic can’t be turned on.
               </div>
             )}
+            <FundingModeCard />
+
             {anyManual && <ManualModeBanner />}
 
             <section className="card am-section" aria-labelledby="pm-agent">

@@ -13,6 +13,9 @@ import { ListSkeleton } from '@/components/ui/Skeleton'
 import Toast from '@/components/ui/Toast'
 import TransferPanel, { type TransferDetails } from '@/components/ui/TransferPanel'
 import { Icons } from '@/components/ui/icons'
+import { PAYSTACK_PUBLIC_KEY, usePaystackInline } from '@/lib/use-paystack-inline'
+import type { FundingMethod } from '@/lib/funding-mode'
+import { useFundingMode } from '@/lib/use-funding-mode'
 
 interface Funding { id: string; ref: string; amount: number; method: string; note: string | null; createdAt: string }
 
@@ -20,7 +23,7 @@ const QUICK = [1000, 5000, 10000, 50000]
 
 const MIN = 100
 
-type AgentUser = { walletBalance?: number }
+type AgentUser = { walletBalance?: number; id?: string; agentId?: string; email?: string }
 
 export default function WalletPage() {
   return <Suspense><WalletContent /></Suspense>
@@ -42,6 +45,9 @@ function WalletContent() {
   const [error, setError] = useState('')
   const [paying, setPaying] = useState(false)
   const [transfer, setTransfer] = useState<TransferDetails | null>(null)
+  /** Set by super admin (Payouts & top-ups). Bank transfer until we know otherwise. */
+  const method: FundingMethod = useFundingMode().agent
+  const cardReady = usePaystackInline(method === 'card')
 
   const loadFundings = () => {
     fetch('/api/wallet').then(r => r.json()).then(d => {
@@ -61,6 +67,8 @@ function WalletContent() {
     if (!amt || amt < MIN) { setError(`The smallest top-up is ${formatNaira(MIN, { minor: false })}.`); return }
     if (!Number.isInteger(amt)) { setError('Enter a whole-naira amount.'); return }
 
+    if (method === 'card') { payByCard(amt); return }
+
     setPaying(true); setError('')
     try {
       const res = await fetch('/api/agent/transfer/init', {
@@ -76,6 +84,41 @@ function WalletContent() {
     } finally {
       setPaying(false)
     }
+  }
+
+  /** Card (Paystack): start on our server, pay in Paystack's window, then confirm on our server before crediting. */
+  async function payByCard(amt: number) {
+    if (!PAYSTACK_PUBLIC_KEY) { setError('Card top-ups aren’t set up yet. Please contact Vochus.'); return }
+    if (!cardReady || !window.PaystackPop) { setError('The card window is still loading. Try again in a moment.'); return }
+    setPaying(true); setError('')
+    let init: { error?: string; email?: string; reference?: string }
+    try {
+      const res = await fetch('/api/wallet/paystack/init', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ amount: amt }) })
+      init = await res.json().catch(() => ({}))
+      if (!res.ok || !init.reference) { setError(init.error ?? 'Couldn’t start the payment. Please try again.'); setPaying(false); return }
+    } catch {
+      setError('No connection. Check your internet and try again.'); setPaying(false); return
+    }
+    const agentUser = session?.user as AgentUser | undefined
+    const reference = init.reference
+    window.PaystackPop.setup({
+      key: PAYSTACK_PUBLIC_KEY,
+      email: init.email ?? agentUser?.email ?? `${agentUser?.agentId?.toLowerCase() ?? 'agent'}@vochus.ng`,
+      amount: Math.round(amt * 100),
+      ref: reference,
+      metadata: { agentId: agentUser?.id, agentCode: agentUser?.agentId },
+      callback: () => {
+        fetch('/api/wallet/paystack/verify', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reference }) })
+          .then(r => r.json().then(d => ({ ok: r.ok, d })))
+          .then(({ ok, d }) => {
+            setPaying(false)
+            if (ok || d.alreadyProcessed) credited(typeof d.newBalance === 'number' ? d.newBalance : null)
+            else setError(d.error ?? `We couldn’t confirm the payment. If you were charged, contact Vochus with reference ${reference}.`)
+          })
+          .catch(() => { setPaying(false); setError(`We couldn’t confirm the payment. If you were charged, contact Vochus with reference ${reference}.`) })
+      },
+      onClose: () => setPaying(false),
+    }).openIframe()
   }
 
   const credited = useCallback((newBalance: number | null) => {
@@ -158,10 +201,12 @@ function WalletContent() {
 
             <button type="button" className="ui-btn ui-btn--primary ui-btn--block ag-topup-btn" disabled={paying || !valid} onClick={handlePay}>
               {paying
-                ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Getting account details…</>
-                : valid ? `Pay ${formatNaira(amt, { minor: false })} by transfer` : 'Enter an amount'}
+                ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> {method === 'card' ? 'Opening the card window…' : 'Getting account details…'}</>
+                : valid ? `Pay ${formatNaira(amt, { minor: false })} ${method === 'card' ? 'by card' : 'by transfer'}` : 'Enter an amount'}
             </button>
-            <p className="ui-note ui-note--center"><Icons.locked size={16} aria-hidden="true" /> Next you’ll see the exact amount to send. It has a few extra kobo. Send it exactly, kobo included.</p>
+            {method === 'card'
+              ? <p className="ui-note ui-note--center"><Icons.locked size={16} aria-hidden="true" /> You’ll pay in Paystack’s secure window. Your wallet is topped up as soon as it’s done.</p>
+              : <p className="ui-note ui-note--center"><Icons.locked size={16} aria-hidden="true" /> Next you’ll see the exact amount to send. It has a few extra kobo. Send it exactly, kobo included.</p>}
           </section>
           )}
         </div>

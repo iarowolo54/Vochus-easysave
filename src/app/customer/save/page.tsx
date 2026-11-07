@@ -20,6 +20,7 @@ import { earliestEnd, isFlexible } from '@/lib/flexible-savings'
 import { isOpenForSaving } from '@/lib/plan-credit'
 import { feeSentence } from '@/lib/savings-fee'
 import { useFlexibleTerms } from '@/lib/use-flexible-terms'
+import { useFundingMode } from '@/lib/use-funding-mode'
 
 type Cadence = 'daily' | 'weekly' | 'monthly'
 
@@ -111,6 +112,8 @@ function SavePageInner() {
   /** What they type to pay into a flexible plan (whole naira). */
   const [payText, setPayText] = useState('')
   const terms = useFlexibleTerms()
+  /** Bank transfer (company system) or card (Paystack), as super admin set it for customers. */
+  const byCard = useFundingMode().customer === 'card'
   const flexMin = Math.max(100, terms.minDeposit)
 
   useEffect(() => {
@@ -149,6 +152,16 @@ function SavePageInner() {
       return
     }
     setPaying(true)
+    if (byCard) {
+      // Paystack's own page; it comes back to /customer/save/callback, which confirms the payment before crediting.
+      const card = await postJson<{ authorizationUrl: string }>('/api/customer/paystack/init', {
+        amount: flex ? typed : periodAmount(selectedPlan), planId: selectedPlan.id,
+      })
+      if (card.ok) { window.location.href = card.data.authorizationUrl; return }
+      setPaying(false)
+      setError(describeFailure(card, { 502: 'Paystack isn’t responding right now. Please try again in a few minutes.' }))
+      return
+    }
     const result = await postJson<TransferDetails>('/api/customer/transfer/init', {
       amount: flex ? typed : periodAmount(selectedPlan), planId: selectedPlan.id,
     })
@@ -317,23 +330,27 @@ function SavePageInner() {
               </div>
               <div className="ui-row">
                 <dt className="ui-row-main ui-row-sub">You’ll send</dt>
-                <dd className="ui-review-value ui-amount">{payAmount > 0 ? <>{formatNaira(payAmount, { minor: false })} <span className="tp-kobo-hint">+ a few kobo</span></> : '—'}</dd>
+                <dd className="ui-review-value ui-amount">{payAmount > 0 ? <>{formatNaira(payAmount, { minor: false })}{!byCard && <> <span className="tp-kobo-hint">+ a few kobo</span></>}</> : '—'}</dd>
               </div>
               <div className="ui-row">
                 <dt className="ui-row-main ui-row-sub">Pay with</dt>
-                <dd className="ui-review-value">Bank transfer<span className="ui-row-sub ui-block">To our Moniepoint account</span></dd>
+                <dd className="ui-review-value">{byCard ? <>Card<span className="ui-row-sub ui-block">On Paystack’s secure page</span></> : <>Bank transfer<span className="ui-row-sub ui-block">To our Moniepoint account</span></>}</dd>
               </div>
             </dl>
 
             <FormError message={error} />
 
             <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={pay} disabled={paying} aria-busy={paying}>
-              {paying ? 'Getting account details…' : 'Get account and exact amount'}
+              {byCard ? (paying ? 'Opening Paystack…' : 'Pay by card') : (paying ? 'Getting account details…' : 'Get account and exact amount')}
             </button>
+            {byCard ? (
+              <p className="ui-note ui-note--center"><Icons.locked size={14} aria-hidden="true" /> You’ll finish on Paystack’s secure page, then come back here.</p>
+            ) : (
             <div className="tp-callout tp-callout--pre">
               <p className="tp-callout-title">Next you’ll see the exact amount</p>
               <p className="tp-callout-text">It has a few extra kobo, like {formatNaira((payAmount || flexMin) + 0.37)}. Send it exactly, kobo included, so we can tell the payment is yours. The kobo is not a fee. All of it goes into your savings.</p>
             </div>
+            )}
 
             <button type="button" className="ui-btn ui-btn--secondary ui-btn--block ui-gap-top" onClick={() => { setMode('new'); setError('') }}>
               <Icons.add size={18} aria-hidden="true" /> Start a new plan

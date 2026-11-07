@@ -6,6 +6,7 @@ import { prisma } from '@/lib/prisma'
 import { createPaymentIntent } from '@/lib/payment-intent'
 import { initCardAuthorization } from '@/lib/paystack'
 import { hasOpenRedemption } from '@/lib/redemption-balance'
+import { CARD_NOT_IN_USE, getFundingMode } from '@/lib/funding-mode'
 import { PAYSTACK_ENABLED, paystackOff } from '@/lib/paystack-off'
 
 // First charge that authorizes the card for future auto-debits (applied to the plan on success).
@@ -14,6 +15,8 @@ const FIRST_CHARGE_NAIRA = 50
 export async function POST(req: NextRequest) {
   // Paystack is closed (see src/lib/paystack-off.ts): nothing may start a card payment.
   if (!PAYSTACK_ENABLED) return paystackOff()
+  // Super admin chose bank transfer for customers (Payouts & top-ups): no new card payments.
+  if ((await getFundingMode(prisma)).customer !== 'card') return NextResponse.json({ error: CARD_NOT_IN_USE }, { status: 410 })
   const session = await getCustomerSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
