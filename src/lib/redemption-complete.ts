@@ -6,6 +6,7 @@ import { money } from '@/lib/wallet-guard'
 import { interestPayoutOps } from '@/lib/redemption-interest-ops'
 import { claimPlanForPayout } from '@/lib/redemption-balance'
 import { completionCredits } from '@/lib/commission-ledger'
+import { notifications, notify } from '@/lib/notifications'
 
 export class ConflictError extends Error {}
 
@@ -45,6 +46,7 @@ export async function redemptionCompletionOps(
   const { decidedBy, isBankTransfer, bankTransferStatus, paystackRecipientCode, paystackTransferCode, claimFrom, walletAfter, adminNote } = opts
 
   // Bank: the Processing claim (and plan lock) was taken earlier. Cash: claim record + plan here.
+  // notify: collectionPaid
   const claim = await tx.earlyRedemption.updateMany({
     where: { id: record.id, status: typeof claimFrom === 'string' ? claimFrom : { in: claimFrom } },
     data: {
@@ -56,6 +58,12 @@ export async function redemptionCompletionOps(
     },
   })
   if (claim.count === 0) throw new ConflictError()
+  if (customerId) {
+    const c = await tx.customer.findUnique({ where: { id: customerId }, select: { firstName: true, lastName: true } })
+    await notify(tx, notifications.collectionPaid({
+      id: record.id, customerId, agentId, customerName: c ? `${c.firstName} ${c.lastName}` : 'Your customer', amount: record.netPayout,
+    }))
+  }
   // Lock the plan unless it was already locked by a Processing pre-claim (auto bank transfer).
   if (typeof claimFrom !== 'string') {
     const refused = await claimPlanForPayout(tx, record.savingsPlanId, record.balance)

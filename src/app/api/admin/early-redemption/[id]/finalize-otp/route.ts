@@ -6,6 +6,7 @@ import { finalizeTransfer, PaystackRejected } from '@/lib/paystack'
 import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
 import { interestPayoutOps } from '@/lib/redemption-interest-ops'
+import { notifications, notify } from '@/lib/notifications'
 import { BALANCE_CHANGED_AWAITING_OTP, NO_MONEY_LEFT, readyToFinalize, reopenPlanAfterNoTransfer, settlePlanAfterPayout } from '@/lib/redemption-balance'
 
 export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
@@ -35,6 +36,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
   }
 
   // Claim BEFORE Paystack: AwaitingOTP -> Finalizing. A concurrent submit claims nothing and never finalizes.
+  // notify: none — internal claim before Paystack is called; the customer hears when it is paid
   const claim = await prisma.earlyRedemption.updateMany({
     where: { id, status: 'AwaitingOTP' },
     data: { status: 'Finalizing' },
@@ -49,6 +51,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     if (err instanceof PaystackRejected) {
       // Definite rejection (e.g. wrong OTP): nothing was sent, so hand the claim back for a retry.
       try {
+        // notify: none — wrong code typed by staff; the claim is handed back and nothing changed for the customer
         await prisma.earlyRedemption.updateMany({ where: { id, status: 'Finalizing' }, data: { status: 'AwaitingOTP' } })
       } catch (relErr) {
         console.error('early-redemption finalize-otp: claim release failed', id, relErr instanceof Error ? relErr.name : 'unknown')
@@ -64,6 +67,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
   const finalizedBy = (session.user as { name?: string }).name ?? 'Super Admin'
   if (NO_MONEY_LEFT.includes(finalStatus)) {
     await prisma.$transaction(async (tx) => {
+      // notify: none — Paystack failed, the request goes back to the office to pay again; the customer's outcome is still to come
       const rel = await tx.earlyRedemption.updateMany({
         where: { id, status: 'Finalizing' },
         data: { status: 'AgentApproved', bankTransferStatus: finalStatus, decidedAt: null, paystackTransferCode: null },
@@ -82,6 +86,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     return NextResponse.json({ error: `Paystack says this transfer ${finalStatus === 'reversed' ? 'was reversed' : 'failed'}. Nothing was paid, and the money is back on the plan.` }, { status: 502 })
   }
   if (finalStatus !== 'success') {
+    // notify: none — outcome unclear, left for Check with Paystack, which notifies when it settles
     await prisma.earlyRedemption.updateMany({ where: { id, status: 'Finalizing' }, data: { bankTransferStatus: finalStatus } })
     logAudit({
       action: 'early_redemption_otp_unclear',
@@ -103,11 +108,15 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
 
   try {
     await prisma.$transaction(async (tx) => {
+      // notify: collectionPaid
       const fin = await tx.earlyRedemption.updateMany({
         where: { id, status: 'Finalizing' },
         data: { status: 'Approved', decidedAt: new Date(), decidedBy, bankTransferStatus: finalStatus },
       })
       if (fin.count === 0) throw new Error('Finalizing claim lost')
+      await notify(tx, notifications.collectionPaid({
+        id, customerId, agentId, customerName: `${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName}`, amount: record.netPayout,
+      }))
       // The customer has been paid, so the ledger is written whatever happened.
       reviewNeeded = await settlePlanAfterPayout(tx, record)
       // The same split redemptionCompletionOps books, from the fee rule stored on the request.

@@ -9,6 +9,7 @@ import { BALANCE_CHANGED, balanceUnchanged, CASH_NEEDS_ACTIVE_AGENT, claimPlanFo
 import { getPayoutMode } from '@/lib/payout-mode'
 import { heldForNameCheck, isBankMethod } from '@/lib/payout-account'
 import { customerType } from '@/lib/customer-type'
+import { notifications, notify } from '@/lib/notifications'
 import {
   notifyCustomerRedemptionPaid,
   notifyCustomerRedemptionDeclined,
@@ -116,12 +117,18 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
 
     try {
       await prisma.$transaction(async (tx) => {
+        // notify: collectionDeclined
         const claim = await tx.earlyRedemption.updateMany({
           // decidedAt too: if this moved on and came back while the admin was deciding, it's a different request now.
           where: { id, status: record.status, decidedAt: record.decidedAt },
           data: { status: 'Rejected', decidedAt: new Date(), decidedBy },
         })
         if (claim.count === 0) throw new ConflictError()
+        const typed = typeof body.reason === 'string' && body.reason.trim() ? body.reason.trim().slice(0, 200) : null
+        await notify(tx, notifications.collectionDeclined({
+          id, customerId: record.savingsPlan.customer.id, agentId: record.savingsPlan.customer.agentId, customerName,
+          amount: record.netPayout, reason: typed,
+        }))
         // AwaitingOTP took the balance off the plan when it was pre-claimed, so it goes back on top of anything since.
         if (record.status === 'AwaitingOTP') {
           await reopenPlanAfterNoTransfer(tx, record.savingsPlanId, record.balance, 'Active')
@@ -217,6 +224,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       // A concurrent approve (or the agent redemption path) claims nothing and never reaches Paystack.
       try {
         await prisma.$transaction(async (tx) => {
+          // notify: none — internal claim before Paystack is called; the customer hears when it is paid or declined
           const claim = await tx.earlyRedemption.updateMany({
             where: { id, status: { in: OPEN_STATUSES } },
             // decidedAt marks when the transfer was started, so verify can tell a call still running from a dead one.
@@ -234,6 +242,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       // Undo the claim when no transfer was started, so the admin can retry.
       const releaseClaim = () =>
         prisma.$transaction(async (tx) => {
+          // notify: none — the claim is undone because no transfer started; nothing changed for the customer
           const rel = await tx.earlyRedemption.updateMany({
             where: { id, status: 'Processing', paystackTransferCode: null },
             data: { status: originalStatus, decidedAt: null },
@@ -268,6 +277,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
 
         // Paystack requires OTP finalisation — pause and wait for admin to enter it.
         if (transfer.status === 'otp') {
+          // notify: none — internal step, Paystack now wants the staff member's code
           await prisma.earlyRedemption.updateMany({
             where: { id, status: 'Processing' },
             data: {
@@ -287,6 +297,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
 
         // Not a status we can book as paid. It stays here, with what Paystack said, for Check with Paystack.
         if (!TRANSFER_ACCEPTED.includes(transfer.status)) {
+          // notify: none — outcome unclear, left for Check with Paystack, which notifies when it settles
           await prisma.earlyRedemption.updateMany({
             where: { id, status: 'Processing' },
             data: { paystackRecipientCode, paystackTransferCode, bankTransferStatus },

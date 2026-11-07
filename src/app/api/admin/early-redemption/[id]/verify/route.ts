@@ -77,6 +77,7 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
     if (NO_MONEY_LEFT.includes(status) || status === 'not_found') {
       // No money left, so the request goes back to the admin to approve again or reject.
       await prisma.$transaction(async (tx) => {
+        // notify: none — the transfer failed, so it goes back to the office to pay again; the customer's outcome is still to come
         const rel = await tx.earlyRedemption.updateMany({
           where: claim,
           data: { status: 'AgentApproved', bankTransferStatus: status === 'not_found' ? null : status, decidedAt: null, paystackTransferCode: null },
@@ -87,6 +88,7 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
       newStatus = 'AgentApproved'
     } else if (status === 'otp' && transferCode && from === 'Processing') {
       // Never from Finalizing: a code may already have gone in, and going back would allow another try.
+      // notify: none — internal step, Paystack now wants the staff member's code
       const moved = await prisma.earlyRedemption.updateMany({
         where: claim,
         data: { status: 'AwaitingOTP', bankTransferStatus: status, paystackTransferCode: transferCode },
@@ -112,6 +114,7 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
     } else {
       // Pending, blocked, rejected, otp we can't or mustn't act on, or a status we don't recognise. Not paid and not
       // released: it stays, and the admin screen says what Paystack said.
+      // notify: none — only records Paystack's latest answer for staff; nothing changed for the customer
       await prisma.earlyRedemption.updateMany({ where: claim, data: { bankTransferStatus: status } })
     }
   } catch (err) {

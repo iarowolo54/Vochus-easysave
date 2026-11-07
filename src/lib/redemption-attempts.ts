@@ -42,6 +42,7 @@ type Client = Prisma.TransactionClient | Pick<PrismaClient, 'earlyRedemption'>
 // where concurrent wrong guesses would otherwise all read the same count and
 // slip past the cap.
 export async function reserveRedemptionAttempt(client: Client, ref: string): Promise<boolean> {
+  // notify: none — counts wrong code guesses (a security limit), not a change the customer needs to hear about
   const reserved = await client.earlyRedemption.updateMany({
     where: { ref, status: 'Pending', attempts: { lt: REDEMPTION_ATTEMPT_LIMIT } },
     data: { attempts: { increment: 1 } },

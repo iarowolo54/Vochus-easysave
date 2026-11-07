@@ -45,6 +45,7 @@ export async function handleTransferEvent(client: PrismaClient, type: string, da
   const match = { OR: [...(transferCode ? [{ paystackTransferCode: transferCode }] : []), ...(reference ? [{ ref: reference }] : [])] }
 
   // Conditional on the stored status, so two events racing can't undo each other. A null status counts as open.
+  // notify: none — only records Paystack's transfer status; a failure or reversal goes to staff review, who settle it with the customer
   const updated = await client.earlyRedemption.updateMany({
     where: { AND: [match, { OR: [{ bankTransferStatus: null }, { bankTransferStatus: { notIn: CANNOT_REPLACE[status] } }] }] },
     data: { bankTransferStatus: status },
