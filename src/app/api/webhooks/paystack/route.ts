@@ -9,6 +9,7 @@ import { sendToReview, settleIntentPayment } from '@/lib/customer-settle'
 import { INTENT_PENDING, INTENT_REVIEW, REVIEW_ACTION, consumePaymentIntent } from '@/lib/payment-intent'
 import { handleTransferEvent, isTransferEvent } from '@/lib/paystack-transfer-event'
 import { reverifyCharge } from '@/lib/webhook-reverify'
+import { notifications, notify } from '@/lib/notifications'
 import { ensureEnrolmentMandate, isEnrolmentRef } from '@/lib/auto-debit-enrol'
 
 /**
@@ -204,6 +205,7 @@ export async function POST(req: NextRequest) {
         data: {
           ref: reference,
           agentId: agentDbId,
+          // notify: walletFunded
           type: 'wallet_funding',
           amount,
           method: 'Paystack',
@@ -212,6 +214,7 @@ export async function POST(req: NextRequest) {
           walletAfter: updated.walletBalance,
         },
       })
+      await notify(tx, notifications.walletFunded({ agentId: agentDbId, amount, ref: reference }))
     })
   } catch (e: unknown) {
     if (e instanceof Error && e.message === 'ALREADY_PROCESSED') return NextResponse.json({ ok: true })

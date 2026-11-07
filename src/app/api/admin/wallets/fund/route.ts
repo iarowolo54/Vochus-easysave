@@ -3,6 +3,7 @@ import { randomBytes } from 'crypto'
 import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { notificationOps, notifications } from '@/lib/notifications'
 import { isValidAmount, MAX_ADMIN_FUND } from '@/lib/wallet-guard'
 
 export async function POST(req: NextRequest) {
@@ -32,6 +33,7 @@ export async function POST(req: NextRequest) {
       data: {
         ref,
         agentId,
+        // notify: walletFunded
         type: 'wallet_funding',
         amount,
         method: 'Admin',
@@ -40,6 +42,7 @@ export async function POST(req: NextRequest) {
         walletAfter,
       },
     }),
+    ...notificationOps(prisma, notifications.walletFunded({ agentId, amount, ref })),
   ])
 
   logAudit({

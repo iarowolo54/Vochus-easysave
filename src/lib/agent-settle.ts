@@ -6,6 +6,7 @@ import { INTENT_PENDING, consumePaymentIntent, recordManualCredit, type ManualAc
 import { sendToReview } from '@/lib/customer-settle'
 import { money } from '@/lib/wallet-guard'
 import { sendPaymentAlert } from '@/lib/payment-alert'
+import { notifications, notify } from '@/lib/notifications'
 import { agentAlertEmailFor } from '@/lib/email-alerts'
 
 export type AgentSettleResult =
@@ -48,12 +49,14 @@ export async function settleAgentTransfer(
       await input.inTx?.(tx)
       const updated = await tx.agent.update({ where: { id: agent.id }, data: { walletBalance: { increment: amount } } })
       newBalance = updated.walletBalance
+      // notify: walletFunded
       await tx.transaction.create({
         data: {
           ref: reference, agentId: agent.id, type: 'wallet_funding', amount, method: 'Transfer', status: 'Done',
           note: via === 'Staff by hand' ? 'Wallet top-up by bank transfer, credited by hand by staff' : 'Wallet top-up by bank transfer', walletAfter: updated.walletBalance,
         },
       })
+      await notify(tx, notifications.walletFunded({ agentId: agent.id, amount, ref: reference }))
     })
   } catch (e: unknown) {
     if (e instanceof Error && e.message === 'ALREADY_PROCESSED') return { kind: 'already' }

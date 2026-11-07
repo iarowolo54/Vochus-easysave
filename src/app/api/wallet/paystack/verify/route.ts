@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { money } from '@/lib/wallet-guard'
+import { notifications, notify } from '@/lib/notifications'
 import { findOwnedPendingIntent, consumePaymentIntent } from '@/lib/payment-intent'
 
 export async function POST(req: NextRequest) {
@@ -73,6 +74,7 @@ export async function POST(req: NextRequest) {
         data: {
           ref: reference,
           agentId: agent.id,
+          // notify: walletFunded
           type: 'wallet_funding',
           amount,
           method: 'Paystack',
@@ -82,6 +84,7 @@ export async function POST(req: NextRequest) {
         },
       })
       await tx.agent.update({ where: { id: agent.id }, data: { walletBalance: { increment: amount } } })
+      await notify(tx, notifications.walletFunded({ agentId: agent.id, amount, ref: reference }))
       return created
     })
   } catch (e) {
