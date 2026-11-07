@@ -75,6 +75,7 @@ export async function POST(req: NextRequest) {
       // Atomically hold the commission; concurrent requests can't overdraw it.
       const debited = await debitAgentBalance(tx, agent.id, 'commissionBalance', amount)
       if (!debited) throw new InsufficientFundsError('Commission balance', balance, amount)
+      // notify: none — the agent made this request on this screen; they hear when it is paid or declined
       return tx.agentWithdrawal.create({
         data: {
           ref,

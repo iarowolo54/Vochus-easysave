@@ -3,6 +3,7 @@ import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { PaystackRejected, verifyTransfer } from '@/lib/paystack'
 import { logAudit } from '@/lib/audit'
+import { notifications, notify } from '@/lib/notifications'
 import { NO_MONEY_LEFT } from '@/lib/redemption-balance'
 
 // Same rules as the early-redemption verify: only a clear answer changes anything, and paid means success.
@@ -72,11 +73,13 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
     if (!inFlight) return NextResponse.json({ error: 'Already processed' }, { status: 409 })
     // Conditional, so a refund happens at most once however many times this is hit.
     const refunded = await prisma.$transaction(async (tx) => {
+      // notify: withdrawalDeclined
       const claimed = await tx.agentWithdrawal.updateMany({
         where: claim,
         data: { status: 'Rejected', bankTransferStatus: status, decidedAt: new Date(), decidedBy, adminNote: `Auto-refund: Paystack ${status}` },
       })
       if (claimed.count === 0) return false
+      await notify(tx, notifications.withdrawalDeclined({ id, agentId: record.agentId, amount: record.amount, reason: 'The bank transfer didn’t go through.' }))
       await tx.agent.update({ where: { id: record.agentId }, data: { commissionBalance: { increment: record.amount } } })
       return true
     })
@@ -84,24 +87,32 @@ export async function POST(_req: Request, context: { params: Promise<{ id: strin
     newStatus = 'Rejected'
   } else if (status === 'not_found') {
     // No transfer exists and the commission is still held, so it goes back to the admin to approve again or reject.
+    // notify: none — no transfer exists, so it goes back to staff to pay again; the agent's outcome is still to come
     const released = await prisma.agentWithdrawal.updateMany({ where: claim, data: { status: 'Pending', decidedAt: null, decidedBy: null } })
     if (released.count === 0) return NextResponse.json({ error: 'Already processed' }, { status: 409 })
     newStatus = 'Pending'
   } else if (status === 'success' && inFlight) {
-    const paid = await prisma.agentWithdrawal.updateMany({
-      where: claim,
-      data: { status: 'Approved', bankTransferStatus: status, paystackTransferCode: transferCode, ...(record.decidedAt ? {} : { decidedAt: new Date(), decidedBy }) },
+    const paid = await prisma.$transaction(async tx => {
+      // notify: withdrawalPaid
+      const p = await tx.agentWithdrawal.updateMany({
+        where: claim,
+        data: { status: 'Approved', bankTransferStatus: status, paystackTransferCode: transferCode, ...(record.decidedAt ? {} : { decidedAt: new Date(), decidedBy }) },
+      })
+      if (p.count === 1) await notify(tx, notifications.withdrawalPaid({ id, agentId: record.agentId, amount: record.amount }))
+      return p
     })
     if (paid.count === 0) return NextResponse.json({ error: 'Already processed' }, { status: 409 })
     newStatus = 'Approved'
   } else if (status === 'otp' && transferCode && record.status === 'Processing') {
     // Never from Finalizing: a code may already have gone in, and going back would allow another try.
+    // notify: none — internal step, Paystack now wants the staff member's code
     const moved = await prisma.agentWithdrawal.updateMany({ where: claim, data: { status: 'AwaitingOTP', bankTransferStatus: status, paystackTransferCode: transferCode } })
     if (moved.count === 0) return NextResponse.json({ error: 'Already processed' }, { status: 409 })
     newStatus = 'AwaitingOTP'
   } else {
     // Pending, blocked, rejected, otp we can't or mustn't act on, or a status we don't recognise: not paid and not
     // refunded. It stays where it is, with what Paystack said.
+    // notify: none — only records Paystack's latest answer for staff; nothing changed for the agent
     await prisma.agentWithdrawal.updateMany({ where: claim, data: { bankTransferStatus: status } })
   }
 

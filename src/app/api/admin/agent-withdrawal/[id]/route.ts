@@ -6,6 +6,7 @@ import { createRecipient, initiateTransfer, PaystackRejected, resolveAccount } f
 import { logAudit } from '@/lib/audit'
 import { AGENT_NOT_ACTIVE, NO_MONEY_LEFT } from '@/lib/redemption-balance'
 import { getPayoutMode } from '@/lib/payout-mode'
+import { notifications, notify } from '@/lib/notifications'
 import { notifyAgentPayoutPaid, notifyAgentPayoutDeclined } from '@/lib/payout-notify'
 
 export async function PATCH(req: Request, context: { params: Promise<{ id: string }> }) {
@@ -34,11 +35,13 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
   if (action === 'reject') {
     // Claim the Pending -> Rejected transition first; only the winner refunds.
     const refunded = await prisma.$transaction(async (tx) => {
+      // notify: withdrawalDeclined
       const claim = await tx.agentWithdrawal.updateMany({
         where: { id, status: 'Pending' },
         data: { status: 'Rejected', decidedAt: new Date(), decidedBy, adminNote: adminNote || null },
       })
       if (claim.count === 0) return false
+      await notify(tx, notifications.withdrawalDeclined({ id, agentId: agent.id, amount: record.amount, reason: adminNote || null }))
       await tx.agent.update({
         where: { id: agent.id },
         data: { commissionBalance: { increment: record.amount } },
@@ -78,17 +81,22 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     if (manual) {
       // Manual rail: admin pays outside Paystack. Commission was already debited at request
       // time, so no balance change here. Same single conditional claim guards double-approval.
-      const claimed = await prisma.agentWithdrawal.updateMany({
-        where: { id, status: 'Pending' },
-        data: {
-          status: 'Approved',
-          decidedAt: new Date(),
-          decidedBy,
-          adminNote: adminNote || null,
-          bankTransferStatus: 'manual',
-          paystackRecipientCode: null,
-          paystackTransferCode: null,
-        },
+      const claimed = await prisma.$transaction(async (tx) => {
+        // notify: withdrawalPaid
+        const c = await tx.agentWithdrawal.updateMany({
+          where: { id, status: 'Pending' },
+          data: {
+            status: 'Approved',
+            decidedAt: new Date(),
+            decidedBy,
+            adminNote: adminNote || null,
+            bankTransferStatus: 'manual',
+            paystackRecipientCode: null,
+            paystackTransferCode: null,
+          },
+        })
+        if (c.count === 1) await notify(tx, notifications.withdrawalPaid({ id, agentId: agent.id, amount: record.amount }))
+        return c
       })
       if (claimed.count === 0) return NextResponse.json({ error: 'Already processed' }, { status: 409 })
 
@@ -126,12 +134,14 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     // Claim Pending -> Processing BEFORE any Paystack call. A concurrent/second approve claims
     // nothing (count 0) and never reaches Paystack. Reverted to Pending below if the transfer
     // is not started, so the admin can retry (Paystack also dedupes on the record's ref).
+    // notify: none — internal claim before Paystack is called; the agent hears when it is paid or declined
     const claim = await prisma.agentWithdrawal.updateMany({
       where: { id, status: 'Pending' },
       data: { status: 'Processing', decidedAt: new Date(), decidedBy, adminNote: adminNote || null },
     })
     if (claim.count === 0) return NextResponse.json({ error: 'Already processed' }, { status: 409 })
     const releaseClaim = () =>
+      // notify: none — the claim is undone because no transfer started; nothing changed for the agent
       prisma.agentWithdrawal.updateMany({
         where: { id, status: 'Processing', paystackTransferCode: null },
         data: { status: 'Pending', decidedAt: null, decidedBy: null },
@@ -145,6 +155,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       } catch {
         recipientName = agent.name
       }
+      // notify: none — only fills in the account name Paystack returned
       await prisma.agentWithdrawal.updateMany({ where: { id, status: 'Processing' }, data: { accountName: recipientName } })
     }
 
@@ -172,6 +183,7 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
       transferStarted = !NO_MONEY_LEFT.includes(transfer.status)
 
       if (transfer.status === 'otp') {
+        // notify: none — internal step, Paystack now wants the staff member's code
         await prisma.agentWithdrawal.updateMany({
           where: { id, status: 'Processing' },
           data: {
@@ -210,17 +222,22 @@ export async function PATCH(req: Request, context: { params: Promise<{ id: strin
     // 'success' = money moved; 'pending' = queued on Paystack side, verify later
     const finalStatus = bankTransferStatus === 'success' ? 'Approved' : 'Processing'
 
-    await prisma.agentWithdrawal.updateMany({
-      where: { id, status: 'Processing' },
-      data: {
-        status: finalStatus,
-        decidedAt: new Date(),
-        decidedBy,
-        adminNote: adminNote || null,
-        paystackRecipientCode,
-        paystackTransferCode,
-        bankTransferStatus,
-      },
+    await prisma.$transaction(async tx => {
+      // notify: withdrawalPaid
+      const done = await tx.agentWithdrawal.updateMany({
+        where: { id, status: 'Processing' },
+        data: {
+          status: finalStatus,
+          decidedAt: new Date(),
+          decidedBy,
+          adminNote: adminNote || null,
+          paystackRecipientCode,
+          paystackTransferCode,
+          bankTransferStatus,
+        },
+      })
+      // Only money that has moved is "paid"; a pending transfer is told when Check status settles it.
+      if (done.count === 1 && finalStatus === 'Approved') await notify(tx, notifications.withdrawalPaid({ id, agentId: agent.id, amount: record.amount }))
     })
 
     logAudit({

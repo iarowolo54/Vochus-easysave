@@ -3,6 +3,7 @@ import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { finalizeTransfer, PaystackRejected } from '@/lib/paystack'
 import { logAudit } from '@/lib/audit'
+import { notifications, notify } from '@/lib/notifications'
 import { AGENT_NOT_ACTIVE, NO_MONEY_LEFT } from '@/lib/redemption-balance'
 
 export async function POST(req: Request, context: { params: Promise<{ id: string }> }) {
@@ -24,6 +25,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
   if (agent?.status !== 'Active') return NextResponse.json({ error: AGENT_NOT_ACTIVE }, { status: 409 })
 
   // Claim BEFORE Paystack: AwaitingOTP -> Finalizing. A concurrent submit claims nothing and never finalizes.
+  // notify: none — internal claim before Paystack is called; the agent hears when it is paid or declined
   const claim = await prisma.agentWithdrawal.updateMany({
     where: { id, status: 'AwaitingOTP' },
     data: { status: 'Finalizing' },
@@ -38,6 +40,7 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     if (err instanceof PaystackRejected) {
       // Definite rejection (e.g. wrong OTP): nothing was sent, so hand the claim back for a retry.
       try {
+        // notify: none — wrong code typed by staff; the claim is handed back and nothing changed for the agent
         await prisma.agentWithdrawal.updateMany({ where: { id, status: 'Finalizing' }, data: { status: 'AwaitingOTP' } })
       } catch (relErr) {
         console.error('agent-withdrawal finalize-otp: claim release failed', id, relErr instanceof Error ? relErr.name : 'unknown')
@@ -55,11 +58,13 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
   // it goes back, the same way the verify route does it: only the call that wins this claim refunds.
   if (NO_MONEY_LEFT.includes(finalStatus)) {
     const refunded = await prisma.$transaction(async (tx) => {
+      // notify: withdrawalDeclined
       const claimed = await tx.agentWithdrawal.updateMany({
         where: { id, status: 'Finalizing' },
         data: { status: 'Rejected', bankTransferStatus: finalStatus, decidedAt: new Date(), decidedBy, adminNote: `Auto-refund: Paystack ${finalStatus}` },
       })
       if (claimed.count === 0) return false
+      await notify(tx, notifications.withdrawalDeclined({ id, agentId: record.agentId, amount: record.amount, reason: 'The bank transfer didn’t go through.' }))
       await tx.agent.update({ where: { id: record.agentId }, data: { commissionBalance: { increment: record.amount } } })
       return true
     })
@@ -76,16 +81,21 @@ export async function POST(req: Request, context: { params: Promise<{ id: string
     return NextResponse.json({ error: `Paystack says this transfer ${finalStatus === 'reversed' ? 'was reversed' : 'failed'}. Nothing was paid, and the commission has gone back to the agent.` }, { status: 502 })
   }
   if (finalStatus !== 'success') {
+    // notify: none — outcome unclear, left for Check status with Paystack, which notifies when it settles
     await prisma.agentWithdrawal.updateMany({ where: { id, status: 'Finalizing' }, data: { bankTransferStatus: finalStatus } })
     return NextResponse.json({ ok: true, status: 'Finalizing', bankTransferStatus: finalStatus })
   }
 
   try {
-    const fin = await prisma.agentWithdrawal.updateMany({
-      where: { id, status: 'Finalizing' },
-      data: { status: 'Approved', decidedAt: new Date(), decidedBy, bankTransferStatus: finalStatus },
+    await prisma.$transaction(async tx => {
+      // notify: withdrawalPaid
+      const fin = await tx.agentWithdrawal.updateMany({
+        where: { id, status: 'Finalizing' },
+        data: { status: 'Approved', decidedAt: new Date(), decidedBy, bankTransferStatus: finalStatus },
+      })
+      if (fin.count === 0) throw new Error('Finalizing claim lost')
+      await notify(tx, notifications.withdrawalPaid({ id, agentId: record.agentId, amount: record.amount }))
     })
-    if (fin.count === 0) throw new Error('Finalizing claim lost')
   } catch (err) {
     // Paystack already accepted the finalize; leave the record in Finalizing (never re-finalizable) for reconciliation.
     console.error('agent-withdrawal finalize-otp: post-finalize write failed', id, err instanceof Error ? err.name : 'unknown')
