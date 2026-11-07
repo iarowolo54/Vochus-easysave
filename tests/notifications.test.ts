@@ -19,6 +19,13 @@ test('a saving tells the customer, and the agent only when an online customer pa
   assert.equal(online[1].dedupeKey, 'saving-agent:TXN-2')
 })
 
+test('a saving that paid a platform fee says how much went into the balance', () => {
+  const e = N.savingsReceived({ ref: 'TXN-3', customerId: 'c1', agentId: 'a1', customerName: 'x', planGoal: 'Rent', amount: 1000, fee: 75, onlineTransfer: false })[0]
+  assert.equal(e.title, '₦1,000 saved into Rent')
+  assert.equal(e.body, '₦75 was the platform fee. ₦925 was added to your balance.')
+  assert.equal(N.savingsReceived({ ref: 'TXN-4', customerId: 'c1', agentId: 'a1', customerName: 'x', planGoal: 'Rent', amount: 1000, fee: 0, onlineTransfer: false })[0].body, undefined)
+})
+
 test('collection steps: requested, approved, paid, declined — customer always, agent where it concerns them', () => {
   const byCustomer = N.collectionRequested({ ...rec, byCustomer: true })
   assert.deepEqual(byCustomer.map(e => [e.recipient.type, e.title]), [
@@ -66,7 +73,7 @@ test('every event links somewhere inside the right app', () => {
 test('notify writes each event as an upsert that never overwrites (retries are harmless)', async () => {
   const calls: unknown[] = []
   const client = { notification: { upsert: async (a: unknown) => { calls.push(a); return a } } }
-  await notify(client, N.collectionPaid(rec))
+  await notify(client as unknown as Parameters<typeof notify>[0], N.collectionPaid(rec))
   assert.equal(calls.length, 2)
   const first = calls[0] as { where: { dedupeKey: string }; update: object; create: { recipientType: string; recipientId: string; kind: string } }
   assert.deepEqual(first.where, { dedupeKey: 'collection-paid:r1' })

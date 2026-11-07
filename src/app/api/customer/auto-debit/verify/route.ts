@@ -9,6 +9,7 @@ import { sendToReview } from '@/lib/customer-settle'
 import { PlanClosedError, creditPlanBalance } from '@/lib/plan-credit'
 import { createMandateFromAuthorization } from '@/lib/auto-debit'
 import { ensureEnrolmentMandate, isEnrolmentRef } from '@/lib/auto-debit-enrol'
+import { notifications, notify } from '@/lib/notifications'
 import { depositFeeOps } from '@/lib/commission-ledger'
 
 class RouteError extends Error {
@@ -132,7 +133,12 @@ export async function POST(req: NextRequest) {
           note: reusable ? 'Auto-debit enrollment first charge' : 'Auto-debit enrollment charge saved (no reusable card authorization)',
         },
       })
+      // notify: savingsReceived
       await creditPlanBalance(tx, plan.id, money(amount - fee))
+      await notify(tx, notifications.savingsReceived({
+        ref: reference, customerId: customer.id, agentId: customer.agentId, customerName: `${customer.firstName} ${customer.lastName}`,
+        planGoal: plan.goal, amount, fee, onlineTransfer: false,
+      }))
     })
   } catch (e) {
     if (e instanceof PlanClosedError) return toReview('closed')

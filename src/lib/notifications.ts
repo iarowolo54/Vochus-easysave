@@ -40,9 +40,11 @@ type CollectionFacts = { id: string; customerId: string; agentId: string; custom
 
 export const notifications = {
   /** Money reached a plan. The agent also hears about it when one of their online customers paid by bank transfer. */
-  savingsReceived(f: { ref: string; customerId: string; agentId: string; customerName: string; planGoal: string; amount: number; onlineTransfer: boolean }): NotificationEvent[] {
+  savingsReceived(f: { ref: string; customerId: string; agentId: string; customerName: string; planGoal: string; amount: number; fee?: number; onlineTransfer: boolean }): NotificationEvent[] {
+    const fee = f.fee && f.fee > 0 ? f.fee : 0
     const out: NotificationEvent[] = [{
       recipient: customer(f.customerId), kind: 'saving_received', title: `${naira(f.amount)} saved into ${f.planGoal}`,
+      body: fee ? `${naira(fee)} was the platform fee. ${naira(Math.max(0, Math.round((f.amount - fee) * 100) / 100))} was added to your balance.` : undefined,
       href: '/customer/dashboard', dedupeKey: `saving:${f.ref}`,
     }]
     if (f.onlineTransfer) out.push({

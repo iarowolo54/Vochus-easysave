@@ -7,6 +7,7 @@ import { insufficientResponse, InsufficientFundsError, money } from '@/lib/walle
 import { debitAgentBalance } from '@/lib/wallet-debit'
 import { creditRegistrationReward } from '@/lib/reward'
 import { isFlexible } from '@/lib/flexible-savings'
+import { notifications, notify } from '@/lib/notifications'
 import { depositDayInPlan, outsidePlanMessage, planHasEnded, PLAN_ENDED } from '@/lib/plan-credit'
 import { selectActivePlan, hasSavingOnDay, ALREADY_SAVED_TODAY } from '@/lib/saving-plan'
 import { creditOpenPlan, hasOpenRedemption, PLAN_CLOSED, PlanClosedError, SAVING_BLOCKED } from '@/lib/redemption-balance'
@@ -158,7 +159,13 @@ export async function POST(req: NextRequest) {
           if (row.ref !== created.ref) throw new DaysTakenError()
         }
       }
+      // notify: savingsReceived
       await creditOpenPlan(tx, plan.id, money(totalAmt - feeSum))
+      // One notification for the whole batch (keyed on its first saving), not one per day.
+      await notify(tx, notifications.savingsReceived({
+        ref: txns[0].ref, customerId: customer.id, agentId: agent.id, customerName: `${customer.firstName} ${customer.lastName}`,
+        planGoal: plan.goal, amount: totalAmt, fee: feeSum, onlineTransfer: false,
+      }))
       return txns
     })
   } catch (e) {

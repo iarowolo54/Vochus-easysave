@@ -9,6 +9,7 @@ import { creditRegistrationReward } from '@/lib/reward'
 import { money } from '@/lib/wallet-guard'
 import { depositFeeOps } from '@/lib/commission-ledger'
 import { sendPaymentAlert } from '@/lib/payment-alert'
+import { notifications, notify } from '@/lib/notifications'
 import { alertEmailFor } from '@/lib/email-alerts'
 
 export type SettleResult =
@@ -96,7 +97,12 @@ export async function settleIntentPayment(client: PrismaClient, input: Input): P
           note: via === 'Staff by hand' ? 'Bank transfer credited by hand by staff' : `Customer self-pay via ${via} — ${channel ?? 'card'}`,
         },
       })
+      // notify: savingsReceived
       await creditPlanBalance(tx, plan.id, money(amount - fee))
+      await notify(tx, notifications.savingsReceived({
+        ref: reference, customerId, agentId: customer.agentId, customerName: `${customer.firstName} ${customer.lastName}`,
+        planGoal: plan.goal, amount, fee, onlineTransfer: plan.source === 'self' && (via === 'Moniepoint transfer' || via === 'Staff by hand'),
+      }))
       await tx.customerPayment.create({
         data: { ref: `PAY-${reference}`, customerId, planId: plan.id, amount, status: 'Done', channel: channel ?? 'card' },
       })

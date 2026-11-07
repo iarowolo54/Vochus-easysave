@@ -3,6 +3,7 @@ import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
 import { REVIEW_ACTION } from '@/lib/payment-intent'
 import { PlanClosedError, creditPlanBalance } from '@/lib/plan-credit'
+import { notifications, notify } from '@/lib/notifications'
 import { depositFeeOps } from '@/lib/commission-ledger'
 
 export type AutoDebitCreditResult = 'credited' | 'already' | 'not_found' | 'review'
@@ -69,7 +70,12 @@ export async function creditAutoDebitAttempt(
           note: 'Auto-debit via Paystack',
         },
       })
+      // notify: savingsReceived
       await creditPlanBalance(tx, plan.id, money(amount - fee))
+      await notify(tx, notifications.savingsReceived({
+        ref: reference, customerId: customer.id, agentId: customer.agentId, customerName: `${customer.firstName} ${customer.lastName}`,
+        planGoal: plan.goal, amount, fee, onlineTransfer: false,
+      }))
       await tx.autoDebitMandate.update({ where: { id: attempt.mandateId }, data: { consecutiveFailures: 0 } })
     })
   } catch (e: unknown) {

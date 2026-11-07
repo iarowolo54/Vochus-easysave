@@ -10,6 +10,7 @@ import { selectActivePlan, depositCreatedAt, hasSavingOnDay, ALREADY_SAVED_TODAY
 import { depositDayInPlan, outsidePlanMessage, planHasEnded, PLAN_ENDED } from '@/lib/plan-credit'
 import { creditOpenPlan, hasOpenRedemption, PLAN_CLOSED, PlanClosedError, SAVING_BLOCKED } from '@/lib/redemption-balance'
 import { depositFeeOps } from '@/lib/commission-ledger'
+import { notifications, notify } from '@/lib/notifications'
 import { getFlexibleSettings, isFlexible } from '@/lib/flexible-savings'
 
 class AlreadySavedError extends Error {}
@@ -43,7 +44,7 @@ export async function POST(req: NextRequest) {
   }
   const plan = selected.plan
 
-  const dates = await prisma.savingsPlan.findUnique({ where: { id: plan.id }, select: { startDate: true, maturityDate: true, cadence: true } })
+  const dates = await prisma.savingsPlan.findUnique({ where: { id: plan.id }, select: { startDate: true, maturityDate: true, cadence: true, goal: true } })
   if (!dates || planHasEnded(dates)) return NextResponse.json({ error: PLAN_ENDED }, { status: 409 })
 
   if (await hasOpenRedemption(prisma, plan.id)) return NextResponse.json({ error: SAVING_BLOCKED }, { status: 409 })
@@ -100,7 +101,12 @@ export async function POST(req: NextRequest) {
           ...(createdAt ? { createdAt } : {}),
         },
       })
+      // notify: savingsReceived
       await creditOpenPlan(tx, plan.id, money(rounded - fee))
+      await notify(tx, notifications.savingsReceived({
+        ref, customerId: customer.id, agentId: agent.id, customerName: `${customer.firstName} ${customer.lastName}`,
+        planGoal: dates.goal, amount: rounded, fee, onlineTransfer: false,
+      }))
       return created
     })
   } catch (e) {
