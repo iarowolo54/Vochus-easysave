@@ -167,3 +167,14 @@ export function flexibleDeduction(
   feeAgent = Math.min(feeAgent, deduction)
   return { commission, penalty, deduction, feeAgent, early }
 }
+
+export type FlexiblePlanData = { cadence: typeof FLEXIBLE; dailyAmount: 0; periodDays: number; startDate: Date; maturityDate: Date }
+
+/** The SavingsPlan fields for a new flexible plan. Any amount or length the client sent is ignored. */
+export function flexiblePlanData(input: { startDate: unknown; endDate: unknown }, s: FlexibleSettings, now: Date = new Date()): FlexiblePlanData | { error: string } {
+  const r = resolveFlexiblePlan(input, s, now)
+  if ('error' in r) return r
+  return { cadence: FLEXIBLE, dailyAmount: 0, periodDays: r.periodDays, startDate: r.startDate, maturityDate: r.maturityDate }
+}
+
+export const BAD_CADENCE = 'Choose daily, weekly, monthly or flexible.'

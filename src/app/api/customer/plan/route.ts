@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { BAD_CADENCE, flexiblePlanData, getFlexibleSettings, isFlexible, parseCadence, shortDate, type FlexiblePlanData } from '@/lib/flexible-savings'
 import { resolvePlanStartDate, maturityFrom } from '@/lib/saving-plan'
 
 export async function POST(req: NextRequest) {
@@ -11,7 +12,14 @@ export async function POST(req: NextRequest) {
   const customer = await prisma.customer.findUnique({ where: { id: session.id } })
   if (!customer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  const { dailyAmount, periodDays, goal, cadence, startDate } = await req.json()
+  const { dailyAmount, periodDays, goal, cadence, startDate, endDate } = await req.json()
+  const cad = parseCadence(cadence)
+  if (!cad) return NextResponse.json({ error: BAD_CADENCE }, { status: 400 })
+  if (isFlexible(cad)) {
+    const r = flexiblePlanData({ startDate, endDate }, await getFlexibleSettings(prisma))
+    if ('error' in r) return NextResponse.json({ error: r.error }, { status: 400 })
+    return createPlan(customer, r, goal)
+  }
   if (!dailyAmount || !periodDays) return NextResponse.json({ error: 'Missing fields' }, { status: 400 })
   const da = parseFloat(dailyAmount)
   const pd = parseInt(periodDays)
@@ -29,7 +37,7 @@ export async function POST(req: NextRequest) {
       customerId: customer.id,
       dailyAmount: da,
       periodDays: pd,
-      cadence: cadence ?? 'daily',
+      cadence: cad,
       source: 'self',
       goal: goal ?? 'General Savings',
       startDate: planStart,
@@ -49,5 +57,22 @@ export async function POST(req: NextRequest) {
     actorName: `${customer.firstName} ${customer.lastName}`,
   })
 
+  return NextResponse.json({ plan })
+}
+
+async function createPlan(customer: { id: string; firstName: string; lastName: string; customerId: string }, flex: FlexiblePlanData, goal: unknown) {
+  const name = typeof goal === 'string' && goal.trim() ? goal.trim() : 'General Savings'
+  const plan = await prisma.savingsPlan.create({
+    data: { customerId: customer.id, ...flex, source: 'self', goal: name, balance: 0, status: 'Active' },
+  })
+  logAudit({
+    action: 'customer_plan_create',
+    entity: 'SavingsPlan',
+    entityId: plan.id,
+    details: `Customer ${customer.firstName} ${customer.lastName} (${customer.customerId}) created plan ${name} — flexible, ${shortDate(flex.startDate)} to ${shortDate(flex.maturityDate)}`,
+    actorType: 'customer',
+    actorId: customer.id,
+    actorName: `${customer.firstName} ${customer.lastName}`,
+  })
   return NextResponse.json({ plan })
 }

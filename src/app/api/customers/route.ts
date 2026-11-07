@@ -4,6 +4,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
+import { BAD_CADENCE, flexiblePlanData, getFlexibleSettings, isFlexible, parseCadence, type FlexiblePlanData } from '@/lib/flexible-savings'
 import { customerType } from '@/lib/customer-type'
 import { validateGender, validateState, validateLga } from '@/lib/customer-fields'
 import { logAudit } from '@/lib/audit'
@@ -203,6 +204,32 @@ export async function POST(req: NextRequest) {
   const lastNum = last ? parseInt(last.customerId.replace('CST-', ''), 10) : 0
   const customerId = `CST-${String(lastNum + 1).padStart(5, '0')}`
 
+  // Plan type first, so a bad plan is refused before the customer is created. Flexible plans take their dates from the
+  // start and end the person chose; any amount or length sent with them is ignored.
+  const mainCadence = parseCadence(cadence)
+  if (!mainCadence) return NextResponse.json({ error: BAD_CADENCE }, { status: 400 })
+  const extraPlans: unknown[] = Array.isArray(plans) && plans.length > 1 ? plans.slice(1) : []
+  const anyFlexible = isFlexible(mainCadence) || extraPlans.some(p => !!p && typeof p === 'object' && isFlexible((p as { cadence?: unknown }).cadence as string))
+  const flexSettings = anyFlexible ? await getFlexibleSettings(prisma) : null
+  let mainFlex: FlexiblePlanData | null = null
+  if (isFlexible(mainCadence)) {
+    const r = flexiblePlanData({ startDate, endDate: body.endDate }, flexSettings!)
+    if ('error' in r) return NextResponse.json({ error: r.error }, { status: 400 })
+    mainFlex = r
+  }
+  const extraFlex = new Map<number, FlexiblePlanData>()
+  for (let i = 0; i < extraPlans.length; i++) {
+    const p = extraPlans[i] as { cadence?: unknown; startDate?: unknown; endDate?: unknown } | null
+    if (!p || typeof p !== 'object') continue
+    const c = parseCadence(p.cadence)
+    if (!c) return NextResponse.json({ error: BAD_CADENCE }, { status: 400 })
+    if (isFlexible(c)) {
+      const r = flexiblePlanData({ startDate: p.startDate, endDate: p.endDate }, flexSettings!)
+      if ('error' in r) return NextResponse.json({ error: `Plan ${i + 2}: ${r.error}` }, { status: 400 })
+      extraFlex.set(i, r)
+    }
+  }
+
   const start = startDate ? new Date(startDate) : new Date()
   const maturity = new Date(start)
   maturity.setDate(maturity.getDate() + parseInt(periodDays))
@@ -235,12 +262,14 @@ export async function POST(req: NextRequest) {
   const plan = await prisma.savingsPlan.create({
     data: {
       customerId: customer.id,
-      dailyAmount: parseFloat(dailyAmount),
-      periodDays: parseInt(periodDays),
+      ...(mainFlex ?? {
+        dailyAmount: parseFloat(dailyAmount),
+        periodDays: parseInt(periodDays),
+        cadence: mainCadence,
+        startDate: start,
+        maturityDate: maturity,
+      }),
       goal,
-      cadence: cadence ?? 'daily',
-      startDate: start,
-      maturityDate: maturity,
       balance: 0,
       notes: notes || null,
     },
@@ -266,6 +295,12 @@ export async function POST(req: NextRequest) {
   if (Array.isArray(plans) && plans.length > 1) {
     for (let i = 0; i < plans.length - 1; i++) {
       const p = plans[i + 1]
+      const flex = extraFlex.get(i)
+      if (flex) {
+        if (!p?.goal) continue
+        await prisma.savingsPlan.create({ data: { customerId: customer.id, ...flex, goal: p.goal, balance: 0, notes: p.notes || null } })
+        continue
+      }
       if (!p?.dailyAmount || !p?.periodDays || !p?.goal) continue
       // Plans may share a start date now that the (customerId, startDate) unique
       // index is gone; no more per-plan +1s bump.
@@ -277,7 +312,7 @@ export async function POST(req: NextRequest) {
           dailyAmount: parseFloat(p.dailyAmount),
           periodDays: parseInt(p.periodDays),
           goal: p.goal,
-          cadence: p.cadence ?? 'daily',
+          cadence: parseCadence(p.cadence) ?? 'daily',
           startDate: pStart,
           maturityDate: pMat,
           balance: 0,

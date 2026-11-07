@@ -9,6 +9,7 @@ import { normalizePhone } from '@/lib/phone'
 import { findIdentityConflict } from '@/lib/identity'
 import { identityConflictResponse } from '@/lib/identity-response'
 import { resolvePlanStartDate, maturityFrom } from '@/lib/saving-plan'
+import { BAD_CADENCE, flexiblePlanData, getFlexibleSettings, isFlexible, parseCadence, shortDate, type FlexiblePlanData } from '@/lib/flexible-savings'
 import { validatePhoto } from '@/lib/photo'
 import { enrolRateLimiter, clientIp } from '@/lib/rate-limit'
 import { validateGender, validateState, validateLga } from '@/lib/customer-fields'
@@ -27,7 +28,7 @@ export async function POST(req: NextRequest) {
 
   const body = await req.json()
   const { ref, aid, firstName, lastName, phone, email, dob, address, gender, state, lga, bvn,
-          nokName, nokRelation, nokPhone, photoUrl, dailyAmount, periodDays, goal, password, cadence, plans, startDate } = body
+          nokName, nokRelation, nokPhone, photoUrl, dailyAmount, periodDays, goal, password, cadence, plans, startDate, endDate } = body
 
   if (!firstName || !lastName || !phone || !email || !address || !nokName || !nokRelation || !nokPhone || !password) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
@@ -67,6 +68,30 @@ export async function POST(req: NextRequest) {
   if (periodDays !== undefined && periodDays !== null && periodDays !== '') {
     const pd = Number(periodDays)
     if (!isFinite(pd) || pd <= 0) return NextResponse.json({ error: 'Period days must be a positive number' }, { status: 400 })
+  }
+
+  // Plan types, and flexible plans' dates, are checked before anything is created.
+  const mainCadence = parseCadence(cadence)
+  if (!mainCadence) return NextResponse.json({ error: BAD_CADENCE }, { status: 400 })
+  const extraPlans: unknown[] = Array.isArray(plans) && plans.length > 1 ? plans.slice(1) : []
+  const flexSettings = await getFlexibleSettings(prisma)
+  let mainFlex: FlexiblePlanData | null = null
+  if (isFlexible(mainCadence)) {
+    const r = flexiblePlanData({ startDate, endDate }, flexSettings)
+    if ('error' in r) return NextResponse.json({ error: r.error }, { status: 400 })
+    mainFlex = r
+  }
+  const extraFlex = new Map<number, FlexiblePlanData>()
+  for (let i = 0; i < extraPlans.length; i++) {
+    const p = extraPlans[i] as { cadence?: unknown; startDate?: unknown; endDate?: unknown } | null
+    if (!p || typeof p !== 'object') continue
+    const c = parseCadence(p.cadence)
+    if (!c) return NextResponse.json({ error: BAD_CADENCE }, { status: 400 })
+    if (isFlexible(c)) {
+      const r = flexiblePlanData({ startDate: p.startDate, endDate: p.endDate }, flexSettings)
+      if ('error' in r) return NextResponse.json({ error: `Plan ${i + 2}: ${r.error}` }, { status: 400 })
+      extraFlex.set(i, r)
+    }
   }
 
   if (bvn && !/^\d{11}$/.test(String(bvn))) {
@@ -147,13 +172,9 @@ export async function POST(req: NextRequest) {
       inviteToken: null,
       savingsPlans: {
         create: {
-          dailyAmount: actualDailyAmount,
-          periodDays: days,
+          ...(mainFlex ?? { dailyAmount: actualDailyAmount, periodDays: days, cadence: mainCadence, startDate: planStart, maturityDate }),
           goal: goal ?? 'General Savings',
-          cadence: cadence ?? 'daily',
           source: 'self',
-          startDate: planStart,
-          maturityDate,
           balance: 0,
           status: 'Active',
         },
@@ -169,6 +190,12 @@ export async function POST(req: NextRequest) {
   if (Array.isArray(plans) && plans.length > 1) {
     for (let i = 0; i < plans.length - 1; i++) {
       const p = plans[i + 1]
+      const flex = extraFlex.get(i)
+      if (flex) {
+        if (!p?.goal) continue
+        await prisma.savingsPlan.create({ data: { customerId: customer.id, ...flex, goal: p.goal, source: 'self', balance: 0, status: 'Active' } })
+        continue
+      }
       const pRawAmt = Number(p?.daily ?? p?.dailyAmount)
       const pPeriod = Number(p?.period ?? p?.periodDays)
       if (!isFinite(pRawAmt) || pRawAmt <= 0 || !isFinite(pPeriod) || pPeriod <= 0 || !p?.goal) continue
@@ -187,7 +214,7 @@ export async function POST(req: NextRequest) {
           dailyAmount: pDaily,
           periodDays: pDays,
           goal: p.goal,
-          cadence: p.cadence ?? 'daily',
+          cadence: parseCadence(p.cadence) ?? 'daily',
           source: 'self',
           startDate: pStart,
           maturityDate: pMat,
@@ -233,7 +260,7 @@ export async function POST(req: NextRequest) {
             <div style="font-size:14px;color:#333;line-height:1.8">
               <div><strong>Customer ID:</strong> ${customer.customerId}</div>
               <div><strong>Agent:</strong> ${agent.name}</div>
-              <div><strong>Daily Savings Target:</strong> ₦${customer.savingsPlans[0]?.dailyAmount?.toLocaleString() || 'N/A'}</div>
+              ${mainFlex ? `<div><strong>Plan:</strong> Flexible, until ${shortDate(mainFlex.maturityDate)}</div>` : `<div><strong>Daily Savings Target:</strong> ₦${customer.savingsPlans[0]?.dailyAmount?.toLocaleString() || 'N/A'}</div>`}
             </div>
           </div>
           <div style="text-align:center;margin:28px 0">
@@ -250,7 +277,7 @@ export async function POST(req: NextRequest) {
     action: 'customer_self_enrol',
     entity: 'Customer',
     entityId: customer.id,
-    details: `Self-enrolment: ${customer.firstName} ${customer.lastName} (${customer.customerId}) via agent ${agent.name} — plan ₦${actualDailyAmount}/${cadence ?? 'daily'} x ${days} days`,
+    details: `Self-enrolment: ${customer.firstName} ${customer.lastName} (${customer.customerId}) via agent ${agent.name} — plan ${mainFlex ? `flexible, ${shortDate(mainFlex.startDate)} to ${shortDate(mainFlex.maturityDate)}` : `₦${actualDailyAmount}/${mainCadence} x ${days} days`}`,
     actorType: 'customer',
     actorId: customer.id,
     actorName: `${customer.firstName} ${customer.lastName}`,

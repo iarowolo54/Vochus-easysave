@@ -122,3 +122,13 @@ test('the deduction never exceeds the balance, and the agent part never exceeds 
     assert.ok(d.deduction >= 0 && d.feeAgent >= 0)
   }
 })
+
+test('flexiblePlanData ignores any amount and returns the plan fields', async () => {
+  const { flexiblePlanData } = await import('../src/lib/flexible-savings')
+  const r = flexiblePlanData({ startDate: '2026-11-10', endDate: '2027-02-10' }, D, NOW)
+  assert.ok(!('error' in r))
+  assert.equal(r.cadence, 'flexible')
+  assert.equal(r.dailyAmount, 0)
+  assert.equal(r.periodDays, 92)
+  assert.ok('error' in flexiblePlanData({ startDate: '2026-11-10', endDate: '2027-01-10' }, D, NOW))
+})

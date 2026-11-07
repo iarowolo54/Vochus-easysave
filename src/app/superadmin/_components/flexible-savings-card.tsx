@@ -60,7 +60,8 @@ export function FlexibleSavingsCard() {
   const parsed = Object.fromEntries(FIELDS.map(f => [f.key, parse(f, drafts[f.key])])) as Record<Key, number | null>
   const valid = FIELDS.every(f => parsed[f.key] !== null)
   const changes = FIELDS.filter(f => parsed[f.key] !== saved[f.key])
-  const current = Object.fromEntries(FIELDS.map(f => [f.key, parsed[f.key] ?? saved[f.key]])) as FlexibleSettings
+  const current: FlexibleSettings = { ...saved }
+  for (const f of FIELDS) current[f.key] = parsed[f.key] ?? saved[f.key]
 
   async function save() {
     if (!valid) return
