@@ -42,7 +42,7 @@ export default function PlanEnded({ plan, hideAmounts, onCollect, onNewPlan, not
           : <>Plan ended {formatDate(plan.maturityDate)}</>}
       </p>
 
-      <div className="ui-ring" role="img" aria-label={hideAmounts ? 'Savings ready to collect' : `${formatNaira(plan.balance)} saved of ${formatNaira(goal)} goal`}>
+      <div className="ui-ring" role="img" aria-label={hideAmounts ? 'Savings ready to collect' : goal > 0 ? `${formatNaira(plan.balance)} saved of ${formatNaira(goal)} goal` : `${formatNaira(plan.balance)} saved`}>
         <svg width={RING} height={RING} viewBox={`0 0 ${RING} ${RING}`} aria-hidden="true">
           <circle cx={RING / 2} cy={RING / 2} r={R} fill="none" stroke="var(--ui-line)" strokeWidth={STROKE} />
           <circle
@@ -57,7 +57,7 @@ export default function PlanEnded({ plan, hideAmounts, onCollect, onNewPlan, not
           {hideAmounts
             ? <span className="ui-amount ui-ring-amount">₦ ••••</span>
             : <span className={`ui-ring-amount${long ? ' ui-ring-amount--long' : ''}`}><Amount value={plan.balance} animate /></span>}
-          <span className="ui-ring-label">of {formatNaira(goal, { minor: false })} goal</span>
+          {goal > 0 && <span className="ui-ring-label">of {formatNaira(goal, { minor: false })} goal</span>}
         </div>
       </div>
 
@@ -85,12 +85,14 @@ export default function PlanEnded({ plan, hideAmounts, onCollect, onNewPlan, not
 /** Plain facts about a finished plan (Copilot-style summary list). */
 export function PlanSummary({ plan, hideAmounts }: { plan: Plan; hideAmounts: boolean }) {
   const goal = plan.dailyAmount * plan.periodDays
-  const rate = (plan.cadence ?? 'daily') === 'weekly'
+  const flexible = plan.cadence === 'flexible'
+  const rate = flexible ? 'Flexible, any amount'
+    : (plan.cadence ?? 'daily') === 'weekly'
     ? `${formatNaira(plan.dailyAmount * 7, { minor: false })} weekly`
     : `${formatNaira(plan.dailyAmount, { minor: false })} daily`
   const rows: [string, string][] = [
     ['Saved', hideAmounts ? '₦ ••••' : formatNaira(plan.balance)],
-    ['Goal', formatNaira(goal)],
+    ...(flexible ? [] : [['Goal', formatNaira(goal)] as [string, string]]),
     ['Saving', rate],
     ['Started', formatDate(plan.startDate)],
     ['Ended', formatDate(plan.maturityDate)],

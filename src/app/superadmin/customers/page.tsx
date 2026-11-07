@@ -1,4 +1,5 @@
 'use client'
+import { isFlexible } from '@/lib/flexible-savings'
 
 import { useState, useEffect, useCallback, type ReactNode } from 'react'
 import {
@@ -409,7 +410,7 @@ export default function CustomersPage() {
               <div key={p.id} className="cm-sec">
                 <h4 className="cm-sec-title">{p.goal} · <StatusBadge status={p.status} /></h4>
                 <dl className="dlg-ledger">
-                  <DlRow label="Saves">{naira(p.dailyAmount)} {p.cadence === 'daily' ? 'a day' : `per ${p.cadence.replace(/ly$/, '')}`} for {p.periodDays} days</DlRow>
+                  <DlRow label="Saves">{isFlexible(p.cadence) ? `Flexible, any amount, for ${p.periodDays} days` : <>{naira(p.dailyAmount)} {p.cadence === 'daily' ? 'a day' : `per ${p.cadence.replace(/ly$/, '')}`} for {p.periodDays} days</>}</DlRow>
                   <DlRow label="Balance"><span className="cm-strong">{naira(p.balance)}</span></DlRow>
                   {p.interestAccrued > 0 && <DlRow label="Interest earned">{naira(p.interestAccrued)}</DlRow>}
                   <DlRow label="Type">{p.source === 'self' ? 'Online' : 'Cash saver'}</DlRow>

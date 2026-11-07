@@ -22,6 +22,7 @@ import ListRow from '@/components/ui/ListRow'
 import { Icons } from '@/components/ui/icons'
 import InterestNudge, { InterestCard, InterestChip, earnsInterest } from '@/components/customer/InterestNudge'
 import AutoFunding from '@/components/customer/AutoFunding'
+import { isFlexible } from '@/lib/flexible-savings'
 import { PAYSTACK_ENABLED } from '@/lib/paystack-off'
 import { displayName, formatDate, formatNaira } from '@/lib/format'
 import { getHideBalance, setHideBalance } from '@/lib/preferences'
@@ -69,7 +70,7 @@ function PlanDetails({ plan }: { plan: Plan }) {
       <dl className="ui-card ui-card--list ui-summary">
         <div className="ui-row">
           <dt className="ui-row-main ui-row-sub ui-summary-key">You save</dt>
-          <dd className="ui-row-value">{formatNaira(weekly ? plan.dailyAmount * 7 : plan.dailyAmount, { minor: false })} {weekly ? 'a week' : 'a day'}</dd>
+          <dd className="ui-row-value">{isFlexible(plan.cadence) ? 'Any amount, any day' : `${formatNaira(weekly ? plan.dailyAmount * 7 : plan.dailyAmount, { minor: false })} ${weekly ? 'a week' : 'a day'}`}</dd>
         </div>
         <div className="ui-row">
           <dt className="ui-row-main ui-row-sub ui-summary-key">You collect on</dt>
@@ -184,6 +185,8 @@ export default function CustomerDashboard() {
   // Past its payout date with no collection in progress: show the result, not the saving controls.
   const finished = ended && !pending
   const target = plan ? plan.dailyAmount * plan.periodDays : 0
+  /** Flexible plans have no set days, so no day calendar, no "saved today" and no auto-funding. */
+  const flex = !!plan && isFlexible(plan.cadence)
   const firstName = displayName(data.name).split(' ')[0]
   const hour = new Date().getHours()
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
@@ -311,7 +314,7 @@ export default function CustomerDashboard() {
                 </p>
               </>
             )}
-            {plan && !ended && !pending && <TodayStatus weekly={weekly} deposits={recentForStatus} covered={currentSlot(slots, today, weekly)?.coveredOnly} paidAhead={slots.filter(s => s.key > today && s.coveredOnly).length} />}
+            {plan && !ended && !pending && !flex && <TodayStatus weekly={weekly} deposits={recentForStatus} covered={currentSlot(slots, today, weekly)?.coveredOnly} paidAhead={slots.filter(s => s.key > today && s.coveredOnly).length} />}
           </section>
         )}
 
@@ -350,16 +353,16 @@ export default function CustomerDashboard() {
           <>
             <InterestCard plan={plan} hideAmounts={hideBalance} />
             <PlanDetails plan={plan} />
-            {PAYSTACK_ENABLED && !ended && <AutoFunding plan={plan} hideAmounts={hideBalance} />}
-            <WeekStrip plan={plan} deposits={planTxs} paused={!!pending} onOpenCard={() => setCardOpen(true)} onSelect={setDaySel} />
+            {PAYSTACK_ENABLED && !ended && !flex && <AutoFunding plan={plan} hideAmounts={hideBalance} />}
+            {!flex && <WeekStrip plan={plan} deposits={planTxs} paused={!!pending} onOpenCard={() => setCardOpen(true)} onSelect={setDaySel} />}
           </>
         ) : (
           <>
-            <WeekStrip plan={plan} deposits={planTxs} paused={!!pending} onOpenCard={() => setCardOpen(true)} onSelect={setDaySel} />
+            {!flex && <WeekStrip plan={plan} deposits={planTxs} paused={!!pending} onOpenCard={() => setCardOpen(true)} onSelect={setDaySel} />}
             <PlanDetails plan={plan} />
           </>
         ))}
-        {plan && finished && (
+        {plan && finished && !flex && (
           <button type="button" className="ui-card ui-card-link" onClick={() => setCardOpen(true)}>
             <span className="ui-row-main">
               <span className="ui-row-title">Savings card</span>
@@ -408,7 +411,7 @@ export default function CustomerDashboard() {
                   key={p.id}
                   icon="plan"
                   title={p.goal}
-                  sub={`${formatNaira(p.dailyAmount)} a ${p.cadence === 'weekly' ? 'week' : p.cadence === 'monthly' ? 'month' : 'day'} · collected`}
+                  sub={`${isFlexible(p.cadence) ? 'Flexible' : `${formatNaira(p.dailyAmount)} a ${p.cadence === 'weekly' ? 'week' : p.cadence === 'monthly' ? 'month' : 'day'}`} · collected`}
                   value="Save again"
                   onClick={() => saveAgain(p.id, p.goal)}
                 />
@@ -454,7 +457,7 @@ export default function CustomerDashboard() {
               <span className="ui-row-main">
                 <span className="ui-row-title" style={{ display: 'block' }}>{p.goal}</span>
                 <span className="ui-row-sub" style={{ display: 'block' }}>{hasEnded(p)
-                    ? (p.balance >= p.dailyAmount * p.periodDays ? 'Goal reached' : `Ended ${formatDate(p.maturityDate)}`)
+                    ? (!isFlexible(p.cadence) && p.balance >= p.dailyAmount * p.periodDays ? 'Goal reached' : `Ended ${formatDate(p.maturityDate)}`)
                     : `Collect on ${formatDate(p.maturityDate)}`}</span>
               </span>
               <span className="ui-row-value">{hideBalance ? '₦ ••••' : formatNaira(p.balance)}</span>

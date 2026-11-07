@@ -26,7 +26,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
           address: true, status: true, createdAt: true,
           savingsPlans: {
             select: {
-              id: true, goal: true, dailyAmount: true, periodDays: true, balance: true, status: true,
+              id: true, goal: true, dailyAmount: true, periodDays: true, cadence: true, balance: true, status: true,
               startDate: true, maturityDate: true, notes: true,
               transactions: { select: txSelect, orderBy: { createdAt: 'desc' } },
             },

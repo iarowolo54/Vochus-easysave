@@ -12,6 +12,8 @@ import ListRow from '@/components/ui/ListRow'
 import { HomeSkeleton } from '@/components/ui/Skeleton'
 import { Icons } from '@/components/ui/icons'
 import { formatDate, formatNaira } from '@/lib/format'
+import { DEFAULT_FLEXIBLE_SETTINGS, flexibleDeduction, isFlexible } from '@/lib/flexible-savings'
+import { useFlexibleTerms } from '@/lib/use-flexible-terms'
 import { IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
 
 type Redemption = {
@@ -47,6 +49,7 @@ function statusLabel(s: string) {
 }
 
 export default function CustomerRedeemPage() {
+  const flexTerms = useFlexibleTerms()
   const router = useRouter()
   const [plan, setPlan] = useState<Plan | null>(null)
   const [redemptions, setRedemptions] = useState<Redemption[]>([])
@@ -143,10 +146,15 @@ export default function CustomerRedeemPage() {
   if (loading) return <HomeSkeleton />
 
   const hasCash = !!plan?.hasCashDeposit
-  const isEarly = plan ? new Date() < new Date(plan.maturityDate) : false
+  // Flexible plans: commission (cash plans) and, before the end date, the penalty — the same rule the server applies.
+  const flexDeduct = plan && isFlexible(plan.cadence)
+    ? flexibleDeduction({ source: plan.source ?? 'self', balance: plan.balance, maturityDate: new Date(plan.maturityDate), at: new Date() }, { ...DEFAULT_FLEXIBLE_SETTINGS, ...flexTerms })
+    : null
+  const isEarly = flexDeduct ? flexDeduct.early : plan ? new Date() < new Date(plan.maturityDate) : false
   let savingsFee = 0
+  if (flexDeduct) savingsFee = flexDeduct.deduction
   // Online (self) plans pay no platform fee; the server waives it, so the preview must too.
-  if (plan && plan.source !== 'self') {
+  else if (plan && plan.source !== 'self') {
     if (hasCash && plan.cadence !== 'weekly') {
       savingsFee = Math.min(plan.dailyAmount, plan.balance)
     } else {
@@ -235,7 +243,10 @@ export default function CustomerRedeemPage() {
               {isEarly && <p className="ag-early"><Icons.pending size={16} aria-hidden="true" /> Your plan ends {formatDate(plan.maturityDate)}, so this is an early collection.</p>}
               <dl className="ag-breakdown">
                 <div><dt>Saved</dt><dd>{formatNaira(plan.balance)}</dd></div>
-                {savingsFee > 0 && <div><dt>Platform fee</dt><dd className="ag-neg">−{formatNaira(savingsFee)}</dd></div>}
+                {flexDeduct ? <>
+                  {flexDeduct.commission > 0 && <div><dt>Commission ({flexTerms.cashCommissionPct}%)</dt><dd className="ag-neg">−{formatNaira(flexDeduct.commission)}</dd></div>}
+                  {flexDeduct.penalty > 0 && <div><dt>Stopping early ({flexTerms.penaltyPct}%)</dt><dd className="ag-neg">−{formatNaira(flexDeduct.penalty)}</dd></div>}
+                </> : savingsFee > 0 && <div><dt>Platform fee</dt><dd className="ag-neg">−{formatNaira(savingsFee)}</dd></div>}
                 <div><dt>Interest earned</dt><dd>+{formatNaira(interest)}</dd></div>
                 <div className="ag-breakdown-total"><dt>You’ll receive</dt><dd>{formatNaira(netPayout)}</dd></div>
               </dl>
@@ -304,7 +315,7 @@ export default function CustomerRedeemPage() {
                 <span className="ui-row-sub">{plan.goal ? `${plan.goal} · ` : ''}Available to collect</span>
                 <p className="ag-status-amount">{formatNaira(plan.balance)}</p>
                 {plan.balance > 0
-                  ? <p className="ui-row-sub">You receive <strong className="ag-strong">{formatNaira(netPayout)}</strong> {savingsFee > 0 ? ` after the platform fee${interest > 0 ? ' and interest' : ''}` : interest > 0 ? ' including interest' : ''}</p>
+                  ? <p className="ui-row-sub">You receive <strong className="ag-strong">{formatNaira(netPayout)}</strong> {savingsFee > 0 ? ` after ${flexDeduct ? (flexDeduct.penalty > 0 ? 'the early-stop charge' : 'the commission') : 'the platform fee'}${interest > 0 ? ' and interest' : ''}` : interest > 0 ? ' including interest' : ''}</p>
                   : <p className="ui-row-sub">Nothing saved in this plan yet. Save first, then you can collect.</p>}
                 {isEarly && plan.balance > 0 && <p className="ag-early"><Icons.pending size={16} aria-hidden="true" /> Ends {formatDate(plan.maturityDate)}. Collecting now is an early collection.</p>}
                 {inProgress ? (

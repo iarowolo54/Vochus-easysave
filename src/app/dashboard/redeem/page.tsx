@@ -11,6 +11,8 @@ import Toast from '@/components/ui/Toast'
 import { Icons } from '@/components/ui/icons'
 import { avatarTint } from '@/lib/avatar'
 import { displayName, formatDate, formatNaira } from '@/lib/format'
+import { DEFAULT_FLEXIBLE_SETTINGS, flexibleDeduction, isFlexible } from '@/lib/flexible-savings'
+import { useFlexibleTerms } from '@/lib/use-flexible-terms'
 
 interface Plan {
   id: string; goal: string; status: string; balance: number; dailyAmount: number
@@ -55,6 +57,7 @@ function Avatar({ c }: { c: Customer }) {
 }
 
 export default function RedeemPage() {
+  const flexTerms = useFlexibleTerms()
   const [step, setStep] = useState<Step>('select')
 
   const [query, setQuery] = useState('')
@@ -164,7 +167,13 @@ export default function RedeemPage() {
   // Online customers collect in their own app, so those plans aren't offered here.
   const eligiblePlans = withMoney.filter(p => p.source !== 'self')
   const selectedPlan = eligiblePlans.find(p => p.id === selectedPlanId) ?? eligiblePlans[0] ?? null
-  const preview = selectedPlan ? payoutFor(selectedPlan) : null
+  // Flexible plans: commission, plus the penalty before the end date — the same rule the server applies to the request.
+  const flexDeduct = selectedPlan && isFlexible(selectedPlan.cadence)
+    ? flexibleDeduction({ source: selectedPlan.source ?? 'agent', balance: selectedPlan.balance, maturityDate: new Date(selectedPlan.maturityDate), at: new Date() }, { ...DEFAULT_FLEXIBLE_SETTINGS, ...flexTerms })
+    : null
+  const preview = selectedPlan
+    ? (flexDeduct ? { deduction: flexDeduct.deduction, net: Math.round((selectedPlan.balance - flexDeduct.deduction) * 100) / 100 } : payoutFor(selectedPlan))
+    : null
   const planMatured = selectedPlan ? (selectedPlan.status === 'Matured' || new Date(selectedPlan.maturityDate) <= new Date()) : false
 
   const bankTransferReady = payoutMethod !== 'Bank Transfer' || (!!selectedBank && accountNumber.length === 10 && !!cleanAccountName(accountName))
@@ -431,7 +440,10 @@ export default function RedeemPage() {
                       {preview && selectedPlan && (
                         <dl className="ag-breakdown">
                           <div><dt>{eligiblePlans.length > 1 ? selectedPlan.goal : 'Total saved'}</dt><dd>{formatNaira(selectedPlan.balance)}</dd></div>
-                          <div><dt>Platform fee</dt><dd className="ag-neg">−{formatNaira(preview.deduction)}</dd></div>
+                          {flexDeduct ? <>
+                            {flexDeduct.commission > 0 && <div><dt>Commission ({flexTerms.cashCommissionPct}%)</dt><dd className="ag-neg">−{formatNaira(flexDeduct.commission)}</dd></div>}
+                            {flexDeduct.penalty > 0 && <div><dt>Stopping early ({flexTerms.penaltyPct}%)</dt><dd className="ag-neg">−{formatNaira(flexDeduct.penalty)}</dd></div>}
+                          </> : <div><dt>Platform fee</dt><dd className="ag-neg">−{formatNaira(preview.deduction)}</dd></div>}
                           <div className="ag-breakdown-total"><dt>Customer receives</dt><dd>{formatNaira(preview.net)}</dd></div>
                         </dl>
                       )}

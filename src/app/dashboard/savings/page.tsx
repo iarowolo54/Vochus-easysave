@@ -2,6 +2,8 @@
 
 import { planFeePreview } from '@/lib/savings-fee'
 import { usePlanFees } from '@/lib/use-plan-fees'
+import { useFlexibleTerms } from '@/lib/use-flexible-terms'
+import { isFlexible } from '@/lib/flexible-savings'
 import { useState, useEffect, useCallback, useRef, Suspense } from 'react'
 import { useSession } from 'next-auth/react'
 import { useSearchParams, useRouter } from 'next/navigation'
@@ -98,6 +100,7 @@ function SavingsContent() {
   /** The plan this saving goes into. Picked automatically when the customer has one active plan. */
   const [planId, setPlanId] = useState<string | null>(null)
   const [amount, setAmount] = useState('')
+  const flexTerms = useFlexibleTerms()
   const [method] = useState('Cash')
   const [loading, setLoading] = useState(false)
   const [toast, setToast] = useState('')
@@ -215,6 +218,8 @@ function SavingsContent() {
 
   const activePlans = (selected?.savingsPlans ?? []).filter(p => p.status === 'Active')
   const plan = activePlans.find(p => p.id === planId) ?? null
+  /** Flexible plan: any amount the agent types, as often as the customer pays; no Bulk Savings, no one-a-day rule. */
+  const flexPlan = !!plan && isFlexible(plan.cadence)
   const choosePlan = activePlans.length > 1
 
   // A new customer: pick their plan if there's only one, otherwise make the agent choose.
@@ -225,7 +230,8 @@ function SavingsContent() {
 
   // The amount is the chosen plan's agreed payment (per day, week or month).
   useEffect(() => {
-    setAmount(plan ? String(perPayment(plan)) : '')
+    setAmount(plan && !isFlexible(plan.cadence) ? String(perPayment(plan)) : '')
+    if (plan && isFlexible(plan.cadence)) setBulkMode(false)
   }, [plan?.id]) // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
@@ -351,6 +357,7 @@ function SavingsContent() {
   function requestPin() {
     if (!selected) { setError('Choose a customer first.'); return }
     if (!plan) { setError(choosePlan ? 'Choose which plan this saving goes into.' : 'This customer has no active plan.'); return }
+    if (flexPlan && !(parseFloat(amount) >= flexTerms.minDeposit && parseFloat(amount) > 0)) { setError(`Enter how much they’re paying (at least ${formatNaira(Math.max(flexTerms.minDeposit, 1), { minor: false })}).`); return }
     if (!bulkMode && (!amount || parseFloat(amount) <= 0)) { setError('This customer has no agreed amount on their plan.'); return }
     if (bulkMode && (!plan.dailyAmount || selectedDates.length < 1)) { setError('Tap at least one day on the calendar.'); return }
     setError('')
@@ -477,7 +484,8 @@ function SavingsContent() {
   const bulkUnit = onlineCal?.weekly ? 'week' : 'day'
   const payAmount = bulkMode ? bulkTotal : parseFloat(amount || '0')
   const short = walletBalance !== null && payAmount > 0 && payAmount > walletBalance
-  const alreadyPaid = !bulkMode && !recordDate && paidToday && paidToday.length > 0 ? paidToday : null
+  // Flexible plans can be paid into more than once a day, so an earlier payment today doesn't block another.
+  const alreadyPaid = !flexPlan && !bulkMode && !recordDate && paidToday && paidToday.length > 0 ? paidToday : null
   const returnHere = selected ? `/dashboard/savings?cid=${encodeURIComponent(selected.customerId)}` : '/dashboard/savings'
   const lateDateLabel = recordDate
     ? new Date(recordDate + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
@@ -640,14 +648,14 @@ function SavingsContent() {
                           onClick={() => { setPlanId(p.id); setError(''); setSelectedDates([]) }}>
                           <span className="ag-payee-main">
                             <span className="ui-row-title ui-block">{p.goal}</span>
-                            <span className="ui-row-sub ui-block">{formatNaira(perPayment(p), { minor: false })} a {planUnit(p)}{p.startDate ? ` · ${formatDate(p.startDate)}${p.maturityDate ? ` to ${formatDate(p.maturityDate)}` : ''}` : ''} · {formatNaira(p.balance, { minor: false })} saved</span>
+                            <span className="ui-row-sub ui-block">{isFlexible(p.cadence) ? 'Flexible, any amount' : `${formatNaira(perPayment(p), { minor: false })} a ${planUnit(p)}`}{p.startDate ? ` · ${formatDate(p.startDate)}${p.maturityDate ? ` to ${formatDate(p.maturityDate)}` : ''}` : ''} · {formatNaira(p.balance, { minor: false })} saved</span>
                           </span>
                           <span className="ui-radio" aria-hidden="true" />
                         </button>
                       ))}
                     </div>
                   )}
-                  {!recordDate && (
+                  {!recordDate && !flexPlan && (
                     <div className="ui-segment ag-segment" role="group" aria-label="Days to record">
                       <button type="button" aria-pressed={!bulkMode} onClick={() => setBulkMode(false)}>Today</button>
                       <button type="button" aria-pressed={bulkMode} onClick={() => setBulkMode(true)}>Bulk Savings</button>
@@ -670,7 +678,19 @@ function SavingsContent() {
                     />
                   ) : (
                     <div className="ag-pay-amount">
-                      {plan
+                      {plan && flexPlan
+                        ? <div className="ag-tf-wrap ui-block">
+                            <div className="ag-tf">
+                              <label className="ag-tf-label" htmlFor="flex-amt">Amount they’re paying</label>
+                              <span className="ag-tf-money">
+                                <span aria-hidden="true">₦</span>
+                                <input id="flex-amt" className="ag-tf-input ag-tf-num" type="tel" inputMode="decimal" autoComplete="off" onKeyDown={blockMinus}
+                                  placeholder="Any amount" value={amount} onChange={e => { setAmount(nonNegativeString(e.target.value)); setError('') }} />
+                              </span>
+                            </div>
+                            <p className="ag-fineprint">Flexible plan{choosePlan ? ` · ${plan.goal}` : ''}: any amount from {formatNaira(flexTerms.minDeposit, { minor: false })}, as often as they like.</p>
+                          </div>
+                        : plan
                         ? <>
                             <span className="ui-amount ui-amount--hero">{formatNaira(parseFloat(amount || '0'), { minor: false })}</span>
                             <span className="ui-row-sub">Their agreed amount for {recordDate ? 'that day' : `one ${planUnit(plan)}`}{choosePlan ? ` · ${plan.goal}` : ''}</span>

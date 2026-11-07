@@ -15,7 +15,7 @@ interface Tx {
 }
 
 interface Plan {
-  id: string; goal: string; dailyAmount: number; periodDays: number
+  id: string; goal: string; dailyAmount: number; periodDays: number; cadence?: string | null
   balance: number; status: string; startDate: string; maturityDate: string; notes: string | null
   transactions: Tx[]
 }
@@ -300,7 +300,7 @@ export default function AgentDetailPage() {
                               <div className="am-plan-hd">
                                 <div className="row-main">
                                   <div className="row-title">{plan.goal || 'Savings plan'}</div>
-                                  <div className="row-sub">{nairaKobo(plan.dailyAmount)} a day · {plan.periodDays} days · {shortDate(plan.startDate)} to {shortDate(plan.maturityDate)}</div>
+                                  <div className="row-sub">{plan.cadence === 'flexible' ? 'Flexible, any amount' : `${nairaKobo(plan.dailyAmount)} a day`} · {plan.periodDays} days · {shortDate(plan.startDate)} to {shortDate(plan.maturityDate)}</div>
                                 </div>
                                 <div className="am-plan-end">
                                   <span className="am-fig"><span className="am-fig-lbl">Balance</span><span className="am-fig-val">{nairaKobo(plan.balance)}</span></span>

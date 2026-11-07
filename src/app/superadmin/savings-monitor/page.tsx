@@ -1,4 +1,5 @@
 'use client'
+import { isFlexible } from '@/lib/flexible-savings'
 
 import { useState, useEffect, useCallback, type ReactNode } from 'react'
 import {
@@ -14,6 +15,7 @@ interface SavingsPlan {
   agentId: string
   balance: number
   dailyAmount: number
+  cadence?: string | null
   periodDays: number
   startDate: string
   maturityDate: string
@@ -156,7 +158,7 @@ export default function SavingsMonitorPage() {
                           <div className="td-name">{p.agentName}</div>
                           <div className="td-sub">{p.agentId}</div>
                         </td>
-                        <td className="num" data-label="Daily amount">{naira(p.dailyAmount)}</td>
+                        <td className="num" data-label="Daily amount">{isFlexible(p.cadence) ? 'Flexible' : naira(p.dailyAmount)}</td>
                         <td className="num" data-label="Period">{p.periodDays} days</td>
                         <td data-label="Started" className="cm-nowrap cm-sub2">{shortDate(p.startDate)}</td>
                         <td data-label="Matures">
@@ -187,7 +189,7 @@ export default function SavingsMonitorPage() {
           <div className="cm-sec">
             <h3 className="cm-sec-title">Plan</h3>
             <dl className="dlg-ledger">
-              <DlRow label="Daily amount">{naira(detail.dailyAmount)}</DlRow>
+              <DlRow label="Daily amount">{isFlexible(detail.cadence) ? 'Flexible, any amount' : naira(detail.dailyAmount)}</DlRow>
               <DlRow label="Period">{detail.periodDays} days</DlRow>
               <DlRow label="Goal">{detail.goal || '—'}</DlRow>
               <DlRow label="Started">{shortDate(detail.startDate)}</DlRow>

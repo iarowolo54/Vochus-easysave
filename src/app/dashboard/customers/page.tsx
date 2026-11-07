@@ -11,6 +11,7 @@ import { useWide } from '@/components/ui/useWide'
 import { Icons, type IconName } from '@/components/ui/icons'
 import { avatarTint } from '@/lib/avatar'
 import { displayName, formatDate, formatNaira, formatTime } from '@/lib/format'
+import { isFlexible } from '@/lib/flexible-savings'
 
 interface Plan {
   id: string; goal: string; status: string; balance: number; dailyAmount: number
@@ -96,6 +97,7 @@ function isOverdue(iso: string | null | undefined) {
 }
 
 function amountText(p: Plan) {
+  if (isFlexible(p.cadence)) return 'Any amount'
   const weekly = p.cadence === 'weekly'
   return `${formatNaira(weekly ? p.dailyAmount * 7 : p.dailyAmount, { minor: false })} ${weekly ? 'a week' : 'a day'}`
 }
@@ -637,13 +639,15 @@ function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, g
             </div>
             <div className="ag-plan-figures">
               <span className="ag-plan-balance">{formatNaira(p.balance, { minor: false })}</span>
-              <span className="ui-row-sub">of {formatNaira(target, { minor: false })}</span>
+              {target > 0 && <span className="ui-row-sub">of {formatNaira(target, { minor: false })}</span>}
             </div>
-            <div className="ui-progress ag-plan-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label={`${p.goal}: ${pct}% saved`}>
-              <span style={{ width: `${pct}%` }} />
-            </div>
+            {target > 0 && (
+              <div className="ui-progress ag-plan-bar" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={pct} aria-label={`${p.goal}: ${pct}% saved`}>
+                <span style={{ width: `${pct}%` }} />
+              </div>
+            )}
             <p className="ag-plan-meta">
-              <span>{formatNaira(weekly ? p.dailyAmount * 7 : p.dailyAmount, { minor: false })} {weekly ? 'a week' : 'a day'}</span>
+              <span>{isFlexible(p.cadence) ? 'Flexible, any amount' : `${formatNaira(weekly ? p.dailyAmount * 7 : p.dailyAmount, { minor: false })} ${weekly ? 'a week' : 'a day'}`}</span>
               <span>{isActive ? (left <= 0 ? 'Ends today' : `${left} day${left === 1 ? '' : 's'} left · ${formatDate(p.maturityDate)}`) : `Ended ${formatDate(p.maturityDate)}`}</span>
             </p>
             <button
