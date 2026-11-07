@@ -27,6 +27,8 @@ export interface NotificationEvent {
   body?: string
   href: string
   dedupeKey: string
+  /** When it happened, if not now (the nightly safety net back-dates what it fills in). */
+  at?: Date
 }
 
 /** ₦2,000 for whole naira, ₦150.10 when there is kobo. */
@@ -140,7 +142,10 @@ function upsertArgs(e: NotificationEvent) {
   return {
     where: { dedupeKey: e.dedupeKey },
     update: {},
-    create: { recipientType: e.recipient.type, recipientId: e.recipient.id, kind: e.kind, title: e.title, body: e.body ?? null, href: e.href, dedupeKey: e.dedupeKey },
+    create: {
+      recipientType: e.recipient.type, recipientId: e.recipient.id, kind: e.kind, title: e.title, body: e.body ?? null, href: e.href, dedupeKey: e.dedupeKey,
+      ...(e.at ? { createdAt: e.at } : {}),
+    },
   }
 }
 

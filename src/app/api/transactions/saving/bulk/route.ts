@@ -8,6 +8,7 @@ import { debitAgentBalance } from '@/lib/wallet-debit'
 import { creditRegistrationReward } from '@/lib/reward'
 import { isFlexible } from '@/lib/flexible-savings'
 import { notifications, notify } from '@/lib/notifications'
+import { BULK_NOTE_PREFIX } from '@/lib/notification-sweep'
 import { depositDayInPlan, outsidePlanMessage, planHasEnded, PLAN_ENDED } from '@/lib/plan-credit'
 import { selectActivePlan, hasSavingOnDay, ALREADY_SAVED_TODAY } from '@/lib/saving-plan'
 import { creditOpenPlan, hasOpenRedemption, PLAN_CLOSED, PlanClosedError, SAVING_BLOCKED } from '@/lib/redemption-balance'
@@ -103,6 +104,7 @@ export async function POST(req: NextRequest) {
   const txnCount = await prisma.transaction.count()
 
   const dates = (rawDates as string[]).map(s => new Date(s + 'T12:00:00'))
+  const batchRef = `TXN-${String(9000 + txnCount + 1)}`
   // Offline days are stamped with their own date, so each must be a day the plan runs (never past its end).
   if (!online && dates.some(d => !depositDayInPlan(plan, d))) return NextResponse.json({ error: outsidePlanMessage(plan) }, { status: 400 })
 
@@ -143,6 +145,8 @@ export async function POST(req: NextRequest) {
             status: 'Done',
             walletAfter,
             feeTaken: fee,
+            // One batch, one notification: the nightly safety net reads this to know these days belong together.
+            note: `${BULK_NOTE_PREFIX}${batchRef}`,
             // SR-3: online (self) plans ignore client dates; createdAt defaults to now.
             ...(online ? {} : { createdAt: dates[i] }),
           },
@@ -163,7 +167,7 @@ export async function POST(req: NextRequest) {
       await creditOpenPlan(tx, plan.id, money(totalAmt - feeSum))
       // One notification for the whole batch (keyed on its first saving), not one per day.
       await notify(tx, notifications.savingsReceived({
-        ref: txns[0].ref, customerId: customer.id, agentId: agent.id, customerName: `${customer.firstName} ${customer.lastName}`,
+        ref: batchRef, customerId: customer.id, agentId: agent.id, customerName: `${customer.firstName} ${customer.lastName}`,
         planGoal: plan.goal, amount: totalAmt, fee: feeSum, onlineTransfer: false,
       }))
       return txns

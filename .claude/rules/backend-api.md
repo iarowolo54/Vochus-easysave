@@ -24,3 +24,20 @@ Next.js App Router route handlers. Each file exports `GET`/`POST`/etc.
 ## Known duplicate to resolve
 
 There are two Paystack webhook handlers (`api/paystack/webhook`, `api/webhooks/paystack`). Confirm which one Paystack is configured to call before changing either.
+
+## In-app notifications (agents and customers)
+
+Every agent/customer notification is written at the moment the change happens, through **one catalogue**:
+`src/lib/notifications.ts`. Never write the `Notification` table directly and never build notification text elsewhere.
+
+- Call `notify(tx, notifications.<kind>({...}))` **inside the same transaction** as the change (or spread
+  `notificationOps(prisma, …)` into a batch `$transaction([...])`). For a conditional `updateMany`, notify only when `count === 1`.
+- **Tripwire:** `tests/notification-coverage.test.ts` fails if any write that changes a collection (`earlyRedemption`) or a
+  withdrawal (`agentWithdrawal`), credits a plan (`creditPlanBalance`/`creditOpenPlan`), funds a wallet (`type: 'wallet_funding'`),
+  creates a collection request (`createRedemptionWithUniqueCode`) or records a device (`deviceSession`) lacks, within the 3 lines
+  above it, either `// notify: <catalogueName>` (and the file calls it) or `// notify: none — <reason>`. Decide deliberately;
+  internal steps (Processing, AwaitingOTP, attempt counters) are `none` with a reason.
+- **Safety net:** `src/lib/notification-sweep.ts`, run nightly from `/api/cron/daily`, rebuilds the last 48 h with the same dedupe
+  keys and writes only what's missing, logging `notifications_backfilled` in the audit log when it had to. A non-zero count means
+  a live path is missing — fix the path, don't rely on the net. New event kinds must be added to both the catalogue and the sweep.
+- Text is built from typed facts only: never pass a code, OTP, token or password into a notification.

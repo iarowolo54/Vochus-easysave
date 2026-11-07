@@ -6,6 +6,7 @@ import { accruedInterestForPlan } from '@/lib/savings-interest-plan'
 import { runDueAutoDebits, reconcileProcessingAttempts } from '@/lib/auto-debit-run'
 import { sendWeeklySummaries } from '@/lib/weekly-summary-run'
 import { isSummaryDay } from '@/lib/summary-day'
+import { runNotificationSweep } from '@/lib/notification-sweep'
 
 export const dynamic = 'force-dynamic'
 
@@ -76,5 +77,16 @@ export async function GET(req: Request) {
     }
   }
 
-  return NextResponse.json({ accrued, failed, charged, skipped, debitFailed, pending, settled, emailed, smsed, summarySkipped, summaryFailed })
+  // Pass 5: in-app notifications — the safety net (fills any a live path missed, and says so) and the date-based notices.
+  let notesBackfilled = 0
+  let notesScheduled = 0
+  try {
+    const n = await runNotificationSweep(prisma, now)
+    notesBackfilled = n.backfilled
+    notesScheduled = n.scheduled
+  } catch (err) {
+    console.error('[cron/daily] notification sweep failed', err instanceof Error ? err.message : 'unknown')
+  }
+
+  return NextResponse.json({ accrued, failed, charged, skipped, debitFailed, pending, settled, emailed, smsed, summarySkipped, summaryFailed, notesBackfilled, notesScheduled })
 }
