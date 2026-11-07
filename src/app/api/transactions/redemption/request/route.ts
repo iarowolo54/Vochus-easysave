@@ -8,6 +8,7 @@ import { sendMail } from '@/lib/mail'
 import { createRedemptionWithUniqueCode } from '@/lib/redemption-create'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { collectionFee } from '@/lib/commission-ledger'
+import { isEarlyCollection, isFlexible, shortDate } from '@/lib/flexible-savings'
 import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
 import { escapeHtml } from '@/lib/escape-html'
@@ -63,6 +64,10 @@ export async function POST(req: NextRequest) {
     })
     if (existing) return NextResponse.json({ error: 'A pending redemption request already exists for this customer' }, { status: 409 })
 
+    // Before the plan's end date this is an early collection, recorded and worded as one (flexible plans count the
+    // whole end date as matured, the same rule their penalty uses).
+    const now = new Date()
+    const isEarly = isFlexible(plan.cadence) ? isEarlyCollection(plan.maturityDate, now) : now < plan.maturityDate
     const tokenExpiry = new Date(Date.now() + 24 * 60 * 60 * 1000)
     const ref = `${AGENT_REQUEST_PREFIX}${Date.now().toString(36).toUpperCase()}`
     const customerName = `${plan.customer.firstName} ${plan.customer.lastName}`
@@ -78,8 +83,8 @@ export async function POST(req: NextRequest) {
     const { code: token } = await createRedemptionWithUniqueCode(prisma, (tokenHash) => ({
       ref,
       savingsPlanId: planId,
-      type: 'matured',
-      reason: 'Plan matured - customer redemption',
+      type: isEarly ? 'early' : 'matured',
+      reason: isEarly ? 'Early collection - asked for by the agent' : 'Plan matured - customer redemption',
       status: 'Pending',
       balance: plan.balance,
       penalty: deduction,
@@ -109,14 +114,14 @@ export async function POST(req: NextRequest) {
       sendMail({
         to: plan.customer.email,
         subject: 'Your Vochus Easy Save Redemption Token',
-        html: `<p>Hi ${plan.customer.firstName},</p><p>Your savings plan has matured. Present the token below to your agent to collect your payout.</p><div style="background:#1a3c2e;border-radius:12px;padding:24px;text-align:center;margin:24px 0"><p style="color:#8fc9a9;font-size:12px;letter-spacing:2px;margin:0 0 8px">REDEMPTION TOKEN</p><p style="color:#4ade80;font-size:48px;font-weight:900;font-family:monospace;letter-spacing:8px;margin:0">${token}</p><p style="color:#8fc9a9;font-size:12px;margin:8px 0 0">Expires: ${expiryStr}</p></div><p>Balance: <strong>N${plan.balance.toLocaleString()}</strong><br/>Deduction: <strong>N${deduction.toLocaleString()}</strong><br/>Payout amount: <strong>N${netPayout.toLocaleString()}</strong></p>${destination ? `<p>${escapeHtml(destination)}</p>` : ''}<p>Ref: <code>${ref}</code></p><p>Do not share this token with anyone other than your registered Vochus agent.</p>`,
+        html: `<p>Hi ${plan.customer.firstName},</p><p>${isEarly ? `You asked to collect from your savings plan before its end date (${shortDate(plan.maturityDate)}).` : 'Your savings plan has matured.'} Present the token below to your agent to collect your payout.</p><div style="background:#1a3c2e;border-radius:12px;padding:24px;text-align:center;margin:24px 0"><p style="color:#8fc9a9;font-size:12px;letter-spacing:2px;margin:0 0 8px">REDEMPTION TOKEN</p><p style="color:#4ade80;font-size:48px;font-weight:900;font-family:monospace;letter-spacing:8px;margin:0">${token}</p><p style="color:#8fc9a9;font-size:12px;margin:8px 0 0">Expires: ${expiryStr}</p></div><p>Balance: <strong>N${plan.balance.toLocaleString()}</strong><br/>Deduction: <strong>N${deduction.toLocaleString()}</strong><br/>Payout amount: <strong>N${netPayout.toLocaleString()}</strong></p>${destination ? `<p>${escapeHtml(destination)}</p>` : ''}<p>Ref: <code>${ref}</code></p><p>Do not share this token with anyone other than your registered Vochus agent.</p>`,
       }).catch(() => {})
     }
 
     logAudit({
       action: 'redemption_requested',
       entity: 'EarlyRedemption',
-      details: `Agent ${agent.name} (${agent.agentId}) created redemption request for ${customerName} — plan ${planId}, balance ₦${plan.balance.toLocaleString()}, net payout ₦${netPayout.toLocaleString()}, ref ${ref}${nameCheckHeld ? `, HELD: account in the name ${resolvedAccountName}` : ''}`,
+      details: `Agent ${agent.name} (${agent.agentId}) created ${isEarly ? 'an early' : 'a matured'} redemption request for ${customerName} — plan ${planId}, balance ₦${plan.balance.toLocaleString()}, net payout ₦${netPayout.toLocaleString()}, ref ${ref}${nameCheckHeld ? `, HELD: account in the name ${resolvedAccountName}` : ''}`,
       actorType: 'agent',
       actorId: agent.id,
       actorName: agent.name,

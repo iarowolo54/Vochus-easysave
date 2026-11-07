@@ -7,6 +7,7 @@ import { createPaymentIntent } from '@/lib/payment-intent'
 import { planHasEnded, PLAN_ENDED } from '@/lib/plan-credit'
 import { hasOpenRedemption } from '@/lib/redemption-balance'
 import { PAYSTACK_ENABLED, paystackOff } from '@/lib/paystack-off'
+import { getFlexibleSettings, isFlexible } from '@/lib/flexible-savings'
 
 export async function POST(req: NextRequest) {
   // Paystack is closed (see src/lib/paystack-off.ts): nothing may start a card payment.
@@ -39,8 +40,13 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'You’ve asked to collect from this plan. You can’t add money until that request is finished.' }, { status: 409 })
   }
 
+  // Flexible plans have no set amount, so the person must say how much (never the plan's ₦0 daily amount).
+  if (isFlexible(plan.cadence) && (body.amount === undefined || body.amount === null || body.amount === '')) {
+    return NextResponse.json({ error: 'Enter how much you want to save.' }, { status: 400 })
+  }
   const amount = parseFloat(body.amount ?? plan.dailyAmount)
-  if (!amount || amount < 100) return NextResponse.json({ error: 'Minimum ₦100' }, { status: 400 })
+  const minimum = isFlexible(plan.cadence) ? Math.max(100, (await getFlexibleSettings(prisma)).minDeposit) : 100
+  if (!amount || amount < minimum) return NextResponse.json({ error: `Minimum ₦${minimum.toLocaleString('en-NG')}` }, { status: 400 })
 
   const email = customer.email ?? `${customer.customerId.toLowerCase()}@vochus.ng`
   const rand = randomBytes(9).toString('base64url').toUpperCase()
