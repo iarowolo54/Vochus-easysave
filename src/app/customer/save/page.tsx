@@ -295,7 +295,7 @@ function SavePageInner() {
               </div>
               <div className="ui-row">
                 <dt className="ui-row-main ui-row-sub">You’ll send</dt>
-                <dd className="ui-review-value ui-amount">{formatNaira(payAmount, { minor: false })} <span className="tp-kobo-hint">+ a few kobo</span></dd>
+                <dd className="ui-review-value ui-amount">{payAmount > 0 ? <>{formatNaira(payAmount, { minor: false })} <span className="tp-kobo-hint">+ a few kobo</span></> : '—'}</dd>
               </div>
               <div className="ui-row">
                 <dt className="ui-row-main ui-row-sub">Pay with</dt>

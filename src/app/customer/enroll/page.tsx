@@ -856,7 +856,7 @@ function EnrollContent() {
 
         {screen === 'amount' && (
           <>
-            <h1 className="cu-q">How much will you save?</h1>
+            <h1 className="cu-q">{flexible ? 'How will you save?' : 'How much will you save?'}</h1>
             <p className="cu-lead">{flexible ? 'Any amount, any day, until the end date you pick.' : `You give this to your agent ${UNIT[cadence].every}.`}</p>
             <div className="ui-segment cu-seg" role="group" aria-label="How often">
               {(['daily', 'weekly', 'monthly'] as const).map(c => (

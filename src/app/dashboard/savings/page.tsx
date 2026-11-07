@@ -677,9 +677,8 @@ function SavingsContent() {
                       online={onlineCal}
                     />
                   ) : (
-                    <div className="ag-pay-amount">
-                      {plan && flexPlan
-                        ? <div className="ag-tf-wrap ui-block">
+                    plan && flexPlan ? (
+                          <div className="ag-tf-wrap ui-block">
                             <div className="ag-tf">
                               <label className="ag-tf-label" htmlFor="flex-amt">Amount they’re paying</label>
                               <span className="ag-tf-money">
@@ -690,13 +689,16 @@ function SavingsContent() {
                             </div>
                             <p className="ag-fineprint">Flexible plan{choosePlan ? ` · ${plan.goal}` : ''}: any amount from {formatNaira(flexTerms.minDeposit, { minor: false })}, as often as they like.</p>
                           </div>
-                        : plan
+                    ) : (
+                    <div className="ag-pay-amount">
+                      {plan
                         ? <>
                             <span className="ui-amount ui-amount--hero">{formatNaira(parseFloat(amount || '0'), { minor: false })}</span>
                             <span className="ui-row-sub">Their agreed amount for {recordDate ? 'that day' : `one ${planUnit(plan)}`}{choosePlan ? ` · ${plan.goal}` : ''}</span>
                           </>
                         : <span className="ui-row-sub">{choosePlan ? 'Choose a plan above to see the amount.' : 'This customer has no active plan.'}</span>}
                     </div>
+                    )
                   )}
 
                   {alreadyPaid && (
