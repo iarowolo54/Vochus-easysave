@@ -57,6 +57,7 @@ async function deliver(
       return false
     }
   }
+  // sms: account unlock code, only when there is no confirmed email
   const r = await sendSMS(
     target,
     `Vochus Easy Save: your account unlock code is ${code}. Valid for 10 minutes. Do not share it.`,

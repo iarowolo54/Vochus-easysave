@@ -36,6 +36,7 @@ async function notifyPaused(client: Client, mandateId: string): Promise<void> {
         html: `<p>Hi ${escapeHtml(c.firstName)},</p><p>${text}</p>`,
       })
     } else if (c.phone) {
+      // sms: online customer with no email at all (email otherwise)
       await sendSMS(c.phone, `Hi ${c.firstName}, ${text}`)
     }
   } catch {

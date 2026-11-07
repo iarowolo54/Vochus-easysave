@@ -11,6 +11,8 @@ import { bankByCode } from '@/lib/banks'
 import { cleanAccountName } from '@/lib/payout-account'
 import { sendSMS } from '@/lib/kudisms'
 import { sendMail } from '@/lib/mail'
+import { collectionCodeChannels } from '@/lib/customer-channels'
+import { escapeHtml } from '@/lib/escape-html'
 import { redemptionTokenMatches } from '@/lib/redemption-token'
 import { createRedemptionWithUniqueCode } from '@/lib/redemption-create'
 import { reserveRedemptionAttempt } from '@/lib/redemption-attempts'
@@ -143,18 +145,22 @@ export async function POST(req: NextRequest) {
   // confirmation step proves possession of the registered contact, not just
   // that the customer can read their own screen. sendSMS is a no-op off-prod.
   const expiryStr = tokenExpiry.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
-  sendSMS(customer.phone, `Vochus Easy Save: your redemption confirmation code is ${token}. It expires ${expiryStr}. Do not share it.`).catch(() => {})
-  if (customer.email) {
+  const channels = collectionCodeChannels({ online: plan.source === 'self', email: customer.email, emailVerifiedAt: customer.emailVerifiedAt })
+  if (channels.includes('sms')) {
+    // sms: collection code — cash customers always; online customers only without a confirmed email
+    sendSMS(customer.phone, `Vochus Easy Save: your redemption confirmation code is ${token}. It expires ${expiryStr}. Do not share it.`).catch(() => {})
+  }
+  if (channels.includes('email') && customer.email) {
     sendMail({
       to: customer.email,
       subject: 'Your Vochus Easy Save redemption code',
-      html: `<p>Hi ${customer.firstName},</p><p>Your redemption confirmation code is:</p><p style="font-size:32px;font-weight:800;letter-spacing:8px;font-family:monospace">${token}</p><p>It expires ${expiryStr}. Do not share this code with anyone.</p>`,
+      html: `<p>Hi ${escapeHtml(customer.firstName)},</p><p>Your redemption confirmation code is:</p><p style="font-size:32px;font-weight:800;letter-spacing:8px;font-family:monospace">${token}</p><p>It expires ${expiryStr}. Do not share this code with anyone.</p>`,
     }).catch(() => {})
   }
 
   // Super admins are notified at the admin-approval stage (when the agent approves and
   // sends to admin — see api/agent/redemption/[id]), not at request creation.
-  return NextResponse.json({ ref: redemption.ref, isEarly, deduction, interest, netPayout, balance: plan.balance })
+  return NextResponse.json({ ref: redemption.ref, isEarly, deduction, interest, netPayout, balance: plan.balance, sentBy: channels })
 }
 
 export async function PATCH(req: NextRequest) {

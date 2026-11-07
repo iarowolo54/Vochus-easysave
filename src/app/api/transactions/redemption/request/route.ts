@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { excludeExpiredPending, IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
 import { sendSMS } from '@/lib/kudisms'
+import { collectionCodeChannels } from '@/lib/customer-channels'
 import { sendMail } from '@/lib/mail'
 import { createRedemptionWithUniqueCode } from '@/lib/redemption-create'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
@@ -45,7 +46,7 @@ export async function POST(req: NextRequest) {
 
     const plan = await prisma.savingsPlan.findFirst({
       where: { id: planId, customerId, customer: { agentId: agent.id } },
-      include: { customer: { select: { id: true, firstName: true, lastName: true, agentId: true, phone: true, email: true } } },
+      include: { customer: { select: { id: true, firstName: true, lastName: true, agentId: true, phone: true, email: true, emailVerifiedAt: true } } },
     })
 
     if (!plan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 })
@@ -113,9 +114,13 @@ export async function POST(req: NextRequest) {
 
     // The plaintext token is delivered only out-of-band (SMS/email) — never
     // logged. Only its hash is stored (createRedemptionWithUniqueCode above).
+    // Only cash plans reach this route (online plans are refused above), so the SMS always goes.
+    const channels = collectionCodeChannels({ online: false, email: plan.customer.email, emailVerifiedAt: plan.customer.emailVerifiedAt })
+    // sms: collection code — cash customer, always
     sendSMS(plan.customer.phone, smsBody).catch(() => {})
 
-    if (plan.customer.email) {
+    // A code goes only to an email the customer confirmed: an unconfirmed one may be a typo that reaches a stranger.
+    if (channels.includes('email') && plan.customer.email) {
       sendMail({
         to: plan.customer.email,
         subject: 'Your Vochus Easy Save Redemption Token',
@@ -137,7 +142,7 @@ export async function POST(req: NextRequest) {
     const nameCheckNote = nameCheckHeld
       ? `This account is in the name ${resolvedAccountName}, not ${customerName}. A super admin will have to check it before it can be paid. The customer can also collect in their Vochus app if they have it.`
       : undefined
-    return NextResponse.json({ ref, nameCheckNote, tokenExpiry, balance: plan.balance, deduction, netPayout, customerName, sentTo: { phone: plan.customer.phone, email: plan.customer.email ?? null } })
+    return NextResponse.json({ ref, nameCheckNote, tokenExpiry, balance: plan.balance, deduction, netPayout, customerName, sentTo: { phone: plan.customer.phone, email: channels.includes('email') ? plan.customer.email : null } })
   } catch (err: any) {
     console.error('[redemption/request]', err)
     return NextResponse.json({ error: err?.message ?? 'Internal server error' }, { status: 500 })

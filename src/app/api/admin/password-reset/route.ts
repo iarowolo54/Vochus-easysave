@@ -51,6 +51,7 @@ export async function POST(req: NextRequest) {
       })
       delivered = true
     } else {
+      // sms: staff password reset code (staff, not customers)
       const sms = await sendSMS(target, `Vochus Easy Save: your password reset code is ${issued.code}. Open ${link} within 10 minutes to use it. Do not share this code.`)
       delivered = sms.success
     }

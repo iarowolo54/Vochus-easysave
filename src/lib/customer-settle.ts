@@ -171,6 +171,7 @@ export async function settleIntentPayment(client: PrismaClient, input: Input): P
       })
       // A cash customer whose transfer staff approved by hand gets one SMS receipt (most don't open the app or email).
       if (sms) {
+        // sms: hand-approved deposit receipt, cash customers only (owner exception)
         const r = await sendSMS(sms, handReceiptSms({ name: customer.firstName, amount, goal: p?.goal ?? '', balanceAfter, reference }))
         if (!r.success) console.error('[hand-receipt] SMS not sent:', r.error ?? 'unknown')
       }

@@ -61,6 +61,7 @@ export async function POST(req: NextRequest) {
     actorName: session.user.name ?? undefined,
   })
 
+  // sms: registration phone check (agent enrolling a cash customer)
   const smsResult = await sendSMS(phone, `Your Vochus Easy Save verification code is: ${code}. Valid for 10 minutes.`)
   if (!smsResult.success) {
     // Keeps the row, so a failing send still counts toward the limits.

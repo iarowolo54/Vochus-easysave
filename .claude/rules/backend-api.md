@@ -41,3 +41,14 @@ Every agent/customer notification is written at the moment the change happens, t
   keys and writes only what's missing, logging `notifications_backfilled` in the audit log when it had to. A non-zero count means
   a live path is missing — fix the path, don't rely on the net. New event kinds must be added to both the catalogue and the sweep.
 - Text is built from typed facts only: never pass a code, OTP, token or password into a notification.
+
+## Text messages (SMS cost money)
+
+Owner's rule (Nov 2026): online customers are reached by email; SMS only when they have no confirmed email. Cash customers
+get SMS for registration, the weekly alert (only with no email at all), collections, the roll-over code and a hand-approved
+deposit receipt. Account-recovery codes fall back to SMS only when there is no confirmed email. Codes never go to an
+unconfirmed email. Channel choices live in `src/lib/customer-channels.ts` (collections), `plan-reopen-code.ts`,
+`unlock-otp.ts` and `payout-notify.ts`.
+
+- **Tripwire:** `tests/sms-sites.test.ts` fails if any `sendSMS(` lacks a `// sms: <rule>` comment within the 3 lines above.
+  A new SMS is a cost decision for the owner — ask before adding one.

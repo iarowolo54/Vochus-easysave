@@ -72,6 +72,7 @@ export async function POST(req: NextRequest) {
       await sendMail({ to: target, subject: 'Vochus Easy Save — Confirm password change', html: codeEmailHtml(issued.code) })
       return true
     }
+    // sms: account recovery code, only when there is no confirmed email
     const sms = await sendSMS(target, `Your Vochus Easy Save password change code is ${issued.code}. Valid for 10 minutes. Do not share.`)
     return sms.success
   })

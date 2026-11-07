@@ -67,6 +67,7 @@ function detailRows(input: { ref: string } & PayoutDetail, extra: [string, strin
 async function dispatch(channel: Channel, smsText: string, email: EmailContent): Promise<void> {
   try {
     if (channel.via === 'sms') {
+      // sms: collection paid/declined: cash customers; online customers and agents only without an email
       await sendSMS(channel.to, smsText)
       return
     }

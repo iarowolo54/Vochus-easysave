@@ -48,6 +48,13 @@ function statusLabel(s: string) {
   return s
 }
 
+/** Where the collection code was sent, said plainly. */
+function codeWhere(sentBy: string[]): string {
+  const email = sentBy.includes('email'), sms = sentBy.includes('sms')
+  if (email && sms) return 'We sent your code by text message and email.'
+  return email ? 'We sent your code to your email.' : 'We sent your code by text message.'
+}
+
 export default function CustomerRedeemPage() {
   const flexTerms = useFlexibleTerms()
   const router = useRouter()
@@ -55,6 +62,8 @@ export default function CustomerRedeemPage() {
   const [redemptions, setRedemptions] = useState<Redemption[]>([])
   const [loading, setLoading] = useState(true)
   const [step, setStep] = useState<'idle' | 'form' | 'token' | 'done' | 'resume-token' | 'awaiting'>('idle')
+  // Where the new code went ('email', 'sms'), so the customer knows where to look.
+  const [sentBy, setSentBy] = useState<string[]>([])
   const [reason, setReason] = useState('')
   const [useBankTransfer, setUseBankTransfer] = useState(false)
   const [bankCode, setBankCode] = useState('')
@@ -100,6 +109,7 @@ export default function CustomerRedeemPage() {
       if (!res.ok) { setError(data.error ?? 'Your request didn’t go through. Please try again.'); return }
       setToken(data.token)
       setCurrentRef(data.ref)
+      setSentBy(Array.isArray(data.sentBy) ? data.sentBy : [])
       setResult(data)
       setTokenInput('')
       setStep('token')
@@ -222,7 +232,10 @@ export default function CustomerRedeemPage() {
         ) : (step === 'token' || step === 'resume-token') ? (
           <section className="ui-card ag-confirm">
             <h2 className="ag-q">Enter your code to confirm</h2>
-            <p className="ag-q-lead">This confirms the request is really from you.</p>
+            <p className="ag-q-lead">
+              {step === 'token' && sentBy.length > 0 && <>{codeWhere(sentBy)} </>}
+              This confirms the request is really from you.
+            </p>
             {token && (
               <div className="ag-code-show">
                 <span className="ui-row-sub">Your code</span>

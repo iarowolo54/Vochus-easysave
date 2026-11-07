@@ -40,6 +40,7 @@ async function deliver(c: Customer, code: string, byAgent: boolean, channels: Co
   const warn = byAgent ? `Give it to your agent only if you asked to ${what}.` : 'Do not share it.'
   for (const ch of channels) {
     if (ch === 'sms') {
+      // sms: roll-over / save-again code: cash customers always; online only as a backup to a confirmed email
       const sms = await sendSMS(c.phone, `Vochus Easy Save: your code to ${what} is ${code}. Valid 10 minutes. ${warn}`).catch(() => ({ success: false }))
       if (sms.success) return 'sms'
     } else if (c.email && c.emailVerifiedAt) {

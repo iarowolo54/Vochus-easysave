@@ -84,6 +84,7 @@ export async function sendWeeklySummaries(
         result.emailed++
       } else if (phone) {
         // sendSMS reports gateway errors via its return value rather than throwing.
+        // sms: weekly alert, only for customers with no email
         const sms = await sendSMS(phone, summary.smsText)
         if (sms.success) {
           result.smsed++

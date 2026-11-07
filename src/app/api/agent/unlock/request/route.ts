@@ -53,6 +53,7 @@ export async function POST(req: Request) {
           await sendMail({ to: target, subject: 'Vochus Easy Save — Agent account unlock code', html: unlockEmailHtml(issued.code) })
           return true
         }
+        // sms: agent unlock code, only when the agent has no confirmed email
         const sms = await sendSMS(target, `Vochus Easy Save: Your account unlock code is ${issued.code}. It expires in 10 minutes. Do not share this code.`)
         return sms.success
       })
