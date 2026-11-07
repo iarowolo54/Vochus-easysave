@@ -8,6 +8,7 @@ import {
   Avatar, ConfirmModal, Empty, Field, LoadError, Modal, PageHeader, Pager, TableSkeleton, naira, nairaKobo, shortDate, useToast,
 } from '../_components/admin-ui'
 import { CommissionHistoryDrawer } from '../_components/commission-history-drawer'
+import { FlexibleSavingsCard } from '../_components/flexible-savings-card'
 
 interface LeaderboardEntry {
   rank: number
@@ -388,7 +389,7 @@ export default function CommissionPage() {
               </div>
               <div className="am-foot">
                 <div className="am-foot-info">
-                  <span>Online customers pay no fee and earn the agent nothing.</span>
+                  <span>Online daily, weekly and monthly plans pay no fee.</span>
                   <span>Loan cost to customer: <strong>{effectiveLoanCost}%</strong></span>
                   {lastSavedComm && <span>{lastSavedComm}</span>}
                 </div>
@@ -402,6 +403,8 @@ export default function CommissionPage() {
             </>
           )}
       </section>
+
+      <FlexibleSavingsCard />
 
       {/* Loan interest */}
       <section className="card am-section" aria-labelledby="loan-h">
