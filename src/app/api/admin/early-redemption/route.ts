@@ -7,6 +7,7 @@ import { collectionFee } from '@/lib/commission-ledger'
 import { money } from '@/lib/wallet-guard'
 import { excludeExpiredPending, IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
 import { balanceUnchanged, readyToFinalize } from '@/lib/redemption-balance'
+import { notifications, notify } from '@/lib/notifications'
 import { heldForNameCheck } from '@/lib/payout-account'
 
 // Awaiting admin action = in flight but not yet Approved (incl. AwaitingOTP / Finalizing), or a transfer
@@ -134,7 +135,7 @@ export async function POST(req: Request) {
   const { savingsPlanId, type, reason, note, payoutMethod } = await req.json()
   if (!savingsPlanId || !reason) return NextResponse.json({ error: 'Missing fields' }, { status: 400 })
 
-  const plan = await prisma.savingsPlan.findUnique({ where: { id: savingsPlanId } })
+  const plan = await prisma.savingsPlan.findUnique({ where: { id: savingsPlanId }, include: { customer: { select: { id: true, agentId: true, firstName: true, lastName: true } } } })
   if (!plan) return NextResponse.json({ error: 'Savings plan not found' }, { status: 404 })
 
   const existing = await prisma.earlyRedemption.findFirst({
@@ -151,7 +152,9 @@ export async function POST(req: Request) {
   const deduction = money(fee.feeRule === 'v2' ? fee.penalty : rates.total)
   const netPayout = money(gross - deduction)
 
-  const record = await prisma.earlyRedemption.create({
+  const record = await prisma.$transaction(async tx => {
+    // notify: collectionRequested
+    const created = await tx.earlyRedemption.create({
     data: {
       ref: genRef(),
       savingsPlanId,
@@ -165,6 +168,12 @@ export async function POST(req: Request) {
       feeRule: fee.feeRule,
       feeAgent: fee.feeRule === 'v2' ? fee.feeAgent : 0,
     },
+    })
+    await notify(tx, notifications.collectionRequested({
+      id: created.id, customerId: plan.customer.id, agentId: plan.customer.agentId,
+      customerName: `${plan.customer.firstName} ${plan.customer.lastName}`, amount: netPayout, byCustomer: false,
+    }))
+    return created
   })
 
   return NextResponse.json({ id: record.id, ref: record.ref, gross, deduction, netPayout })

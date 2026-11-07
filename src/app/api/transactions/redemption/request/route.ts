@@ -13,6 +13,7 @@ import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
 import { escapeHtml } from '@/lib/escape-html'
 import { bankByCode } from '@/lib/banks'
+import { notifications } from '@/lib/notifications'
 import { accountNameMatches, AGENT_REQUEST_PREFIX, cleanAccountName, otherNameWarning, payoutDestination } from '@/lib/payout-account'
 
 export async function POST(req: NextRequest) {
@@ -80,6 +81,7 @@ export async function POST(req: NextRequest) {
 
     // Collision-safe create: retries if the random code's hash is already taken
     // (token is @unique) instead of 500ing.
+    // notify: collectionRequested
     const { code: token } = await createRedemptionWithUniqueCode(prisma, (tokenHash) => ({
       ref,
       savingsPlanId: planId,
@@ -98,6 +100,9 @@ export async function POST(req: NextRequest) {
       accountName: resolvedAccountName,
       bankCode: isBank ? String(bankCode) : null,
       bankName: resolvedBankName,
+    }), undefined, undefined, r => notifications.collectionRequested({
+      id: r.id, customerId: plan.customer.id, agentId: agent.id, customerName,
+      amount: netPayout, byCustomer: false,
     }))
 
     const expiryStr = tokenExpiry.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })

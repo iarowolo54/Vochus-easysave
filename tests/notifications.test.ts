@@ -42,6 +42,7 @@ test('collection steps: requested, approved, paid, declined — customer always,
   assert.equal(declined[0].title, 'Your collection request was declined')
   assert.equal(declined[0].body, 'Reason: Balance changed')
   assert.equal(N.collectionDeclined({ ...rec, reason: null })[0].body, undefined)
+  assert.deepEqual(N.collectionDeclined({ ...rec, byAgent: true }).map(e => e.recipient.type), ['customer'])
 })
 
 test('wallet top-up and withdrawals reach the agent', () => {

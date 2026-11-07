@@ -2,6 +2,8 @@
 // funds an agent wallet or registers a new phone must carry, within the 3 lines above it, a deliberate decision:
 //   // notify: <catalogueName>        → and that file must actually call notifications.<catalogueName>(
 //   // notify: none — <reason>        → a written reason, at least a few words
+//   // notify: caller — <reason>      → a shared helper that writes the events its caller passes in; its call sites
+//                                        are then write sites too, so each caller must name its notification
 // A new money path that forgets the notification fails here before it can ship.
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
@@ -19,6 +21,7 @@ const WRITES: { what: string; re: RegExp }[] = [
   { what: 'plan credit', re: /(?<!function )\b(creditPlanBalance|creditOpenPlan)\(/ },
   { what: 'wallet funding', re: /type:\s*'wallet_funding'/ },
   { what: 'new device session', re: /\bdeviceSession\.(create|upsert)\(/ },
+  { what: 'collection request (helper)', re: /(?<!function )\bcreateRedemptionWithUniqueCode\(/ },
 ]
 
 function files(dir: string): string[] {
@@ -46,8 +49,8 @@ function scan(): Finding[] {
         const m = /\/\/\s*notify:\s*(.+)$/m.exec(above)
         if (!m) { out.push({ file, line: i + 1, what: w.what, problem: 'no `// notify:` decision above it' }); continue }
         const decision = m[1].trim()
-        if (/^none\b/.test(decision)) {
-          if (!/^none\s*[—-]\s*\S+(\s+\S+){2,}/.test(decision)) out.push({ file, line: i + 1, what: w.what, problem: '`notify: none` needs a reason of a few words' })
+        if (/^(none|caller)\b/.test(decision)) {
+          if (!/^(none|caller)\s*[—-]\s*\S+(\s+\S+){2,}/.test(decision)) out.push({ file, line: i + 1, what: w.what, problem: '`notify: none|caller` needs a reason of a few words' })
           continue
         }
         for (const nameUsed of decision.split(/[,\s]+/).filter(Boolean)) {

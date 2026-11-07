@@ -83,12 +83,14 @@ export const notifications = {
     ]
   },
 
-  collectionDeclined(f: CollectionFacts & { reason?: string | null }): NotificationEvent[] {
+  /** byAgent: the agent declined it themselves, so only the customer is told. */
+  collectionDeclined(f: CollectionFacts & { reason?: string | null; byAgent?: boolean }): NotificationEvent[] {
     const why = f.reason?.trim() ? `Reason: ${f.reason.trim()}` : undefined
-    return [
+    const out: NotificationEvent[] = [
       { recipient: customer(f.customerId), kind: 'collection_declined', title: 'Your collection request was declined', body: why, href: '/customer/redeem', dedupeKey: `collection-declined:${f.id}` },
-      { recipient: agent(f.agentId), kind: 'collection_declined_agent', title: `${name(f.customerName)}’s collection request was declined`, body: why, href: '/dashboard/redeem', dedupeKey: `collection-declined-agent:${f.id}` },
     ]
+    if (!f.byAgent) out.push({ recipient: agent(f.agentId), kind: 'collection_declined_agent', title: `${name(f.customerName)}’s collection request was declined`, body: why, href: '/dashboard/redeem', dedupeKey: `collection-declined-agent:${f.id}` })
+    return out
   },
 
   walletFunded(f: { agentId: string; amount: number; ref: string }): NotificationEvent[] {

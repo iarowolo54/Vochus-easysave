@@ -15,6 +15,7 @@ import { redemptionTokenMatches } from '@/lib/redemption-token'
 import { createRedemptionWithUniqueCode } from '@/lib/redemption-create'
 import { reserveRedemptionAttempt } from '@/lib/redemption-attempts'
 import { getPayoutMode } from '@/lib/payout-mode'
+import { notifications } from '@/lib/notifications'
 import { notifyAgentRedemptionToReview } from '@/lib/payout-notify'
 
 export async function GET() {
@@ -102,6 +103,7 @@ export async function POST(req: NextRequest) {
 
   // Crypto-random 6-digit code (finding #6 — not Math.random), created
   // collision-safe: retries if the code's hash is already taken (token @unique).
+  // notify: collectionRequested
   const { redemption, code: token } = await createRedemptionWithUniqueCode(prisma, (tokenHash) => ({
     ref,
     savingsPlanId: plan.id,
@@ -121,6 +123,9 @@ export async function POST(req: NextRequest) {
     accountName: resolvedAccountName,
     bankCode: payoutMethod === 'BankTransfer' ? String(bankCode) : null,
     bankName: resolvedBankName,
+  }), undefined, undefined, r => notifications.collectionRequested({
+    id: r.id, customerId: customer.id, agentId: customer.agentId, customerName: `${customer.firstName} ${customer.lastName}`,
+    amount: netPayout, byCustomer: true,
   }))
 
   logAudit({
@@ -185,6 +190,7 @@ export async function PATCH(req: NextRequest) {
   }
   if (!redemptionTokenMatches(redemption.token, token)) return NextResponse.json({ error: 'Invalid token' }, { status: 400 })
 
+  // notify: none — the customer just confirmed their own code; they were told when they asked, and hear again when it's approved
   await prisma.earlyRedemption.update({
     where: { ref },
     data: { status: 'TokenValidated' },

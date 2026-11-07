@@ -7,6 +7,7 @@ import { prisma } from './prisma'
 import { notifySuperAdminsRedemptionPending } from './redemption-notify'
 import { heldForNameCheck } from './payout-account'
 import { money } from './wallet-guard'
+import { notifications, notify } from '@/lib/notifications'
 import { excludeExpiredPending, IN_FLIGHT_REDEMPTION_STATUSES } from './redemption-statuses'
 
 type Client = Pick<PrismaClient, 'savingsPlan' | 'earlyRedemption'> | Prisma.TransactionClient
@@ -106,16 +107,23 @@ export async function creditOpenPlan(client: Client, planId: string, amount: num
  * False if it had already moved on or the code ran out in the meantime.
  */
 export async function confirmRequestWithCode(
-  record: { id: string; ref: string; netPayout: number; payoutMethod: string | null; accountName: string | null; savingsPlan: { goal: string; customer: { firstName: string; lastName: string } } },
+  record: { id: string; ref: string; netPayout: number; payoutMethod: string | null; accountName: string | null; savingsPlan: { goal: string; customer: { id: string; agentId: string; firstName: string; lastName: string } } },
   agent: { id: string; agentId: string; name: string },
   now = new Date(),
 ): Promise<boolean> {
-  const moved = await prisma.earlyRedemption.updateMany({
-    where: { id: record.id, status: 'Pending', tokenExpiry: { gte: now } },
-    data: { status: 'AgentApproved', agentApprovedAt: now, agentApprovedBy: agent.agentId },
+  const customerName = `${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName}`
+  const moved = await prisma.$transaction(async tx => {
+    // notify: collectionApproved
+    const m = await tx.earlyRedemption.updateMany({
+      where: { id: record.id, status: 'Pending', tokenExpiry: { gte: now } },
+      data: { status: 'AgentApproved', agentApprovedAt: now, agentApprovedBy: agent.agentId },
+    })
+    if (m.count === 1) await notify(tx, notifications.collectionApproved({
+      id: record.id, customerId: record.savingsPlan.customer.id, agentId: record.savingsPlan.customer.agentId, customerName, amount: record.netPayout,
+    }))
+    return m
   })
   if (moved.count !== 1) return false
-  const customerName = `${record.savingsPlan.customer.firstName} ${record.savingsPlan.customer.lastName}`
   logAudit({
     action: 'agent_redemption_code_confirmed',
     entity: 'EarlyRedemption',

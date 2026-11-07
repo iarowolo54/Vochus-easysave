@@ -1,8 +1,9 @@
 import { Prisma, type PrismaClient, type EarlyRedemption } from '@prisma/client'
 import { randomInt } from 'node:crypto'
 import { hashRedemptionToken } from './redemption-token'
+import { notify, type NotificationEvent } from './notifications'
 
-type Client = Prisma.TransactionClient | Pick<PrismaClient, 'earlyRedemption'>
+type Client = Prisma.TransactionClient | Pick<PrismaClient, 'earlyRedemption' | 'notification' | '$transaction'>
 
 // Create an EarlyRedemption with a 6-digit confirmation code whose hash is unique.
 // `EarlyRedemption.token` is @unique, but both creation paths draw a random code
@@ -17,12 +18,24 @@ export async function createRedemptionWithUniqueCode(
   buildData: (tokenHash: string) => Prisma.EarlyRedemptionUncheckedCreateInput,
   genCode: () => string = () => randomInt(100000, 1000000).toString(),
   maxTries = 8,
+  /** The caller's notifications for this request (notifications.collectionRequested), saved with it in one transaction. */
+  events?: (r: EarlyRedemption) => NotificationEvent[],
 ): Promise<{ redemption: EarlyRedemption; code: string }> {
   let lastErr: unknown
   for (let i = 0; i < maxTries; i++) {
     const code = genCode()
     try {
-      const redemption = await client.earlyRedemption.create({ data: buildData(hashRedemptionToken(code)) })
+      const data = buildData(hashRedemptionToken(code))
+      const create = async (tx: Prisma.TransactionClient | Client) => {
+        // notify: caller — the caller passes notifications.collectionRequested and it is written with this create
+        const r = await tx.earlyRedemption.create({ data })
+        if (events) await notify(tx, events(r))
+        return r
+      }
+      // A client that can open a transaction does; one already inside a transaction writes in it.
+      const redemption = events && '$transaction' in client
+        ? await client.$transaction(tx => create(tx))
+        : await create(client)
       return { redemption, code }
     } catch (e) {
       const isTokenCollision =

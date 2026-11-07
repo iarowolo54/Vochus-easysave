@@ -6,6 +6,7 @@ import { logAudit } from '@/lib/audit'
 import { notifySuperAdminsRedemptionPending } from '@/lib/redemption-notify'
 import { getPayoutMode } from '@/lib/payout-mode'
 import { customerType } from '@/lib/customer-type'
+import { notifications, notify } from '@/lib/notifications'
 import { notifyCustomerRedemptionDeclined } from '@/lib/payout-notify'
 
 export async function GET() {
@@ -76,9 +77,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const customerName = `${redemption.savingsPlan.customer.firstName} ${redemption.savingsPlan.customer.lastName}`
 
   if (action === 'reject') {
-    const declined = await prisma.earlyRedemption.updateMany({
-      where: { id, status: 'TokenValidated' },
-      data: { status: 'Rejected', decidedAt: new Date(), decidedBy: agent.agentId },
+    const declined = await prisma.$transaction(async tx => {
+      // notify: collectionDeclined
+      const d = await tx.earlyRedemption.updateMany({
+        where: { id, status: 'TokenValidated' },
+        data: { status: 'Rejected', decidedAt: new Date(), decidedBy: agent.agentId },
+      })
+      if (d.count === 1) await notify(tx, notifications.collectionDeclined({
+        id, customerId: redemption.savingsPlan.customer.id, agentId: agent.id, customerName,
+        amount: redemption.netPayout, reason: 'Declined by your agent', byAgent: true,
+      }))
+      return d
     })
     if (declined.count === 0) return NextResponse.json({ error: 'Not ready for agent approval' }, { status: 409 })
     logAudit({
@@ -109,13 +118,20 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ ok: true, status: 'Rejected' })
   }
 
-  const approved = await prisma.earlyRedemption.updateMany({
-    where: { id, status: 'TokenValidated' },
-    data: {
-      status: 'AgentApproved',
-      agentApprovedAt: new Date(),
-      agentApprovedBy: agent.agentId,
-    },
+  const approved = await prisma.$transaction(async tx => {
+    // notify: collectionApproved
+    const a = await tx.earlyRedemption.updateMany({
+      where: { id, status: 'TokenValidated' },
+      data: {
+        status: 'AgentApproved',
+        agentApprovedAt: new Date(),
+        agentApprovedBy: agent.agentId,
+      },
+    })
+    if (a.count === 1) await notify(tx, notifications.collectionApproved({
+      id, customerId: redemption.savingsPlan.customer.id, agentId: agent.id, customerName, amount: redemption.netPayout,
+    }))
+    return a
   })
   if (approved.count === 0) return NextResponse.json({ error: 'Not ready for agent approval' }, { status: 409 })
 

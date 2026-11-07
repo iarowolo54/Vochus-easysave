@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
     where: { ref },
     include: {
       savingsPlan: {
-        include: { customer: { select: { agentId: true, firstName: true, lastName: true } } },
+        include: { customer: { select: { id: true, agentId: true, firstName: true, lastName: true } } },
       },
     },
   })
