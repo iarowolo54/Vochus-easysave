@@ -19,6 +19,7 @@ export type NotificationKind =
   | 'collection_declined' | 'collection_declined_agent'
   | 'wallet_funded' | 'withdrawal_paid' | 'withdrawal_declined'
   | 'plan_ending_soon' | 'plan_ended' | 'plans_ending_this_week'
+  | 'plan_uncollected' | 'uncollected_this_week'
   | 'new_phone'
 
 export interface NotificationEvent {
@@ -118,6 +119,25 @@ export const notifications = {
 
   planEnded(f: { planId: string; customerId: string; goal: string }): NotificationEvent[] {
     return [{ recipient: customer(f.customerId), kind: 'plan_ended', title: `Your ${f.goal} plan has ended`, body: 'You can collect it now, or keep saving into it again from Home.', href: '/customer/dashboard', dedupeKey: `plan-ended:${f.planId}` }]
+  },
+
+  /** Every 7 days after a plan ends while money is still in it (the end day itself is planEnded). */
+  planUncollected(f: { planId: string; customerId: string; goal: string; balance: number; week: number }): NotificationEvent[] {
+    return [{
+      recipient: customer(f.customerId), kind: 'plan_uncollected', title: `${naira(f.balance)} is waiting in your ${f.goal} plan`,
+      body: 'Your plan has ended. Collect your money, or keep saving into it again from Home.',
+      href: '/customer/dashboard', dedupeKey: `plan-uncollected:${f.planId}:w${f.week}`,
+    }]
+  },
+
+  /** Once a week: the agent's customers whose plans have ended with money still in them. */
+  agentUncollected(f: { agentId: string; count: number; total: number; weekKey: string }): NotificationEvent[] {
+    if (f.count <= 0) return []
+    const title = f.count === 1 ? '1 customer hasn’t collected their money' : `${f.count} customers haven’t collected their money`
+    return [{
+      recipient: agent(f.agentId), kind: 'uncollected_this_week', title, body: `${naira(f.total)} is waiting in plans that have ended.`,
+      href: '/dashboard/redeem', dedupeKey: `uncollected-agent:${f.agentId}:${f.weekKey}`,
+    }]
   },
 
   /** Once a day, only when there is something to say. */

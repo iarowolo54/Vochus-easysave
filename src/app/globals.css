@@ -941,6 +941,8 @@ body:has(.ui-auth) { background: var(--ui-canvas) !important; }
 .ui-link-text { color: var(--ui-brand-ink); font-weight: 600; flex-shrink: 0; }
 .ui-option:disabled { cursor: default; color: inherit; opacity: 1; }
 .ui-note { display: flex; align-items: center; gap: 6px; font-size: var(--ui-fs-sm); color: var(--ui-ink-2); margin: var(--ui-s3) 0; }
+/* Super admin pop-up message: their line breaks kept, long words wrapped at phone width. */
+.ui-announcement-text { margin: 0; white-space: pre-line; overflow-wrap: anywhere; line-height: 1.55; color: var(--ui-ink); }
 .ui-note--center { justify-content: center; text-align: center; }
 .ui-gap-top { margin-top: var(--ui-s4); }
 .ui-stack { display: grid; gap: var(--ui-s3); width: 100%; min-width: min(320px, 100%); }

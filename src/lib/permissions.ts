@@ -37,6 +37,7 @@ export const SCREENS = [
   { key: 'cards', label: 'Cards', group: 'Cards', actions: VM, manageNote: 'Generate cards, gift-card design' },
   { key: 'devices', label: 'Devices', group: 'Oversight', actions: VM, manageNote: 'Reset a device' },
   { key: 'audit', label: 'Audit log', group: 'Oversight', actions: V },
+  { key: 'messages', label: 'Pop-up messages', group: 'Oversight', actions: VM, manageNote: 'Create, edit, switch off and delete pop-up messages' },
   { key: 'reports', label: 'Reports', group: 'Oversight', actions: VM, manageNote: 'Update the status of a report' },
 ] as const satisfies readonly ScreenDef[]
 

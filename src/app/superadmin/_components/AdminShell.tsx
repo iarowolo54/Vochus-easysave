@@ -77,6 +77,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
       { label: 'Staff & access', icon: 'staff', href: '/superadmin/staff', staffAccess: true },
       { label: 'Devices', screen: 'devices', icon: 'device', href: '/superadmin/devices' },
       { label: 'Audit log', screen: 'audit', icon: 'audit', href: '/superadmin/audit' },
+      { label: 'Pop-up messages', screen: 'messages', icon: 'bell', href: '/superadmin/messages' },
       { label: 'Reports', screen: 'reports', icon: 'reports', href: '/superadmin/reports' },
     ],
   },

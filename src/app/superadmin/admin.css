@@ -900,6 +900,7 @@
 .admin-root .am-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; }
 .admin-root .am-muted { color: var(--text2); }
 .admin-root .am-nowrap { white-space: nowrap; }
+.admin-root .am-msg-preview { font-weight: 400; font-size: 13px; margin-top: 2px; max-width: 42ch; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; white-space: pre-line; }
 .admin-root .am-strong { font-weight: 700; }
 .admin-root .am-acct { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 20px; font-weight: 700; letter-spacing: 0.02em; color: var(--text); }
 .admin-root .am-acct-sm { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 15px; font-weight: 600; color: var(--text); }

@@ -789,3 +789,31 @@ model CommissionLedger {
   @@index([agentId, createdAt])
   @@index([party, createdAt])
 }
+
+// A pop-up message super admin shows to agents and/or customers when they open the app. Each person sees it once,
+// until they tap OK (a dismissal row). Title and plain text only.
+model Announcement {
+  id         String                  @id @default(cuid())
+  title      String
+  body       String
+  audience   String // 'agents' | 'customers' | 'both'
+  startsAt   DateTime
+  endsAt     DateTime
+  isActive   Boolean                 @default(true)
+  createdBy  String?
+  createdAt  DateTime                @default(now())
+  dismissals AnnouncementDismissal[]
+
+  @@index([isActive, endsAt])
+}
+
+model AnnouncementDismissal {
+  id             String       @id @default(cuid())
+  announcementId String
+  announcement   Announcement @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  recipientType  String // 'agent' | 'customer'
+  recipientId    String
+  dismissedAt    DateTime     @default(now())
+
+  @@unique([announcementId, recipientType, recipientId])
+}

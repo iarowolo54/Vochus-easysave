@@ -7,6 +7,7 @@
 import type { PrismaClient } from '@prisma/client'
 import { notifications as N, notify, type NotificationEvent } from '@/lib/notifications'
 import { logAudit } from '@/lib/audit'
+import { runUncollectedReminders } from '@/lib/uncollected-reminders'
 
 /** Bulk Savings stamps each day's transaction with this + the batch's first ref, so the batch is one notification. */
 export const BULK_NOTE_PREFIX = 'Bulk Savings batch '
@@ -136,7 +137,14 @@ export async function runNotificationSweep(client: PrismaClient, now: Date = new
     where: { status: 'Active', maturityDate: { lte: new Date(now.getTime() + 7 * DAY), gte: new Date(now.getTime() - 30 * DAY) } },
     select: { id: true, goal: true, customerId: true, maturityDate: true, customer: { select: { agentId: true } } },
   })
-  const scheduled = await writeMissing(client, scheduledEvents(open.map(p => ({ ...p, agentId: p.customer.agentId })), now))
+  let scheduled = await writeMissing(client, scheduledEvents(open.map(p => ({ ...p, agentId: p.customer.agentId })), now))
+  // Money left in ended plans: weekly reminders to the customer and a weekly list to the agent (src/lib/uncollected-reminders.ts).
+  // Its own failure must not stop the safety-net audit below.
+  try {
+    scheduled += (await runUncollectedReminders(client, now)).notices
+  } catch (err) {
+    console.error('[notification-sweep] uncollected reminders failed', err instanceof Error ? err.message : 'unknown')
+  }
 
   if (backfilled > 0) {
     logAudit({

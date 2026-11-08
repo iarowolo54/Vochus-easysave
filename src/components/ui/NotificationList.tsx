@@ -18,6 +18,7 @@ const TONE: Record<string, [Tone, IconName]> = {
   collection_requested: ['out', 'redeem'], collection_wanted: ['out', 'redeem'], collection_approved: ['out', 'check'],
   collection_declined: ['attention', 'error'], collection_declined_agent: ['attention', 'error'], withdrawal_declined: ['attention', 'error'],
   plan_ending_soon: ['attention', 'calendar'], plan_ended: ['attention', 'calendar'], plans_ending_this_week: ['attention', 'calendar'],
+  plan_uncollected: ['attention', 'cash'], uncollected_this_week: ['attention', 'cash'],
   new_phone: ['security', 'device'],
 }
 
