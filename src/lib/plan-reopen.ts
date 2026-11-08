@@ -19,9 +19,10 @@ export type ReopenResult = { ok: true; planId: string } | { ok: false; reason: '
 export async function reopenPlan(client: Client, input: { planId: string; customerId: string }, now: Date = new Date()): Promise<ReopenResult> {
   const plan = await client.savingsPlan.findFirst({
     where: { id: input.planId, customerId: input.customerId },
-    select: { id: true, status: true, periodDays: true },
+    select: { id: true, status: true, periodDays: true, cadence: true },
   })
-  if (!plan) return { ok: false, reason: 'not_found' }
+  // An Ajo payout plan holds a group's pot to collect; it is never saved into again.
+  if (!plan || plan.cadence === 'ajo') return { ok: false, reason: 'not_found' }
   if (await hasOpenRedemption(client, plan.id, now)) return { ok: false, reason: 'collecting' }
 
   const maturityDate = maturityFrom(now, plan.periodDays)
@@ -44,9 +45,9 @@ export async function reopenPlan(client: Client, input: { planId: string; custom
 export async function checkReopenable(client: Client, input: { planId: string; customerId: string }, now: Date = new Date()): Promise<ReopenResult> {
   const plan = await client.savingsPlan.findFirst({
     where: { id: input.planId, customerId: input.customerId },
-    select: { id: true, status: true, maturityDate: true },
+    select: { id: true, status: true, maturityDate: true, cadence: true },
   })
-  if (!plan) return { ok: false, reason: 'not_found' }
+  if (!plan || plan.cadence === 'ajo') return { ok: false, reason: 'not_found' }
   if (await hasOpenRedemption(client, plan.id, now)) return { ok: false, reason: 'collecting' }
   const finished = plan.status === 'Redeemed' || (plan.status === 'Active' && plan.maturityDate <= now)
   return finished ? { ok: true, planId: plan.id } : { ok: false, reason: 'not_finished' }

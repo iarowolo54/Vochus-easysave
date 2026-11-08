@@ -19,6 +19,8 @@ const TONE: Record<string, [Tone, IconName]> = {
   collection_declined: ['attention', 'error'], collection_declined_agent: ['attention', 'error'], withdrawal_declined: ['attention', 'error'],
   plan_ending_soon: ['attention', 'calendar'], plan_ended: ['attention', 'calendar'], plans_ending_this_week: ['attention', 'calendar'],
   plan_uncollected: ['attention', 'cash'], uncollected_this_week: ['attention', 'cash'],
+  ajo_joined: ['in', 'customers'], ajo_started: ['in', 'calendar'], ajo_paid: ['in', 'deposit'], ajo_paid_agent: ['in', 'deposit'],
+  ajo_round_out: ['in', 'cash'], ajo_due: ['attention', 'calendar'], ajo_late: ['attention', 'calendar'],
   new_phone: ['security', 'device'],
 }
 

@@ -8,66 +8,67 @@ datasource db {
 }
 
 model Agent {
-  id            String       @id @default(cuid())
-  agentId       String       @unique
-  phone         String       @unique
-  email              String?      @unique
-  emailVerified      Boolean      @default(false)
-  emailAlertsOn      Boolean      @default(true) // the agent's switch for sign-in and payment emails; acts only on a verified email
-  emailVerifyToken   String?      @unique
-  name          String
-  location      String
-  address       String?
-  dob           String?
-  gender        String?
-  bvn           String?
-  nin           String?
-  nokName       String?
-  nokPhone      String?
-  photoUrl      String?
-  nfcCard       String?
-  floatLimit    Float?
-  password      String
-  walletBalance      Float        @default(0)
-  commissionBalance  Float        @default(0)
-  requiredDocs       String       @default("[]")
-  status             String       @default("Active")
-  loginAttempts      Int          @default(0)
-  lockedAt           DateTime?
-  tokenVersion       Int          @default(0)
-  profileUnlocked    Boolean      @default(false)
-  transactionPin     String?
-  unlockToken        String?
-  unlockTokenExpiry  DateTime?
-  boundDeviceId      String?
-  bankCode           String?
-  bankName           String?
-  accountNumber      String?
-  accountName        String?
+  id                  String           @id @default(cuid())
+  agentId             String           @unique
+  phone               String           @unique
+  email               String?          @unique
+  emailVerified       Boolean          @default(false)
+  emailAlertsOn       Boolean          @default(true) // the agent's switch for sign-in and payment emails; acts only on a verified email
+  emailVerifyToken    String?          @unique
+  name                String
+  location            String
+  address             String?
+  dob                 String?
+  gender              String?
+  bvn                 String?
+  nin                 String?
+  nokName             String?
+  nokPhone            String?
+  photoUrl            String?
+  nfcCard             String?
+  floatLimit          Float?
+  password            String
+  walletBalance       Float            @default(0)
+  commissionBalance   Float            @default(0)
+  requiredDocs        String           @default("[]")
+  status              String           @default("Active")
+  loginAttempts       Int              @default(0)
+  lockedAt            DateTime?
+  tokenVersion        Int              @default(0)
+  profileUnlocked     Boolean          @default(false)
+  transactionPin      String?
+  unlockToken         String?
+  unlockTokenExpiry   DateTime?
+  boundDeviceId       String?
+  bankCode            String?
+  bankName            String?
+  accountNumber       String?
+  accountName         String?
   /// When the agent last opened their notifications; newer ones count as new on the bell.
   notificationsSeenAt DateTime?
-  createdAt          DateTime     @default(now())
-  customers     Customer[]
-  transactions  Transaction[]
-  loans         Loan[]
-  subAgents     SubAgent[]
-  reports       IssueReport[]
-  commissions   Commission[]
-  documents     AgentDocument[]
-  memberCards   MemberCard[]
-  customerInvites CustomerInvite[]
-  agentRewards    AgentReward[]
+  createdAt           DateTime         @default(now())
+  customers           Customer[]
+  transactions        Transaction[]
+  loans               Loan[]
+  subAgents           SubAgent[]
+  reports             IssueReport[]
+  commissions         Commission[]
+  documents           AgentDocument[]
+  memberCards         MemberCard[]
+  customerInvites     CustomerInvite[]
+  agentRewards        AgentReward[]
+  ajoGroups           AjoGroup[]
 }
 
 model AgentDocument {
-  id                 String   @id @default(cuid())
+  id                 String    @id @default(cuid())
   agentId            String
-  agent              Agent    @relation(fields: [agentId], references: [id])
+  agent              Agent     @relation(fields: [agentId], references: [id])
   docType            String
   fileName           String
   fileData           String
-  uploadedAt         DateTime @default(now())
-  docApprovalStatus  String   @default("pending")
+  uploadedAt         DateTime  @default(now())
+  docApprovalStatus  String    @default("pending")
   docApprovedAt      DateTime?
   docRejectionReason String?
 
@@ -75,75 +76,75 @@ model AgentDocument {
 }
 
 model Customer {
-  id           String       @id @default(cuid())
-  customerId   String       @unique
-  agentId      String
-  agent        Agent        @relation(fields: [agentId], references: [id])
-  referredBy   String?
-  referrer     Customer?    @relation("Referrals", fields: [referredBy], references: [id])
-  referrals    Customer[]   @relation("Referrals")
-  kind         String       @default("Savings")
-  firstName    String
-  lastName     String
-  phone        String
-  email        String?
-  emailVerifiedAt DateTime? // set only when the customer proved the address; agent-entered emails stay null
-  emailAlertsOn   Boolean  @default(true) // the customer's switch for sign-in and payment emails; only acts once the email is verified
-  dob          DateTime?
-  address      String
-  language     String       @default("English")
-  gender       String?
-  state        String?
-  lga          String?
-  bvn          String?
-  nokName      String
-  nokRelation  String
-  nokPhone     String
-  photoUrl     String?
-  status       String       @default("Active")
-  walletBalance Float       @default(0)
-  password     String?
-  inviteToken  String?      @unique
-  tokenVersion Int          @default(0)
+  id                  String                @id @default(cuid())
+  customerId          String                @unique
+  agentId             String
+  agent               Agent                 @relation(fields: [agentId], references: [id])
+  referredBy          String?
+  referrer            Customer?             @relation("Referrals", fields: [referredBy], references: [id])
+  referrals           Customer[]            @relation("Referrals")
+  kind                String                @default("Savings")
+  firstName           String
+  lastName            String
+  phone               String
+  email               String?
+  emailVerifiedAt     DateTime? // set only when the customer proved the address; agent-entered emails stay null
+  emailAlertsOn       Boolean               @default(true) // the customer's switch for sign-in and payment emails; only acts once the email is verified
+  dob                 DateTime?
+  address             String
+  language            String                @default("English")
+  gender              String?
+  state               String?
+  lga                 String?
+  bvn                 String?
+  nokName             String
+  nokRelation         String
+  nokPhone            String
+  photoUrl            String?
+  status              String                @default("Active")
+  walletBalance       Float                 @default(0)
+  password            String?
+  inviteToken         String?               @unique
+  tokenVersion        Int                   @default(0)
   /// When the customer last opened their notifications; newer ones count as new on the bell.
   notificationsSeenAt DateTime?
-  boundDeviceId String?
-  createdAt    DateTime     @default(now())
-  savingsPlans SavingsPlan[]
-  transactions Transaction[]
-  loans        Loan[]
-  memberCards  MemberCard[]
-  chatMessages CustomerChatMessage[]
-  customerPayments CustomerPayment[]
-  giftCardOrders   GiftCardOrder[]
-  redeemedGiftCards GiftCard[]  @relation("RedeemedBy")
-  agentReward       AgentReward?
+  boundDeviceId       String?
+  createdAt           DateTime              @default(now())
+  savingsPlans        SavingsPlan[]
+  transactions        Transaction[]
+  loans               Loan[]
+  memberCards         MemberCard[]
+  chatMessages        CustomerChatMessage[]
+  customerPayments    CustomerPayment[]
+  giftCardOrders      GiftCardOrder[]
+  redeemedGiftCards   GiftCard[]            @relation("RedeemedBy")
+  agentReward         AgentReward?
+  ajoMemberships      AjoMember[]
 }
 
 model SavingsPlan {
-  id           String       @id @default(cuid())
-  customerId   String
-  customer     Customer     @relation(fields: [customerId], references: [id])
-  dailyAmount  Float
-  periodDays   Int
-  cadence      String       @default("daily")
-  source       String       @default("agent")
-  goal         String
-  startDate    DateTime
-  maturityDate DateTime
-  balance           Float              @default(0)
-  status            String             @default("Active")
-  maturityNotified  Boolean            @default(false)
-  interestAccrued   Float              @default(0)
+  id               String            @id @default(cuid())
+  customerId       String
+  customer         Customer          @relation(fields: [customerId], references: [id])
+  dailyAmount      Float
+  periodDays       Int
+  cadence          String            @default("daily")
+  source           String            @default("agent")
+  goal             String
+  startDate        DateTime
+  maturityDate     DateTime
+  balance          Float             @default(0)
+  status           String            @default("Active")
+  maturityNotified Boolean           @default(false)
+  interestAccrued  Float             @default(0)
   /// New model: fee already taken from this plan (a daily plan stops at one day's amount).
-  feeCollected      Float              @default(0)
+  feeCollected     Float             @default(0)
   /// Set when a redeemed plan is reopened: interest counts only deposits made from this moment on. Null = whole life of the plan.
-  cycleStartedAt    DateTime?
-  notes             String?
-  transactions      Transaction[]
-  earlyRedemptions  EarlyRedemption[]
-  dayCoverages      PlanDayCoverage[]
-
+  cycleStartedAt   DateTime?
+  notes            String?
+  transactions     Transaction[]
+  earlyRedemptions EarlyRedemption[]
+  dayCoverages     PlanDayCoverage[]
 }
 
 model PlanDayCoverage {
@@ -173,27 +174,27 @@ model Transaction {
   note        String?
   walletAfter Float?
   /// New model: platform fee taken out of this deposit before it reached the plan balance.
-  feeTaken    Float    @default(0)
+  feeTaken    Float        @default(0)
   createdAt   DateTime     @default(now())
 }
 
 model Loan {
-  id            String         @id @default(cuid())
-  ref           String         @unique
-  agentId       String
-  agent         Agent          @relation(fields: [agentId], references: [id])
-  customerId    String?
-  customer      Customer?      @relation(fields: [customerId], references: [id], onDelete: SetNull)
-  principal     Float
-  interestRate  Float
+  id             String          @id @default(cuid())
+  ref            String          @unique
+  agentId        String
+  agent          Agent           @relation(fields: [agentId], references: [id])
+  customerId     String?
+  customer       Customer?       @relation(fields: [customerId], references: [id], onDelete: SetNull)
+  principal      Float
+  interestRate   Float
   interestAmount Float
-  totalAmount   Float
-  durationDays  Int
-  dueDate       DateTime
-  status        String         @default("Pending")
-  approvedBy    String?
-  repayments    LoanRepayment[]
-  createdAt     DateTime       @default(now())
+  totalAmount    Float
+  durationDays   Int
+  dueDate        DateTime
+  status         String          @default("Pending")
+  approvedBy     String?
+  repayments     LoanRepayment[]
+  createdAt      DateTime        @default(now())
 }
 
 model LoanRepayment {
@@ -206,8 +207,8 @@ model LoanRepayment {
 }
 
 model InterestRate {
-  id           String @id @default(cuid())
-  durationDays Int    @unique
+  id           String  @id @default(cuid())
+  durationDays Int     @unique
   label        String
   rate         Float
   maxAmount    Float?
@@ -252,12 +253,12 @@ model PlatformWallet {
 }
 
 model SuperAdmin {
-  id        String   @id @default(cuid())
-  email     String   @unique
-  password  String
-  name      String
+  id          String   @id @default(cuid())
+  email       String   @unique
+  password    String
+  name        String
   approvalPin String?
-  createdAt DateTime @default(now())
+  createdAt   DateTime @default(now())
 }
 
 model IssueReport {
@@ -303,17 +304,17 @@ model AuditLog {
 }
 
 model StaffUser {
-  id              String      @id @default(cuid())
+  id              String       @id @default(cuid())
   name            String
-  email           String      @unique
+  email           String       @unique
   password        String?
-  status          String      @default("Invited")
+  status          String       @default("Invited")
   lastActiveAt    DateTime?
-  createdAt       DateTime    @default(now())
+  createdAt       DateTime     @default(now())
   roleId          String?
-  roleRef         Role?       @relation(fields: [roleId], references: [id])
+  roleRef         Role?        @relation(fields: [roleId], references: [id])
   departmentId    String?
-  department      Department? @relation("DeptMembers", fields: [departmentId], references: [id])
+  department      Department?  @relation("DeptMembers", fields: [departmentId], references: [id])
   ledDepartments  Department[] @relation("DeptLead")
   approvalPin     String?
   inviteTokenHash String?
@@ -333,52 +334,52 @@ model Department {
 }
 
 model Role {
-  id           String     @id @default(cuid())
+  id           String      @id @default(cuid())
   departmentId String
-  department   Department @relation(fields: [departmentId], references: [id])
+  department   Department  @relation(fields: [departmentId], references: [id])
   name         String
-  permissions  String     @default("[]")
-  status       String     @default("Active")
-  createdAt    DateTime   @default(now())
+  permissions  String      @default("[]")
+  status       String      @default("Active")
+  createdAt    DateTime    @default(now())
   staff        StaffUser[]
 
   @@unique([departmentId, name])
 }
 
 model EarlyRedemption {
-  id            String    @id @default(cuid())
-  ref           String    @unique
-  savingsPlanId String
-  savingsPlan   SavingsPlan @relation(fields: [savingsPlanId], references: [id])
-  type          String    @default("early")
-  reason        String
-  note          String?
-  status        String    @default("Pending")
-  balance       Float
-  penalty       Float     @default(0)
-  interestAmount Float    @default(0)
-  netPayout     Float
-  token         String?   @unique
-  tokenExpiry   DateTime?
-  attempts      Int       @default(0)
-  agentApprovedAt        DateTime?
-  agentApprovedBy        String?
-  payoutMethod           String    @default("Cash")
-  accountNumber          String?
-  accountName            String?
-  bankCode               String?
-  bankName               String?
-  paystackRecipientCode  String?
-  paystackTransferCode   String?
-  bankTransferStatus     String?
-  requestedAt            DateTime  @default(now())
-  decidedAt              DateTime?
-  decidedBy              String?
-  adminNote              String?
+  id                    String      @id @default(cuid())
+  ref                   String      @unique
+  savingsPlanId         String
+  savingsPlan           SavingsPlan @relation(fields: [savingsPlanId], references: [id])
+  type                  String      @default("early")
+  reason                String
+  note                  String?
+  status                String      @default("Pending")
+  balance               Float
+  penalty               Float       @default(0)
+  interestAmount        Float       @default(0)
+  netPayout             Float
+  token                 String?     @unique
+  tokenExpiry           DateTime?
+  attempts              Int         @default(0)
+  agentApprovedAt       DateTime?
+  agentApprovedBy       String?
+  payoutMethod          String      @default("Cash")
+  accountNumber         String?
+  accountName           String?
+  bankCode              String?
+  bankName              String?
+  paystackRecipientCode String?
+  paystackTransferCode  String?
+  bankTransferStatus    String?
+  requestedAt           DateTime    @default(now())
+  decidedAt             DateTime?
+  decidedBy             String?
+  adminNote             String?
   /// 'v1' = fee split 3/5 agent, 2/5 platform (before go-live); 'v2' = fee is all platform, agent gets the catch-up.
-  feeRule                String    @default("v1")
+  feeRule               String      @default("v1")
   /// The agent's part of `penalty` under feeRule v2, stored at request time.
-  feeAgent               Float     @default(0)
+  feeAgent              Float       @default(0)
 }
 
 model MemberCard {
@@ -433,14 +434,14 @@ model CustomerChatMessage {
 }
 
 model BiometricToken {
-  id          String   @id @default(cuid())
-  agentId     String?
-  customerId  String?
-  deviceId    String
-  tokenHash   String
-  createdAt   DateTime @default(now())
-  lastUsedAt  DateTime?
-  revokedAt   DateTime?
+  id         String    @id @default(cuid())
+  agentId    String?
+  customerId String?
+  deviceId   String
+  tokenHash  String
+  createdAt  DateTime  @default(now())
+  lastUsedAt DateTime?
+  revokedAt  DateTime?
 
   @@index([agentId, deviceId])
   @@index([customerId, deviceId])
@@ -448,20 +449,20 @@ model BiometricToken {
 }
 
 model DeviceSession {
-  id            String   @id @default(cuid())
-  deviceId      String
-  app           String   // 'agent' | 'customer'
-  agentId       String?
-  customerId    String?
-  platform      String?  // 'android' | 'ios'
-  model         String?
-  manufacturer  String?
-  osVersion     String?
-  appVersion    String?
-  ipAddress     String?
-  firstSeenAt   DateTime @default(now())
-  lastSeenAt    DateTime @default(now())
-  loginCount    Int      @default(1)
+  id           String   @id @default(cuid())
+  deviceId     String
+  app          String // 'agent' | 'customer'
+  agentId      String?
+  customerId   String?
+  platform     String? // 'android' | 'ios'
+  model        String?
+  manufacturer String?
+  osVersion    String?
+  appVersion   String?
+  ipAddress    String?
+  firstSeenAt  DateTime @default(now())
+  lastSeenAt   DateTime @default(now())
+  loginCount   Int      @default(1)
 
   @@unique([deviceId, app])
   @@index([agentId])
@@ -479,34 +480,34 @@ model AgentInvite {
 }
 
 model GiftCardCategory {
-  id             String   @id @default(cuid())
-  name           String   @unique
+  id             String          @id @default(cuid())
+  name           String          @unique
   description    String?
-  denominations  String   @default("[]")
+  denominations  String          @default("[]")
   productionCost Float
-  active         Boolean  @default(true)
-  createdAt      DateTime @default(now())
+  active         Boolean         @default(true)
+  createdAt      DateTime        @default(now())
   orders         GiftCardOrder[]
 }
 
 model GiftCardOrder {
-  id             String   @id @default(cuid())
-  ref            String   @unique
+  id             String           @id @default(cuid())
+  ref            String           @unique
   customerId     String
-  customer       Customer @relation(fields: [customerId], references: [id])
+  customer       Customer         @relation(fields: [customerId], references: [id])
   categoryId     String
   category       GiftCardCategory @relation(fields: [categoryId], references: [id])
   loadedAmount   Float
   productionCost Float
   totalPaid      Float
-  quantity       Int      @default(1)
-  status         String   @default("PendingPayment")
-  paystackRef    String?  @unique
+  quantity       Int              @default(1)
+  status         String           @default("PendingPayment")
+  paystackRef    String?          @unique
   paidAt         DateTime?
   producedAt     DateTime?
   producedBy     String?
   shippedAt      DateTime?
-  createdAt      DateTime @default(now())
+  createdAt      DateTime         @default(now())
   cards          GiftCard[]
 
   @@index([status])
@@ -514,33 +515,33 @@ model GiftCardOrder {
 }
 
 model GiftCard {
-  id                 String   @id @default(cuid())
-  serial             String   @unique
-  qrToken            String   @unique
-  orderId            String
-  order              GiftCardOrder @relation(fields: [orderId], references: [id])
-  issuerCustomerId   String
-  loadedAmount       Float
-  balance            Float
-  status             String   @default("Produced")
+  id                   String        @id @default(cuid())
+  serial               String        @unique
+  qrToken              String        @unique
+  orderId              String
+  order                GiftCardOrder @relation(fields: [orderId], references: [id])
+  issuerCustomerId     String
+  loadedAmount         Float
+  balance              Float
+  status               String        @default("Produced")
   redeemedByCustomerId String?
-  redeemedBy         Customer? @relation("RedeemedBy", fields: [redeemedByCustomerId], references: [id])
-  redeemedAt         DateTime?
-  createdAt          DateTime @default(now())
+  redeemedBy           Customer?     @relation("RedeemedBy", fields: [redeemedByCustomerId], references: [id])
+  redeemedAt           DateTime?
+  createdAt            DateTime      @default(now())
 
   @@index([status])
   @@index([issuerCustomerId])
 }
 
 model GiftCardInvite {
-  id        String   @id @default(cuid())
-  token     String   @unique
-  email     String
-  name      String?
-  status    String   @default("Pending")
+  id         String   @id @default(cuid())
+  token      String   @unique
+  email      String
+  name       String?
+  status     String   @default("Pending")
   customerId String?
-  createdAt DateTime @default(now())
-  expiresAt DateTime
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
 }
 
 model AgentWithdrawal {
@@ -627,17 +628,17 @@ model AccountUnlockOtp {
 // Password-reset and agent-unlock codes. Only the hash is stored, and rows are
 // consumed rather than deleted so the send cooldown and daily cap keep counting.
 model PasswordResetOtp {
-  id         String    @id @default(cuid())
-  actorType  String // 'customer' | 'agent'
-  actorId    String
-  purpose    String    @default("reset") // 'reset' | 'unlock' | 'admin'
-  resetId    String? // given only to whoever requested this code; guesses must present it
+  id            String    @id @default(cuid())
+  actorType     String // 'customer' | 'agent'
+  actorId       String
+  purpose       String    @default("reset") // 'reset' | 'unlock' | 'admin'
+  resetId       String? // given only to whoever requested this code; guesses must present it
   requestIpHash String? // keyed hash of the requester's IP, for the per-account-and-IP send limits
-  codeHash   String
-  expiresAt  DateTime
-  attempts   Int       @default(0)
-  consumedAt DateTime?
-  createdAt  DateTime  @default(now())
+  codeHash      String
+  expiresAt     DateTime
+  attempts      Int       @default(0)
+  consumedAt    DateTime?
+  createdAt     DateTime  @default(now())
 
   @@index([actorType, actorId, createdAt])
   @@index([resetId])
@@ -647,24 +648,27 @@ model PasswordResetOtp {
 // a payment reference to the actor, plan and amount it was initiated for, so a
 // verify cannot claim an arbitrary reference or credit a mismatched amount.
 model PaymentIntent {
-  id         String    @id @default(cuid())
-  ref        String    @unique
-  actorType  String // 'agent' | 'customer'
-  agentId    String?
-  customerId String?
-  planId     String?
-  amount     Float
-  currency   String    @default("NGN")
-  status     String    @default("Pending") // Pending | Done
-  createdAt  DateTime  @default(now())
-  consumedAt DateTime?
-  coversKeys String? // JSON array of day-keys
+  id          String    @id @default(cuid())
+  ref         String    @unique
+  actorType   String // 'agent' | 'customer'
+  agentId     String?
+  customerId  String?
+  planId      String?
+  amount      Float
+  currency    String    @default("NGN")
+  status      String    @default("Pending") // Pending | Done
+  createdAt   DateTime  @default(now())
+  consumedAt  DateTime?
+  coversKeys  String? // JSON array of day-keys
   /// 'paystack' | 'transfer'. A transfer intent's amount carries a unique kobo and it closes at expiresAt.
-  method     String    @default("paystack")
-  expiresAt  DateTime?
+  method      String    @default("paystack")
+  expiresAt   DateTime?
   /// Set when staff credited this by hand: the admin's name and the reason they gave.
-  manualBy   String?
-  manualNote String?
+  manualBy    String?
+  manualNote  String?
+  /// Set when this transfer pays an Ajo round instead of a plan: the member and the round it pays.
+  ajoMemberId String?
+  ajoRound    Int?
 
   @@index([customerId])
   @@index([agentId])
@@ -672,16 +676,16 @@ model PaymentIntent {
 
 /// A Moniepoint credit alert read from the mailbox. messageId and txnId are unique so one transfer credits once.
 model BankAlert {
-  id         String   @id @default(cuid())
-  messageId  String   @unique
-  txnId      String   @unique
-  amount     Float
-  senderName String
-  narration  String
-  alertAt    DateTime
-  status     String // Matched | Unmatched | Resolved | Dismissed
-  intentRef  String?
-  createdAt  DateTime @default(now())
+  id           String    @id @default(cuid())
+  messageId    String    @unique
+  txnId        String    @unique
+  amount       Float
+  senderName   String
+  narration    String
+  alertAt      DateTime
+  status       String // Matched | Unmatched | Resolved | Dismissed
+  intentRef    String?
+  createdAt    DateTime  @default(now())
   resolvedAt   DateTime?
   resolvedBy   String?
   resolvedNote String?
@@ -696,44 +700,44 @@ model SavingsInterestRate {
 }
 
 model AutoDebitMandate {
-  id                 String   @id @default(cuid())
-  customerId         String
-  savingsPlanId      String   @unique
-  channel            String   @default("card")
-  authorizationCode  String
-  authSignature      String
-  authEmail          String
-  reusable           Boolean  @default(false)
-  last4              String?
-  cardType           String?
-  bankName           String?
-  expMonth           String?
-  expYear            String?
-  status             String   @default("pending")
-  amountPerCycle     Float
-  nextRunAt          DateTime
-  consecutiveFailures Int     @default(0)
-  consentAt          DateTime @default(now())
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
+  id                  String   @id @default(cuid())
+  customerId          String
+  savingsPlanId       String   @unique
+  channel             String   @default("card")
+  authorizationCode   String
+  authSignature       String
+  authEmail           String
+  reusable            Boolean  @default(false)
+  last4               String?
+  cardType            String?
+  bankName            String?
+  expMonth            String?
+  expYear             String?
+  status              String   @default("pending")
+  amountPerCycle      Float
+  nextRunAt           DateTime
+  consecutiveFailures Int      @default(0)
+  consentAt           DateTime @default(now())
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
 
   @@index([status, nextRunAt])
 }
 
 model AutoDebitAttempt {
-  id             String   @id @default(cuid())
-  mandateId      String
-  savingsPlanId  String
-  reference      String   @unique
-  cycleDate      DateTime
-  creditAmount   Float
-  grossCharged   Float
-  feeEstimate    Float
-  settledAmount  Float?
-  status         String   @default("pending")
+  id              String   @id @default(cuid())
+  mandateId       String
+  savingsPlanId   String
+  reference       String   @unique
+  cycleDate       DateTime
+  creditAmount    Float
+  grossCharged    Float
+  feeEstimate     Float
+  settledAmount   Float?
+  status          String   @default("pending")
   gatewayResponse String?
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   @@index([status, createdAt])
 }
@@ -742,7 +746,7 @@ model AutoDebitAttempt {
 /// catalogue in src/lib/notifications.ts only. dedupeKey makes retries and the nightly safety net harmless.
 model Notification {
   id            String   @id @default(cuid())
-  recipientType String   // 'agent' | 'customer'
+  recipientType String // 'agent' | 'customer'
   recipientId   String
   kind          String
   title         String
@@ -775,9 +779,9 @@ model ApprovalPinAttempt {
 /// Append-only record of every commission and platform fee. Never updated or deleted.
 model CommissionLedger {
   id         String   @id @default(cuid())
-  party      String   // 'agent' | 'platform'
+  party      String // 'agent' | 'platform'
   agentId    String?
-  source     String   // 'savings' | 'savings_catchup' | 'loan' | 'repayment' | 'redemption_fee'
+  source     String // 'savings' | 'savings_catchup' | 'loan' | 'repayment' | 'redemption_fee'
   sourceRef  String
   customerId String?
   base       Float
@@ -816,4 +820,81 @@ model AnnouncementDismissal {
   dismissedAt    DateTime     @default(now())
 
   @@unique([announcementId, recipientType, recipientId])
+}
+
+// Ajo (rotating group savings). An agent creates a group; members (the agent's own customers) each pay the
+// contribution every round, and when every member has paid a round, that round's slot holder gets the whole pot as an
+// ended payout plan (SavingsPlan cadence 'ajo') that they collect through the normal collection flow.
+model AjoGroup {
+  id            String            @id @default(cuid())
+  /// Six digits, from node:crypto. Only usable while the group is Forming.
+  code          String            @unique
+  name          String
+  agentId       String
+  agent         Agent             @relation(fields: [agentId], references: [id])
+  cadence       String // 'daily' | 'weekly' | 'monthly'
+  size          Int
+  contribution  Float
+  /// Round 1 is due on this Lagos day; round N one day/week/month later each.
+  startDate     DateTime
+  status        String            @default("Forming") // Forming | Running | Completed | Cancelled
+  /// Fee taken from each pot; 'none' until the owner decides.
+  feeRule       String            @default("none")
+  lockedAt      DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime          @default(now())
+  members       AjoMember[]
+  contributions AjoContribution[]
+  payouts       AjoPayout[]
+
+  @@index([agentId])
+}
+
+model AjoMember {
+  id            String            @id @default(cuid())
+  groupId       String
+  group         AjoGroup          @relation(fields: [groupId], references: [id])
+  customerId    String
+  customer      Customer          @relation(fields: [customerId], references: [id])
+  /// The round this member collects; null until the agent assigns slots.
+  slot          Int?
+  joinedAt      DateTime          @default(now())
+  contributions AjoContribution[]
+
+  @@unique([groupId, customerId])
+  @@unique([groupId, slot])
+  @@index([customerId])
+}
+
+/// The pool ledger: one row per member per round, never more.
+model AjoContribution {
+  id        String    @id @default(cuid())
+  groupId   String
+  group     AjoGroup  @relation(fields: [groupId], references: [id])
+  memberId  String
+  member    AjoMember @relation(fields: [memberId], references: [id])
+  round     Int
+  amount    Float
+  method    String // 'transfer' | 'cash'
+  ref       String    @unique
+  /// The agent who took the cash, for cash contributions.
+  agentId   String?
+  createdAt DateTime  @default(now())
+
+  @@unique([memberId, round])
+  @@index([groupId, round])
+}
+
+/// One payout per round: the pot moved into the slot holder's payout plan.
+model AjoPayout {
+  id            String   @id @default(cuid())
+  groupId       String
+  group         AjoGroup @relation(fields: [groupId], references: [id])
+  round         Int
+  memberId      String
+  amount        Float
+  savingsPlanId String   @unique
+  createdAt     DateTime @default(now())
+
+  @@unique([groupId, round])
 }

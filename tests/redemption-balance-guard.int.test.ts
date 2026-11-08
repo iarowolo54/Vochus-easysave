@@ -5,6 +5,7 @@ process.env.NEXTAUTH_URL = 'http://localhost:3000'
 process.env.PAYSTACK_WEBHOOK_SECRET = 'whsec_guard'
 process.env.NEXTAUTH_SECRET ??= 'test-secret'
 import { test, before, after, beforeEach } from 'node:test'
+import { NextRequest } from 'next/server'
 import assert from 'node:assert/strict'
 import Module, { createRequire } from 'node:module'
 import { existsSync } from 'node:fs'
@@ -1660,7 +1661,7 @@ test('an online customer with an expired code is not stuck: new request, save an
   const me = await (await meRoute.GET()).json()
   assert.ok(!me.pendingRedemptions.some((p: { savingsPlanId: string }) => p.savingsPlanId === planId), 'save page reads this')
 
-  const listed = await (await redeemRoute.GET()).json()
+  const listed = await (await redeemRoute.GET(new NextRequest('http://localhost/api/customer/redeem'))).json()
   const row = listed.redemptions.find((x: { id: string }) => x.id === r.id)
   assert.equal(row.expired, true)
   assert.equal(row.status, 'Pending', 'status stays honest')

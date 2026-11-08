@@ -23,6 +23,7 @@ import { Icons } from '@/components/ui/icons'
 import InterestNudge, { InterestCard, InterestChip, earnsInterest } from '@/components/customer/InterestNudge'
 import AutoFunding from '@/components/customer/AutoFunding'
 import { isFlexible } from '@/lib/flexible-savings'
+import { isAjoPlan } from '@/lib/ajo'
 import { PAYSTACK_ENABLED } from '@/lib/paystack-off'
 import { displayName, formatDate, formatNaira } from '@/lib/format'
 import { getHideBalance, setHideBalance } from '@/lib/preferences'
@@ -72,7 +73,7 @@ function PlanDetails({ plan }: { plan: Plan }) {
       <dl className="ui-card ui-card--list ui-summary">
         <div className="ui-row">
           <dt className="ui-row-main ui-row-sub ui-summary-key">You save</dt>
-          <dd className="ui-row-value">{isFlexible(plan.cadence) ? 'Any amount, any day' : `${formatNaira(weekly ? plan.dailyAmount * 7 : plan.dailyAmount, { minor: false })} ${weekly ? 'a week' : 'a day'}`}</dd>
+          <dd className="ui-row-value">{isAjoPlan(plan) ? 'Ajo payout' : isFlexible(plan.cadence) ? 'Any amount, any day' : `${formatNaira(weekly ? plan.dailyAmount * 7 : plan.dailyAmount, { minor: false })} ${weekly ? 'a week' : 'a day'}`}</dd>
         </div>
         <div className="ui-row">
           <dt className="ui-row-main ui-row-sub ui-summary-key">You collect on</dt>
@@ -195,7 +196,8 @@ export default function CustomerDashboard() {
   const finished = ended && !pending
   const target = plan ? plan.dailyAmount * plan.periodDays : 0
   /** Flexible plans have no set days, so no day calendar, no "saved today" and no auto-funding. */
-  const flex = !!plan && isFlexible(plan.cadence)
+  // An Ajo payout plan has no daily schedule either, so it follows the flexible branches on this screen.
+  const flex = !!plan && (isFlexible(plan.cadence) || isAjoPlan(plan))
   const firstName = displayName(data.name).split(' ')[0]
   const hour = new Date().getHours()
   const greeting = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening'
@@ -283,7 +285,7 @@ export default function CustomerDashboard() {
             <PlanEnded
               plan={plan}
               hideAmounts={hideBalance}
-              onCollect={() => router.push('/customer/redeem')}
+              onCollect={() => router.push(plan && isAjoPlan(plan) ? `/customer/redeem?planId=${encodeURIComponent(plan.id)}` : '/customer/redeem')}
               onNewPlan={() => router.push('/customer/save?new=1')}
               note={<InterestNudge plan={plan} hideAmounts={hideBalance} />}
             />
@@ -330,7 +332,7 @@ export default function CustomerDashboard() {
 
         {pending && <CollectionTracker status={pending.status} onView={() => router.push('/customer/redeem')} />}
 
-        {plan && finished && (
+        {plan && finished && !isAjoPlan(plan) && (
           <div className="ui-actions">
             <ActionButton icon="history" label="Roll over" onClick={() => rollOver(plan)} />
           </div>
@@ -348,7 +350,7 @@ export default function CustomerDashboard() {
           {canBulkSave && plan && (
             <ActionButton icon="history" label={BULK_SAVINGS_LABEL} onClick={() => router.push(`/customer/catchup?planId=${encodeURIComponent(plan.id)}`)} />
           )}
-          <ActionButton icon="withdraw" label="Collect" onClick={() => router.push('/customer/redeem')} />
+          <ActionButton icon="withdraw" label="Collect" onClick={() => router.push(plan && isAjoPlan(plan) ? `/customer/redeem?planId=${encodeURIComponent(plan.id)}` : '/customer/redeem')} />
           <ActionButton
             icon="plan"
             label="New plan"
@@ -384,6 +386,14 @@ export default function CustomerDashboard() {
             <Icons.next size={20} aria-hidden="true" />
           </button>
         )}
+
+        <button type="button" className="ui-card ui-card-link" onClick={() => router.push('/customer/ajo')}>
+          <span className="ui-row-main">
+            <span className="ui-row-title">Group Ajo</span>
+            <span className="ui-row-sub">Join with a code, or see your groups</span>
+          </span>
+          <Icons.next size={20} aria-hidden="true" />
+        </button>
 
         <div className="ui-section-head">
           <h2>Recent savings</h2>
@@ -467,7 +477,7 @@ export default function CustomerDashboard() {
               <span className="ui-row-main">
                 <span className="ui-row-title" style={{ display: 'block' }}>{p.goal}</span>
                 <span className="ui-row-sub" style={{ display: 'block' }}>{hasEnded(p)
-                    ? (!isFlexible(p.cadence) && p.balance >= p.dailyAmount * p.periodDays ? 'Goal reached' : `Ended ${formatDate(p.maturityDate)}`)
+                    ? (isAjoPlan(p) ? 'Ready to collect' : !isFlexible(p.cadence) && p.balance >= p.dailyAmount * p.periodDays ? 'Goal reached' : `Ended ${formatDate(p.maturityDate)}`)
                     : `Collect on ${formatDate(p.maturityDate)}`}</span>
               </span>
               <span className="ui-row-value">{hideBalance ? '₦ ••••' : formatNaira(p.balance)}</span>

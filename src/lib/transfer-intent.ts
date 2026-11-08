@@ -81,7 +81,7 @@ export type TransferActor = { customerId: string } | { agentId: string }
  * anything else closes the old one (it still counts for the grace period, in case they pay it). So one account can't tie
  * up the kobo pool. `planId` is the savings plan for a customer and null for an agent's wallet.
  */
-export async function createTransferIntent(input: { actor: TransferActor; planId: string | null; baseAmount: number; coversKeys?: string[] }) {
+export async function createTransferIntent(input: { actor: TransferActor; planId: string | null; baseAmount: number; coversKeys?: string[]; ajo?: { memberId: string; round: number } }) {
   const ref = `VCHS-TRF-${Date.now()}-${randomBytes(6).toString('base64url').toUpperCase()}`
   const mineWhere = 'customerId' in input.actor ? { customerId: input.actor.customerId } : { agentId: input.actor.agentId }
   return prisma.$transaction(async (tx) => {
@@ -89,7 +89,9 @@ export async function createTransferIntent(input: { actor: TransferActor; planId
     const live = { method: TRANSFER_METHOD, status: INTENT_PENDING, expiresAt: { gt: new Date(now - TRANSFER_GRACE_MS) } }
 
     const mine = await tx.paymentIntent.findMany({ where: { ...live, ...mineWhere } })
-    const again = mine.find((i) => canReuse(i, input.planId, input.baseAmount, input.coversKeys ?? [], now))
+    const again = mine.find((i) => canReuse(i, input.planId, input.baseAmount, input.coversKeys ?? [], now)
+      // An Ajo request is reused only for the same member and round.
+      && (i.ajoMemberId ?? null) === (input.ajo?.memberId ?? null) && (i.ajoRound ?? null) === (input.ajo?.round ?? null))
     if (again && again.expiresAt) return { ref: again.ref, payAmount: again.amount, expiresAt: again.expiresAt }
     for (const old of mine) {
       if (old.expiresAt && old.expiresAt.getTime() > now) {
@@ -107,6 +109,7 @@ export async function createTransferIntent(input: { actor: TransferActor; planId
         ref, actorType: 'customerId' in input.actor ? 'customer' : 'agent', planId: input.planId,
         ...mineWhere, amount: payAmount, method: TRANSFER_METHOD, expiresAt,
         coversKeys: input.coversKeys && input.coversKeys.length > 0 ? JSON.stringify(input.coversKeys) : null,
+        ...(input.ajo ? { ajoMemberId: input.ajo.memberId, ajoRound: input.ajo.round } : {}),
       },
     })
     return { ref, payAmount, expiresAt }

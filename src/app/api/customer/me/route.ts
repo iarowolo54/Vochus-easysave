@@ -82,7 +82,8 @@ export async function GET() {
   // Collected plans, offered on the home screen so the customer can save into one again. Kept apart from
   // `plans` because the save, collect and settings screens expect `plans` to hold only open plans.
   const redeemedPlans = await prisma.savingsPlan.findMany({
-    where: { customerId: customer.id, status: 'Redeemed' },
+    // A collected Ajo pot can't be saved into again, so it isn't offered here.
+    where: { customerId: customer.id, status: 'Redeemed', cadence: { not: 'ajo' } },
     orderBy: { startDate: 'desc' },
     take: 5,
     select: { id: true, goal: true, dailyAmount: true, periodDays: true, cadence: true },

@@ -96,6 +96,8 @@ export async function collectionFee(
   balance: number,
   at: Date,
 ): Promise<{ feeRule: 'v1' } | { feeRule: 'v2'; penalty: number; feeAgent: number }> {
+  // An Ajo payout plan is a group's pot: no fee until the owner decides one (AjoGroup.feeRule).
+  if (plan.cadence === 'ajo') return { feeRule: 'v2', penalty: 0, feeAgent: 0 }
   // Flexible plans: commission (cash) and, before the end date, a penalty (cash and online). New plan type, so no v1 rule.
   if (isFlexible(plan.cadence)) {
     if (!plan.maturityDate) throw new Error('collectionFee: flexible plan needs maturityDate')

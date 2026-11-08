@@ -671,7 +671,7 @@ function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, g
               </div>
             )}
             <p className="ag-plan-meta">
-              <span>{isFlexible(p.cadence) ? 'Flexible, any amount' : `${formatNaira(weekly ? p.dailyAmount * 7 : p.dailyAmount, { minor: false })} ${weekly ? 'a week' : 'a day'}`}</span>
+              <span>{p.cadence === 'ajo' ? 'Ajo payout' : isFlexible(p.cadence) ? 'Flexible, any amount' : `${formatNaira(weekly ? p.dailyAmount * 7 : p.dailyAmount, { minor: false })} ${weekly ? 'a week' : 'a day'}`}</span>
               <span>{isActive ? (left <= 0 ? 'Ends today' : `${left} day${left === 1 ? '' : 's'} left · ${formatDate(p.maturityDate)}`) : `Ended ${formatDate(p.maturityDate)}`}</span>
             </p>
             <button

@@ -2693,3 +2693,13 @@ button.ui-cal-day:disabled:active { transform: none; }
 .nt-state { display: flex; flex-direction: column; align-items: center; text-align: center; gap: var(--ui-s2); padding: var(--ui-s6) var(--ui-s4); }
 .nt-state-icon { width: 56px; height: 56px; border-radius: 50%; background: var(--ui-canvas); color: var(--ui-ink-2); display: flex; align-items: center; justify-content: center; }
 .nt-state-title { font-size: var(--ui-fs-lg); font-weight: 700; margin: 0; }
+
+/* Ajo groups (agent and customer screens) */
+.ag-ajo-pot { margin-top: var(--ui-s3); font-size: 32px; font-weight: 700; letter-spacing: -0.02em; color: var(--ui-ink); font-variant-numeric: tabular-nums; }
+.ag-ajo-code { margin: var(--ui-s2) 0 var(--ui-s3); text-align: center; font-size: 40px; font-weight: 700; letter-spacing: 0.14em; color: var(--ui-ink); font-variant-numeric: tabular-nums; }
+.ag-ajo-actions { display: grid; grid-template-columns: 1fr 1fr; gap: var(--ui-s3); }
+.ag-ajo-summary { align-items: flex-start; }
+.ag-ajo-summary svg { flex-shrink: 0; margin-top: 2px; }
+.ag-ajo-review .ui-row { gap: var(--ui-s3); }
+.ag-ajo-review dt { flex: none; }
+.ag-ajo-review dd { margin-left: auto; }

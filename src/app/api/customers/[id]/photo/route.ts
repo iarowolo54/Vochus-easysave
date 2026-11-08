@@ -7,8 +7,10 @@ import { validatePhoto } from '@/lib/photo'
 
 async function sessionAgent() {
   const session = await getServerSession(authOptions)
-  if (!session?.user) return null
-  return prisma.agent.findFirst({ where: { agentId: session.user.agentId }, select: { id: true, name: true, agentId: true, status: true } })
+  // Fail closed: an undefined filter would match the first agent in the table.
+  const agentId = session?.user?.agentId
+  if (typeof agentId !== 'string' || !agentId) return null
+  return prisma.agent.findUnique({ where: { agentId }, select: { id: true, name: true, agentId: true, status: true } })
 }
 
 // Serves one of the agent's own customers' photos as an image, so customer lists carry a link

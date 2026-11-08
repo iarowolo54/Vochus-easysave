@@ -59,7 +59,8 @@ export async function loadLoanEligibilityContext(
   const customer = await client.customer.findFirst({
     where: { id: customerId, agentId: agentDbId },
     include: {
-      savingsPlans: { where: { status: 'Active' }, select: { balance: true } },
+      // An uncollected Ajo pot is a group's money passing through, not savings to lend against.
+      savingsPlans: { where: { status: 'Active', cadence: { not: 'ajo' } }, select: { balance: true } },
       loans: { where: { status: { in: [...ACTIVE_LOAN_STATUSES] } }, select: { id: true }, take: 1 },
     },
   })

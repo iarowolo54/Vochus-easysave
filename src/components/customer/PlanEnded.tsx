@@ -33,13 +33,14 @@ export default function PlanEnded({ plan, hideAmounts, onCollect, onNewPlan, not
   const months = Math.max(1, Math.round(plan.periodDays / 30))
   const span = plan.periodDays < 45 ? `${plan.periodDays} days` : `${months} months`
   const long = formatNaira(plan.balance).length > 10
+  const ajo = plan.cadence === 'ajo'
 
   return (
     <>
       <p className={`ui-status ui-status--lg ${reached ? 'ui-status--success' : 'ui-status--neutral'}`}>
         {reached
           ? <><Icons.check size={16} aria-hidden="true" /> Goal reached</>
-          : <>Plan ended {formatDate(plan.maturityDate)}</>}
+          : ajo ? <><Icons.check size={16} aria-hidden="true" /> Everyone has paid</> : <>Plan ended {formatDate(plan.maturityDate)}</>}
       </p>
 
       <div className="ui-ring" role="img" aria-label={hideAmounts ? 'Savings ready to collect' : goal > 0 ? `${formatNaira(plan.balance)} saved of ${formatNaira(goal)} goal` : `${formatNaira(plan.balance)} saved`}>
@@ -62,7 +63,9 @@ export default function PlanEnded({ plan, hideAmounts, onCollect, onNewPlan, not
       </div>
 
       <p className="ui-hero-sub">
-        {hideAmounts
+        {ajo
+          ? 'It’s your turn in the Ajo group. Your money is ready to collect.'
+          : hideAmounts
           ? 'Your savings are ready to collect.'
           : reached
             ? <>You reached your {formatNaira(goal, { minor: false })} goal over {span}.</>
@@ -85,8 +88,8 @@ export default function PlanEnded({ plan, hideAmounts, onCollect, onNewPlan, not
 /** Plain facts about a finished plan (Copilot-style summary list). */
 export function PlanSummary({ plan, hideAmounts }: { plan: Plan; hideAmounts: boolean }) {
   const goal = plan.dailyAmount * plan.periodDays
-  const flexible = plan.cadence === 'flexible'
-  const rate = flexible ? 'Flexible, any amount'
+  const flexible = plan.cadence === 'flexible' || plan.cadence === 'ajo'
+  const rate = plan.cadence === 'ajo' ? 'Ajo payout' : flexible ? 'Flexible, any amount'
     : (plan.cadence ?? 'daily') === 'weekly'
     ? `${formatNaira(plan.dailyAmount * 7, { minor: false })} weekly`
     : `${formatNaira(plan.dailyAmount, { minor: false })} daily`

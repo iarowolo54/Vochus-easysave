@@ -487,7 +487,8 @@ function SavingsContent() {
   /** Every plan has ended (or been collected) but the customer isn't on the new-plan form: nothing to save into. */
   const nothingOpen = !!selected && !redeemed && activePlans.length === 0
   const finishedPlans = (selected?.savingsPlans ?? [])
-    .filter(p => p.status === 'Redeemed' || (p.status === 'Active' && p.maturityDate !== null && new Date(p.maturityDate).getTime() <= Date.now()))
+    // An Ajo pot is collected, never saved into again.
+    .filter(p => p.cadence !== 'ajo' && (p.status === 'Redeemed' || (p.status === 'Active' && p.maturityDate !== null && new Date(p.maturityDate).getTime() <= Date.now())))
     .slice(0, 3)
   const bulkTotal = (onlineCal?.perSlot ?? plan?.dailyAmount ?? 0) * selectedDates.length
   const bulkUnit = onlineCal?.weekly ? 'week' : 'day'

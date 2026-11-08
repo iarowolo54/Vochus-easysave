@@ -41,6 +41,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
     items: [
       { label: 'All customers', screen: 'customers', icon: 'plan', href: '/superadmin/customers' },
       { label: 'Savings monitor', screen: 'savings', icon: 'monitor', href: '/superadmin/savings-monitor' },
+      { label: 'Ajo groups', screen: 'ajo', icon: 'staff', href: '/superadmin/ajo' },
       { label: 'Redemptions', screen: 'redemptions', icon: 'redeem', href: '/superadmin/early-redemption' },
     ],
   },

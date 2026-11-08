@@ -90,7 +90,7 @@ export async function creditRequestByHand(
         method: TRANSFER_METHOD, status: INTENT_PENDING, manualBy: null, ref: { not: intent.ref }, amount: nearAmount(intent.amount),
         // Older requests only (up to a day before): a newer one is a new payment and must stay open.
         createdAt: { gte: new Date(intent.createdAt.getTime() - 86_400_000), lte: intent.createdAt },
-        ...(intent.actorType === 'agent' ? { agentId: intent.agentId } : { customerId: intent.customerId, planId: intent.planId }),
+        ...(intent.actorType === 'agent' ? { agentId: intent.agentId } : { customerId: intent.customerId, planId: intent.planId, ajoMemberId: intent.ajoMemberId, ajoRound: intent.ajoRound }),
       },
       data: { status: INTENT_SUPERSEDED },
     })

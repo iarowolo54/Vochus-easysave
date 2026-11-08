@@ -29,7 +29,9 @@ export function isWeekly(plan: PlanLike): boolean {
   return (plan.cadence ?? 'daily') === 'weekly'
 }
 
-export function hasEnded(plan: PlanLike, now = new Date()): boolean {
+export function hasEnded(plan: PlanLike & { cadence?: string | null }, now = new Date()): boolean {
+  // An Ajo payout plan is born finished; going by the calendar day would show it as still running on its first day.
+  if (plan.cadence === 'ajo') return true
   return dateKey(now) > dateKey(new Date(plan.maturityDate))
 }
 

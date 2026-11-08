@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import CustomerBottomNav from '@/components/customer/CustomerBottomNav'
 import BankSelect from '@/components/ui/BankSelect'
@@ -56,6 +56,7 @@ function codeWhere(sentBy: string[]): string {
 }
 
 export default function CustomerRedeemPage() {
+  const planIdRef = useRef<string | null>(null)
   const flexTerms = useFlexibleTerms()
   const router = useRouter()
   const [plan, setPlan] = useState<Plan | null>(null)
@@ -79,12 +80,15 @@ export default function CustomerRedeemPage() {
   const [selectedRedemption, setSelectedRedemption] = useState<Redemption | null>(null)
 
   useEffect(() => {
+    // Set when Collect came from a specific plan (an Ajo pot); otherwise the customer's newest plan.
+    const wantedPlan = new URLSearchParams(window.location.search).get('planId')
+    planIdRef.current = wantedPlan
     fetch('/api/customer/me')
       .then(r => { if (r.status === 401) { router.push('/customer/login'); return null } return r.json() })
-      .then(d => { if (d) setPlan(d.plan) })
+      .then(d => { if (d) setPlan(wantedPlan ? d.plans?.find((p: { id: string }) => p.id === wantedPlan) ?? d.plan : d.plan) })
       .catch(() => {})
 
-    fetch('/api/customer/redeem')
+    fetch(`/api/customer/redeem${wantedPlan ? `?planId=${encodeURIComponent(wantedPlan)}` : ''}`)
       .then(r => r.json())
       .then(d => { if (d.redemptions) setRedemptions(d.redemptions) })
       .catch(() => {})
@@ -102,6 +106,7 @@ export default function CustomerRedeemPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           reason,
+          ...(planIdRef.current ? { planId: planIdRef.current } : {}),
           ...(useBankTransfer ? { accountNumber, accountName: accountName.trim(), bankCode } : {}),
         }),
       })

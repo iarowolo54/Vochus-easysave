@@ -20,15 +20,17 @@ import { getPayoutMode } from '@/lib/payout-mode'
 import { notifications } from '@/lib/notifications'
 import { notifyAgentRedemptionToReview } from '@/lib/payout-notify'
 
-export async function GET() {
+export async function GET(req: NextRequest) {
   const session = await getCustomerSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const customer = await prisma.customer.findUnique({ where: { id: session.id } })
   if (!customer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
+  // A named plan (an Ajo pot, which may not be the newest) or, with none named, the newest one. Always the customer's own.
+  const planId = req.nextUrl.searchParams.get('planId')
   const plan = await prisma.savingsPlan.findFirst({
-    where: { customerId: customer.id, status: 'Active' },
+    where: { customerId: customer.id, status: 'Active', ...(planId ? { id: planId } : {}) },
     orderBy: { startDate: 'desc' },
   })
   if (!plan) return NextResponse.json({ plan: null, redemptions: [] })
@@ -52,8 +54,11 @@ export async function POST(req: NextRequest) {
   const customer = await prisma.customer.findUnique({ where: { id: session.id } })
   if (!customer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
+  const body = await req.json()
+  // A named plan (an Ajo pot, which may not be the newest) or, with none named, the newest one. Always the customer's own.
+  const planId = typeof body?.planId === 'string' && body.planId ? body.planId : undefined
   const plan = await prisma.savingsPlan.findFirst({
-    where: { customerId: customer.id, status: 'Active' },
+    where: { customerId: customer.id, status: 'Active', ...(planId ? { id: planId } : {}) },
     orderBy: { startDate: 'desc' },
   })
   if (!plan) return NextResponse.json({ error: 'No active plan' }, { status: 400 })
@@ -64,7 +69,6 @@ export async function POST(req: NextRequest) {
   })
   if (pending) return NextResponse.json({ error: 'You already have a pending redemption request' }, { status: 409 })
 
-  const body = await req.json()
   const { reason, accountNumber, bankCode } = body
 
   if (!reason) return NextResponse.json({ error: 'Reason required' }, { status: 400 })

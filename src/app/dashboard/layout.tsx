@@ -27,6 +27,7 @@ const navItems: { section: string; items: { label: string; icon: IconName; href:
     { label: 'Enrol customer', icon: 'enrol', href: '/dashboard/enrol' },
     { label: 'Savings calendar', icon: 'calendar', href: '/dashboard/calendar' },
     { label: 'Collections', icon: 'collect', href: '/dashboard/redeem' },
+    { label: 'Ajo groups', icon: 'team', href: '/dashboard/ajo' },
     { label: 'Cards', icon: 'card', href: '/dashboard/cards' },
   ]},
   { section: 'Loans', items: [
@@ -56,6 +57,8 @@ const pageTitles: Record<string, string> = {
   '/dashboard/savings': 'Record saving',
   '/dashboard/calendar': 'Savings calendar',
   '/dashboard/redeem': 'Collections',
+  '/dashboard/ajo': 'Ajo groups',
+  '/dashboard/ajo/new': 'New Ajo group',
   '/dashboard/loan-request': 'Loan request',
   '/dashboard/loan-disburse': 'Disburse loan',
   '/dashboard/loan-repay': 'Loan repayment',
@@ -183,7 +186,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     : initials
 
   const pageTitle = pageTitles[pathname]
-    ?? (pathname.startsWith('/dashboard/transactions/') ? 'Receipt' : pathname.startsWith('/dashboard/cards/') ? 'Card' : 'Home')
+    ?? (pathname.startsWith('/dashboard/transactions/') ? 'Receipt' : pathname.startsWith('/dashboard/cards/') ? 'Card' : pathname.startsWith('/dashboard/ajo/') ? 'Ajo group' : 'Home')
 
   // Close the mobile menu with Escape, and whenever the page changes.
   useEffect(() => {

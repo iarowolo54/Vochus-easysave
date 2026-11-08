@@ -14,7 +14,7 @@ const HIDDEN = '₦ ••••'
 const money = (n: number, hide: boolean) => (hide ? HIDDEN : formatNaira(n))
 
 /** Only online (self-registered) plans earn interest; agent-run cash plans never show any. */
-export const earnsInterest = (p: InterestFields) => p.source === 'self'
+export const earnsInterest = (p: InterestFields & { cadence?: string | null }) => p.source === 'self' && p.cadence !== 'ajo'
 
 /** The next monthly credit, if the API says one is coming. */
 function nextCredit(p: InterestFields) {

@@ -20,7 +20,7 @@ const EMAIL_KIND = 'uncollected_reminder'
 const AGENT_LIST_MAX = 25
 
 export type UncollectedPlan = {
-  id: string; goal: string; balance: number; maturityDate: Date
+  id: string; goal: string; balance: number; maturityDate: Date; cadence?: string
   customerId: string; agentId: string; customerName: string
 }
 
@@ -35,7 +35,7 @@ export function uncollectedEvents(plans: UncollectedPlan[], now: Date): { custom
   const byAgent = new Map<string, { count: number; total: number }>()
   for (const p of plans) {
     const week = weeksSinceEnd(p.maturityDate, now)
-    if (week >= 1) customer.push(...N.planUncollected({ planId: p.id, customerId: p.customerId, goal: p.goal, balance: p.balance, week }))
+    if (week >= 1) customer.push(...N.planUncollected({ planId: p.id, customerId: p.customerId, goal: p.goal, balance: p.balance, week, ajo: p.cadence === 'ajo' }))
     const a = byAgent.get(p.agentId) ?? { count: 0, total: 0 }
     a.count++
     a.total = Math.round((a.total + p.balance) * 100) / 100
@@ -78,7 +78,7 @@ export async function runUncollectedReminders(client: PrismaClient, now: Date = 
   const rows = await client.savingsPlan.findMany({
     where: { status: 'Active', maturityDate: { lte: now }, balance: { gt: 0.009 } },
     select: {
-      id: true, goal: true, balance: true, maturityDate: true,
+      id: true, goal: true, balance: true, maturityDate: true, cadence: true,
       customer: { select: { id: true, agentId: true, firstName: true, lastName: true, email: true, emailVerifiedAt: true, emailAlertsOn: true } },
     },
   })
@@ -86,7 +86,7 @@ export async function runUncollectedReminders(client: PrismaClient, now: Date = 
   for (const r of rows) if (!(await hasOpenRedemption(client, r.id, now))) open.push(r)
 
   const plans: UncollectedPlan[] = open.map(r => ({
-    id: r.id, goal: r.goal, balance: r.balance, maturityDate: r.maturityDate,
+    id: r.id, goal: r.goal, balance: r.balance, maturityDate: r.maturityDate, cadence: r.cadence,
     customerId: r.customer.id, agentId: r.customer.agentId, customerName: `${r.customer.firstName} ${r.customer.lastName}`,
   }))
   const events = uncollectedEvents(plans, now)
@@ -118,7 +118,7 @@ export async function runUncollectedReminders(client: PrismaClient, now: Date = 
       amount: formatNaira(r.balance),
       amountLabel: 'In your plan',
       rows: [['Plan', r.goal], ['Ended on', formatDate(r.maturityDate)]],
-      note: 'Open the Vochus Easy Save app to collect it, or keep saving into the plan again from Home. Your agent can help too.',
+      note: r.cadence === 'ajo' ? 'Open the Vochus Easy Save app to collect it from Home. Your agent can help too.' : 'Open the Vochus Easy Save app to collect it, or keep saving into the plan again from Home. Your agent can help too.',
     })
     if (await mail(to, `Your ${r.goal} plan has ended. Your money is waiting`, html)) emails++
   }

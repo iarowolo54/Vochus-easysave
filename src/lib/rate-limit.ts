@@ -80,3 +80,9 @@ export function clientIp(req: Request): string {
   const real = req.headers.get('x-real-ip')?.trim()
   return real && isIP(real) ? real : 'unknown'
 }
+
+// Ajo join codes: a signed-in customer looking up or joining by code. Codes only resolve for their own agent's groups,
+// so this just stops a customer from walking through codes.
+export const ajoCodeRateLimiter = createRateLimiter()
+export const AJO_CODE_LIMIT = { perCustomer: 10, windowMs: 10 * 60_000 }
+export const AJO_PAY_LIMIT = { perCustomer: 6, windowMs: 10 * 60_000 }

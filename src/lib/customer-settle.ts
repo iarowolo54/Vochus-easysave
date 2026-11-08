@@ -13,6 +13,7 @@ import { notifications, notify } from '@/lib/notifications'
 import { alertEmailFor } from '@/lib/email-alerts'
 import { HAND_CREDIT_NOTE, handReceiptSms, wantsHandReceiptSms } from '@/lib/hand-receipt'
 import { sendSMS } from '@/lib/kudisms'
+import { settleAjoTransfer } from '@/lib/ajo-settle'
 
 export type SettleResult =
   | { kind: 'credited'; amount: number; planId: string; notBought: number }
@@ -51,6 +52,8 @@ export async function sendToReview(client: PrismaClient, intent: PaymentIntent, 
 }
 
 export async function settleIntentPayment(client: PrismaClient, input: Input): Promise<SettleResult> {
+  // An Ajo round, not a plan: same matching and review rules, its own ledger.
+  if (input.intent.ajoMemberId) return settleAjoTransfer(client, input)
   const { intent, reference, currency, channel, via } = input
   if (intent.status === INTENT_REVIEW) return { kind: 'review' }
   if (intent.status !== INTENT_PENDING) return { kind: 'already' }

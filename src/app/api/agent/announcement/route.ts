@@ -6,8 +6,10 @@ import { dismissAnnouncement, nextAnnouncement } from '@/lib/announcements'
 
 async function agentId(): Promise<string | null> {
   const session = await getServerSession(authOptions)
-  if (!session?.user) return null
-  const agent = await prisma.agent.findFirst({ where: { agentId: session.user.agentId }, select: { id: true } })
+  // Fail closed: an undefined filter would match the first agent in the table.
+  const agentId = session?.user?.agentId
+  if (typeof agentId !== 'string' || !agentId) return null
+  const agent = await prisma.agent.findUnique({ where: { agentId }, select: { id: true } })
   return agent?.id ?? null
 }
 

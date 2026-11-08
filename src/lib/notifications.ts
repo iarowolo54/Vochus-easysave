@@ -20,6 +20,7 @@ export type NotificationKind =
   | 'wallet_funded' | 'withdrawal_paid' | 'withdrawal_declined'
   | 'plan_ending_soon' | 'plan_ended' | 'plans_ending_this_week'
   | 'plan_uncollected' | 'uncollected_this_week'
+  | 'ajo_joined' | 'ajo_started' | 'ajo_paid' | 'ajo_paid_agent' | 'ajo_round_out' | 'ajo_due' | 'ajo_late'
   | 'new_phone'
 
 export interface NotificationEvent {
@@ -117,15 +118,16 @@ export const notifications = {
     return [{ recipient: customer(f.customerId), kind: 'plan_ending_soon', title: `Your ${f.goal} plan ends on ${shortDay(f.maturityDate)}`, href: '/customer/dashboard', dedupeKey: `plan-ending:${f.planId}` }]
   },
 
-  planEnded(f: { planId: string; customerId: string; goal: string }): NotificationEvent[] {
+  planEnded(f: { planId: string; customerId: string; goal: string; ajo?: boolean }): NotificationEvent[] {
+    if (f.ajo) return [{ recipient: customer(f.customerId), kind: 'plan_ended', title: `Your ${f.goal} money is ready`, body: 'Everyone has paid this round. Collect it from Home.', href: '/customer/dashboard', dedupeKey: `plan-ended:${f.planId}` }]
     return [{ recipient: customer(f.customerId), kind: 'plan_ended', title: `Your ${f.goal} plan has ended`, body: 'You can collect it now, or keep saving into it again from Home.', href: '/customer/dashboard', dedupeKey: `plan-ended:${f.planId}` }]
   },
 
   /** Every 7 days after a plan ends while money is still in it (the end day itself is planEnded). */
-  planUncollected(f: { planId: string; customerId: string; goal: string; balance: number; week: number }): NotificationEvent[] {
+  planUncollected(f: { planId: string; customerId: string; goal: string; balance: number; week: number; ajo?: boolean }): NotificationEvent[] {
     return [{
       recipient: customer(f.customerId), kind: 'plan_uncollected', title: `${naira(f.balance)} is waiting in your ${f.goal} plan`,
-      body: 'Your plan has ended. Collect your money, or keep saving into it again from Home.',
+      body: f.ajo ? 'Collect your Ajo money from Home.' : 'Your plan has ended. Collect your money, or keep saving into it again from Home.',
       href: '/customer/dashboard', dedupeKey: `plan-uncollected:${f.planId}:w${f.week}`,
     }]
   },
@@ -138,6 +140,40 @@ export const notifications = {
       recipient: agent(f.agentId), kind: 'uncollected_this_week', title, body: `${naira(f.total)} is waiting in plans that have ended.`,
       href: '/dashboard/redeem', dedupeKey: `uncollected-agent:${f.agentId}:${f.weekKey}`,
     }]
+  },
+
+  /** Ajo: someone joined the agent's group. */
+  ajoJoined(f: { memberId: string; agentId: string; groupId: string; groupName: string; memberName: string; count: number; size: number }): NotificationEvent[] {
+    return [{ recipient: agent(f.agentId), kind: 'ajo_joined', title: `${name(f.memberName)} joined ${f.groupName}`, body: `${f.count} of ${f.size} members.`, href: `/dashboard/ajo/${f.groupId}`, dedupeKey: `ajo-joined:${f.memberId}` }]
+  },
+
+  /** Ajo: the group started; each member learns when they collect. */
+  ajoStarted(f: { memberId: string; customerId: string; groupId: string; groupName: string; slotLabel: string; firstDue: string }): NotificationEvent[] {
+    return [{ recipient: customer(f.customerId), kind: 'ajo_started', title: `${f.groupName} has started`, body: `You collect in ${f.slotLabel}. The first payment is due ${f.firstDue}.`, href: `/customer/ajo/${f.groupId}`, dedupeKey: `ajo-started:${f.memberId}` }]
+  },
+
+  /** Ajo: a member's payment for a round was received. The agent hears about bank transfers (cash they took themselves). */
+  ajoPaid(f: { ref: string; customerId: string; agentId: string; groupId: string; groupName: string; memberName: string; roundLabel: string; amount: number; byTransfer: boolean; at?: Date }): NotificationEvent[] {
+    const out: NotificationEvent[] = [{ recipient: customer(f.customerId), kind: 'ajo_paid', title: `${naira(f.amount)} paid for ${f.groupName}`, body: f.roundLabel, href: `/customer/ajo/${f.groupId}`, dedupeKey: `ajo-paid:${f.ref}`, at: f.at }]
+    if (f.byTransfer) out.push({ recipient: agent(f.agentId), kind: 'ajo_paid_agent', title: `${name(f.memberName)} paid ${naira(f.amount)} for ${f.groupName}`, body: f.roundLabel, href: `/dashboard/ajo/${f.groupId}`, dedupeKey: `ajo-paid-agent:${f.ref}`, at: f.at })
+    return out
+  },
+
+  /** Ajo: everyone paid a round and its holder's money is ready to collect. */
+  ajoRoundOut(f: { groupId: string; round: number; agentId: string; groupName: string; roundLabel: string; holderName: string; amount: number; at?: Date }): NotificationEvent[] {
+    return [{ recipient: agent(f.agentId), kind: 'ajo_round_out', title: `${f.groupName}: ${f.roundLabel} is complete`, body: `${name(f.holderName)} can collect ${naira(f.amount)}.`, href: `/dashboard/ajo/${f.groupId}`, dedupeKey: `ajo-out-agent:${f.groupId}:${f.round}`, at: f.at }]
+  },
+
+  /** Ajo: a member hasn't paid the open round and it is due (on the day, then weekly). */
+  ajoDue(f: { memberId: string; customerId: string; groupId: string; groupName: string; round: number; roundLabel: string; amount: number; week: number }): NotificationEvent[] {
+    return [{ recipient: customer(f.customerId), kind: 'ajo_due', title: `Your ${f.groupName} payment is due`, body: `Pay ${naira(f.amount)} for ${f.roundLabel}. The round pays out when everyone has paid.`, href: `/customer/ajo/${f.groupId}`, dedupeKey: `ajo-due:${f.memberId}:${f.round}:w${f.week}` }]
+  },
+
+  /** Ajo: tells the agent who is holding a due round up (on the day after it was due, then weekly). */
+  ajoLate(f: { groupId: string; agentId: string; groupName: string; round: number; roundLabel: string; unpaid: number; week: number }): NotificationEvent[] {
+    if (f.unpaid <= 0) return []
+    const who = f.unpaid === 1 ? '1 member hasn’t paid' : `${f.unpaid} members haven’t paid`
+    return [{ recipient: agent(f.agentId), kind: 'ajo_late', title: `${f.groupName}: ${who}`, body: `${f.roundLabel} can’t pay out until everyone has paid.`, href: `/dashboard/ajo/${f.groupId}`, dedupeKey: `ajo-late:${f.groupId}:${f.round}:w${f.week}` }]
   },
 
   /** Once a day, only when there is something to say. */

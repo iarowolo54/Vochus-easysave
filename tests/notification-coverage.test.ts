@@ -21,6 +21,9 @@ const WRITES: { what: string; re: RegExp }[] = [
   { what: 'plan credit', re: /(?<!function )\b(creditPlanBalance|creditOpenPlan)\(/ },
   { what: 'wallet funding', re: /type:\s*'wallet_funding'/ },
   { what: 'new device session', re: /\bdeviceSession\.(create|upsert)\(/ },
+  { what: 'ajo member joins', re: /\bajoMember\.create\(/ },
+  { what: 'ajo contribution', re: /\bajoContribution\.create\(/ },
+  { what: 'ajo payout', re: /\bajoPayout\.create\(/ },
   { what: 'collection request (helper)', re: /(?<!function )\bcreateRedemptionWithUniqueCode\(/ },
 ]
 

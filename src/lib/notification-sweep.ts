@@ -8,6 +8,7 @@ import type { PrismaClient } from '@prisma/client'
 import { notifications as N, notify, type NotificationEvent } from '@/lib/notifications'
 import { logAudit } from '@/lib/audit'
 import { runUncollectedReminders } from '@/lib/uncollected-reminders'
+import { ajoSweepEvents } from '@/lib/ajo-notices'
 
 /** Bulk Savings stamps each day's transaction with this + the batch's first ref, so the batch is one notification. */
 export const BULK_NOTE_PREFIX = 'Bulk Savings batch '
@@ -82,14 +83,14 @@ const dayKey = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padSt
 
 /** Date-based notices for plans still open (status Active): ending within 7 days, or already ended. */
 export function scheduledEvents(
-  plans: { id: string; goal: string; customerId: string; agentId: string; maturityDate: Date }[],
+  plans: { id: string; goal: string; customerId: string; agentId: string; maturityDate: Date; cadence?: string }[],
   now: Date,
 ): NotificationEvent[] {
   const out: NotificationEvent[] = []
   const endingByAgent = new Map<string, number>()
   for (const p of plans) {
     const left = p.maturityDate.getTime() - now.getTime()
-    if (left <= 0) out.push(...N.planEnded({ planId: p.id, customerId: p.customerId, goal: p.goal }))
+    if (left <= 0) out.push(...N.planEnded({ planId: p.id, customerId: p.customerId, goal: p.goal, ajo: p.cadence === 'ajo' }))
     else if (left <= 7 * DAY) {
       out.push(...N.planEndingSoon({ planId: p.id, customerId: p.customerId, goal: p.goal, maturityDate: p.maturityDate }))
       endingByAgent.set(p.agentId, (endingByAgent.get(p.agentId) ?? 0) + 1)
@@ -131,14 +132,22 @@ export async function runNotificationSweep(client: PrismaClient, now: Date = new
     savings: savings.flatMap(s => (s.plan ? [{ ...s, plan: s.plan }] : [])),
     collections, withdrawals, topUps,
   }
-  const backfilled = await writeMissing(client, backfillEvents(rows, { since, agentCodes: new Map(agents.map(a => [a.id, a.agentId])) }))
+  let backfilled = await writeMissing(client, backfillEvents(rows, { since, agentCodes: new Map(agents.map(a => [a.id, a.agentId])) }))
 
   const open = await client.savingsPlan.findMany({
     where: { status: 'Active', maturityDate: { lte: new Date(now.getTime() + 7 * DAY), gte: new Date(now.getTime() - 30 * DAY) } },
-    select: { id: true, goal: true, customerId: true, maturityDate: true, customer: { select: { agentId: true } } },
+    select: { id: true, goal: true, customerId: true, maturityDate: true, cadence: true, customer: { select: { agentId: true } } },
   })
   let scheduled = await writeMissing(client, scheduledEvents(open.map(p => ({ ...p, agentId: p.customer.agentId })), now))
   // Money left in ended plans: weekly reminders to the customer and a weekly list to the agent (src/lib/uncollected-reminders.ts).
+  // Ajo: the last 48 h rebuilt (counted as backfill, so a gap shows in the audit) and today's due reminders.
+  try {
+    const ajo = await ajoSweepEvents(client, since, now)
+    backfilled += await writeMissing(client, ajo.backfill)
+    scheduled += await writeMissing(client, ajo.scheduled)
+  } catch (err) {
+    console.error('[notification-sweep] ajo notices failed', err instanceof Error ? err.message : 'unknown')
+  }
   // Its own failure must not stop the safety-net audit below.
   try {
     scheduled += (await runUncollectedReminders(client, now)).notices
