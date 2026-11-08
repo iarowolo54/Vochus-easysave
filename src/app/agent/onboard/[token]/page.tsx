@@ -4,6 +4,7 @@ import { useEffect, useState, useRef } from 'react'
 import { useParams } from 'next/navigation'
 import { blockNonDigit, digitsOnly } from '@/lib/numeric'
 import Logo from '@/components/Logo'
+import CameraCapture from '@/components/ui/CameraCapture'
 
 const STEPS = ['Personal', 'Photo', 'Verify Email', 'Password']
 
@@ -47,7 +48,6 @@ export default function AgentOnboardPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [done, setDone] = useState<{ agentId: string; name: string } | null>(null)
-  const photoRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     fetch(`/api/agent/onboard/${token}`)
@@ -82,13 +82,6 @@ export default function AgentOnboardPage() {
   }
 
   const set = (k: keyof typeof emptyForm, v: string) => setForm(f => ({ ...f, [k]: v }))
-
-  function handlePhoto(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0]; if (!file) return
-    const reader = new FileReader()
-    reader.onload = ev => setPhoto(ev.target?.result as string)
-    reader.readAsDataURL(file)
-  }
 
   function validateStep(): boolean {
     setError('')
@@ -413,22 +406,11 @@ export default function AgentOnboardPage() {
           <>
             <div style={sectionLabel}>Passport Photo</div>
             <div style={{ background: '#f0faf4', border: '1px solid #b6e8c8', borderRadius: 10, padding: '10px 14px', fontSize: 13, color: '#2e7d4f', marginBottom: 16 }}>
-              📸 Upload a clear, recent passport photograph — full face, plain background, no hats/sunglasses.
+              Take a clear photo of your face with your phone’s camera: plain background, no hat or sunglasses. Photos from your gallery can’t be used.
             </div>
-            <input ref={photoRef} type="file" accept="image/*" style={{ display: 'none' }} onChange={handlePhoto} />
-            {photo ? (
-              <div style={{ textAlign: 'center', marginBottom: 20 }}>
-                <img src={photo} alt="" style={{ width: 120, height: 120, borderRadius: '50%', objectFit: 'cover', border: '3px solid #1a5c35', marginBottom: 12 }} />
-                <div style={{ fontSize: 13, color: '#1a5c35', fontWeight: 600, marginBottom: 8 }}>✓ Photo uploaded</div>
-                <button onClick={() => setPhoto(null)} style={{ fontSize: 12, color: '#dc2626', background: 'none', border: '1px solid #dc2626', borderRadius: 6, padding: '4px 12px', cursor: 'pointer' }}>Remove</button>
-              </div>
-            ) : (
-              <div onClick={() => photoRef.current?.click()} style={{ border: '2px dashed #d1d5db', borderRadius: 12, padding: '40px 20px', textAlign: 'center', cursor: 'pointer', marginBottom: 16, background: '#f9fafb' }}>
-                <div style={{ fontSize: 48, marginBottom: 10 }}>👤</div>
-                <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 4 }}>Click to upload photo</div>
-                <div style={{ fontSize: 12, color: '#9ca3af' }}>JPG, PNG · Max 5MB</div>
-              </div>
-            )}
+            <div style={{ marginBottom: 16 }}>
+              <CameraCapture value={photo} onChange={setPhoto} facing="user" subject="your" />
+            </div>
             <div style={{ ...btnRow, justifyContent: 'space-between' }}>
               <button style={btnOutline} onClick={() => setStep(1)}>← Back</button>
               <button style={btnPrimary} onClick={() => setStep(3)}>Next: Verify Email →</button>
@@ -498,7 +480,7 @@ export default function AgentOnboardPage() {
                 <div>Phone: <strong style={{ color: '#111' }}>{form.phone}</strong></div>
                 <div>Email: <strong style={{ color: '#1a5c35' }}>{email} ✓</strong></div>
                 <div>State: <strong style={{ color: '#111' }}>{form.state}</strong></div>
-                <div>Photo: <strong style={{ color: photo ? '#1a5c35' : '#e67e22' }}>{photo ? '✅ Uploaded' : '⚠️ Not uploaded'}</strong></div>
+                <div>Photo: <strong style={{ color: photo ? '#1a5c35' : '#e67e22' }}>{photo ? 'Taken' : 'Not taken'}</strong></div>
               </div>
             </div>
             <div style={{ ...btnRow, justifyContent: 'space-between' }}>

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { randomBytes } from 'crypto'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
+import { maxSinglePayment, overCapMessage } from '@/lib/payment-cap'
 import { logAudit } from '@/lib/audit'
 import { createPaymentIntent } from '@/lib/payment-intent'
 import { planHasEnded, PLAN_ENDED } from '@/lib/plan-credit'
@@ -50,6 +51,9 @@ export async function POST(req: NextRequest) {
   const amount = parseFloat(body.amount ?? plan.dailyAmount)
   const minimum = isFlexible(plan.cadence) ? Math.max(100, (await getFlexibleSettings(prisma)).minDeposit) : 100
   if (!amount || amount < minimum) return NextResponse.json({ error: `Minimum ₦${minimum.toLocaleString('en-NG')}` }, { status: 400 })
+  // One payment can't be more than the plan's amount for the days it has left (owner's rule).
+  const max = maxSinglePayment(plan)
+  if (max !== null && amount > max) return NextResponse.json({ error: overCapMessage(max) }, { status: 400 })
 
   const email = customer.email ?? `${customer.customerId.toLowerCase()}@vochus.ng`
   const rand = randomBytes(9).toString('base64url').toUpperCase()

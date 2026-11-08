@@ -9,6 +9,7 @@ import { customerType } from '@/lib/customer-type'
 import { validateGender, validateState, validateLga } from '@/lib/customer-fields'
 import { logAudit } from '@/lib/audit'
 import { normalizePhone } from '@/lib/phone'
+import { validatePhoto } from '@/lib/photo'
 import { normalizeEmail } from '@/lib/email'
 import { findIdentityConflict } from '@/lib/identity'
 import { identityConflictResponse } from '@/lib/identity-response'
@@ -150,7 +151,8 @@ export async function GET(req: NextRequest) {
       gender: c.gender,
       state: c.state,
       lga: c.lga,
-      photoUrl: c.photoUrl,
+      // A link, not the base64 photo: a page of customers would otherwise carry several MB.
+      photoUrl: c.photoUrl ? `/api/customers/${c.id}/photo` : null,
       // Whether the account is locked to a phone; the device id itself is never sent.
       deviceBound: c.boundDeviceId != null,
     }
@@ -188,7 +190,7 @@ export async function POST(req: NextRequest) {
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
 
   const body = await req.json()
-  const { firstName, lastName, phone, email, dob, address, language, gender, state, lga, bvn, nokName, nokRelation, nokPhone, dailyAmount, periodDays, goal, startDate, notes, registrationFee, feeMethod, cadence, plans } = body
+  const { firstName, lastName, phone, email, dob, address, language, gender, state, lga, bvn, nokName, nokRelation, nokPhone, photoUrl, dailyAmount, periodDays, goal, startDate, notes, registrationFee, feeMethod, cadence, plans } = body
 
   if (typeof phone !== 'string' || !phone.trim()) return NextResponse.json({ error: 'Phone is required' }, { status: 400 })
 
@@ -199,6 +201,11 @@ export async function POST(req: NextRequest) {
   if (!stateCheck.ok) return NextResponse.json({ error: stateCheck.error }, { status: 400 })
   const lgaCheck = validateLga(stateCheck.value, lga)
   if (!lgaCheck.ok) return NextResponse.json({ error: lgaCheck.error }, { status: 400 })
+
+  // The agent's registration screen sends the photo it took; until now it was dropped here, so no agent-registered
+  // customer had a picture.
+  const photoCheck = validatePhoto(photoUrl)
+  if (!photoCheck.ok) return NextResponse.json({ error: photoCheck.error }, { status: 400 })
 
   const last = await prisma.customer.findFirst({ orderBy: { customerId: 'desc' } })
   const lastNum = last ? parseInt(last.customerId.replace('CST-', ''), 10) : 0
@@ -256,6 +263,7 @@ export async function POST(req: NextRequest) {
       nokName: nokName || '',
       nokRelation: nokRelation || '',
       nokPhone: nokPhone || '',
+      photoUrl: typeof photoUrl === 'string' && photoUrl ? photoUrl : null,
     },
   })
 

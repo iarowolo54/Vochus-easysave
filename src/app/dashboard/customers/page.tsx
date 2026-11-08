@@ -4,6 +4,7 @@ import { useEffect, useState, useCallback } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import BottomSheet from '@/components/ui/BottomSheet'
+import RetakePhotoSheet from '@/components/agent/RetakePhotoSheet'
 import EmptyState from '@/components/ui/EmptyState'
 import ListRow from '@/components/ui/ListRow'
 import { ListSkeleton } from '@/components/ui/Skeleton'
@@ -148,6 +149,7 @@ export default function CustomersPage() {
   const [plan, setPlan] = useState('')
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<Customer | null>(null)
+  const [photoFor, setPhotoFor] = useState<Customer | null>(null)
   const [sheetOpen, setSheetOpen] = useState(false)
   const [custTxns, setCustTxns] = useState<Txn[]>([])
   const [txnsLoading, setTxnsLoading] = useState(false)
@@ -301,6 +303,14 @@ export default function CustomersPage() {
     }
   }
 
+  function photoSaved(photoUrl: string) {
+    const c = photoFor
+    if (!c) return
+    setCustomers(prev => prev.map(x => x.id === c.id ? { ...x, photoUrl } : x))
+    setSelected(prev => (prev && prev.id === c.id ? { ...prev, photoUrl } : prev))
+    setPhotoFor(null)
+  }
+
   function go(path: string) {
     if (!selected) return
     const cid = selected.customerId
@@ -317,6 +327,7 @@ export default function CustomersPage() {
       setExpandedPlan={setExpandedPlan}
       go={go}
       onResetDevice={() => { setResetError(''); setResetFor(selected) }}
+      onRetakePhoto={() => setPhotoFor(selected)}
       habit={habits[selected.customerId]}
     />
   )
@@ -510,6 +521,12 @@ export default function CustomersPage() {
         </BottomSheet>
       )}
 
+      <RetakePhotoSheet
+        customer={photoFor && { id: photoFor.id, name: fullName(photoFor), hasPhoto: !!photoFor.photoUrl }}
+        onClose={() => setPhotoFor(null)}
+        onSaved={photoSaved}
+      />
+
       <BottomSheet open={!!resetFor} onClose={() => { if (!resetBusy) setResetFor(null) }} title="Reset their phone?">
         {resetFor && (
           <>
@@ -548,7 +565,7 @@ function HabitDot({ h }: { h: MonthStats }) {
   )
 }
 
-function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, go, onResetDevice, habit }: {
+function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, go, onResetDevice, onRetakePhoto, habit }: {
   c: Customer
   txns: Txn[]
   txnsLoading: boolean
@@ -556,6 +573,7 @@ function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, g
   setExpandedPlan: (id: string | null) => void
   go: (path: string) => void
   onResetDevice: () => void
+  onRetakePhoto: () => void
   habit?: MonthStats
 }) {
   const active = c.savingsPlans.filter(p => p.status === 'Active').length
@@ -607,6 +625,9 @@ function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, g
         <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/loan-request')}><Icons.loan size={18} aria-hidden="true" /> New loan</button>
         <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/loan-repay')}><Icons.repay size={18} aria-hidden="true" /> Pay loan</button>
       </div>
+      <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={onRetakePhoto}>
+        <Icons.image size={18} aria-hidden="true" /> {c.photoUrl ? 'Retake photo' : 'Add photo'}
+      </button>
       {c.deviceBound && (
         <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={onResetDevice}>
           <Icons.device size={18} aria-hidden="true" /> Reset their phone

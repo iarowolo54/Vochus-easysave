@@ -6,6 +6,7 @@ import { logAudit } from '@/lib/audit'
 import { assertSufficient, insufficientResponse, InsufficientFundsError, money } from '@/lib/wallet-guard'
 import { debitAgentBalance } from '@/lib/wallet-debit'
 import { creditRegistrationReward } from '@/lib/reward'
+import { maxSinglePayment, overCapMessage } from '@/lib/payment-cap'
 import { selectActivePlan, depositCreatedAt, hasSavingOnDay, ALREADY_SAVED_TODAY } from '@/lib/saving-plan'
 import { depositDayInPlan, outsidePlanMessage, planHasEnded, PLAN_ENDED } from '@/lib/plan-credit'
 import { creditOpenPlan, hasOpenRedemption, PLAN_CLOSED, PlanClosedError, SAVING_BLOCKED } from '@/lib/redemption-balance'
@@ -44,7 +45,7 @@ export async function POST(req: NextRequest) {
   }
   const plan = selected.plan
 
-  const dates = await prisma.savingsPlan.findUnique({ where: { id: plan.id }, select: { startDate: true, maturityDate: true, cadence: true, goal: true } })
+  const dates = await prisma.savingsPlan.findUnique({ where: { id: plan.id }, select: { startDate: true, maturityDate: true, cadence: true, goal: true, dailyAmount: true } })
   if (!dates || planHasEnded(dates)) return NextResponse.json({ error: PLAN_ENDED }, { status: 409 })
 
   if (await hasOpenRedemption(prisma, plan.id)) return NextResponse.json({ error: SAVING_BLOCKED }, { status: 409 })
@@ -56,6 +57,9 @@ export async function POST(req: NextRequest) {
     const { minDeposit } = await getFlexibleSettings(prisma)
     if (rounded < minDeposit) return NextResponse.json({ error: `The smallest deposit is ₦${minDeposit.toLocaleString('en-NG')}.` }, { status: 400 })
   }
+  // One payment can't be more than the plan's amount for the days it has left (owner's rule).
+  const max = flexible ? null : maxSinglePayment(dates)
+  if (max !== null && rounded > max) return NextResponse.json({ error: overCapMessage(max) }, { status: 400 })
   // SR-3: ignore a client backdate on online (self) plans.
   const createdAt = depositCreatedAt(plan.source, date)
   // A cash saving recorded for a chosen day must be for a day the plan runs (not past its end, not before its start).

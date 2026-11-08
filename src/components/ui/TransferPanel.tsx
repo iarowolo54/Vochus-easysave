@@ -194,6 +194,8 @@ export default function TransferPanel({ details, statusUrl, cancelUrl, reportUrl
   const rows: { label: string; value: string; copyValue?: string }[] = [
     { label: 'Bank', value: details.account.bank },
     { label: 'Account number', value: details.account.number, copyValue: details.account.number },
+    // Repeated here because many people copy the account number and never scroll back up to the amount.
+    { label: 'Amount to pay', value: exact, copyValue: details.payAmount.toFixed(2) },
     { label: 'Account name', value: details.account.name },
   ]
 

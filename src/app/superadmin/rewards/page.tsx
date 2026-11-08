@@ -172,7 +172,7 @@ export default function RewardsPage() {
     <>
       <PageHeader
         title="Rewards"
-        sub="While a promo is on, agents earn a reward for every customer they register."
+        sub="While a promo is on, an agent earns a reward when a customer they registered makes their first deposit. No deposit, no reward."
         actions={<button type="button" className="btn btn-green" onClick={openNew}><Icons.add size={18} aria-hidden="true" /> New promo</button>}
       />
 
@@ -242,7 +242,7 @@ export default function RewardsPage() {
               </div>
             </div>
             {firstLoad ? <TableSkeleton rows={5} cols={5} />
-              : rewards.length === 0 ? <Empty icon="history" title="No rewards given yet" text="Rewards show here when an agent registers a customer while a promo is on." />
+              : rewards.length === 0 ? <Empty icon="history" title="No rewards given yet" text="Rewards show here when a customer registered during a promo makes their first deposit." />
               : (
                 <>
                   <div className="tbl-wrap tbl-stack">
@@ -330,7 +330,7 @@ export default function RewardsPage() {
               </dl>
               <p className="dlg-note">
                 {editPromo
-                  ? 'New amounts apply to customers registered from now on. Rewards already given don’t change.'
+                  ? 'New amounts apply to rewards not yet paid. Rewards already given don’t change.'
                   : 'The promo is switched on as soon as you create it. Agents are credited automatically for each new customer.'}
               </p>
             </>

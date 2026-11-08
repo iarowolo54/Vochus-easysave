@@ -10,6 +10,7 @@ import { createTransferIntent } from '@/lib/transfer-intent'
 import { checkBulkSelection } from '@/lib/bulk-savings'
 import { getFundingMode, TRANSFER_NOT_IN_USE } from '@/lib/funding-mode'
 import { money } from '@/lib/wallet-guard'
+import { maxSinglePayment, overCapMessage } from '@/lib/payment-cap'
 
 export async function POST(req: NextRequest) {
   const session = await getCustomerSession()
@@ -52,6 +53,13 @@ export async function POST(req: NextRequest) {
   if (!catchup && isFlexible(plan.cadence)) {
     const min = Math.max(100, (await getFlexibleSettings(prisma)).minDeposit)
     if (amount < min) return NextResponse.json({ error: `The smallest deposit is ₦${min.toLocaleString('en-NG')}.` }, { status: 400 })
+  }
+
+  // One payment can't be more than the plan's amount for the days it has left (owner's rule). Bulk Savings picks
+  // days the plan runs, so it is already within this.
+  if (!catchup) {
+    const max = maxSinglePayment(plan)
+    if (max !== null && amount > max) return NextResponse.json({ error: overCapMessage(max) }, { status: 400 })
   }
 
   if (catchup) {
