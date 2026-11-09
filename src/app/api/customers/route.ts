@@ -1,4 +1,5 @@
 import { matchesCustomer } from '@/lib/fuzzy-search'
+import { ajoPlanFees } from '@/lib/ajo-fee'
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
@@ -104,6 +105,8 @@ export async function GET(req: NextRequest) {
   }
 
   const eligiblePlanIds = customers.flatMap(c => c.savingsPlans.filter(p => p.status !== 'Redeemed' && p.balance > 0).map(p => p.id))
+  // What collecting each Ajo pot will cost, from the server's own rule, so the screen never estimates it.
+  const ajoFees = await ajoPlanFees(prisma, customers.flatMap(c => c.savingsPlans.filter(p => p.cadence === 'ajo')))
   const cashDepositPlanIds = new Set(
     eligiblePlanIds.length
       ? (await prisma.transaction.findMany({
@@ -141,7 +144,7 @@ export async function GET(req: NextRequest) {
       activeLoan: activeLoan
         ? { ref: activeLoan.ref, totalAmount: activeLoan.totalAmount, status: activeLoan.status }
         : null,
-      savingsPlans: c.savingsPlans.map(p => ({ ...p, hasCashDeposit: cashDepositPlanIds.has(p.id) })),
+      savingsPlans: c.savingsPlans.map(p => ({ ...p, hasCashDeposit: cashDepositPlanIds.has(p.id), ajoFee: ajoFees.get(p.id)?.fee })),
       nokName: c.nokName,
       nokRelation: c.nokRelation,
       nokPhone: c.nokPhone,

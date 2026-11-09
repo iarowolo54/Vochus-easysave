@@ -16,7 +16,7 @@ import { useFlexibleTerms } from '@/lib/use-flexible-terms'
 
 interface Plan {
   id: string; goal: string; status: string; balance: number; dailyAmount: number
-  periodDays: number; cadence?: string; maturityDate: string; source?: string
+  periodDays: number; cadence?: string; maturityDate: string; source?: string; ajoFee?: number
 }
 
 interface Customer {
@@ -41,6 +41,8 @@ type Step = 'select' | 'review' | 'token-issued' | 'verify' | 'direct-verify' | 
 
 /** Same fee rule the payout preview has always used: a day's saving per 31 days on daily plans, 20% otherwise. */
 function payoutFor(p: Plan) {
+  // An Ajo pot: the server's figure at the group's locked rate.
+  if (p.cadence === 'ajo') { const deduction = p.ajoFee ?? 0; return { deduction, net: Math.round((p.balance - deduction) * 100) / 100 } }
   const isDaily = !p.cadence || p.cadence === 'daily'
   const deduction = isDaily
     ? Math.min(Math.round(p.dailyAmount * ((p.periodDays || 31) / 31) * 100) / 100, p.balance)

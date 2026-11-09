@@ -6,7 +6,8 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { customerType } from '@/lib/customer-type'
 import { displayName } from '@/lib/format'
-import { openRound, potOf, roundDueDay, roundLabel, type AjoCadence } from '@/lib/ajo'
+import { ajoFeeOn, openRound, potOf, roundDueDay, roundLabel, type AjoCadence } from '@/lib/ajo'
+import { getAjoFee } from '@/lib/ajo-fee'
 import { notifications, notify } from '@/lib/notifications'
 
 /** Six digits, cryptographically random. Callers retry on the (unique) clash. */
@@ -69,6 +70,8 @@ export async function loadGroup(client: PrismaClient | Prisma.TransactionClient,
   if (!g) return null
   const cadence = g.cadence as AjoCadence
   const paidOut = g.payouts.map(p => p.round)
+  // Until the group starts it shows today's rate; from then on, the rate locked for it.
+  const rate = g.status === 'Forming' ? await getAjoFee(client) : { feePct: g.feePct, agentSharePct: g.feeAgentSharePct }
   const current = g.status === 'Running' ? openRound(g.size, paidOut) : null
   const members = g.members.map(m => ({
     id: m.id,
@@ -93,7 +96,7 @@ export async function loadGroup(client: PrismaClient | Prisma.TransactionClient,
   })
   return {
     id: g.id, code: g.code, name: g.name, agentId: g.agentId, cadence, size: g.size, contribution: g.contribution,
-    pot: potOf(g), startDate: g.startDate, status: g.status, createdAt: g.createdAt, lockedAt: g.lockedAt, completedAt: g.completedAt,
+    pot: potOf(g), feePct: rate.feePct, platformFee: ajoFeeOn(potOf(g), rate).fee, startDate: g.startDate, status: g.status, createdAt: g.createdAt, lockedAt: g.lockedAt, completedAt: g.completedAt,
     currentRound: current, members, rounds,
   }
 }
@@ -103,7 +106,7 @@ export type AjoGroupView = NonNullable<Awaited<ReturnType<typeof loadGroup>>>
 export function memberView(g: AjoGroupView, customerDbId: string) {
   const me = g.members.find(m => m.customerDbId === customerDbId) ?? null
   return {
-    id: g.id, name: g.name, cadence: g.cadence, size: g.size, contribution: g.contribution, pot: g.pot, startDate: g.startDate,
+    id: g.id, name: g.name, cadence: g.cadence, size: g.size, contribution: g.contribution, pot: g.pot, feePct: g.feePct, platformFee: g.platformFee, startDate: g.startDate,
     status: g.status, currentRound: g.currentRound, memberCount: g.members.length,
     me: me && { memberId: me.id, slot: me.slot, position: g.members.findIndex(m => m.id === me.id) + 1, payoutPlanId: me.slot ? g.rounds[me.slot - 1]?.payout?.savingsPlanId ?? null : null },
     members: g.members.map(m => ({ id: m.id, name: m.name, slot: m.slot, isMe: m.id === me?.id })),

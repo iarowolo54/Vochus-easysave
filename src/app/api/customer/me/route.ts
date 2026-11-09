@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { ajoPlanFees } from '@/lib/ajo-fee'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
 import { isHandCredit } from '@/lib/hand-receipt'
@@ -72,7 +73,11 @@ export async function GET() {
       })
     : []
   const coveringRefs = await coveringRefsByPlan(prisma, planIds)
+  // What collecting each Ajo pot will cost, from the server's own rule, so the screen never estimates it.
+  const ajoFees = await ajoPlanFees(prisma, plansBase.filter(p => p.cadence === 'ajo'))
   const plans = plansBase.map(p => ({
+    ajoFee: ajoFees.get(p.id)?.fee,
+    ajoFeePct: ajoFees.get(p.id)?.feePct,
     ...p,
     coveredKeys: coverageRows.filter(r => r.savingsPlanId === p.id).map(r => r.coversKey),
     coveredRefs: coveringRefs.get(p.id) ?? [],

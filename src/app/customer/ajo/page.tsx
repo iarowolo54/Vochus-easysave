@@ -11,7 +11,7 @@ import { Icons } from '@/components/ui/icons'
 import { formatDate, formatNaira } from '@/lib/format'
 
 type Preview = {
-  id: string; name: string; cadence: string; size: number; contribution: number; pot: number; startDate: string
+  id: string; name: string; cadence: string; size: number; contribution: number; pot: number; feePct: number; platformFee: number; startDate: string
   firstRound: string; lastRound: string; agentName: string; memberCount: number; yourTurn: string | null; full: boolean; alreadyIn: boolean
 }
 type MyGroup = {
@@ -106,7 +106,8 @@ export default function GroupAjoPage() {
               <dl className="ui-review-rows ag-ajo-review">
                 <div className="ui-row"><dt className="ui-row-main ui-row-sub">Group</dt><dd className="ui-review-value">{preview.name}</dd></div>
                 <div className="ui-row"><dt className="ui-row-main ui-row-sub">You pay</dt><dd className="ui-review-value">{naira(preview.contribution)} {EVERY[preview.cadence]}</dd></div>
-                <div className="ui-row"><dt className="ui-row-main ui-row-sub">You collect once</dt><dd className="ui-review-value">{naira(preview.pot)}</dd></div>
+                <div className="ui-row"><dt className="ui-row-main ui-row-sub">You collect once</dt><dd className="ui-review-value">{naira(preview.pot - preview.platformFee)}</dd></div>
+                {preview.feePct > 0 && <div className="ui-row"><dt className="ui-row-main ui-row-sub">Platform Fee ({preview.feePct}%)</dt><dd className="ui-review-value">{naira(preview.platformFee)}</dd></div>}
                 {preview.yourTurn && !preview.alreadyIn && <div className="ui-row"><dt className="ui-row-main ui-row-sub">Your turn if you join now</dt><dd className="ui-review-value">{preview.yourTurn}</dd></div>}
                 <div className="ui-row"><dt className="ui-row-main ui-row-sub">Runs</dt><dd className="ui-review-value">{preview.firstRound} to {preview.lastRound}</dd></div>
                 <div className="ui-row"><dt className="ui-row-main ui-row-sub">First payment</dt><dd className="ui-review-value">{formatDate(preview.startDate)}</dd></div>

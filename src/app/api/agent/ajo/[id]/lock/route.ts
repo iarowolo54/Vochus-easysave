@@ -5,6 +5,7 @@ import { sessionAgent } from '@/lib/ajo-server'
 import { byJoinOrder, roundDueDay, roundLabel, type AjoCadence } from '@/lib/ajo'
 import { notifications as N, notify } from '@/lib/notifications'
 import { formatDate } from '@/lib/format'
+import { getAjoFee } from '@/lib/ajo-fee'
 
 type Ctx = { params: Promise<{ id: string }> }
 
@@ -20,7 +21,9 @@ export async function POST(_req: NextRequest, { params }: Ctx) {
   const result = await prisma.$transaction(async tx => {
     const members = await tx.ajoMember.findMany({ where: { groupId: group.id }, select: { id: true, joinedAt: true, customerId: true } })
     if (members.length !== group.size) return `The group needs ${group.size} members. It has ${members.length}.`
-    const done = await tx.ajoGroup.updateMany({ where: { id: group.id, status: 'Forming' }, data: { status: 'Running', lockedAt: new Date() } })
+    // The Platform Fee is locked here: changing the setting later doesn't touch a group that has started.
+    const fee = await getAjoFee(tx)
+    const done = await tx.ajoGroup.updateMany({ where: { id: group.id, status: 'Forming' }, data: { status: 'Running', lockedAt: new Date(), feePct: fee.feePct, feeAgentSharePct: fee.agentSharePct } })
     if (done.count !== 1) return 'This group has already started.'
     const cadence = group.cadence as AjoCadence
     const firstDue = formatDate(new Date(`${roundDueDay(group.startDate, cadence, 1)}T12:00:00+01:00`))

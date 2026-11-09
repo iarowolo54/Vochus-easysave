@@ -12,7 +12,7 @@ import { Icons } from '@/components/ui/icons'
 import { formatDate, formatNaira } from '@/lib/format'
 
 type Group = {
-  id: string; name: string; cadence: string; size: number; contribution: number; pot: number; startDate: string
+  id: string; name: string; cadence: string; size: number; contribution: number; pot: number; feePct: number; platformFee: number; startDate: string
   status: string; currentRound: number | null; memberCount: number
   me: { memberId: string; slot: number | null; position: number; payoutPlanId: string | null } | null
   members: { id: string; name: string; slot: number | null; isMe: boolean }[]
@@ -123,7 +123,8 @@ export default function CustomerAjoGroupPage() {
       <main className="ui-container">
         <section className="ui-card">
           <p className="ui-row-sub">You pay {naira(g.contribution)} {EVERY[g.cadence]}</p>
-          <p className="ag-ajo-pot">{naira(g.pot)}</p>
+          <p className="ag-ajo-pot">{naira(g.pot - g.platformFee)}</p>
+          {g.feePct > 0 && <p className="ui-row-sub">After a {g.feePct}% Platform Fee of {naira(g.platformFee)}</p>}
           <p className="ui-row-sub">{myRound ? `You collect in ${myRound.label}` : g.me ? `You’re number ${g.me.position}: ${g.rounds[g.me.position - 1].label}, unless someone ahead leaves` : ''}</p>
         </section>
 

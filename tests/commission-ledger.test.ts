@@ -30,7 +30,7 @@ function stubTx(opts: { goLive?: string; rates?: Record<string, number>; existin
     },
     transaction: { aggregate: async () => ({ _sum: { amount: opts.preDeposits ?? 0 } }) },
   }
-  return { tx: tx as unknown as Prisma.TransactionClient, calls, client: tx as unknown as Pick<PrismaClient, 'platformSetting' | 'transaction'> }
+  return { tx: tx as unknown as Prisma.TransactionClient, calls, client: tx as unknown as Pick<PrismaClient, 'platformSetting' | 'transaction' | 'ajoPayout'> }
 }
 
 const LIVE = '2026-01-01T00:00:00.000Z' // already past, so "now" is after go-live

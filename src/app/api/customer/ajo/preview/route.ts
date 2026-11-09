@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
-import { isJoinCode, potOf, roundLabel, type AjoCadence } from '@/lib/ajo'
+import { ajoFeeOn, isJoinCode, potOf, roundLabel, type AjoCadence } from '@/lib/ajo'
+import { getAjoFee } from '@/lib/ajo-fee'
 import { AJO_CODE_LIMIT, ajoCodeRateLimiter } from '@/lib/rate-limit'
 import { displayName } from '@/lib/format'
 
@@ -23,9 +24,10 @@ export async function GET(req: NextRequest) {
   })
   if (!g) return NextResponse.json({ error: NOT_FOUND }, { status: 404 })
   const cadence = g.cadence as AjoCadence
+  const rate = await getAjoFee(prisma)
   return NextResponse.json({
     group: {
-      id: g.id, name: g.name, cadence, size: g.size, contribution: g.contribution, pot: potOf(g), startDate: g.startDate,
+      id: g.id, name: g.name, cadence, size: g.size, contribution: g.contribution, pot: potOf(g), feePct: rate.feePct, platformFee: ajoFeeOn(potOf(g), rate).fee, startDate: g.startDate,
       firstRound: roundLabel(g.startDate, cadence, 1), lastRound: roundLabel(g.startDate, cadence, g.size),
       agentName: displayName(g.agent.name), memberCount: g.members.length,
       yourTurn: g.members.length < g.size ? roundLabel(g.startDate, cadence, g.members.length + 1) : null,

@@ -102,3 +102,30 @@ export function parseNewGroup(raw: unknown, now: Date = new Date()): { ok: true;
 export function byJoinOrder<T extends { id: string; joinedAt: Date | string }>(members: T[]): T[] {
   return [...members].sort((x, y) => new Date(x.joinedAt).getTime() - new Date(y.joinedAt).getTime() || x.id.localeCompare(y.id))
 }
+
+// Platform Fee: a percentage of each pot, taken when its member collects. Super admin sets it; a group's rate is locked
+// when the group starts. Refunds carry no fee.
+export const AJO_FEE_MAX_PCT = 50
+export type AjoFee = { feePct: number; agentSharePct: number }
+export const AJO_FEE_DEFAULT: AjoFee = { feePct: 0, agentSharePct: 0 }
+
+const cents = (n: number) => Math.round(n * 100) / 100
+
+/** Narrow an untrusted fee setting; errors are per field. */
+export function parseAjoFee(raw: unknown): { ok: true; value: AjoFee } | { ok: false; errors: Record<string, string> } {
+  const b = (raw && typeof raw === 'object' ? raw : {}) as Record<string, unknown>
+  const feePct = b.feePct === '' || b.feePct === null || b.feePct === undefined ? NaN : Number(b.feePct)
+  const agentSharePct = b.agentSharePct === '' || b.agentSharePct === null || b.agentSharePct === undefined ? NaN : Number(b.agentSharePct)
+  const errors: Record<string, string> = {}
+  if (!Number.isFinite(feePct) || feePct < 0 || feePct > AJO_FEE_MAX_PCT) errors.feePct = `Enter a percentage from 0 to ${AJO_FEE_MAX_PCT}.`
+  if (!Number.isFinite(agentSharePct) || agentSharePct < 0 || agentSharePct > 100) errors.agentSharePct = 'Enter a percentage from 0 to 100.'
+  if (Object.keys(errors).length) return { ok: false, errors }
+  return { ok: true, value: { feePct: cents(feePct), agentSharePct: cents(agentSharePct) } }
+}
+
+/** The fee on an amount, and who gets it. The platform takes whatever the agent's share leaves, so the kobo always adds up. */
+export function ajoFeeOn(amount: number, rate: AjoFee): { fee: number; agent: number; platform: number } {
+  const fee = cents(amount * rate.feePct / 100)
+  const agent = cents(fee * rate.agentSharePct / 100)
+  return { fee, agent, platform: cents(fee - agent) }
+}

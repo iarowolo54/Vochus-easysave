@@ -826,29 +826,32 @@ model AnnouncementDismissal {
 // contribution every round, and when every member has paid a round, that round's slot holder gets the whole pot as an
 // ended payout plan (SavingsPlan cadence 'ajo') that they collect through the normal collection flow.
 model AjoGroup {
-  id            String            @id @default(cuid())
+  id               String            @id @default(cuid())
   /// Six digits, from node:crypto. Only usable while the group is Forming.
-  code          String            @unique
-  name          String
-  agentId       String
-  agent         Agent             @relation(fields: [agentId], references: [id])
-  cadence       String // 'daily' | 'weekly' | 'monthly'
-  size          Int
-  contribution  Float
+  code             String            @unique
+  name             String
+  agentId          String
+  agent            Agent             @relation(fields: [agentId], references: [id])
+  cadence          String // 'daily' | 'weekly' | 'monthly'
+  size             Int
+  contribution     Float
   /// Round 1 is due on this Lagos day; round N one day/week/month later each.
-  startDate     DateTime
-  status        String            @default("Forming") // Forming | Running | Completed | Cancelled
+  startDate        DateTime
+  status           String            @default("Forming") // Forming | Running | Completed | Cancelled
   /// Fee taken from each pot; 'none' until the owner decides.
-  feeRule       String            @default("none")
-  lockedAt      DateTime?
-  completedAt   DateTime?
+  feeRule          String            @default("none")
+  /// Platform Fee rate, locked when the group starts: % of each pot, and the agent's % of that fee.
+  feePct           Float             @default(0)
+  feeAgentSharePct Float             @default(0)
+  lockedAt         DateTime?
+  completedAt      DateTime?
   /// Set when staff stop a running group and refund its open turn (status Stopped).
-  stoppedAt     DateTime?
-  stopReason    String?
-  createdAt     DateTime          @default(now())
-  members       AjoMember[]
-  contributions AjoContribution[]
-  payouts       AjoPayout[]
+  stoppedAt        DateTime?
+  stopReason       String?
+  createdAt        DateTime          @default(now())
+  members          AjoMember[]
+  contributions    AjoContribution[]
+  payouts          AjoPayout[]
 
   @@index([agentId])
 }

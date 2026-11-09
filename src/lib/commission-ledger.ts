@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client'
+import { ajoPlanFee } from '@/lib/ajo-fee'
 import { money } from '@/lib/money'
 import { feeRulesOf, getCommissionRates, pct, type CommissionRates } from '@/lib/commission-rates'
 import { depositFee, settleUpFee } from '@/lib/savings-fee'
@@ -91,13 +92,16 @@ export async function depositFeeOps(
  * After: only what the deposits did not already pay (v2), split with the agent's part stored so a later rate edit cannot change it.
  */
 export async function collectionFee(
-  client: Pick<PrismaClient, 'platformSetting' | 'transaction'>,
+  client: Pick<PrismaClient, 'platformSetting' | 'transaction' | 'ajoPayout'>,
   plan: { id: string; cadence: string | null; dailyAmount: number; source: string | null; feeCollected: number; maturityDate?: Date },
   balance: number,
   at: Date,
 ): Promise<{ feeRule: 'v1' } | { feeRule: 'v2'; penalty: number; feeAgent: number }> {
-  // An Ajo payout plan is a group's pot: no fee until the owner decides one (AjoGroup.feeRule).
-  if (plan.cadence === 'ajo') return { feeRule: 'v2', penalty: 0, feeAgent: 0 }
+  // An Ajo pot pays the Platform Fee at its group's locked rate; a refund plan pays nothing.
+  if (plan.cadence === 'ajo') {
+    const f = await ajoPlanFee(client, plan.id, balance)
+    return { feeRule: 'v2', penalty: f.fee, feeAgent: f.agent }
+  }
   // Flexible plans: commission (cash) and, before the end date, a penalty (cash and online). New plan type, so no v1 rule.
   if (isFlexible(plan.cadence)) {
     if (!plan.maturityDate) throw new Error('collectionFee: flexible plan needs maturityDate')

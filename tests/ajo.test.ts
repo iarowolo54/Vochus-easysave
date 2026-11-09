@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { byJoinOrder, isJoinCode, isRoundFunded, lagosMidnight, openRound, parseNewGroup, potOf, roundDueDay, roundLabel } from '../src/lib/ajo'
+import { ajoFeeOn, parseAjoFee, byJoinOrder, isJoinCode, isRoundFunded, lagosMidnight, openRound, parseNewGroup, potOf, roundDueDay, roundLabel } from '../src/lib/ajo'
 
 const start = lagosMidnight('2026-11-10')
 
@@ -53,4 +53,16 @@ test('turns follow join order, whatever order the rows arrive in', () => {
 test('join codes are six digits', () => {
   assert.ok(isJoinCode('012345'))
   assert.ok(!isJoinCode('12345') && !isJoinCode('12345a') && !isJoinCode(123456))
+})
+
+test('platform fee: amounts add up exactly', () => {
+  assert.deepEqual(ajoFeeOn(30000, { feePct: 2, agentSharePct: 25 }), { fee: 600, agent: 150, platform: 450 })
+  const f = ajoFeeOn(3333.33, { feePct: 1.5, agentSharePct: 33.33 })
+  assert.equal(Math.round((f.agent + f.platform) * 100) / 100, f.fee)
+  assert.deepEqual(ajoFeeOn(30000, { feePct: 0, agentSharePct: 50 }), { fee: 0, agent: 0, platform: 0 })
+})
+
+test('platform fee setting: limits', () => {
+  assert.deepEqual(parseAjoFee({ feePct: '2.5', agentSharePct: '40' }), { ok: true, value: { feePct: 2.5, agentSharePct: 40 } })
+  for (const bad of [{ feePct: '', agentSharePct: '10' }, { feePct: '51', agentSharePct: '10' }, { feePct: '-1', agentSharePct: '10' }, { feePct: '2', agentSharePct: '101' }, { feePct: 'x', agentSharePct: '1' }]) assert.equal(parseAjoFee(bad).ok, false, JSON.stringify(bad))
 })

@@ -1,8 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { ajoFeeOn } from '@/lib/ajo'
 import { Empty, Field, LoadError, Modal, PageHeader, TableSkeleton, naira, useToast } from '../_components/admin-ui'
 
+type Fee = { feePct: number; agentSharePct: number }
 type Group = {
   id: string; name: string; status: string; cadence: string; size: number; contribution: number; pot: number
   agentName: string; agentCode: string; memberCount: number; round: number | null; roundLabel: string | null
@@ -17,6 +19,8 @@ export default function AjoGroupsAdminPage() {
   const [groups, setGroups] = useState<Group[] | null>(null)
   const [failed, setFailed] = useState(false)
   const [manage, setManage] = useState<Group | null>(null)
+  const [fee, setFee] = useState<Fee | null>(null)
+  const [editFee, setEditFee] = useState(false)
   const [toastNode, toast] = useToast()
 
   const load = useCallback(async () => {
@@ -27,7 +31,10 @@ export default function AjoGroupsAdminPage() {
       setGroups(((await res.json()) as { groups: Group[] }).groups)
     } catch { setFailed(true) }
   }, [])
-  useEffect(() => { load() }, [load])
+  const loadFee = useCallback(() => {
+    fetch('/api/admin/ajo/fee', { cache: 'no-store' }).then(r => r.ok ? r.json() : null).then((d: { fee?: Fee } | null) => { if (d?.fee) setFee(d.fee) }).catch(() => {})
+  }, [])
+  useEffect(() => { load(); loadFee() }, [load, loadFee])
 
   const overdue = groups?.filter(g => g.overdue).length ?? 0
   const held = groups?.reduce((s, g) => s + g.inPool, 0) ?? 0
@@ -42,6 +49,20 @@ export default function AjoGroupsAdminPage() {
             <div className="stat"><div className="stat-lbl">Paid in, not yet paid out</div><div className="stat-val">{groups ? naira(held) : '—'}</div></div>
             <div className="stat"><div className="stat-lbl">Overdue turns</div><div className="stat-val">{groups ? overdue : '—'}</div></div>
           </div>
+          <section className="card am-section" aria-labelledby="ajo-fee-h">
+            <div className="card-hd">
+              <div>
+                <h3 id="ajo-fee-h">Platform Fee</h3>
+                <p className="am-card-sub">Taken from each pot when its member collects. Refunds aren’t charged. A group keeps the rate it started with.</p>
+              </div>
+              <button type="button" className="btn btn-sm btn-outline" onClick={() => setEditFee(true)} disabled={!fee}>Edit</button>
+            </div>
+            <dl className="dlg-ledger am-ajo-fee">
+              <div><dt>Fee on each pot</dt><dd className="dlg-strong">{fee ? `${fee.feePct}%` : '—'}</dd></div>
+              <div><dt>Agent’s share of the fee</dt><dd>{fee ? `${fee.agentSharePct}%` : '—'}</dd></div>
+              <div><dt>Platform’s share of the fee</dt><dd>{fee ? `${Math.round((100 - fee.agentSharePct) * 100) / 100}%` : '—'}</dd></div>
+            </dl>
+          </section>
           <section className="card" aria-labelledby="ajo-h">
             <div className="card-hd"><h3 id="ajo-h">Groups</h3></div>
             {!groups ? <TableSkeleton rows={4} cols={6} />
@@ -72,9 +93,57 @@ export default function AjoGroupsAdminPage() {
           </section>
         </>
       )}
+      {editFee && fee && <EditFee fee={fee} onClose={() => setEditFee(false)} onDone={f => { setFee(f); setEditFee(false); toast('Platform Fee saved', 'success') }} />}
       {manage && <ManageGroup group={manage} onClose={() => setManage(null)} onDone={msg => { setManage(null); toast(msg, 'success'); void load() }} />}
       {toastNode}
     </>
+  )
+}
+
+const EXAMPLE_POT = 30000
+
+function EditFee({ fee, onClose, onDone }: { fee: Fee; onClose: () => void; onDone: (f: Fee) => void }) {
+  const [feePct, setFeePct] = useState(String(fee.feePct))
+  const [agentSharePct, setAgentSharePct] = useState(String(fee.agentSharePct))
+  const [pin, setPin] = useState('')
+  const [errors, setErrors] = useState<Record<string, string>>({})
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+  const example = ajoFeeOn(EXAMPLE_POT, { feePct: Number(feePct) || 0, agentSharePct: Number(agentSharePct) || 0 })
+
+  async function save() {
+    setBusy(true); setError(''); setErrors({})
+    try {
+      const res = await fetch('/api/admin/ajo/fee', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ feePct, agentSharePct, pin }) })
+      const d = await res.json().catch(() => ({})) as { fee?: Fee; error?: string; errors?: Record<string, string> }
+      if (res.ok && d.fee) { onDone(d.fee); return }
+      setErrors(d.errors ?? {}); setError(d.error ?? 'That didn’t save. Try again.')
+    } catch {
+      setError('No connection. Check your internet and try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal icon="commission" title="Platform Fee" sub="Applies to groups that start from now on. Groups already running keep their rate." onClose={onClose} busy={busy} error={error || undefined}
+      footer={<>
+        <button type="button" className="btn btn-outline" onClick={onClose} disabled={busy}>Cancel</button>
+        <button type="button" className="btn btn-green" onClick={save} disabled={busy || !pin}>{busy ? 'Saving…' : 'Save'}</button>
+      </>}>
+      <form onSubmit={e => { e.preventDefault(); if (pin) save() }} noValidate>
+        <div className="am-2col">
+          <Field id="af-fee" label="Fee on each pot (%)" error={errors.feePct}>
+            <input id="af-fee" className="a-input" type="text" inputMode="decimal" autoComplete="off" value={feePct} aria-invalid={!!errors.feePct} onChange={e => setFeePct(e.target.value)} />
+          </Field>
+          <Field id="af-agent" label="Agent’s share of it (%)" error={errors.agentSharePct}>
+            <input id="af-agent" className="a-input" type="text" inputMode="decimal" autoComplete="off" value={agentSharePct} aria-invalid={!!errors.agentSharePct} onChange={e => setAgentSharePct(e.target.value)} />
+          </Field>
+        </div>
+        <p className="dlg-note">On a {naira(EXAMPLE_POT)} pot: {naira(example.fee)} fee, {naira(example.agent)} to the agent and {naira(example.platform)} to the platform.</p>
+        <Field id="af-pin" label="Approval PIN"><input id="af-pin" className="a-input am-pin" type="password" inputMode="numeric" maxLength={6} autoComplete="off" placeholder="••••" value={pin} onChange={e => setPin(e.target.value)} /></Field>
+      </form>
+    </Modal>
   )
 }
 
@@ -122,7 +191,7 @@ function ManageGroup({ group, onClose, onDone }: { group: Group; onClose: () => 
   return (
     <Modal icon="staff" size="lg" title={mode?.kind === 'stop' ? `Stop ${group.name}?` : mode ? `Replace ${mode.name}` : group.name}
       sub={mode?.kind === 'stop'
-        ? 'The group closes for good. Everyone who paid the open turn gets that money back to collect. Turns already paid out aren’t affected.'
+        ? 'The group closes for good. Everyone who paid the open turn gets that money back to redeem. Turns already paid out aren’t affected.'
         : mode ? 'The new customer takes over this turn and pays every turn from now on. What this member already paid comes out of that turn’s pot and goes back to them.' : undefined}
       onClose={onClose} busy={busy} error={error || undefined}
       footer={mode ? <>
@@ -146,7 +215,7 @@ function ManageGroup({ group, onClose, onDone }: { group: Group; onClose: () => 
                     <td className="am-nowrap" data-label="Turn">{m.slot ? detail.rounds[m.slot - 1].label : ''}</td>
                     <td className="td-name">{m.name}<div className="am-muted">{m.customerCode}</div></td>
                     <td data-label="This turn"><span className={`bdg ${paid ? 'bdg-g' : 'bdg-a'}`}>{paid ? 'Paid' : 'Not paid'}</span></td>
-                    <td>{collected ? <span className="am-muted">Collected</span> : <button type="button" className="btn btn-sm btn-outline" onClick={() => choose({ kind: 'replace', memberId: m.id, name: m.name })}>Replace</button>}</td>
+                    <td>{collected ? <span className="am-muted">Redeemed</span> : <button type="button" className="btn btn-sm btn-outline" onClick={() => choose({ kind: 'replace', memberId: m.id, name: m.name })}>Replace</button>}</td>
                   </tr>
                 )
               })}

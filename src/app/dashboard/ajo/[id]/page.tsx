@@ -12,7 +12,7 @@ import { displayName, formatDate, formatNaira } from '@/lib/format'
 type Member = { id: string; slot: number | null; customerDbId: string; customerCode: string; name: string; phone: string; type: string }
 type Round = { round: number; label: string; dueDay: string; holderId: string | null; paid: { memberId: string; method: string; at: string }[]; payout: { memberId: string; amount: number; at: string } | null }
 type Group = {
-  id: string; code: string; name: string; cadence: string; size: number; contribution: number; pot: number; startDate: string
+  id: string; code: string; name: string; cadence: string; size: number; contribution: number; pot: number; feePct: number; platformFee: number; startDate: string
   status: string; currentRound: number | null; members: Member[]; rounds: Round[]
 }
 type Found = { id: string; customerId: string; firstName: string; lastName: string }
@@ -96,7 +96,7 @@ export default function AjoGroupPage() {
         <p className="ui-row-title">{g.name}</p>
         <p className="ui-row-sub">{naira(g.contribution)} {EVERY[g.cadence]} · {g.size} members</p>
         <p className="ag-ajo-pot">{naira(g.pot)}</p>
-        <p className="ui-row-sub">Each turn’s pot</p>
+        <p className="ui-row-sub">Each turn’s pot{g.feePct > 0 ? `, less a ${g.feePct}% Platform Fee (${naira(g.platformFee)})` : ''}</p>
       </section>
 
       {forming && (
