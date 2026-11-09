@@ -644,6 +644,10 @@ export default function RedemptionsPage() {
                             <div className="td-name">{r.customerName}</div>
                             <div className="td-sub">{r.customerId}</div>
                             {r.planGoal && <div className="td-sub">Plan: {r.planGoal}</div>}
+                            {r.ajoEarlyTurn && <div className="cm-ajo-flag">
+                              <span className="bdg bdg-a">Early Ajo turn</span>
+                              <div className="td-sub">Turn {r.ajoEarlyTurn.round} of {r.ajoEarlyTurn.size}. Has paid {r.ajoEarlyTurn.paid} turn{r.ajoEarlyTurn.paid === 1 ? '' : 's'}{r.ajoEarlyTurn.allCash ? ', all cash through the agent' : ''}. Check before approving.</div>
+                            </div>}
                           </td>
                           <td data-label="Agent">
                             <div className="td-name">{r.agentName}</div>
@@ -651,10 +655,6 @@ export default function RedemptionsPage() {
                           </td>
                           <td data-label="Type">
                             <TypeBadge type={r.type} />
-                            {r.ajoEarlyTurn && <>
-                              <div><span className="bdg bdg-a">Early Ajo turn</span></div>
-                              <div className="td-sub">Turn {r.ajoEarlyTurn.round} of {r.ajoEarlyTurn.size}. Has paid {r.ajoEarlyTurn.paid} turn{r.ajoEarlyTurn.paid === 1 ? '' : 's'}{r.ajoEarlyTurn.allCash ? ', all cash through the agent' : ''}. Check before approving.</div>
-                            </>}
                           </td>
                           <td className="num cm-strong" data-label="Net payout">{nairaKobo(r.netPayout)}</td>
                           <td data-label="Payout method">
