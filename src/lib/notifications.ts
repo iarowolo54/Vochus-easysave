@@ -20,7 +20,7 @@ export type NotificationKind =
   | 'wallet_funded' | 'withdrawal_paid' | 'withdrawal_declined'
   | 'plan_ending_soon' | 'plan_ended' | 'plans_ending_this_week'
   | 'plan_uncollected' | 'uncollected_this_week'
-  | 'ajo_joined' | 'ajo_started' | 'ajo_paid' | 'ajo_paid_agent' | 'ajo_round_out' | 'ajo_due' | 'ajo_late'
+  | 'ajo_joined' | 'ajo_started' | 'ajo_paid' | 'ajo_paid_agent' | 'ajo_round_out' | 'ajo_due' | 'ajo_late' | 'ajo_stopped' | 'ajo_replaced'
   | 'new_phone'
 
 export interface NotificationEvent {
@@ -119,7 +119,7 @@ export const notifications = {
   },
 
   planEnded(f: { planId: string; customerId: string; goal: string; ajo?: boolean }): NotificationEvent[] {
-    if (f.ajo) return [{ recipient: customer(f.customerId), kind: 'plan_ended', title: `Your ${f.goal} money is ready`, body: 'Everyone has paid this round. Collect it from Home.', href: '/customer/dashboard', dedupeKey: `plan-ended:${f.planId}` }]
+    if (f.ajo) return [{ recipient: customer(f.customerId), kind: 'plan_ended', title: `Your ${f.goal} money is ready`, body: 'Collect it from Home.', href: '/customer/dashboard', dedupeKey: `plan-ended:${f.planId}` }]
     return [{ recipient: customer(f.customerId), kind: 'plan_ended', title: `Your ${f.goal} plan has ended`, body: 'You can collect it now, or keep saving into it again from Home.', href: '/customer/dashboard', dedupeKey: `plan-ended:${f.planId}` }]
   },
 
@@ -174,6 +174,19 @@ export const notifications = {
     if (f.unpaid <= 0) return []
     const who = f.unpaid === 1 ? '1 member hasn’t paid' : `${f.unpaid} members haven’t paid`
     return [{ recipient: agent(f.agentId), kind: 'ajo_late', title: `${f.groupName}: ${who}`, body: `${f.roundLabel} can’t pay out until everyone has paid.`, href: `/dashboard/ajo/${f.groupId}`, dedupeKey: `ajo-late:${f.groupId}:${f.round}:w${f.week}` }]
+  },
+
+  /** Ajo: staff stopped the group. Anyone who paid the open turn has it back to collect. */
+  ajoStopped(f: { memberId: string; customerId: string; groupId: string; groupName: string; refund: number }): NotificationEvent[] {
+    return [{ recipient: customer(f.customerId), kind: 'ajo_stopped', title: `${f.groupName} has been stopped`, body: f.refund > 0 ? `${naira(f.refund)} you paid for this turn is ready to collect from Home.` : 'Talk to your agent if you have questions.', href: `/customer/ajo/${f.groupId}`, dedupeKey: `ajo-stopped:${f.memberId}` }]
+  },
+
+  /** Ajo: staff put someone in a member's place. Both people are told. */
+  ajoReplaced(f: { memberId: string; newCustomerId: string; oldCustomerId: string; groupId: string; groupName: string; turnLabel: string; owed: number }): NotificationEvent[] {
+    return [
+      { recipient: customer(f.newCustomerId), kind: 'ajo_replaced', title: `You’ve joined ${f.groupName}`, body: `You collect in ${f.turnLabel} and pay every turn from now on.`, href: `/customer/ajo/${f.groupId}`, dedupeKey: `ajo-replaced-in:${f.memberId}:${f.newCustomerId}` },
+      { recipient: customer(f.oldCustomerId), kind: 'ajo_replaced', title: `You’re no longer in ${f.groupName}`, body: f.owed > 0 ? `The ${naira(f.owed)} you paid comes back to you in ${f.turnLabel}.` : 'Someone else has taken your place.', href: '/customer/ajo', dedupeKey: `ajo-replaced-out:${f.memberId}:${f.oldCustomerId}` },
+    ]
   },
 
   /** Once a day, only when there is something to say. */

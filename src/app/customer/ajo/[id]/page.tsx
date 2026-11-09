@@ -14,7 +14,7 @@ import { formatDate, formatNaira } from '@/lib/format'
 type Group = {
   id: string; name: string; cadence: string; size: number; contribution: number; pot: number; startDate: string
   status: string; currentRound: number | null; memberCount: number
-  me: { memberId: string; slot: number | null; payoutPlanId: string | null } | null
+  me: { memberId: string; slot: number | null; position: number; payoutPlanId: string | null } | null
   members: { id: string; name: string; slot: number | null; isMe: boolean }[]
   rounds: { round: number; label: string; dueDay: string; holderId: string | null; paidMemberIds: string[]; paidOut: boolean }[]
 }
@@ -124,7 +124,7 @@ export default function CustomerAjoGroupPage() {
         <section className="ui-card">
           <p className="ui-row-sub">You pay {naira(g.contribution)} {EVERY[g.cadence]}</p>
           <p className="ag-ajo-pot">{naira(g.pot)}</p>
-          <p className="ui-row-sub">{myRound ? `You collect in ${myRound.label}` : 'Your agent will give you your turn to collect'}</p>
+          <p className="ui-row-sub">{myRound ? `You collect in ${myRound.label}` : g.me ? `You’re number ${g.me.position}: ${g.rounds[g.me.position - 1].label}, unless someone ahead leaves` : ''}</p>
         </section>
 
         {g.status === 'Forming' && (
@@ -151,6 +151,8 @@ export default function CustomerAjoGroupPage() {
             </section>
           </>
         )}
+
+        {g.status === 'Stopped' && <section className="ui-card ui-gap-top"><EmptyState icon="error" title="This group was stopped" text="If you paid for the open turn, that money is ready to collect from Home." /></section>}
 
         {g.status === 'Completed' && <section className="ui-card ui-gap-top"><EmptyState icon="check" title="This group has finished" text="Every member has had their turn." /></section>}
 

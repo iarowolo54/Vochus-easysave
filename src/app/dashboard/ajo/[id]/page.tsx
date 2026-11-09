@@ -38,7 +38,7 @@ export default function AjoGroupPage() {
   const [group, setGroup] = useState<Group | null>(null)
   const [failed, setFailed] = useState(false)
   const [copied, setCopied] = useState(false)
-  const [sheet, setSheet] = useState<null | 'add' | 'slots' | 'start' | 'cancel'>(null)
+  const [sheet, setSheet] = useState<null | 'add' | 'start' | 'cancel'>(null)
   const [cashFor, setCashFor] = useState<Member | null>(null)
   const [removing, setRemoving] = useState<Member | null>(null)
   const [busy, setBusy] = useState(false)
@@ -78,7 +78,6 @@ export default function AjoGroupPage() {
   const byId = new Map(g.members.map(m => [m.id, m]))
   const forming = g.status === 'Forming'
   const full = g.members.length === g.size
-  const slotted = full && g.members.every(m => m.slot !== null)
   const current = g.currentRound ? g.rounds[g.currentRound - 1] : null
   const paidIds = new Set(current?.paid.map(p => p.memberId) ?? [])
   const shareText = `Join our Ajo group "${g.name}" on Vochus Easy Save. Open the app, tap Group Ajo and enter this code: ${g.code}`
@@ -115,25 +114,27 @@ export default function AjoGroupPage() {
           <div className="ui-section-head ui-gap-top"><h2>Members ({g.members.length} of {g.size})</h2></div>
           <div className="ui-card ui-card--list">
             {g.members.length === 0 && <p className="ui-note ui-note--center">No one has joined yet.</p>}
-            {g.members.map(m => (
+            {g.members.map((m, i) => (
               <ListRow key={m.id} icon="customers" title={m.name}
-                sub={m.slot ? g.rounds[m.slot - 1].label : m.type === 'online' ? 'Online' : 'Cash'}
-                value={<button type="button" className="ui-link" onClick={() => { setError(''); setRemoving(m) }} aria-label={`Remove ${m.name}`}>Remove</button>} />
+                sub={`${g.rounds[i].label} · ${m.type === 'online' ? 'Online' : 'Cash'}`}
+                value={m.type === 'online' ? undefined : <button type="button" className="ui-link" onClick={() => { setError(''); setRemoving(m) }} aria-label={`Remove ${m.name}`}>Remove</button>} />
             ))}
           </div>
+          <p className="ui-note">Turns follow the order people joined. No one can change them.</p>
           <div className="ui-stack ui-gap-top">
             {!full && <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => openSheet('add')}><Icons.add size={18} aria-hidden="true" /> Add a cash customer</button>}
-            {full && <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => openSheet('slots')}>{slotted ? 'Change who collects when' : 'Choose who collects when'}</button>}
-            <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={!slotted} onClick={() => openSheet('start')}>Start the group</button>
-            {!slotted && <p className="ui-note ui-note--center">{full ? 'Give every member a turn to start the group.' : `You need ${g.size - g.members.length} more member${g.size - g.members.length === 1 ? '' : 's'} to start.`}</p>}
+            <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={!full} onClick={() => openSheet('start')}>Start the group</button>
+            {!full && <p className="ui-note ui-note--center">You need {g.size - g.members.length} more member{g.size - g.members.length === 1 ? '' : 's'} to start.</p>}
             <button type="button" className="ui-btn ui-btn--plain ui-btn--block" onClick={() => openSheet('cancel')}>Cancel this group</button>
           </div>
         </>
       )}
 
+      {g.status === 'Stopped' && <section className="ui-card ui-gap-top"><EmptyState icon="error" title="This group was stopped" text="Vochus staff stopped it. Anyone who paid the open turn can collect that money back from Collections." /></section>}
+
       {g.status === 'Cancelled' && <section className="ui-card ui-gap-top"><EmptyState icon="error" title="This group was cancelled" text="It never started, so no money moved." /></section>}
 
-      {!forming && g.status !== 'Cancelled' && (
+      {!forming && g.status !== 'Cancelled' && g.status !== 'Stopped' && (
         <>
           {current && (
             <>
@@ -174,10 +175,6 @@ export default function AjoGroupPage() {
       <BottomSheet open={sheet === 'add'} onClose={closeAll} title="Add a cash customer">
         {sheet === 'add' && <AddCustomer memberCustomerIds={g.members.map(m => m.customerDbId)} busy={busy} error={error}
           onPick={c => act(`/api/agent/ajo/${g.id}/members`, 'POST', { customerId: c.id })} />}
-      </BottomSheet>
-
-      <BottomSheet open={sheet === 'slots'} onClose={closeAll} title="Who collects when">
-        {sheet === 'slots' && <SlotsForm group={g} busy={busy} error={error} onSave={slots => act(`/api/agent/ajo/${g.id}/slots`, 'POST', { slots })} />}
       </BottomSheet>
 
       <BottomSheet open={sheet === 'start'} onClose={closeAll} title="Start this group?">
@@ -248,34 +245,6 @@ function AddCustomer({ memberCustomerIds, busy, error, onPick }: { memberCustome
           {list.map(c => <ListRow key={c.id} icon="customers" title={displayName(`${c.firstName} ${c.lastName}`)} sub={c.customerId} onClick={busy ? undefined : () => onPick(c)} />)}
         </div>
       )}
-    </>
-  )
-}
-
-function SlotsForm({ group, busy, error, onSave }: { group: Group; busy: boolean; error: string; onSave: (slots: Record<string, number>) => void }) {
-  const [slots, setSlots] = useState<Record<string, string>>(() => Object.fromEntries(group.members.map(m => [m.id, m.slot ? String(m.slot) : ''])))
-  const used = new Set(Object.values(slots).filter(Boolean))
-  const complete = group.members.every(m => slots[m.id]) && used.size === group.size
-
-  return (
-    <>
-      {group.members.map(m => (
-        <div className="ui-field" key={m.id}>
-          <label className="ui-label" htmlFor={`slot-${m.id}`}>{m.name}</label>
-          <select id={`slot-${m.id}`} className="ui-input" value={slots[m.id]} onChange={e => setSlots(s => ({ ...s, [m.id]: e.target.value }))}>
-            <option value="">Choose a turn</option>
-            {group.rounds.map(r => {
-              const takenByOther = used.has(String(r.round)) && slots[m.id] !== String(r.round)
-              return <option key={r.round} value={r.round} disabled={takenByOther}>{r.label}{takenByOther ? ' (taken)' : ''}</option>
-            })}
-          </select>
-        </div>
-      ))}
-      {error && <p className="ui-field-error" role="alert"><Icons.error size={16} aria-hidden="true" /> {error}</p>}
-      <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={busy || !complete} aria-busy={busy}
-        onClick={() => onSave(Object.fromEntries(Object.entries(slots).map(([k, v]) => [k, Number(v)])))}>
-        {busy ? 'Saving…' : 'Save'}
-      </button>
     </>
   )
 }

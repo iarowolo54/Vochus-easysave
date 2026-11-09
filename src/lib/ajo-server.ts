@@ -61,7 +61,7 @@ export async function loadGroup(client: PrismaClient | Prisma.TransactionClient,
   const g = await client.ajoGroup.findFirst({
     where,
     include: {
-      members: { select: memberSelect, orderBy: { joinedAt: 'asc' } },
+      members: { select: memberSelect, orderBy: [{ joinedAt: 'asc' }, { id: 'asc' }] },
       contributions: { select: { memberId: true, round: true, method: true, createdAt: true } },
       payouts: { select: { round: true, memberId: true, amount: true, savingsPlanId: true, createdAt: true } },
     },
@@ -105,7 +105,7 @@ export function memberView(g: AjoGroupView, customerDbId: string) {
   return {
     id: g.id, name: g.name, cadence: g.cadence, size: g.size, contribution: g.contribution, pot: g.pot, startDate: g.startDate,
     status: g.status, currentRound: g.currentRound, memberCount: g.members.length,
-    me: me && { memberId: me.id, slot: me.slot, payoutPlanId: me.slot ? g.rounds[me.slot - 1]?.payout?.savingsPlanId ?? null : null },
+    me: me && { memberId: me.id, slot: me.slot, position: g.members.findIndex(m => m.id === me.id) + 1, payoutPlanId: me.slot ? g.rounds[me.slot - 1]?.payout?.savingsPlanId ?? null : null },
     members: g.members.map(m => ({ id: m.id, name: m.name, slot: m.slot, isMe: m.id === me?.id })),
     rounds: g.rounds.map(r => ({ round: r.round, label: r.label, dueDay: r.dueDay, holderId: r.holderId, paidMemberIds: r.paid.map(p => p.memberId), paidOut: !!r.payout })),
   }

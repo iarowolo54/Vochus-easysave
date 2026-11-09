@@ -1,7 +1,7 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
-import { Empty, LoadError, PageHeader, TableSkeleton, naira } from '../_components/admin-ui'
+import { Empty, Field, LoadError, Modal, PageHeader, TableSkeleton, naira, useToast } from '../_components/admin-ui'
 
 type Group = {
   id: string; name: string; status: string; cadence: string; size: number; contribution: number; pot: number
@@ -10,12 +10,14 @@ type Group = {
 }
 
 const STATUS: Record<string, [string, string]> = {
-  Forming: ['Getting members', 'bdg-b'], Running: ['Running', 'bdg-g'], Completed: ['Finished', 'bdg-grey'], Cancelled: ['Cancelled', 'bdg-grey'],
+  Forming: ['Getting members', 'bdg-b'], Running: ['Running', 'bdg-g'], Completed: ['Finished', 'bdg-grey'], Cancelled: ['Cancelled', 'bdg-grey'], Stopped: ['Stopped', 'bdg-r'],
 }
 
 export default function AjoGroupsAdminPage() {
   const [groups, setGroups] = useState<Group[] | null>(null)
   const [failed, setFailed] = useState(false)
+  const [manage, setManage] = useState<Group | null>(null)
+  const [toastNode, toast] = useToast()
 
   const load = useCallback(async () => {
     setFailed(false)
@@ -47,7 +49,7 @@ export default function AjoGroupsAdminPage() {
               : (
                 <div className="tbl-wrap tbl-stack">
                   <table>
-                    <thead><tr><th>Group</th><th>Agent</th><th className="num">Each pays</th><th>This turn</th><th className="num">In the pool</th><th>Status</th></tr></thead>
+                    <thead><tr><th>Group</th><th>Agent</th><th className="num">Each pays</th><th>This turn</th><th className="num">In the pool</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr></thead>
                     <tbody>
                       {groups.map(g => {
                         const [label, cls] = STATUS[g.status] ?? [g.status, 'bdg-grey']
@@ -59,6 +61,7 @@ export default function AjoGroupsAdminPage() {
                             <td data-label="This turn">{g.roundLabel ? <>{g.roundLabel}<div className="am-muted">{g.paidThisRound} of {g.size} paid</div></> : <span className="am-muted">None</span>}</td>
                             <td className="num am-strong" data-label="In the pool">{naira(g.inPool)}</td>
                             <td data-label="Status"><span className={`bdg ${g.overdue ? 'bdg-a' : cls}`}>{g.overdue ? 'Overdue' : label}</span></td>
+                            <td>{g.status === 'Running' && <button type="button" className="btn btn-sm btn-outline" onClick={() => setManage(g)} aria-label={`Manage ${g.name}`}>Manage</button>}</td>
                           </tr>
                         )
                       })}
@@ -69,6 +72,97 @@ export default function AjoGroupsAdminPage() {
           </section>
         </>
       )}
+      {manage && <ManageGroup group={manage} onClose={() => setManage(null)} onDone={msg => { setManage(null); toast(msg, 'success'); void load() }} />}
+      {toastNode}
     </>
+  )
+}
+
+type Detail = { members: { id: string; slot: number | null; name: string; customerCode: string }[]; rounds: { round: number; label: string; paid: { memberId: string }[]; payout: { memberId: string } | null }[]; currentRound: number | null }
+
+/** Staff actions for a stuck group: put someone in a member's place, or stop it and refund the open turn. */
+function ManageGroup({ group, onClose, onDone }: { group: Group; onClose: () => void; onDone: (msg: string) => void }) {
+  const [detail, setDetail] = useState<Detail | null>(null)
+  const [mode, setMode] = useState<{ kind: 'replace'; memberId: string; name: string } | { kind: 'stop' } | null>(null)
+  const [code, setCode] = useState('')
+  const [note, setNote] = useState('')
+  const [pin, setPin] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
+
+  useEffect(() => {
+    fetch(`/api/admin/ajo/${group.id}`, { cache: 'no-store' })
+      .then(r => { if (!r.ok) throw new Error(); return r.json() })
+      .then((d: { group: Detail }) => setDetail(d.group))
+      .catch(() => setError('Couldn’t load this group. Close this and try again.'))
+  }, [group.id])
+
+  function choose(m: typeof mode) { setMode(m); setCode(''); setNote(''); setPin(''); setError('') }
+
+  async function submit() {
+    if (!mode) return
+    setBusy(true); setError('')
+    try {
+      const res = await fetch(`/api/admin/ajo/${group.id}/${mode.kind}`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note: note.trim(), pin, ...(mode.kind === 'replace' ? { memberId: mode.memberId, customerCode: code.trim() } : {}) }),
+      })
+      if (res.ok) { onDone(mode.kind === 'replace' ? 'Member replaced' : 'Group stopped and open turn refunded'); return }
+      const d = await res.json().catch(() => ({})) as { error?: string }
+      setError(d.error ?? 'That didn’t go through. Try again.')
+    } catch {
+      setError('No connection. Check your internet and try again.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const open = detail?.currentRound ? detail.rounds[detail.currentRound - 1] : null
+  const ready = note.trim().length >= 3 && pin.length > 0 && (mode?.kind !== 'replace' || code.trim().length > 0)
+  return (
+    <Modal icon="staff" size="lg" title={mode?.kind === 'stop' ? `Stop ${group.name}?` : mode ? `Replace ${mode.name}` : group.name}
+      sub={mode?.kind === 'stop'
+        ? 'The group closes for good. Everyone who paid the open turn gets that money back to collect. Turns already paid out aren’t affected.'
+        : mode ? 'The new customer takes over this turn and pays every turn from now on. What this member already paid comes out of that turn’s pot and goes back to them.' : undefined}
+      onClose={onClose} busy={busy} error={error || undefined}
+      footer={mode ? <>
+        <button type="button" className="btn btn-outline" onClick={() => choose(null)} disabled={busy}>Back</button>
+        <button type="button" className={`btn ${mode.kind === 'stop' ? 'btn-danger' : 'btn-green'}`} onClick={submit} disabled={busy || !ready}>{busy ? 'Saving…' : mode.kind === 'stop' ? 'Stop and refund' : 'Replace member'}</button>
+      </> : <>
+        <button type="button" className="btn btn-outline" onClick={onClose}>Close</button>
+        <button type="button" className="btn btn-danger" onClick={() => choose({ kind: 'stop' })} disabled={!detail}>Stop group and refund</button>
+      </>}>
+      {!detail && !error && <TableSkeleton rows={3} cols={3} />}
+      {detail && !mode && (
+        <div className="tbl-wrap tbl-stack">
+          <table>
+            <thead><tr><th>Turn</th><th>Member</th><th>{open ? open.label : 'This turn'}</th><th><span className="sr-only">Actions</span></th></tr></thead>
+            <tbody>
+              {[...detail.members].sort((a, b) => (a.slot ?? 0) - (b.slot ?? 0)).map(m => {
+                const collected = detail.rounds.some(r => r.payout?.memberId === m.id)
+                const paid = !!open?.paid.some(p => p.memberId === m.id)
+                return (
+                  <tr key={m.id}>
+                    <td className="am-nowrap" data-label="Turn">{m.slot ? detail.rounds[m.slot - 1].label : ''}</td>
+                    <td className="td-name">{m.name}<div className="am-muted">{m.customerCode}</div></td>
+                    <td data-label="This turn"><span className={`bdg ${paid ? 'bdg-g' : 'bdg-a'}`}>{paid ? 'Paid' : 'Not paid'}</span></td>
+                    <td>{collected ? <span className="am-muted">Collected</span> : <button type="button" className="btn btn-sm btn-outline" onClick={() => choose({ kind: 'replace', memberId: m.id, name: m.name })}>Replace</button>}</td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {mode && (
+        <form onSubmit={e => { e.preventDefault(); if (ready) submit() }} noValidate>
+          {mode.kind === 'replace' && <Field id="aj-code" label="New customer’s ID" hint="They must belong to this group’s agent.">
+            <input id="aj-code" className="a-input" value={code} autoComplete="off" placeholder="CST-00123" onChange={e => setCode(e.target.value)} />
+          </Field>}
+          <Field id="aj-note" label="Why"><input id="aj-note" className="a-input" value={note} maxLength={300} autoComplete="off" onChange={e => setNote(e.target.value)} /></Field>
+          <Field id="aj-pin" label="Approval PIN"><input id="aj-pin" className="a-input am-pin" type="password" inputMode="numeric" maxLength={6} autoComplete="off" placeholder="••••" value={pin} onChange={e => setPin(e.target.value)} /></Field>
+        </form>
+      )}
+    </Modal>
   )
 }

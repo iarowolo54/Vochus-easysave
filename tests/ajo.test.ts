@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { checkSlots, isJoinCode, isRoundFunded, lagosMidnight, openRound, parseNewGroup, potOf, roundDueDay, roundLabel } from '../src/lib/ajo'
+import { byJoinOrder, isJoinCode, isRoundFunded, lagosMidnight, openRound, parseNewGroup, potOf, roundDueDay, roundLabel } from '../src/lib/ajo'
 
 const start = lagosMidnight('2026-11-10')
 
@@ -45,12 +45,9 @@ test('new group: every bad field is named; past start refused', () => {
   if (!r.ok) assert.deepEqual(Object.keys(r.errors).sort(), ['cadence', 'contribution', 'name', 'size', 'startDate'])
 })
 
-test('slots: complete, unique, members only', () => {
-  assert.ok(checkSlots(['a', 'b'], 2, { a: 2, b: 1 }).ok)
-  assert.ok(!checkSlots(['a'], 2, { a: 1 }).ok, 'group not full')
-  assert.ok(!checkSlots(['a', 'b'], 2, { a: 1, b: 1 }).ok, 'same slot twice')
-  assert.ok(!checkSlots(['a', 'b'], 2, { a: 1, b: 3 }).ok, 'slot out of range')
-  assert.ok(!checkSlots(['a', 'b'], 2, { a: 1, b: 2, z: 1 }).ok, 'stranger')
+test('turns follow join order, whatever order the rows arrive in', () => {
+  const m = [{ id: 'c', joinedAt: '2026-11-08T10:02:00Z' }, { id: 'a', joinedAt: '2026-11-08T10:00:00Z' }, { id: 'b', joinedAt: '2026-11-08T10:00:00Z' }]
+  assert.deepEqual(byJoinOrder(m).map(x => x.id), ['a', 'b', 'c'])
 })
 
 test('join codes are six digits', () => {

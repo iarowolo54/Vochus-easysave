@@ -73,6 +73,21 @@ export async function ajoSweepEvents(client: PrismaClient, since: Date, now: Dat
     const firstDue = formatDate(new Date(`${roundDueDay(g.startDate, cadence, 1)}T12:00:00+01:00`))
     for (const m of g.members) if (m.slot) backfill.push(...N.ajoStarted({ memberId: m.id, customerId: m.customerId, groupId: g.id, groupName: g.name, slotLabel: roundLabel(g.startDate, cadence, m.slot), firstDue }))
   }
+  const [stopped, replaced] = await Promise.all([
+    client.ajoGroup.findMany({ where: { stoppedAt: { gte: since } }, select: { id: true, name: true, members: { select: { id: true, customerId: true } }, contributions: { where: { refundPlanId: { not: null } }, select: { amount: true, ref: true } } } }),
+    client.ajoMember.findMany({ where: { replacedAt: { gte: since }, owedToCustomerId: { not: null } }, select: { id: true, slot: true, customerId: true, owedToCustomerId: true, owedAmount: true, group: group } }),
+  ])
+  const refs = stopped.flatMap(g => g.contributions.map(c => c.ref))
+  const payers = new Map((await client.transaction.findMany({ where: { ref: { in: refs } }, select: { ref: true, customerId: true } })).map(t => [t.ref, t.customerId]))
+  for (const g of stopped) {
+    for (const m of g.members) {
+      const refund = g.contributions.filter(c => payers.get(c.ref) === m.customerId).reduce((s, c) => s + c.amount, 0)
+      backfill.push(...N.ajoStopped({ memberId: m.id, customerId: m.customerId, groupId: g.id, groupName: g.name, refund }))
+    }
+  }
+  for (const m of replaced) {
+    if (m.slot) backfill.push(...N.ajoReplaced({ memberId: m.id, newCustomerId: m.customerId, oldCustomerId: m.owedToCustomerId!, groupId: m.group.id, groupName: m.group.name, turnLabel: roundLabel(m.group.startDate, m.group.cadence as AjoCadence, m.slot), owed: m.owedAmount }))
+  }
   const scheduled = ajoDueEvents(running.map(g => ({ ...g, paidOutRounds: g.payouts.map(p => p.round), paid: g.contributions })), now)
   return { backfill, scheduled }
 }

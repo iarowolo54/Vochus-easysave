@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { customerType } from '@/lib/customer-type'
 import { AjoClosedError, AjoFullError, addMember, isUniqueViolation, sessionAgent } from '@/lib/ajo-server'
 
 type Ctx = { params: Promise<{ id: string }> }
@@ -41,6 +42,10 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
   const group = await prisma.ajoGroup.findFirst({ where: { id, agentId: agent.id }, select: { id: true, name: true, status: true } })
   if (!group) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (group.status !== 'Forming') return NextResponse.json({ error: 'This group has started, so members can’t be removed.' }, { status: 409 })
+  // Online members leave for themselves. If an agent could remove them, removing and re-adding would change who is first.
+  const target = await prisma.ajoMember.findFirst({ where: { id: memberId, groupId: group.id }, select: { customer: { select: { savingsPlans: { select: { source: true } } } } } })
+  if (!target) return NextResponse.json({ error: 'Member not found' }, { status: 404 })
+  if (customerType(target.customer.savingsPlans) === 'online') return NextResponse.json({ error: 'Online members leave the group themselves.' }, { status: 403 })
   const gone = await prisma.$transaction(async tx => {
     // Re-checked inside the write: the group must still be forming.
     const still = await tx.ajoGroup.count({ where: { id: group.id, status: 'Forming' } })

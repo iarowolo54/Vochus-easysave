@@ -5,6 +5,7 @@ import { prisma } from '../src/lib/prisma'
 import { recordContribution, ajoRef, AjoAlreadyPaidError, AjoRoundClosedError } from '../src/lib/ajo-settle'
 import { settleIntentPayment } from '../src/lib/customer-settle'
 import { lagosMidnight } from '../src/lib/ajo'
+import { replaceMember, stopAndRefund } from '../src/lib/ajo-admin'
 
 test('ajo: rounds, races, transfers and payouts on a real database', async () => {
   const agent = await prisma.agent.findFirstOrThrow({ where: { agentId: 'AGT-UITEST' } })
@@ -59,5 +60,60 @@ test('ajo: rounds, races, transfers and payouts on a real database', async () =>
   await prisma.ajoMember.deleteMany({ where: { groupId: g.id } })
   await prisma.ajoGroup.delete({ where: { id: g.id } })
   await prisma.paymentIntent.deleteMany({ where: { ref: { startsWith: 'ZZ-AJO-' } } })
-  await prisma.$disconnect()
+})
+
+async function setup(size: number) {
+  const agent = await prisma.agent.findFirstOrThrow({ where: { agentId: 'AGT-UITEST' } })
+  const custs = await prisma.customer.findMany({ where: { agentId: agent.id }, take: size + 1, orderBy: { createdAt: 'asc' } })
+  const g = await prisma.ajoGroup.create({ data: { code: '8' + String(Date.now()).slice(-5), name: 'ZZ staff', agentId: agent.id, cadence: 'weekly', size, contribution: 1000, startDate: lagosMidnight('2026-11-10'), status: 'Running', lockedAt: new Date() } })
+  const members = []
+  for (let i = 0; i < size; i++) members.push(await prisma.ajoMember.create({ data: { groupId: g.id, customerId: custs[i].id, slot: i + 1 } }))
+  const pay = (m: { id: string }, round: number) => prisma.$transaction(tx => recordContribution(tx, { groupId: g.id, memberId: m.id, round, amount: 1000, method: 'cash', ref: ajoRef('CON'), agentId: agent.id }))
+  const clean = async () => {
+    const refs = (await prisma.ajoContribution.findMany({ where: { groupId: g.id }, select: { ref: true } })).map(c => c.ref)
+    const plans = (await prisma.savingsPlan.findMany({ where: { cadence: 'ajo', notes: { contains: g.id } }, select: { id: true } })).map(p => p.id)
+    await prisma.notification.deleteMany({ where: { OR: [{ dedupeKey: { startsWith: 'ajo-' } }, { dedupeKey: { in: plans.map(id => `plan-ended:${id}`) } }] } })
+    await prisma.ajoPayout.deleteMany({ where: { groupId: g.id } })
+    await prisma.savingsPlan.deleteMany({ where: { id: { in: plans } } })
+    await prisma.transaction.deleteMany({ where: { ref: { in: refs } } })
+    await prisma.ajoContribution.deleteMany({ where: { groupId: g.id } })
+    await prisma.ajoMember.deleteMany({ where: { groupId: g.id } })
+    await prisma.ajoGroup.delete({ where: { id: g.id } })
+  }
+  return { g, custs, members, pay, clean }
+}
+const actor = { actorName: 'ZZ test' }
+
+test('ajo staff: a replacement takes the turn and the old member is paid back from its pot', async () => {
+  const { g, custs, members, pay, clean } = await setup(2)
+  try {
+    await pay(members[0], 1); await pay(members[1], 1)
+    const refused = await replaceMember(prisma, { groupId: g.id, memberId: members[0].id, customerCode: custs[2].customerId, note: 'test', actor })
+    assert.equal(refused.ok, false, 'a member who has collected cannot be replaced')
+    const inGroup = await replaceMember(prisma, { groupId: g.id, memberId: members[1].id, customerCode: custs[0].customerId, note: 'test', actor })
+    assert.equal(inGroup.ok, false, 'someone already in the group cannot be added')
+    assert.deepEqual(await replaceMember(prisma, { groupId: g.id, memberId: members[1].id, customerCode: custs[2].customerId, note: 'test', actor }), { ok: true })
+    assert.equal((await replaceMember(prisma, { groupId: g.id, memberId: members[1].id, customerCode: custs[1].customerId, note: 'test', actor })).ok, false, 'one handover per place')
+    await pay(members[0], 2)
+    const done = await pay(members[1], 2)
+    assert.equal(done.payout!.customerId, custs[2].id, 'the new person collects the turn')
+    assert.equal(done.payout!.amount, 1000, 'pot less what the old member paid in')
+    assert.ok(done.payout!.groupCompleted)
+    const back = await prisma.savingsPlan.findFirstOrThrow({ where: { cadence: 'ajo', customerId: custs[1].id, notes: { contains: g.id } } })
+    assert.equal(back.balance, 1000); assert.match(back.goal, /^Ajo refund/)
+  } finally { await clean() }
+})
+
+test('ajo staff: stopping refunds the open turn once, to the people who paid', async () => {
+  const { g, custs, members, pay, clean } = await setup(3)
+  try {
+    await pay(members[0], 1); await pay(members[1], 1)
+    const both = await Promise.all([stopAndRefund(prisma, { groupId: g.id, note: 'test', actor }), stopAndRefund(prisma, { groupId: g.id, note: 'test', actor })])
+    assert.equal(both.filter(r => r.ok).length, 1, 'two staff stopping at once refund once')
+    const plans = await prisma.savingsPlan.findMany({ where: { cadence: 'ajo', notes: { contains: g.id } } })
+    assert.deepEqual(plans.map(p => p.customerId).sort(), [custs[0].id, custs[1].id].sort())
+    assert.ok(plans.every(p => p.balance === 1000))
+    assert.equal((await prisma.ajoGroup.findUniqueOrThrow({ where: { id: g.id } })).status, 'Stopped')
+    await assert.rejects(pay(members[2], 1), AjoRoundClosedError)
+  } finally { await clean(); await prisma.$disconnect() }
 })

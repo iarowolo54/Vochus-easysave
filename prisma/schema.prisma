@@ -842,6 +842,9 @@ model AjoGroup {
   feeRule       String            @default("none")
   lockedAt      DateTime?
   completedAt   DateTime?
+  /// Set when staff stop a running group and refund its open turn (status Stopped).
+  stoppedAt     DateTime?
+  stopReason    String?
   createdAt     DateTime          @default(now())
   members       AjoMember[]
   contributions AjoContribution[]
@@ -851,15 +854,20 @@ model AjoGroup {
 }
 
 model AjoMember {
-  id            String            @id @default(cuid())
-  groupId       String
-  group         AjoGroup          @relation(fields: [groupId], references: [id])
-  customerId    String
-  customer      Customer          @relation(fields: [customerId], references: [id])
-  /// The round this member collects; null until the agent assigns slots.
-  slot          Int?
-  joinedAt      DateTime          @default(now())
-  contributions AjoContribution[]
+  id               String            @id @default(cuid())
+  groupId          String
+  group            AjoGroup          @relation(fields: [groupId], references: [id])
+  customerId       String
+  customer         Customer          @relation(fields: [customerId], references: [id])
+  /// The round this member collects, set from join order when the group starts. Null while forming.
+  slot             Int?
+  joinedAt         DateTime          @default(now())
+  /// Set when staff replaced this member: who they replaced and what that person had paid in. It comes out of this
+  /// turn's pot and goes back to them.
+  owedToCustomerId String?
+  owedAmount       Float             @default(0)
+  replacedAt       DateTime?
+  contributions    AjoContribution[]
 
   @@unique([groupId, customerId])
   @@unique([groupId, slot])
@@ -868,18 +876,21 @@ model AjoMember {
 
 /// The pool ledger: one row per member per round, never more.
 model AjoContribution {
-  id        String    @id @default(cuid())
-  groupId   String
-  group     AjoGroup  @relation(fields: [groupId], references: [id])
-  memberId  String
-  member    AjoMember @relation(fields: [memberId], references: [id])
-  round     Int
-  amount    Float
-  method    String // 'transfer' | 'cash'
-  ref       String    @unique
+  id           String    @id @default(cuid())
+  groupId      String
+  group        AjoGroup  @relation(fields: [groupId], references: [id])
+  memberId     String
+  member       AjoMember @relation(fields: [memberId], references: [id])
+  round        Int
+  amount       Float
+  method       String // 'transfer' | 'cash'
+  ref          String    @unique
   /// The agent who took the cash, for cash contributions.
-  agentId   String?
-  createdAt DateTime  @default(now())
+  agentId      String?
+  /// Set when staff stopped the group: the plan holding this payment for its payer to collect.
+  refundPlanId String?
+  refundedAt   DateTime?
+  createdAt    DateTime  @default(now())
 
   @@unique([memberId, round])
   @@index([groupId, round])

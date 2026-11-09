@@ -21,6 +21,19 @@ export class AjoAlreadyPaidError extends Error {}
 
 export const ajoRef = (kind: 'CON' | 'OUT') => `VCHS-AJO-${kind}-${Date.now()}-${randomBytes(5).toString('base64url').toUpperCase()}`
 
+/** An ended plan holding Ajo money for one person, who collects it through the normal collection flow. */
+export function createAjoPlan(tx: Tx, f: { customerId: string; online: boolean; goal: string; amount: number; notes: string }) {
+  const now = new Date()
+  return tx.savingsPlan.create({
+    data: {
+      customerId: f.customerId, cadence: AJO_PLAN_CADENCE,
+      // Keeps the person's online/cash standing, which decides how the collection is paid.
+      source: f.online ? 'self' : 'agent',
+      goal: f.goal, dailyAmount: 0, periodDays: 0, startDate: now, maturityDate: now, balance: f.amount, status: 'Active', notes: f.notes,
+    },
+  })
+}
+
 export type PayoutDone = { round: number; memberId: string; customerId: string; amount: number; savingsPlanId: string; groupCompleted: boolean }
 
 /** If every member has paid `round`, move the round's money into its holder's payout plan. Null when not yet. */
@@ -30,7 +43,7 @@ export async function completeRoundIfFunded(tx: Tx, groupId: string, round: numb
     select: {
       id: true, name: true, cadence: true, size: true, startDate: true, status: true,
       agentId: true,
-      members: { select: { id: true, slot: true, customerId: true, customer: { select: { firstName: true, lastName: true, savingsPlans: { select: { source: true } } } } } },
+      members: { select: { id: true, slot: true, customerId: true, owedToCustomerId: true, owedAmount: true, customer: { select: { firstName: true, lastName: true, savingsPlans: { select: { source: true } } } } } },
     },
   })
   if (!g || g.status !== 'Running') return null
@@ -41,27 +54,25 @@ export async function completeRoundIfFunded(tx: Tx, groupId: string, round: numb
   if (!holder) throw new Error(`Ajo group ${groupId} has no holder for round ${round}`)
 
   // The whole round goes to the holder, extra kobo included, so nothing is left in the pool.
-  const amount = money(paid.reduce((s, p) => s + p.amount, 0))
+  const total = money(paid.reduce((s, p) => s + p.amount, 0))
+  // If staff replaced this member, what the person before them paid in goes back to that person out of this pot.
+  const owed = holder.owedToCustomerId ? money(Math.min(holder.owedAmount, total)) : 0
+  const amount = money(total - owed)
   const now = new Date()
-  const plan = await tx.savingsPlan.create({
-    data: {
-      customerId: holder.customerId,
-      cadence: AJO_PLAN_CADENCE,
-      // Keeps the member's online/cash standing, which decides how the collection is paid.
-      source: customerType(holder.customer.savingsPlans) === 'online' ? 'self' : 'agent',
-      goal: `Ajo · ${g.name}, ${roundLabel(g.startDate, g.cadence as AjoCadence, round)}`,
-      dailyAmount: 0, periodDays: 0, startDate: now, maturityDate: now,
-      balance: amount, status: 'Active',
-      notes: `ajo:${g.id}:${round}`,
-    },
-  })
+  const label = roundLabel(g.startDate, g.cadence as AjoCadence, round)
+  const plan = await createAjoPlan(tx, { customerId: holder.customerId, online: customerType(holder.customer.savingsPlans) === 'online', goal: `Ajo · ${g.name}, ${label}`, amount, notes: `ajo:${g.id}:${round}` })
+  if (owed > 0) {
+    const before = await tx.customer.findUniqueOrThrow({ where: { id: holder.owedToCustomerId! }, select: { savingsPlans: { select: { source: true } } } })
+    const back = await createAjoPlan(tx, { customerId: holder.owedToCustomerId!, online: customerType(before.savingsPlans) === 'online', goal: `Ajo refund · ${g.name}, ${label}`, amount: owed, notes: `ajo-owed:${g.id}:${round}` })
+    await notify(tx, notifications.planEnded({ planId: back.id, customerId: back.customerId, goal: back.goal, ajo: true }))
+  }
   // Unique (groupId, round): if another contribution completed this round at the same moment, this throws and the
   // whole transaction (plan included) rolls back.
   // notify: ajoRoundOut
-  await tx.ajoPayout.create({ data: { groupId, round, memberId: holder.id, amount, savingsPlanId: plan.id } })
+  await tx.ajoPayout.create({ data: { groupId, round, memberId: holder.id, amount: total, savingsPlanId: plan.id } })
   await notify(tx, [
     ...notifications.planEnded({ planId: plan.id, customerId: holder.customerId, goal: plan.goal, ajo: true }),
-    ...notifications.ajoRoundOut({ groupId, round, agentId: g.agentId, groupName: g.name, roundLabel: roundLabel(g.startDate, g.cadence as AjoCadence, round), holderName: `${holder.customer.firstName} ${holder.customer.lastName}`, amount }),
+    ...notifications.ajoRoundOut({ groupId, round, agentId: g.agentId, groupName: g.name, roundLabel: label, holderName: `${holder.customer.firstName} ${holder.customer.lastName}`, amount }),
   ])
   const groupCompleted = round === g.size
   if (groupCompleted) await tx.ajoGroup.update({ where: { id: groupId }, data: { status: 'Completed', completedAt: now } })

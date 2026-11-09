@@ -28,6 +28,7 @@ export async function GET(req: NextRequest) {
       id: g.id, name: g.name, cadence, size: g.size, contribution: g.contribution, pot: potOf(g), startDate: g.startDate,
       firstRound: roundLabel(g.startDate, cadence, 1), lastRound: roundLabel(g.startDate, cadence, g.size),
       agentName: displayName(g.agent.name), memberCount: g.members.length,
+      yourTurn: g.members.length < g.size ? roundLabel(g.startDate, cadence, g.members.length + 1) : null,
       full: g.members.length >= g.size, alreadyIn: g.members.some(m => m.customerId === session.id),
     },
   })

@@ -4,7 +4,7 @@ import Amount, { useCountUp } from '@/components/ui/Amount'
 import { Icons } from '@/components/ui/icons'
 import { formatDate, formatNaira } from '@/lib/format'
 
-type Plan = { balance: number; dailyAmount: number; periodDays: number; startDate: string; maturityDate: string; cadence?: string }
+type Plan = { goal?: string; balance: number; dailyAmount: number; periodDays: number; startDate: string; maturityDate: string; cadence?: string }
 
 type Props = {
   plan: Plan
@@ -34,13 +34,14 @@ export default function PlanEnded({ plan, hideAmounts, onCollect, onNewPlan, not
   const span = plan.periodDays < 45 ? `${plan.periodDays} days` : `${months} months`
   const long = formatNaira(plan.balance).length > 10
   const ajo = plan.cadence === 'ajo'
+  const ajoRefund = ajo && !!plan.goal?.startsWith('Ajo refund')
 
   return (
     <>
       <p className={`ui-status ui-status--lg ${reached ? 'ui-status--success' : 'ui-status--neutral'}`}>
         {reached
           ? <><Icons.check size={16} aria-hidden="true" /> Goal reached</>
-          : ajo ? <><Icons.check size={16} aria-hidden="true" /> Everyone has paid</> : <>Plan ended {formatDate(plan.maturityDate)}</>}
+          : ajoRefund ? <>Ajo refund</> : ajo ? <><Icons.check size={16} aria-hidden="true" /> Everyone has paid</> : <>Plan ended {formatDate(plan.maturityDate)}</>}
       </p>
 
       <div className="ui-ring" role="img" aria-label={hideAmounts ? 'Savings ready to collect' : goal > 0 ? `${formatNaira(plan.balance)} saved of ${formatNaira(goal)} goal` : `${formatNaira(plan.balance)} saved`}>
@@ -64,7 +65,7 @@ export default function PlanEnded({ plan, hideAmounts, onCollect, onNewPlan, not
 
       <p className="ui-hero-sub">
         {ajo
-          ? 'It’s your turn in the Ajo group. Your money is ready to collect.'
+          ? ajoRefund ? 'Your Ajo money has come back to you. It’s ready to collect.' : 'It’s your turn in the Ajo group. Your money is ready to collect.'
           : hideAmounts
           ? 'Your savings are ready to collect.'
           : reached

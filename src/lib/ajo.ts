@@ -98,21 +98,7 @@ export function parseNewGroup(raw: unknown, now: Date = new Date()): { ok: true;
   return { ok: true, value: { name, cadence: cadence as AjoCadence, size, contribution, startDate: lagosMidnight(start) } }
 }
 
-/**
- * Check a full slot assignment: every member gets exactly one slot, and slots 1..size are each used once.
- * `assignments` maps memberId → slot.
- */
-export function checkSlots(memberIds: string[], size: number, assignments: Record<string, unknown>): { ok: true; slots: Map<string, number> } | { ok: false; error: string } {
-  if (memberIds.length !== size) return { ok: false, error: `The group needs all ${size} members before slots can be set.` }
-  const slots = new Map<string, number>()
-  const used = new Set<number>()
-  for (const id of memberIds) {
-    const s = Number(assignments[id])
-    if (!Number.isInteger(s) || s < 1 || s > size) return { ok: false, error: 'Give every member a slot.' }
-    if (used.has(s)) return { ok: false, error: 'Two members have the same slot.' }
-    used.add(s)
-    slots.set(id, s)
-  }
-  if (Object.keys(assignments).some(id => !memberIds.includes(id))) return { ok: false, error: 'That person isn’t in this group.' }
-  return { ok: true, slots }
+/** First come, first served: the order people joined decides the turns. Nobody can set or change it. */
+export function byJoinOrder<T extends { id: string; joinedAt: Date | string }>(members: T[]): T[] {
+  return [...members].sort((x, y) => new Date(x.joinedAt).getTime() - new Date(y.joinedAt).getTime() || x.id.localeCompare(y.id))
 }
