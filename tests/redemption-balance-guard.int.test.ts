@@ -1513,7 +1513,7 @@ test('agent saving: 409 during each open status, nothing debited', async () => {
     const m0 = await money()
     const res = await save(planId)
     assert.equal(res.status, 409, status)
-    assert.match((await res.json()).error, /collect/i)
+    assert.match((await res.json()).error, /redeem/i)
     assert.equal((await planRow(planId)).balance, 10000)
     assert.deepEqual(await money(), m0)
   }
@@ -1550,7 +1550,7 @@ test('auto-debit setup: 409 during an open request', async () => {
   await mkRedemption({ planId, status: 'Pending' })
   const res = await autoDebitInit.POST({ json: async () => ({ planId }) } as never)
   assert.equal(res.status, 409)
-  assert.match((await res.json()).error, /collect/i)
+  assert.match((await res.json()).error, /redeem/i)
   assert.equal(await prisma.paymentIntent.count({ where: { customerId, planId } }), 0)
 })
 
@@ -1607,7 +1607,7 @@ test('customer Paystack init: 409 during an open request, with no Paystack call'
   const before = paystackInits
   const res = await payInit(planId)
   assert.equal(res.status, 409)
-  assert.match((await res.json()).error, /collect/i)
+  assert.match((await res.json()).error, /redeem/i)
   assert.equal(paystackInits, before)
   assert.equal(await prisma.paymentIntent.count({ where: { customerId, planId } }), 0)
 })

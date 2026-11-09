@@ -10,6 +10,7 @@ import { hasOpenRedemption } from '@/lib/redemption-balance'
 import { PAYSTACK_ENABLED, paystackOff } from '@/lib/paystack-off'
 import { CARD_NOT_IN_USE, getFundingMode } from '@/lib/funding-mode'
 import { getFlexibleSettings, isFlexible } from '@/lib/flexible-savings'
+import { periodPaidError } from '@/lib/bulk-savings'
 
 export async function POST(req: NextRequest) {
   // Paystack is closed (see src/lib/paystack-off.ts): nothing may start a card payment.
@@ -41,7 +42,7 @@ export async function POST(req: NextRequest) {
   if (planHasEnded(plan)) return NextResponse.json({ error: PLAN_ENDED }, { status: 409 })
 
   if (await hasOpenRedemption(prisma, plan.id)) {
-    return NextResponse.json({ error: 'You’ve asked to collect from this plan. You can’t add money until that request is finished.' }, { status: 409 })
+    return NextResponse.json({ error: 'You’ve asked to redeem from this plan. You can’t add money until that request is finished.' }, { status: 409 })
   }
 
   // Flexible plans have no set amount, so the person must say how much (never the plan's ₦0 daily amount).
@@ -54,6 +55,8 @@ export async function POST(req: NextRequest) {
   // One payment can't be more than the plan's amount for the days it has left (owner's rule).
   const max = maxSinglePayment(plan)
   if (max !== null && amount > max) return NextResponse.json({ error: overCapMessage(max) }, { status: 400 })
+  const paid = await periodPaidError(prisma, plan, new Date())
+  if (paid) return NextResponse.json({ error: paid }, { status: 409 })
 
   const email = customer.email ?? `${customer.customerId.toLowerCase()}@vochus.ng`
   const rand = randomBytes(9).toString('base64url').toUpperCase()

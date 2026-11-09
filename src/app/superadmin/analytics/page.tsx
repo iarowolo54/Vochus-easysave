@@ -96,7 +96,7 @@ export default function AnalyticsPage() {
                 <h2 className="an-h">What the platform keeps</h2>
                 <div className="stats-grid">
                   <Stat label="Platform keeps" money value={data.earnings.platform} chg={change(data.earnings.platform, data.earnings.platformPrev)} sub="Its own share only" />
-                  <Stat label="From savings fees" money value={data.earnings.savingsFees} sub="Fees on deposits and collections" />
+                  <Stat label="From savings fees" money value={data.earnings.savingsFees} sub="Fees on deposits and redemptions" />
                   <Stat label="From loan interest" money value={data.earnings.loanShare} sub="Platform’s part of interest" />
                   <Stat label="Paid to agents" money value={data.earnings.agents} sub="Their commission, not counted above" />
                 </div>

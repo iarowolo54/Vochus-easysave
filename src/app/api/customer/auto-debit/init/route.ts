@@ -41,7 +41,7 @@ export async function POST(req: NextRequest) {
   if (isFlexible(plan.cadence)) return NextResponse.json({ error: 'Automatic saving isn’t available on flexible plans.' }, { status: 400 })
 
   if (await hasOpenRedemption(prisma, plan.id)) {
-    return NextResponse.json({ error: 'You’ve asked to collect from this plan. You can’t set up auto-debit until that request is finished.' }, { status: 409 })
+    return NextResponse.json({ error: 'You’ve asked to redeem from this plan. You can’t set up auto-debit until that request is finished.' }, { status: 409 })
   }
 
   const existing = await prisma.autoDebitMandate.findFirst({

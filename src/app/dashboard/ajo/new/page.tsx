@@ -74,7 +74,7 @@ export default function NewAjoGroupPage() {
           <input id="ajo-size" className="ui-input" type="tel" inputMode="numeric" maxLength={2} placeholder={`${MIN_SIZE} to ${MAX_SIZE}`}
             value={size} aria-invalid={!!errors.size} onChange={e => setSize(e.target.value.replace(/\D/g, ''))} />
           {ready
-            ? <p className="ui-field-hint">The group runs {n} {UNIT[cadence][n === 1 ? 0 : 1]}: one turn to collect for each member.</p>
+            ? <p className="ui-field-hint">The group runs {n} {UNIT[cadence][n === 1 ? 0 : 1]}: one turn to redeem for each member.</p>
             : <FieldError id="ajo-size-error" message={errors.size} />}
         </div>
 
@@ -93,7 +93,7 @@ export default function NewAjoGroupPage() {
         {ready && (
           <p className="ui-note ag-ajo-summary">
             <Icons.calendar size={16} aria-hidden="true" />
-            <span>Each member pays {formatNaira(contribution, { minor: false })} {EVERY[cadence]}. Every turn, one member collects {formatNaira(potOf({ contribution, size: n }), { minor: false })}, from {roundLabel(start, cadence, 1)} to {roundLabel(start, cadence, n)}.</span>
+            <span>Each member pays {formatNaira(contribution, { minor: false })} {EVERY[cadence]}. Every turn, one member redeems {formatNaira(potOf({ contribution, size: n }), { minor: false })}, from {roundLabel(start, cadence, 1)} to {roundLabel(start, cadence, n)}.</span>
           </p>
         )}
 

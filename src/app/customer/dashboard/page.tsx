@@ -76,7 +76,7 @@ function PlanDetails({ plan }: { plan: Plan }) {
           <dd className="ui-row-value">{isAjoPlan(plan) ? 'Ajo payout' : isFlexible(plan.cadence) ? 'Any amount, any day' : `${formatNaira(weekly ? plan.dailyAmount * 7 : plan.dailyAmount, { minor: false })} ${weekly ? 'a week' : 'a day'}`}</dd>
         </div>
         <div className="ui-row">
-          <dt className="ui-row-main ui-row-sub ui-summary-key">You collect on</dt>
+          <dt className="ui-row-main ui-row-sub ui-summary-key">You redeem on</dt>
           <dd className="ui-row-value ui-value-stack">
             <span>{formatDate(plan.maturityDate)}</span>
           </dd>
@@ -189,6 +189,8 @@ export default function CustomerDashboard() {
 
   if (!data) return null
 
+  // Always name the plan on screen; without it the redeem screen falls back to the first plan.
+  const redeemHref = plan ? `/customer/redeem?planId=${encodeURIComponent(plan.id)}` : '/customer/redeem'
   const weekly = plan ? isWeekly(plan) : false
   const ended = plan ? hasEnded(plan) : false
   const pending = plan ? data.pendingRedemptions.find(r => r.savingsPlanId === plan.id) ?? null : null
@@ -285,7 +287,7 @@ export default function CustomerDashboard() {
             <PlanEnded
               plan={plan}
               hideAmounts={hideBalance}
-              onCollect={() => router.push(plan && isAjoPlan(plan) ? `/customer/redeem?planId=${encodeURIComponent(plan.id)}` : '/customer/redeem')}
+              onCollect={() => router.push(redeemHref)}
               onNewPlan={() => router.push('/customer/save?new=1')}
               note={<InterestNudge plan={plan} hideAmounts={hideBalance} />}
             />
@@ -330,7 +332,7 @@ export default function CustomerDashboard() {
           </section>
         )}
 
-        {pending && <CollectionTracker status={pending.status} onView={() => router.push('/customer/redeem')} />}
+        {pending && <CollectionTracker status={pending.status} onView={() => router.push(redeemHref)} />}
 
         {plan && finished && !isAjoPlan(plan) && (
           <div className="ui-actions">
@@ -350,7 +352,7 @@ export default function CustomerDashboard() {
           {canBulkSave && plan && (
             <ActionButton icon="history" label={BULK_SAVINGS_LABEL} onClick={() => router.push(`/customer/catchup?planId=${encodeURIComponent(plan.id)}`)} />
           )}
-          <ActionButton icon="withdraw" label="Collect" onClick={() => router.push(plan && isAjoPlan(plan) ? `/customer/redeem?planId=${encodeURIComponent(plan.id)}` : '/customer/redeem')} />
+          <ActionButton icon="withdraw" label="Redeem" onClick={() => router.push(redeemHref)} />
           <ActionButton
             icon="plan"
             label="New plan"
@@ -423,7 +425,7 @@ export default function CustomerDashboard() {
         {!!data.redeemedPlans?.length && (
           <>
             <div className="ui-section-head">
-              <h2>Collected plans</h2>
+              <h2>Redeemed plans</h2>
             </div>
             <section className="ui-card ui-card--list">
               {data.redeemedPlans.map(p => (
@@ -431,7 +433,7 @@ export default function CustomerDashboard() {
                   key={p.id}
                   icon="plan"
                   title={p.goal}
-                  sub={`${isFlexible(p.cadence) ? 'Flexible' : `${formatNaira(p.dailyAmount)} a ${p.cadence === 'weekly' ? 'week' : p.cadence === 'monthly' ? 'month' : 'day'}`} · collected`}
+                  sub={`${isFlexible(p.cadence) ? 'Flexible' : `${formatNaira(p.dailyAmount)} a ${p.cadence === 'weekly' ? 'week' : p.cadence === 'monthly' ? 'month' : 'day'}`} · redeemed`}
                   value="Save again"
                   onClick={() => saveAgain(p.id, p.goal)}
                 />
@@ -477,8 +479,8 @@ export default function CustomerDashboard() {
               <span className="ui-row-main">
                 <span className="ui-row-title" style={{ display: 'block' }}>{p.goal}</span>
                 <span className="ui-row-sub" style={{ display: 'block' }}>{hasEnded(p)
-                    ? (isAjoPlan(p) ? 'Ready to collect' : !isFlexible(p.cadence) && p.balance >= p.dailyAmount * p.periodDays ? 'Goal reached' : `Ended ${formatDate(p.maturityDate)}`)
-                    : `Collect on ${formatDate(p.maturityDate)}`}</span>
+                    ? (isAjoPlan(p) ? 'Ready to redeem' : !isFlexible(p.cadence) && p.balance >= p.dailyAmount * p.periodDays ? 'Goal reached' : `Ended ${formatDate(p.maturityDate)}`)
+                    : `Redeem on ${formatDate(p.maturityDate)}`}</span>
               </span>
               <span className="ui-row-value">{hideBalance ? '₦ ••••' : formatNaira(p.balance)}</span>
               <span className="ui-option-check" aria-hidden="true">{i === activePlanIdx && <Icons.check size={20} />}</span>

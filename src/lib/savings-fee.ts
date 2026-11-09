@@ -67,9 +67,9 @@ export function feeSentence(i: {
     const f = i.flexible
     return f.online
       ? `No charge if you keep it to the end date. Stopping early costs ${f.penaltyPct}%.`
-      : `${f.cashCommissionPct}% is taken when they collect, plus ${f.penaltyPct}% if they stop before the end date.`
+      : `${f.cashCommissionPct}% is taken when they redeem, plus ${f.penaltyPct}% if they stop before the end date.`
   }
-  if (!i.live) return 'A platform fee is taken when they collect.'
+  if (!i.live) return 'A platform fee is taken when they redeem.'
   if (isDaily(i.cadence)) {
     return `The first day's savings (₦${money(i.amountPerPayment).toLocaleString('en-NG', { maximumFractionDigits: 2 })}) is the platform fee, taken from their first deposit.`
   }

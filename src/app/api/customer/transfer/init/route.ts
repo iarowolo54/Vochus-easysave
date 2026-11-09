@@ -7,7 +7,7 @@ import { getFlexibleSettings, isFlexible } from '@/lib/flexible-savings'
 import { planHasEnded, PLAN_ENDED } from '@/lib/plan-credit'
 import { hasOpenRedemption } from '@/lib/redemption-balance'
 import { createTransferIntent } from '@/lib/transfer-intent'
-import { checkBulkSelection } from '@/lib/bulk-savings'
+import { checkBulkSelection, periodPaidError } from '@/lib/bulk-savings'
 import { getFundingMode, TRANSFER_NOT_IN_USE } from '@/lib/funding-mode'
 import { money } from '@/lib/wallet-guard'
 import { maxSinglePayment, overCapMessage } from '@/lib/payment-cap'
@@ -46,7 +46,7 @@ export async function POST(req: NextRequest) {
   }
   if (planHasEnded(plan)) return NextResponse.json({ error: PLAN_ENDED }, { status: 409 })
   if (await hasOpenRedemption(prisma, plan.id)) {
-    return NextResponse.json({ error: 'You’ve asked to collect from this plan. You can’t add money until that request is finished.' }, { status: 409 })
+    return NextResponse.json({ error: 'You’ve asked to redeem from this plan. You can’t add money until that request is finished.' }, { status: 409 })
   }
 
   // Flexible plans: the super admin's smallest deposit, never below the ₦100 every transfer needs.
@@ -60,6 +60,8 @@ export async function POST(req: NextRequest) {
   if (!catchup) {
     const max = maxSinglePayment(plan)
     if (max !== null && amount > max) return NextResponse.json({ error: overCapMessage(max) }, { status: 400 })
+    const paid = await periodPaidError(prisma, plan, new Date())
+    if (paid) return NextResponse.json({ error: paid }, { status: 409 })
   }
 
   if (catchup) {

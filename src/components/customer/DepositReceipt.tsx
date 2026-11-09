@@ -24,7 +24,7 @@ type Direction = 'in' | 'out' | 'none'
 export function txMeta(type = 'saving'): { label: string; direction: Direction; planLabel: string } {
   switch (type) {
     case 'saving':       return { label: 'Savings deposit', direction: 'in',   planLabel: 'Paid into' }
-    case 'redemption':   return { label: 'Collection',      direction: 'out',  planLabel: 'Paid from' }
+    case 'redemption':   return { label: 'Redemption',      direction: 'out',  planLabel: 'Paid from' }
     case 'disbursement': return { label: 'Loan received',   direction: 'in',   planLabel: 'Plan' }
     case 'repayment':    return { label: 'Loan repayment',  direction: 'out',  planLabel: 'Plan' }
     case 'enrolment':    return { label: 'Enrolment',       direction: 'none', planLabel: 'Plan' }

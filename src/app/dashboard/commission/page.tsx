@@ -72,7 +72,7 @@ export default function CommissionPage() {
     return (
       <div className="ag-page">
         <section className="ui-card">
-          <EmptyState icon="commission" title="No commission yet" text="What you earn from collections, loans and rewards will show here each month." />
+          <EmptyState icon="commission" title="No commission yet" text="What you earn from redemptions, loans and rewards will show here each month." />
         </section>
       </div>
     )
@@ -98,7 +98,7 @@ export default function CommissionPage() {
                     value={<span className="ui-value-stack">{formatNaira(breakdown.savings.commission ?? 0)}</span>} />
                 )}
                 {breakdown.redemptions && (
-                  <ListRow icon="withdraw" title="Collections" sub={`${breakdown.redemptions.count} · ${formatNaira(breakdown.redemptions.volume ?? 0, { minor: false })}`}
+                  <ListRow icon="withdraw" title="Redemptions" sub={`${breakdown.redemptions.count} · ${formatNaira(breakdown.redemptions.volume ?? 0, { minor: false })}`}
                     value={<span className="ui-value-stack ui-amount--positive">{formatNaira(breakdown.redemptions.commission ?? 0)}</span>} />
                 )}
                 {breakdown.enrolments && (

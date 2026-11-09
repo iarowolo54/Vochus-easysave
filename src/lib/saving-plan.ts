@@ -77,6 +77,13 @@ export function depositCreatedAt(planSource: string, clientDate?: string | Date 
 
 export const ALREADY_SAVED_TODAY = 'A saving has already been recorded for this plan on that day.'
 
+/** The refusal for a plan that already has this period's saving. */
+export function alreadySavedMessage(cadence?: string | null): string {
+  if (cadence === 'weekly') return 'A saving has already been recorded for this plan for that week.'
+  if (cadence === 'monthly') return 'A saving has already been recorded for this plan for that month.'
+  return ALREADY_SAVED_TODAY
+}
+
 const WAT_MS = 60 * 60 * 1000 // Africa/Lagos is UTC+1 all year
 
 /** True when this plan already has a saving on the same Lagos calendar day as `at`. */

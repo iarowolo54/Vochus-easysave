@@ -25,7 +25,7 @@ interface Txn {
 
 const TYPES: Record<string, { label: string; icon: IconName; sign: '+' | '−' | '' }> = {
   saving: { label: 'Savings deposit', icon: 'deposit', sign: '+' },
-  redemption: { label: 'Collection payout', icon: 'withdraw', sign: '−' },
+  redemption: { label: 'Redemption payout', icon: 'withdraw', sign: '−' },
   repayment: { label: 'Loan repayment', icon: 'repay', sign: '+' },
   disbursement: { label: 'Loan paid out', icon: 'withdraw', sign: '−' },
   enrolment: { label: 'Customer enrolment', icon: 'enrol', sign: '' },

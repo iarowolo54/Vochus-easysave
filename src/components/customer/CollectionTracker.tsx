@@ -16,9 +16,9 @@ type Props = { status: string; onView: () => void }
 export default function CollectionTracker({ status, onView }: Props) {
   const current = CURRENT_STEP[status] ?? 1
   return (
-    <section className="ui-card" aria-label="Collection progress">
+    <section className="ui-card" aria-label="Redemption progress">
       <div className="ui-card-head">
-        <h2 className="ui-card-title">Collecting your money</h2>
+        <h2 className="ui-card-title">Redeeming your money</h2>
         <button type="button" className="ui-link" onClick={onView}>View <Icons.next size={16} aria-hidden="true" /></button>
       </div>
       <ol className="ui-steps">

@@ -125,7 +125,7 @@ export default function CustomerAjoGroupPage() {
           <p className="ui-row-sub">You pay {naira(g.contribution)} {EVERY[g.cadence]}</p>
           <p className="ag-ajo-pot">{naira(g.pot - g.platformFee)}</p>
           {g.feePct > 0 && <p className="ui-row-sub">After a {g.feePct}% Platform Fee of {naira(g.platformFee)}</p>}
-          <p className="ui-row-sub">{myRound ? `You collect in ${myRound.label}` : g.me ? `You’re number ${g.me.position}: ${g.rounds[g.me.position - 1].label}, unless someone ahead leaves` : ''}</p>
+          <p className="ui-row-sub">{myRound ? `You redeem in ${myRound.label}` : g.me ? `You’re number ${g.me.position}: ${g.rounds[g.me.position - 1].label}, unless someone ahead leaves` : ''}</p>
         </section>
 
         {g.status === 'Forming' && (
@@ -141,7 +141,7 @@ export default function CustomerAjoGroupPage() {
             <div className="ui-section-head ui-gap-top"><h2>{open.label}</h2></div>
             <section className="ui-card">
               <p className="ui-row-title">{open.paidMemberIds.length} of {g.size} have paid</p>
-              <p className="ui-row-sub">Due {dayText(open.dueDay)}{open.holderId ? ` · ${open.holderId === g.me?.memberId ? 'You collect' : `${nameOf(open.holderId)} collects`} when everyone has paid` : ''}</p>
+              <p className="ui-row-sub">Due {dayText(open.dueDay)}{open.holderId ? ` · ${open.holderId === g.me?.memberId ? 'You redeem' : `${nameOf(open.holderId)} redeems`} when everyone has paid` : ''}</p>
               <div className="ui-progress ag-plan-bar" role="progressbar" aria-valuemin={0} aria-valuemax={g.size} aria-valuenow={open.paidMemberIds.length} aria-label={`${open.paidMemberIds.length} of ${g.size} paid`}>
                 <span style={{ width: `${(open.paidMemberIds.length / g.size) * 100}%` }} />
               </div>
@@ -161,11 +161,11 @@ export default function CustomerAjoGroupPage() {
             <div className="ui-card ui-card--list">
               {g.rounds.map(r => {
                 const state = r.paidOut ? ['Paid out', 'ui-status--success'] : r.round === g.currentRound ? ['Open', 'ui-status--warn'] : ['Waiting', 'ui-status--neutral']
-                return <ListRow key={r.round} icon="calendar" title={r.label} sub={r.holderId ? (r.holderId === g.me?.memberId ? 'You collect' : `${nameOf(r.holderId)} collects`) : undefined}
+                return <ListRow key={r.round} icon="calendar" title={r.label} sub={r.holderId ? (r.holderId === g.me?.memberId ? 'You redeem' : `${nameOf(r.holderId)} redeems`) : undefined}
                   value={<span className={`ui-status ui-status--sm ${state[1]}`}>{state[0]}</span>} />
               })}
             </div>
-            {g.me?.payoutPlanId && <button type="button" className="ui-btn ui-btn--secondary ui-btn--block ui-gap-top" onClick={() => router.push(`/customer/redeem?planId=${encodeURIComponent(g.me!.payoutPlanId!)}`)}>Collect my Ajo money</button>}
+            {g.me?.payoutPlanId && <button type="button" className="ui-btn ui-btn--secondary ui-btn--block ui-gap-top" onClick={() => router.push(`/customer/redeem?planId=${encodeURIComponent(g.me!.payoutPlanId!)}`)}>Redeem my Ajo money</button>}
           </>
         )}
 

@@ -35,7 +35,7 @@ test('enrolment hides the amount, as the receipt page does', () => {
 
 test('titles are worded for the customer, not the agent', () => {
   assert.match(buildReceiptMessage([txn({ type: 'disbursement' })], who), /loan received receipt/)
-  assert.match(buildReceiptMessage([txn({ type: 'redemption' })], who), /collection receipt/)
+  assert.match(buildReceiptMessage([txn({ type: 'redemption' })], who), /redemption receipt/)
   assert.match(buildReceiptMessage([txn({ type: 'some_new_type' })], who), /some new type receipt/)
 })
 

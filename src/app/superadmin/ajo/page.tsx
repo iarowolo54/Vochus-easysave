@@ -53,7 +53,7 @@ export default function AjoGroupsAdminPage() {
             <div className="card-hd">
               <div>
                 <h3 id="ajo-fee-h">Platform Fee</h3>
-                <p className="am-card-sub">Taken from each pot when its member collects. Refunds aren’t charged. A group keeps the rate it started with.</p>
+                <p className="am-card-sub">Taken from each pot when its member redeems. Refunds aren’t charged. A group keeps the rate it started with.</p>
               </div>
               <button type="button" className="btn btn-sm btn-outline" onClick={() => setEditFee(true)} disabled={!fee}>Edit</button>
             </div>

@@ -27,7 +27,7 @@ export async function GET(req: NextRequest) {
   const customer = await prisma.customer.findUnique({ where: { id: session.id } })
   if (!customer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  // A named plan (an Ajo pot, which may not be the newest) or, with none named, the newest one. Always the customer's own.
+  // A named plan or, with none named, the newest one. Always the customer's own.
   const planId = req.nextUrl.searchParams.get('planId')
   const plan = await prisma.savingsPlan.findFirst({
     where: { customerId: customer.id, status: 'Active', ...(planId ? { id: planId } : {}) },
@@ -55,7 +55,7 @@ export async function POST(req: NextRequest) {
   if (!customer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const body = await req.json()
-  // A named plan (an Ajo pot, which may not be the newest) or, with none named, the newest one. Always the customer's own.
+  // A named plan or, with none named, the newest one. Always the customer's own.
   const planId = typeof body?.planId === 'string' && body.planId ? body.planId : undefined
   const plan = await prisma.savingsPlan.findFirst({
     where: { customerId: customer.id, status: 'Active', ...(planId ? { id: planId } : {}) },
@@ -79,7 +79,7 @@ export async function POST(req: NextRequest) {
   if (payoutMethod === 'Cash') {
     const agent = await prisma.agent.findUnique({ where: { id: customer.agentId }, select: { status: true } })
     if (agent?.status !== 'Active') {
-      return NextResponse.json({ error: 'Cash collection isn’t available on your account right now. Please choose a bank account instead.' }, { status: 400 })
+      return NextResponse.json({ error: 'Cash redemption isn’t available on your account right now. Please choose a bank account instead.' }, { status: 400 })
     }
   }
 

@@ -545,7 +545,7 @@ function EnrollContent() {
             <p className="cu-hello-text">
               {resume
                 ? `You started opening your account ${timeAgo(resume.savedAt)}. Your details are saved on this phone.`
-                : 'Give your agent a little at a time. Every saving shows in your account, and you collect it when your plan ends.'}
+                : 'Give your agent a little at a time. Every saving shows in your account, and you redeem it when your plan ends.'}
             </p>
             {!resume && parsedPlan && (
               <p className="cu-hello-plan">Your agent suggested <strong>{formatNaira(initDaily, { minor: false })} a day</strong> for {initPeriod} days. That’s <strong>{formatNaira(initDaily * initPeriod, { minor: false })}</strong>.</p>
@@ -893,7 +893,7 @@ function EnrollContent() {
         {screen === 'length' && (
           <>
             <h1 className="cu-q">For how long?</h1>
-            <p className="cu-lead">{flexible ? `Pick when you want to collect. At least ${flexTerms.minTermMonths} months.` : `Saving ${formatNaira(perPayment(draft), { minor: false })} ${UNIT[cadence].per}. Pick when you want to collect.`}</p>
+            <p className="cu-lead">{flexible ? `Pick when you want to redeem. At least ${flexTerms.minTermMonths} months.` : `Saving ${formatNaira(perPayment(draft), { minor: false })} ${UNIT[cadence].per}. Pick when you want to redeem.`}</p>
             <div className="ag-tf-wrap cu-start">
               <div className="ui-field">
                 <label className="ui-label" htmlFor="plan-start">Starts on</label>
@@ -916,7 +916,7 @@ function EnrollContent() {
                     minIso={isoDate(flexMin)} maxIso={isoDate(addDays(startDay, MAX_PLAN_DAYS))} emptyViewIso={isoDate(flexMin)}
                     value={flexEnd} onChange={setFlexEnd} />
                 </div>
-                {flexEndError ? <FieldError id="flex-end-error" message={flexEndError} /> : <p className="ag-fineprint">{flexEndDay ? `You can collect from ${formatDate(flexEndDay)}. Stopping before then costs ${flexTerms.penaltyPct}%.` : `The earliest is ${formatDate(flexMin)}.`}</p>}
+                {flexEndError ? <FieldError id="flex-end-error" message={flexEndError} /> : <p className="ag-fineprint">{flexEndDay ? `You can redeem from ${formatDate(flexEndDay)}. Stopping before then costs ${flexTerms.penaltyPct}%.` : `The earliest is ${formatDate(flexMin)}.`}</p>}
               </div>
             ) : (<>
             <div className="cu-options" role="radiogroup" aria-label="How long">
@@ -938,7 +938,7 @@ function EnrollContent() {
                 <span className="cu-goal-icon cu-goal-icon--sm" aria-hidden="true"><Icons.calendar size={18} strokeWidth={1.75} /></span>
                 <span className="cu-option-main">
                   <span className="cu-option-title">Choose an end date</span>
-                  <span className="cu-option-sub">{customEnd ? `Until ${formatDate(endDate(draft))}` : 'Pick the day you want to collect'}</span>
+                  <span className="cu-option-sub">{customEnd ? `Until ${formatDate(endDate(draft))}` : 'Pick the day you want to redeem'}</span>
                 </span>
                 {customEnd && <span className="cu-option-end">{formatNaira(totalSaved(draft), { minor: false })}</span>}
                 <span className="ui-radio" aria-hidden="true" />

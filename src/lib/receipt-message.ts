@@ -24,7 +24,7 @@ const oneLine = (s: string) => s.replace(/[\p{C}\p{Z}\u115F\u1160\u3164\uFFA0\u2
 // The customer reads this, so types are named from their side ("Loan received", not "Loan paid out").
 const LABELS: Record<string, string> = {
   saving: 'Savings deposit',
-  redemption: 'Collection',
+  redemption: 'Redemption',
   repayment: 'Loan repayment',
   disbursement: 'Loan received',
   enrolment: 'Enrolment',

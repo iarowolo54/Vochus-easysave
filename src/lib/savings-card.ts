@@ -112,6 +112,26 @@ export function slotKeyForDate(slots: Pick<Slot, 'key'>[], date: string, weekly:
   return slot?.key ?? null
 }
 
+/**
+ * Has the day, week or 30-day month holding `today` already been saved? A fixed plan takes one ordinary payment per
+ * period; saving ahead goes through Bulk Savings. Flexible and Ajo plans have no schedule, so they're never blocked.
+ */
+export function periodAlreadySaved(slots: Pick<Slot, 'key' | 'state'>[], today: string, cadence?: string | null): boolean {
+  if (cadence === 'flexible' || cadence === 'ajo') return false
+  const key = slotKeyForDate(slots, today, cadence === 'weekly')
+  if (key === null) return false
+  if (cadence !== 'monthly') return slots.find(s => s.key === key)?.state === 'saved'
+  // Monthly plans have one slot a day, so look across the 30-day block holding today.
+  const i = slots.findIndex(s => s.key === key)
+  const first = i - (i % 30)
+  return slots.slice(first, first + 30).some(s => s.state === 'saved')
+}
+
+/** How to name the period periodAlreadySaved checks: "You've saved for today". */
+export function periodWord(cadence?: string | null): string {
+  return cadence === 'weekly' ? 'this week' : cadence === 'monthly' ? 'this month' : 'today'
+}
+
 /** Monday–Sunday of the calendar week containing `now`, as dates. */
 export function currentWeekDays(now = new Date()): Date[] {
   const monday = addDays(now, -((now.getDay() + 6) % 7))

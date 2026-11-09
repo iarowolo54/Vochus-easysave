@@ -139,7 +139,7 @@ export default function AjoGroupPage() {
               <div className="ui-section-head ui-gap-top"><h2>{current.label}</h2></div>
               <section className="ui-card">
                 <p className="ui-row-title">{current.paid.length} of {g.size} have paid</p>
-                <p className="ui-row-sub">Due {dayText(current.dueDay)}{current.holderId ? ` · ${byId.get(current.holderId)?.name} collects ${naira(g.pot)}` : ''}</p>
+                <p className="ui-row-sub">Due {dayText(current.dueDay)}{current.holderId ? ` · ${byId.get(current.holderId)?.name} redeems ${naira(g.pot)}` : ''}</p>
                 <div className="ui-progress ag-plan-bar" role="progressbar" aria-valuemin={0} aria-valuemax={g.size} aria-valuenow={current.paid.length} aria-label={`${current.paid.length} of ${g.size} paid`}>
                   <span style={{ width: `${(current.paid.length / g.size) * 100}%` }} />
                 </div>
@@ -163,10 +163,10 @@ export default function AjoGroupPage() {
             {g.rounds.map(r => {
               const holder = r.holderId ? byId.get(r.holderId)?.name : null
               const state = r.payout ? ['Paid out', 'ui-status--success'] : r.round === g.currentRound ? ['Open', 'ui-status--warn'] : ['Waiting', 'ui-status--neutral']
-              return <ListRow key={r.round} icon="calendar" title={r.label} sub={holder ? `${holder} collects` : undefined} value={<span className={`ui-status ui-status--sm ${state[1]}`}>{state[0]}</span>} />
+              return <ListRow key={r.round} icon="calendar" title={r.label} sub={holder ? `${holder} redeems` : undefined} value={<span className={`ui-status ui-status--sm ${state[1]}`}>{state[0]}</span>} />
             })}
           </div>
-          <p className="ui-note ui-note--center">When a turn is paid out, its member collects from Collections like any finished plan.</p>
+          <p className="ui-note ui-note--center">When a turn is paid out, its member redeems from Redemptions like any finished plan.</p>
         </>
       )}
 
@@ -176,7 +176,7 @@ export default function AjoGroupPage() {
       </BottomSheet>
 
       <BottomSheet open={sheet === 'start'} onClose={closeAll} title="Start this group?">
-        <p className="ui-note">Once it starts, members and turns can’t change. Everyone is told when they collect, and the first payment is due {dayText(g.rounds[0].dueDay)}.</p>
+        <p className="ui-note">Once it starts, members and turns can’t change. Everyone is told when they redeem, and the first payment is due {dayText(g.rounds[0].dueDay)}.</p>
         {error && <p className="ui-field-error" role="alert"><Icons.error size={16} aria-hidden="true" /> {error}</p>}
         <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={busy} aria-busy={busy} onClick={() => act(`/api/agent/ajo/${g.id}/lock`, 'POST')}>{busy ? 'Starting…' : 'Start the group'}</button>
       </BottomSheet>

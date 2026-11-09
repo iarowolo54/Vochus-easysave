@@ -42,7 +42,7 @@ export default function AjoGroupsPage() {
       ) : !groups ? <ListSkeleton count={3} />
       : groups.length === 0 ? (
         <section className="ui-card">
-          <EmptyState icon="team" title="No Ajo groups yet" text="Start a group, share its code, and members take turns collecting the pot." action={newButton} />
+          <EmptyState icon="team" title="No Ajo groups yet" text="Start a group, share its code, and members take turns redeeming the pot." action={newButton} />
         </section>
       ) : (
         <>

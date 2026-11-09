@@ -43,7 +43,7 @@ export function InterestCard({ plan, hideAmounts }: { plan: InterestFields; hide
           <div className="ui-row">
             <dt className="ui-row-main">
               <span className="ui-row-title">Earned so far</span>
-              <span className="ui-row-sub">Paid when you collect</span>
+              <span className="ui-row-sub">Paid when you redeem</span>
             </dt>
             <dd className="ui-row-value ui-amount--positive">{hideAmounts ? HIDDEN : `+${formatNaira(plan.interest)}`}</dd>
           </div>
