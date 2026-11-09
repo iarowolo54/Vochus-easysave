@@ -23,6 +23,6 @@ export const AGENT_NAV: NavItem[] = [
   { key: 'dashboard', icon: 'home',      label: 'Home',        href: '/dashboard' },
   { key: 'customers', icon: 'customers', label: 'Customers',   href: '/dashboard/customers' },
   { key: 'savings',   icon: 'add',       label: 'Record',      href: '/dashboard/savings', prominent: true },
-  { key: 'redeem',    icon: 'collect',   label: 'Collections', href: '/dashboard/redeem' },
+  { key: 'redeem',    icon: 'collect',   label: 'Redemptions', href: '/dashboard/redeem' },
   { key: 'more',      icon: 'menu',      label: 'More',        href: '#', more: true },
 ]

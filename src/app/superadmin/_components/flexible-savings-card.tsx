@@ -15,7 +15,7 @@ const SAMPLE = 100000
 const FIELDS: { key: Key; unit: Unit; label: string; max: number; example: (v: number, all: FlexibleSettings) => string }[] = [
   { key: 'minTermMonths', unit: 'months', label: 'Shortest plan, in months', max: 60, example: v => `Customers must pick an end date at least ${v} month${v === 1 ? '' : 's'} after the start.` },
   { key: 'minDeposit', unit: 'naira', label: 'Smallest deposit', max: 1_000_000, example: v => `Any amount from ${nairaKobo(v)} up, any day, as often as they like.` },
-  { key: 'cashCommissionPct', unit: 'pct', label: 'Commission when an offline customer collects', max: 25, example: v => `On ${nairaKobo(SAMPLE)} collected the commission is ${nairaKobo(SAMPLE * v / 100)}. Online customers don’t pay it. At most 25%.` },
+  { key: 'cashCommissionPct', unit: 'pct', label: 'Commission when an offline customer redeems', max: 25, example: v => `On ${nairaKobo(SAMPLE)} redeemed the commission is ${nairaKobo(SAMPLE * v / 100)}. Online customers don’t pay it. At most 25%.` },
   { key: 'cashCommissionAgentPct', unit: 'pct', label: 'Agent’s share of the commission', max: 100, example: (v, a) => `Of a ${nairaKobo(SAMPLE * a.cashCommissionPct / 100)} commission the agent gets ${nairaKobo(SAMPLE * a.cashCommissionPct / 100 * v / 100)}.` },
   { key: 'penaltyPct', unit: 'pct', label: 'Penalty for stopping before the end date', max: 25, example: v => `Offline and online. On ${nairaKobo(SAMPLE)} the penalty is ${nairaKobo(SAMPLE * v / 100)}. At most 25%.` },
   { key: 'penaltyAgentPct', unit: 'pct', label: 'Agent’s share of the penalty', max: 100, example: (v, a) => `Of a ${nairaKobo(SAMPLE * a.penaltyPct / 100)} penalty the agent gets ${nairaKobo(SAMPLE * a.penaltyPct / 100 * v / 100)}.` },
@@ -89,7 +89,7 @@ export function FlexibleSavingsCard() {
       <div className="card-hd">
         <div>
           <h3 id="flex-h">Flexible savings</h3>
-          <p className="am-card-sub">Any amount, any day, until an end date the customer picks. Nothing is taken from deposits; charges come off when they collect.</p>
+          <p className="am-card-sub">Any amount, any day, until an end date the customer picks. Nothing is taken from deposits; charges come off when they redeem.</p>
         </div>
       </div>
       {state === 'failed' ? <LoadError what="flexible savings settings" onRetry={load} />
@@ -111,7 +111,7 @@ export function FlexibleSavingsCard() {
                 <div className="am-rate-group-hd">
                   <span className="row-ic" aria-hidden="true"><Icons.treasury size={18} /></span>
                   <div>
-                    <h4>Charges when they collect</h4>
+                    <h4>Charges when they redeem</h4>
                     <p>A percentage of what is in the plan. The platform keeps what the agent doesn’t get.</p>
                   </div>
                 </div>
@@ -120,7 +120,7 @@ export function FlexibleSavingsCard() {
             </div>
             <div className="am-foot">
               <div className="am-foot-info">
-                <span>A change applies to collections asked for after you save.</span>
+                <span>A change applies to redemptions asked for after you save.</span>
                 {lastSaved && <span>{lastSaved}</span>}
               </div>
               <div className="am-foot-actions">
@@ -135,7 +135,7 @@ export function FlexibleSavingsCard() {
       {confirm && (
         <ConfirmModal icon="rate" title="Save flexible savings settings?" confirmLabel="Save settings" busy={busy} error={error}
           body={<>
-            These apply to every agent and customer from now. Collections already asked for don’t change.
+            These apply to every agent and customer from now. Redemptions already asked for don’t change.
             <ul className="am-diff">
               {changes.map(f => (
                 <li key={f.key}><span>{f.label}</span><span className="am-diff-val"><span className="am-diff-old">{show(f.unit, saved[f.key])}</span>{show(f.unit, current[f.key])}</span></li>

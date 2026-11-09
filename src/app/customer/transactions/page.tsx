@@ -23,7 +23,7 @@ type Tx = {
 type Me = { transactions: { id: string; recordedBy: string }[] }
 
 type Group = 'all' | 'saving' | 'collection' | 'loan' | 'other'
-const GROUP_LABEL: Record<Exclude<Group, 'all'>, string> = { saving: 'Savings', collection: 'Collections', loan: 'Loans', other: 'Other' }
+const GROUP_LABEL: Record<Exclude<Group, 'all'>, string> = { saving: 'Savings', collection: 'Redemptions', loan: 'Loans', other: 'Other' }
 
 function groupOf(type: string): Exclude<Group, 'all'> {
   if (type === 'saving') return 'saving'
@@ -179,7 +179,7 @@ export default function TransactionsPage() {
             </div>
           </div>
         ) : all.length === 0 ? (
-          <EmptyState icon="history" title="No transactions yet" text="Your savings and collections will show up here." />
+          <EmptyState icon="history" title="No transactions yet" text="Your savings and redemptions will show up here." />
         ) : (
           <>
             <section className="ui-card ui-month-summary" aria-label={`Saved in ${monthName}`}>

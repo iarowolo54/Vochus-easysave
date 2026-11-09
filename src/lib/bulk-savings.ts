@@ -1,18 +1,18 @@
 // Server-side rules shared by every way of buying specific days on an online plan: the customer's
 // Bulk Savings checkout, the agent's Bulk Savings, and the auto-debit cron that has to respect both.
 import type { Prisma, PrismaClient, SavingsPlan } from '@prisma/client'
-import { isEligiblePlan, readableKey, validateSelection } from '@/lib/catchup'
+import { BULK_SAVINGS_LABEL, isEligiblePlan, readableKey, validateSelection } from '@/lib/catchup'
 import { INTENT_DONE, INTENT_PENDING, parseCoversKeys } from '@/lib/payment-intent'
 import { PENDING_HOLD_MS, inFlightKeys, ordinaryDeposits } from '@/lib/pay-ahead'
 import { IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
-import { buildSlotsWat, dayDeposits } from '@/lib/savings-card'
+import { buildSlotsWat, dayDeposits, periodAlreadySaved, periodWord, watKey } from '@/lib/savings-card'
 
 /**
  * The deposits that were meant to pay for specific days, by plan: those with coverage rows, plus consumed
  * intents that named days. The second covers a payment that ended up buying none, because every day was
  * taken or the amount was wrong. It still doesn't count as "saved today", as nobody paid it for today.
  */
-export async function coveringRefsByPlan(client: PrismaClient, planIds: string[]): Promise<Map<string, string[]>> {
+export async function coveringRefsByPlan(client: PrismaClient | Prisma.TransactionClient, planIds: string[]): Promise<Map<string, string[]>> {
   const out = new Map<string, Set<string>>(planIds.map(id => [id, new Set<string>()]))
   if (planIds.length === 0) return new Map()
   const [rows, intents] = await Promise.all([
@@ -74,7 +74,7 @@ export async function loadCycleState(client: PrismaClient, planId: string) {
 }
 
 /** This plan's live slots in WAT: what the customer's calendar shows, as the server sees it. */
-export async function liveSlots(client: PrismaClient, plan: SavingsPlan, now: Date) {
+export async function liveSlots(client: PrismaClient | Prisma.TransactionClient, plan: Pick<SavingsPlan, 'id' | 'startDate' | 'maturityDate' | 'periodDays' | 'cadence'>, now: Date) {
   const [deposits, coverage, refs] = await Promise.all([
     client.transaction.findMany({ where: { planId: plan.id, type: 'saving', status: 'Done' }, select: { createdAt: true, ref: true } }),
     client.planDayCoverage.findMany({ where: { savingsPlanId: plan.id }, select: { coversKey: true } }),
@@ -88,6 +88,22 @@ export async function liveSlots(client: PrismaClient, plan: SavingsPlan, now: Da
   )
 }
 
+/** Has the day, week or month holding `at` already been saved on this plan? Works inside a write. */
+export async function periodSavedOn(
+  client: PrismaClient | Prisma.TransactionClient,
+  plan: Pick<SavingsPlan, 'id' | 'startDate' | 'maturityDate' | 'periodDays' | 'cadence'>,
+  at: Date,
+): Promise<boolean> {
+  return periodAlreadySaved(await liveSlots(client, plan, at), watKey(at), plan.cadence)
+}
+
+/** Why an ordinary online payment is refused, or null when it may go ahead. Bulk Savings doesn't come through here. */
+export async function periodPaidError(client: PrismaClient, plan: SavingsPlan, now: Date): Promise<string | null> {
+  if (!(await periodSavedOn(client, plan, now))) return null
+  const ahead = isEligiblePlan(plan) ? ` To save ahead, use ${BULK_SAVINGS_LABEL}.` : ''
+  return `You’ve already saved for ${periodWord(plan.cadence)}.${ahead}`
+}
+
 /** Who is buying: the customer themselves, or their agent recording it for them. */
 export type BulkBuyer = { kind: 'customer'; customerId: string } | { kind: 'agent' }
 
@@ -98,7 +114,7 @@ export async function checkBulkSelection(client: PrismaClient, plan: SavingsPlan
   if (!isEligiblePlan(plan)) return { ok: false, status: 400, error: 'Bulk Savings isn’t available for this plan' }
   if (plan.maturityDate.getTime() <= now.getTime()) return { ok: false, status: 400, error: 'This plan has ended' }
   if (await hasOpenRedemption(client, plan.id, now)) {
-    return { ok: false, status: 409, error: 'This plan has a collection in progress, so no more can be added to it right now' }
+    return { ok: false, status: 409, error: 'This plan has a redemption in progress, so no more can be added to it right now' }
   }
 
   const result = validateSelection(plan, await liveSlots(client, plan, now), keys)

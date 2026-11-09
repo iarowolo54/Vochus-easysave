@@ -26,7 +26,7 @@ const navItems: { section: string; items: { label: string; icon: IconName; href:
     { label: 'Record saving', icon: 'plan', href: '/dashboard/savings' },
     { label: 'Enrol customer', icon: 'enrol', href: '/dashboard/enrol' },
     { label: 'Savings calendar', icon: 'calendar', href: '/dashboard/calendar' },
-    { label: 'Collections', icon: 'collect', href: '/dashboard/redeem' },
+    { label: 'Redemptions', icon: 'collect', href: '/dashboard/redeem' },
     { label: 'Cards', icon: 'card', href: '/dashboard/cards' },
   ]},
   { section: 'Loans', items: [
@@ -55,7 +55,7 @@ const pageTitles: Record<string, string> = {
   '/dashboard/enrol': 'Enrol customer',
   '/dashboard/savings': 'Record saving',
   '/dashboard/calendar': 'Savings calendar',
-  '/dashboard/redeem': 'Collections',
+  '/dashboard/redeem': 'Redemptions',
   '/dashboard/loan-request': 'Loan request',
   '/dashboard/loan-disburse': 'Disburse loan',
   '/dashboard/loan-repay': 'Loan repayment',

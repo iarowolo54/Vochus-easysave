@@ -17,7 +17,7 @@ type Me = { agent: { name: string; agentId: string; phone: string } }
 
 const PROMPTS = [
   'A deposit isn’t showing in my savings',
-  'How do I collect my money?',
+  'How do I redeem my money?',
   'I want to change my daily amount',
 ]
 
@@ -175,7 +175,7 @@ function ChatInner() {
 
         {messages && messages.length === 0 && (
           <div className="ui-chat-empty">
-            <EmptyState icon="chat" title={`Message ${firstName}`} text="Ask about a deposit, collecting your money or your plan." />
+            <EmptyState icon="chat" title={`Message ${firstName}`} text="Ask about a deposit, redeeming your money or your plan." />
             <div className="ui-chat-prompts">
               {PROMPTS.map(p => (
                 <button key={p} type="button" className="ui-chip" onClick={() => { setText(p); inputRef.current?.focus() }}>{p}</button>

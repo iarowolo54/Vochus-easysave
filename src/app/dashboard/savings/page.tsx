@@ -13,7 +13,7 @@ import { blockMinus, nonNegativeString } from '@/lib/numeric'
 import { avatarTint } from '@/lib/avatar'
 import { waLink } from '@/lib/whatsapp'
 import { displayName, formatDate, formatNaira, formatTime } from '@/lib/format'
-import { slotKeyForDate } from '@/lib/savings-card'
+import { buildSlots, dateKey, periodAlreadySaved, periodWord, slotKeyForDate } from '@/lib/savings-card'
 import { addDays, isoDate, parseDateInput, today } from '@/lib/plan-dates'
 import { createReceiptSender, SEND_IDLE } from '@/lib/receipt-send'
 import BottomSheet from '@/components/ui/BottomSheet'
@@ -35,14 +35,14 @@ interface Customer {
   savingsPlans?: SavingsPlan[]
 }
 /** `dailyAmount` is stored as a per-day equivalent; weekly / monthly plans pay 7 or 30 times that each time. */
-interface SavingsPlan { id: string; goal: string; status: string; startDate?: string | null; maturityDate: string | null; dailyAmount: number; cadence?: string | null; balance: number; periodDays: number }
+interface SavingsPlan { id: string; goal: string; status: string; startDate?: string | null; maturityDate: string | null; dailyAmount: number; cadence?: string | null; balance: number; periodDays: number; source?: string | null }
 const UNIT_DAYS: Record<string, number> = { daily: 1, weekly: 7, monthly: 30 }
 const perPayment = (p: SavingsPlan) => Math.round(p.dailyAmount * (UNIT_DAYS[p.cadence ?? 'daily'] ?? 1) * 100) / 100
 const planUnit = (p: SavingsPlan) => p.cadence === 'weekly' ? 'week' : p.cadence === 'monthly' ? 'month' : 'day'
 
 interface TodaySaving { name: string; time: string; method: string; amount: number }
 interface RecentCustomer { code: string; name: string; photoUrl?: string | null }
-interface PaidToday { amount: number; time: string }
+interface PaidToday { planId: string | null; amount: number; time: string; createdAt: string }
 
 type Receipt = {
   ref: string; customer: string; customerId: string; phone: string; amount: number; balance: number
@@ -271,19 +271,17 @@ function SavingsContent() {
       .catch(() => setTodaySavings(prev => prev ?? []))
   }, [refreshKey])
 
-  // Has this customer already paid today? Guards against recording the same cash twice.
+  // This customer's latest savings, newest first: has the chosen plan already been paid for this period?
   useEffect(() => {
     setPaidToday(null)
     if (!selected || recordDate) return
     let live = true
-    fetch(`/api/transactions?type=saving&customerId=${selected.id}&limit=10`)
+    fetch(`/api/transactions?type=saving&customerId=${selected.id}&limit=30`)
       .then(r => r.json())
       .then(d => {
         if (!live) return
-        const today = new Date().toDateString()
-        setPaidToday(((d.transactions ?? []) as { amount: number; createdAt: string; status?: string }[])
-          .filter(t => new Date(t.createdAt).toDateString() === today)
-          .map(t => ({ amount: t.amount, time: formatTime(t.createdAt) })))
+        setPaidToday(((d.transactions ?? []) as { planId: string | null; amount: number; createdAt: string }[])
+          .map(t => ({ planId: t.planId, amount: t.amount, time: formatTime(t.createdAt), createdAt: t.createdAt })))
       })
       .catch(() => { if (live) setPaidToday([]) })
     return () => { live = false }
@@ -493,8 +491,21 @@ function SavingsContent() {
   const bulkUnit = onlineCal?.weekly ? 'week' : 'day'
   const payAmount = bulkMode ? bulkTotal : parseFloat(amount || '0')
   const short = walletBalance !== null && payAmount > 0 && payAmount > walletBalance
-  // Flexible plans can be paid into more than once a day, so an earlier payment today doesn't block another.
-  const alreadyPaid = !flexPlan && !bulkMode && !recordDate && paidToday && paidToday.length > 0 ? paidToday : null
+  // Only this plan's savings count. Weekly and monthly cash plans keep the one-a-day rule until whole-period Bulk Savings
+  // goes live, and online weeks and months hold one saving. Flexible plans can be paid into at any time.
+  const cashPeriod = !!plan && plan.source !== 'self' && (plan.cadence === 'weekly' || plan.cadence === 'monthly')
+  const paidCadence = cashPeriod ? 'daily' : plan?.cadence
+  const planSaves = plan ? (paidToday ?? []).filter(p => p.planId === plan.id) : []
+  const periodPaid = !!plan?.startDate && !!plan.maturityDate && periodAlreadySaved(
+    buildSlots({ startDate: plan.startDate, maturityDate: plan.maturityDate, periodDays: plan.periodDays, cadence: paidCadence ?? undefined }, planSaves.map(p => p.createdAt)),
+    dateKey(new Date()),
+    paidCadence,
+  )
+  // A daily plan lists today's savings; on a longer period the latest one is the one that paid it.
+  const paidList = paidCadence === 'weekly' || paidCadence === 'monthly'
+    ? planSaves.slice(0, 1).map(p => `${formatNaira(p.amount, { minor: false })} on ${formatDate(p.createdAt)}`)
+    : planSaves.filter(p => dateKey(new Date(p.createdAt)) === dateKey(new Date())).map(p => `${formatNaira(p.amount, { minor: false })} at ${p.time}`)
+  const alreadyPaid = !flexPlan && !bulkMode && !recordDate && periodPaid ? paidList : null
   const returnHere = selected ? `/dashboard/savings?cid=${encodeURIComponent(selected.customerId)}` : '/dashboard/savings'
   const lateDateLabel = recordDate
     ? new Date(recordDate + 'T12:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })
@@ -638,7 +649,7 @@ function SavingsContent() {
                     <div key={p.id} className="ui-row">
                       <span className="ui-row-main">
                         <span className="ui-row-title ui-block">{p.goal}</span>
-                        <span className="ui-row-sub ui-block">{isFlexible(p.cadence) ? 'Flexible' : `${formatNaira(perPayment(p), { minor: false })} a ${planUnit(p)}`} · {p.status === 'Redeemed' ? 'collected' : (p.maturityDate ? `ended ${formatDate(p.maturityDate)}` : 'ended')}</span>
+                        <span className="ui-row-sub ui-block">{isFlexible(p.cadence) ? 'Flexible' : `${formatNaira(perPayment(p), { minor: false })} a ${planUnit(p)}`} · {p.status === 'Redeemed' ? 'redeemed' : (p.maturityDate ? `ended ${formatDate(p.maturityDate)}` : 'ended')}</span>
                       </span>
                       <button type="button" className="ui-btn ui-btn--secondary" disabled={loading}
                         onClick={() => setReopenFor(p.status === 'Redeemed'
@@ -728,9 +739,8 @@ function SavingsContent() {
                     <div className="ui-banner ui-banner--warn ag-card-banner" role="status">
                       <Icons.error size={18} aria-hidden="true" />
                       <div>
-                        <strong>Already paid today:</strong>{' '}
-                        {alreadyPaid.map(p => `${formatNaira(p.amount, { minor: false })} at ${p.time}`).join(', ')}.
-                        {' '}Today’s saving is already recorded.
+                        <strong>Already paid {periodWord(paidCadence)}:</strong>{' '}
+                        {alreadyPaid.join(', ')}.
                       </div>
                     </div>
                   )}
@@ -988,7 +998,7 @@ function NewPlanForm({ plan, setPlan }: { plan: typeof EMPTY_PLAN; setPlan: (fn:
       <h2 id="plan-title" className="ui-card-title ag-card-title">Start a new plan</h2>
       <div className="ui-banner ui-banner--info">
         <Icons.locked size={18} aria-hidden="true" />
-        <div>Their last plan has been collected. Start a new plan to keep saving.</div>
+        <div>Their last plan has been redeemed. Start a new plan to keep saving.</div>
       </div>
 
       <div className="ui-field">

@@ -197,7 +197,7 @@ export default function RedeemPage() {
   async function generateToken() {
     if (!selected) { setError('Choose a customer first.'); return }
     const planId = selectedPlan?.id
-    if (!planId) { setError('This customer has no savings plan that can be collected.'); return }
+    if (!planId) { setError('This customer has no savings plan that can be redeemed.'); return }
     if (!bankTransferReady) { setError('Choose the bank, enter the 10-digit account number and the account name.'); return }
     setLoading(true); setError('')
     let res: Response
@@ -222,7 +222,7 @@ export default function RedeemPage() {
     }
     if (!res.ok) {
       if (res.status === 409) {
-        setError('A collection code was already sent to this customer. Use “Customer already has a code” to finish it.')
+        setError('A redemption code was already sent to this customer. Use “Customer already has a code” to finish it.')
       } else {
         setError(data.error ?? `The request didn’t go through (${res.status}). Please try again.`)
       }
@@ -264,7 +264,7 @@ export default function RedeemPage() {
   }
 
   async function lookupToken() {
-    if (!enteredToken.trim()) { setError('Enter the collection code.'); return }
+    if (!enteredToken.trim()) { setError('Enter the redemption code.'); return }
     setLoading(true); setError('')
     try {
       const res = await fetch('/api/transactions/redemption/lookup-token', {
@@ -277,7 +277,7 @@ export default function RedeemPage() {
         if (data.error === 'REJECTED') {
           setEnteredToken('')
           setStep('select')
-          setError(`This code belongs to a declined collection for ${data.customerName}. Send them a new code.`)
+          setError(`This code belongs to a declined redemption for ${data.customerName}. Send them a new code.`)
         } else {
           setError(data.error ?? 'We couldn’t find that code.')
         }
@@ -307,7 +307,7 @@ export default function RedeemPage() {
           {pendingCustomerRedemptions.length > 0 && step === 'select' && !selected && (
             <section className="ag-requests" aria-labelledby="req-title">
               <div className="ag-requests-head">
-                <h2 id="req-title">Customers asking to collect</h2>
+                <h2 id="req-title">Customers asking to redeem</h2>
                 <span className="ag-badge-count">{pendingCustomerRedemptions.length}</span>
               </div>
               {pendingCustomerRedemptions.map(r => (
@@ -357,7 +357,7 @@ export default function RedeemPage() {
               {/* Choose the customer */}
               {step === 'select' && !selected && (
                 <>
-                  <h2 className="ag-q">Who’s collecting their savings?</h2>
+                  <h2 className="ag-q">Who’s redeeming their savings?</h2>
                   <p className="ag-q-lead">Find the customer, check what they’ll receive, then we send them a code to confirm.</p>
                   <FormError message={error} />
                   <div className="ag-search">
@@ -387,7 +387,7 @@ export default function RedeemPage() {
                     <span className="ag-alt-icon" aria-hidden="true"><Icons.locked size={20} /></span>
                     <span className="ag-payee-main">
                       <span className="ui-row-title ui-block">Customer already has a code?</span>
-                      <span className="ui-row-sub ui-block">Enter it to finish their collection</span>
+                      <span className="ui-row-sub ui-block">Enter it to finish their redemption</span>
                     </span>
                     <Icons.next size={18} aria-hidden="true" />
                   </button>
@@ -407,7 +407,7 @@ export default function RedeemPage() {
                   </div>
 
                   {eligiblePlans.length === 0 ? (
-                    <EmptyState icon="plan" title="Nothing to collect here" text={withMoney.length > 0 ? 'This customer’s plans are online, so they collect in their Vochus app.' : 'This customer has no savings plan with money in it.'} />
+                    <EmptyState icon="plan" title="Nothing to redeem here" text={withMoney.length > 0 ? 'This customer’s plans are online, so they redeem in their Vochus app.' : 'This customer has no savings plan with money in it.'} />
                   ) : (
                     <>
                       <h2 className="ag-q ag-q--amount">
@@ -415,7 +415,7 @@ export default function RedeemPage() {
                         {formatNaira(preview?.net ?? 0)}
                       </h2>
                       {selectedPlan && !planMatured && (
-                        <p className="ag-early"><Icons.pending size={16} aria-hidden="true" /> This plan ends {formatDate(selectedPlan.maturityDate)}, so this is an early collection.</p>
+                        <p className="ag-early"><Icons.pending size={16} aria-hidden="true" /> This plan ends {formatDate(selectedPlan.maturityDate)}, so this is an early redemption.</p>
                       )}
 
                       <FormError message={error} />
@@ -552,10 +552,10 @@ export default function RedeemPage() {
                   <p className="ag-q-lead">
                     {step === 'verify'
                       ? <>Ask {displayName(issuedCustomerName) || 'the customer'} to read it out. It confirms they agree to this payout.</>
-                      : 'The customer got a 6-digit collection code by text or email. Ask them to read it to you.'}
+                      : 'The customer got a 6-digit redemption code by text or email. Ask them to read it to you.'}
                   </p>
                   <FormError message={error} />
-                  <CodeBoxes value={enteredToken} onChange={v => { setEnteredToken(v); setError('') }} label="Collection code" autoFocus
+                  <CodeBoxes value={enteredToken} onChange={v => { setEnteredToken(v); setError('') }} label="Redemption code" autoFocus
                     onComplete={step === 'verify' ? validateToken : lookupToken} error={!!error} />
                   <div className="ag-flow-actions">
                     <button type="button" className="ui-btn ui-btn--primary ag-flow-cta"

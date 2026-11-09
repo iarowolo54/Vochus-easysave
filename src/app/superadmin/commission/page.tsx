@@ -350,7 +350,7 @@ export default function CommissionPage() {
         <div className="stat">
           <div className="stat-lbl">System commission</div>
           <div className="stat-val">{firstLoad ? '—' : naira(data.systemCommission.total)}</div>
-          <div className="stat-sub">Platform fees: new ones recorded, earlier collections worked out</div>
+          <div className="stat-sub">Platform fees: new ones recorded, earlier redemptions worked out</div>
         </div>
       </div>
 

@@ -29,7 +29,7 @@ interface Stats {
 
 const TYPES: Record<string, { label: string; icon: IconName; sign: '+' | '−' | '' }> = {
   saving: { label: 'Saving', icon: 'deposit', sign: '+' },
-  redemption: { label: 'Collection', icon: 'withdraw', sign: '−' },
+  redemption: { label: 'Redemption', icon: 'withdraw', sign: '−' },
   repayment: { label: 'Loan repayment', icon: 'repay', sign: '+' },
   disbursement: { label: 'Loan paid out', icon: 'withdraw', sign: '−' },
   enrolment: { label: 'New customer', icon: 'enrol', sign: '' },
@@ -42,7 +42,7 @@ const meta = (t: string) => TYPES[t] ?? { label: t.charAt(0).toUpperCase() + t.s
 const FILTERS: { v: string; l: string }[] = [
   { v: '', l: 'All' },
   { v: 'saving', l: 'Savings' },
-  { v: 'redemption', l: 'Collections' },
+  { v: 'redemption', l: 'Redemptions' },
   { v: 'repayment', l: 'Repayments' },
   { v: 'disbursement', l: 'Loans paid out' },
   { v: 'loan', l: 'Loan requests' },
@@ -121,7 +121,7 @@ export default function TransactionsPage() {
             <dd>{formatNaira(stats?.todaySavings ?? 0, { minor: false })}<span>{stats?.todaySavingsCount ?? 0}</span></dd>
           </div>
           <div>
-            <dt><span className="ag-dot ag-dot--out" aria-hidden="true" />Collections out</dt>
+            <dt><span className="ag-dot ag-dot--out" aria-hidden="true" />Redemptions out</dt>
             <dd>{formatNaira(stats?.todayRedemptions ?? 0, { minor: false })}<span>{stats?.todayRedemptionsCount ?? 0}</span></dd>
           </div>
           <div>
@@ -164,7 +164,7 @@ export default function TransactionsPage() {
           {filtered
             ? <EmptyState icon="history" title="Nothing here" text="No transactions match these filters."
                 action={<button type="button" className="ui-btn ui-btn--secondary" onClick={() => { setType(''); setDate(''); setPage(1) }}>Clear filters</button>} />
-            : <EmptyState icon="history" title="No transactions yet" text="Savings, collections and loans you handle will show here." />}
+            : <EmptyState icon="history" title="No transactions yet" text="Savings, redemptions and loans you handle will show here." />}
         </section>
       ) : (
         <div className={`ag-tx-list${loading ? ' is-loading' : ''}`} aria-busy={loading}>

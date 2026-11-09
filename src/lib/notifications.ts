@@ -61,11 +61,11 @@ export const notifications = {
   /** A collection was asked for. When the customer asked, their agent is told it's waiting for them. */
   collectionRequested(f: CollectionFacts & { byCustomer: boolean }): NotificationEvent[] {
     const out: NotificationEvent[] = [{
-      recipient: customer(f.customerId), kind: 'collection_requested', title: 'Your collection request was sent',
+      recipient: customer(f.customerId), kind: 'collection_requested', title: 'Your redemption request was sent',
       body: `${naira(f.amount)} will be paid once it’s approved.`, href: '/customer/redeem', dedupeKey: `collection-requested:${f.id}`,
     }]
     if (f.byCustomer) out.push({
-      recipient: agent(f.agentId), kind: 'collection_wanted', title: `${name(f.customerName)} wants to collect ${naira(f.amount)}`,
+      recipient: agent(f.agentId), kind: 'collection_wanted', title: `${name(f.customerName)} wants to redeem ${naira(f.amount)}`,
       href: '/dashboard/redeem', dedupeKey: `collection-wanted:${f.id}`,
     })
     return out
@@ -74,7 +74,7 @@ export const notifications = {
   /** The agent approved (or confirmed the customer's code); the office pays next. */
   collectionApproved(f: CollectionFacts): NotificationEvent[] {
     return [{
-      recipient: customer(f.customerId), kind: 'collection_approved', title: 'Your collection was approved',
+      recipient: customer(f.customerId), kind: 'collection_approved', title: 'Your redemption was approved',
       body: 'The office is now paying it.', href: '/customer/redeem', dedupeKey: `collection-approved:${f.id}`,
     }]
   },
@@ -83,7 +83,7 @@ export const notifications = {
   collectionPaid(f: CollectionFacts): NotificationEvent[] {
     return [
       { recipient: customer(f.customerId), kind: 'collection_paid', title: `${naira(f.amount)} has been paid to you`, href: '/customer/redeem', dedupeKey: `collection-paid:${f.id}` },
-      { recipient: agent(f.agentId), kind: 'collection_paid_agent', title: `${name(f.customerName)}’s collection of ${naira(f.amount)} was paid`, href: '/dashboard/redeem', dedupeKey: `collection-paid-agent:${f.id}` },
+      { recipient: agent(f.agentId), kind: 'collection_paid_agent', title: `${name(f.customerName)}’s redemption of ${naira(f.amount)} was paid`, href: '/dashboard/redeem', dedupeKey: `collection-paid-agent:${f.id}` },
     ]
   },
 
@@ -91,9 +91,9 @@ export const notifications = {
   collectionDeclined(f: CollectionFacts & { reason?: string | null; byAgent?: boolean }): NotificationEvent[] {
     const why = f.reason?.trim() ? `Reason: ${f.reason.trim()}` : undefined
     const out: NotificationEvent[] = [
-      { recipient: customer(f.customerId), kind: 'collection_declined', title: 'Your collection request was declined', body: why, href: '/customer/redeem', dedupeKey: `collection-declined:${f.id}` },
+      { recipient: customer(f.customerId), kind: 'collection_declined', title: 'Your redemption request was declined', body: why, href: '/customer/redeem', dedupeKey: `collection-declined:${f.id}` },
     ]
-    if (!f.byAgent) out.push({ recipient: agent(f.agentId), kind: 'collection_declined_agent', title: `${name(f.customerName)}’s collection request was declined`, body: why, href: '/dashboard/redeem', dedupeKey: `collection-declined-agent:${f.id}` })
+    if (!f.byAgent) out.push({ recipient: agent(f.agentId), kind: 'collection_declined_agent', title: `${name(f.customerName)}’s redemption request was declined`, body: why, href: '/dashboard/redeem', dedupeKey: `collection-declined-agent:${f.id}` })
     return out
   },
 
@@ -118,14 +118,14 @@ export const notifications = {
   },
 
   planEnded(f: { planId: string; customerId: string; goal: string }): NotificationEvent[] {
-    return [{ recipient: customer(f.customerId), kind: 'plan_ended', title: `Your ${f.goal} plan has ended`, body: 'You can collect it now, or keep saving into it again from Home.', href: '/customer/dashboard', dedupeKey: `plan-ended:${f.planId}` }]
+    return [{ recipient: customer(f.customerId), kind: 'plan_ended', title: `Your ${f.goal} plan has ended`, body: 'You can redeem it now, or keep saving into it again from Home.', href: '/customer/dashboard', dedupeKey: `plan-ended:${f.planId}` }]
   },
 
   /** Every 7 days after a plan ends while money is still in it (the end day itself is planEnded). */
   planUncollected(f: { planId: string; customerId: string; goal: string; balance: number; week: number }): NotificationEvent[] {
     return [{
       recipient: customer(f.customerId), kind: 'plan_uncollected', title: `${naira(f.balance)} is waiting in your ${f.goal} plan`,
-      body: 'Your plan has ended. Collect your money, or keep saving into it again from Home.',
+      body: 'Your plan has ended. Redeem your money, or keep saving into it again from Home.',
       href: '/customer/dashboard', dedupeKey: `plan-uncollected:${f.planId}:w${f.week}`,
     }]
   },
@@ -133,7 +133,7 @@ export const notifications = {
   /** Once a week: the agent's customers whose plans have ended with money still in them. */
   agentUncollected(f: { agentId: string; count: number; total: number; weekKey: string }): NotificationEvent[] {
     if (f.count <= 0) return []
-    const title = f.count === 1 ? '1 customer hasn’t collected their money' : `${f.count} customers haven’t collected their money`
+    const title = f.count === 1 ? '1 customer hasn’t redeemed their money' : `${f.count} customers haven’t redeemed their money`
     return [{
       recipient: agent(f.agentId), kind: 'uncollected_this_week', title, body: `${naira(f.total)} is waiting in plans that have ended.`,
       href: '/dashboard/redeem', dedupeKey: `uncollected-agent:${f.agentId}:${f.weekKey}`,

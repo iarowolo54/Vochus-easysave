@@ -26,9 +26,9 @@ test('agent: one notice a week with every ended plan, including ones in their fi
   const ev = uncollectedEvents([plan('p1', 'a1', 3, 5000), plan('p2', 'a1', 7, 2500.5), plan('p3', 'a2', 21, 100)], now)
   const a1 = ev.agent.find(e => e.recipient.id === 'a1')!
   assert.equal(a1.dedupeKey, 'uncollected-agent:a1:2026-W46')
-  assert.equal(a1.title, '2 customers haven’t collected their money')
+  assert.equal(a1.title, '2 customers haven’t redeemed their money')
   assert.equal(a1.body, '₦7,500.50 is waiting in plans that have ended.')
-  assert.equal(ev.agent.find(e => e.recipient.id === 'a2')?.title, '1 customer hasn’t collected their money')
+  assert.equal(ev.agent.find(e => e.recipient.id === 'a2')?.title, '1 customer hasn’t redeemed their money')
 })
 
 test('nothing to say, nothing sent', () => {

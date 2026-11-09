@@ -21,6 +21,8 @@ import { isOpenForSaving } from '@/lib/plan-credit'
 import { feeSentence } from '@/lib/savings-fee'
 import { useFlexibleTerms } from '@/lib/use-flexible-terms'
 import { useFundingMode } from '@/lib/use-funding-mode'
+import { buildSlots, dateKey, dayDeposits, periodAlreadySaved, periodWord } from '@/lib/savings-card'
+import { BULK_SAVINGS_LABEL, isEligiblePlan } from '@/lib/catchup'
 
 type Cadence = 'daily' | 'weekly' | 'monthly'
 
@@ -61,10 +63,12 @@ const GOALS = [
 type Plan = {
   id: string; dailyAmount: number; periodDays: number; cadence?: string; goal: string
   startDate: string; maturityDate: string; balance: number; status: string
+  source?: string | null; coveredKeys?: string[]; coveredRefs?: string[]
 }
 type Me = {
   plan: Plan | null
   plans: Plan[]
+  transactions: { planId: string | null; ref?: string; createdAt: string }[]
   pendingRedemptions: { ref: string; status: string; savingsPlanId: string }[]
 }
 
@@ -235,6 +239,14 @@ function SavePageInner() {
   const flexEndError = flexEndDay && flexEndDay < flexMinEnd ? `Pick ${formatDate(flexMinEnd)} or later. A flexible plan runs at least ${terms.minTermMonths} months.` : ''
   const selectedFlex = !!selectedPlan && isFlexible(selectedPlan.cadence)
   const payAmount = selectedPlan ? (selectedFlex ? (Number(payText) || 0) : periodAmount(selectedPlan)) : 0
+  // Same reading as Home's calendar; the server makes the final decision.
+  const planDeposits = selectedPlan ? data.transactions.filter(t => t.planId === selectedPlan.id) : []
+  const paidForPeriod = !!selectedPlan && periodAlreadySaved(
+    buildSlots(selectedPlan, dayDeposits(planDeposits, selectedPlan.coveredRefs).map(t => t.createdAt), selectedPlan.coveredKeys ?? []),
+    dateKey(new Date()),
+    selectedPlan.cadence,
+  )
+  const canSaveAhead = !!selectedPlan && isEligiblePlan({ ...selectedPlan, source: selectedPlan.source ?? '' })
 
   return (
     <div className="ui-screen">
@@ -254,7 +266,7 @@ function SavePageInner() {
           <EmptyState
             icon="plan"
             title="Your plan has ended"
-            text="It can’t take more savings. Collect it, save into it again from Home, or start a new plan."
+            text="It can’t take more savings. Redeem it, save into it again from Home, or start a new plan."
             action={
               <div className="ui-stack">
                 <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => router.push('/customer/dashboard')}>Go to Home</button>
@@ -268,10 +280,10 @@ function SavePageInner() {
           <EmptyState
             icon="locked"
             title="Saving is paused for this plan"
-            text="You have a collection in progress. You can save into this plan again once it's finished."
+            text="You have a redemption in progress. You can save into this plan again once it's finished."
             action={
               <div className="ui-stack">
-                <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => router.push('/customer/redeem')}>View collection</button>
+                <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => router.push(`/customer/redeem?planId=${encodeURIComponent(selectedPlan.id)}`)}>View redemption</button>
                 {plans.length > 1 && (
                   <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => setPickerOpen(true)}>Save into another plan</button>
                 )}
@@ -294,7 +306,26 @@ function SavePageInner() {
           />
         )}
 
-        {mode === 'pay' && selectedPlan && !pending && !transfer && (
+        {mode === 'pay' && selectedPlan && !pending && !transfer && paidForPeriod && (
+          <EmptyState
+            icon="check"
+            title={`You’ve saved for ${periodWord(selectedPlan.cadence)}`}
+            text={canSaveAhead ? `To save ahead, use ${BULK_SAVINGS_LABEL}.` : 'You can save again when the next payment is due.'}
+            action={
+              <div className="ui-stack">
+                {canSaveAhead && (
+                  <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => router.push(`/customer/catchup?planId=${encodeURIComponent(selectedPlan.id)}`)}>{BULK_SAVINGS_LABEL}</button>
+                )}
+                {plans.length > 1 && (
+                  <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => setPickerOpen(true)}>Save into another plan</button>
+                )}
+                <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => router.push('/customer/dashboard')}>Go to Home</button>
+              </div>
+            }
+          />
+        )}
+
+        {mode === 'pay' && selectedPlan && !pending && !transfer && !paidForPeriod && (
           <>
             {/* Review layout (Cash App style): the sentence says exactly what will happen before the account details show. */}
             <section className="ui-review" aria-label="Payment summary">
@@ -454,7 +485,7 @@ function SavePageInner() {
                   <span className="ui-radio" aria-hidden="true" />
                   <span className="ui-row-main">
                     <span className="ui-row-title ui-block">Choose an end date</span>
-                    <span className="ui-row-sub ui-block">{customEnd ? lengthLabel(periodDays, cadence) : 'Pick the day you want to collect'}</span>
+                    <span className="ui-row-sub ui-block">{customEnd ? lengthLabel(periodDays, cadence) : 'Pick the day you want to redeem'}</span>
                   </span>
                   {customEnd && <span className="ui-row-value">{formatNaira(Math.round(dailyEquiv * periodDays), { minor: false })}</span>}
                 </button>
@@ -517,7 +548,7 @@ function SavePageInner() {
                 <span className="ui-row-main">
                   <span className="ui-row-title ui-block">{p.goal}</span>
                   <span className="ui-row-sub ui-block">
-                    {locked ? 'Collection in progress' : isFlexible(p.cadence) ? 'Flexible, any amount' : `${formatNaira(periodAmount(p), { minor: false })} a ${UNIT[cadenceOf(p)]}`}
+                    {locked ? 'Redemption in progress' : isFlexible(p.cadence) ? 'Flexible, any amount' : `${formatNaira(periodAmount(p), { minor: false })} a ${UNIT[cadenceOf(p)]}`}
                   </span>
                 </span>
                 <span className="ui-row-value">{formatNaira(p.balance)}</span>

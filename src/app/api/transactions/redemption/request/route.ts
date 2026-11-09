@@ -51,7 +51,7 @@ export async function POST(req: NextRequest) {
 
     if (!plan) return NextResponse.json({ error: 'Plan not found' }, { status: 404 })
     // Online customers collect through their own app, where the request and its code are theirs.
-    if (plan.source === 'self') return NextResponse.json({ error: 'This is an online plan. Ask the customer to collect from it in their Vochus app.' }, { status: 400 })
+    if (plan.source === 'self') return NextResponse.json({ error: 'This is an online plan. Ask the customer to redeem from it in their Vochus app.' }, { status: 400 })
     if (!['Active', 'Matured'].includes(plan.status)) return NextResponse.json({ error: `Plan status is "${plan.status}" — must be Active or Matured` }, { status: 400 })
     if (plan.balance <= 0) return NextResponse.json({ error: 'No balance to redeem' }, { status: 400 })
 
@@ -87,7 +87,7 @@ export async function POST(req: NextRequest) {
       ref,
       savingsPlanId: planId,
       type: isEarly ? 'early' : 'matured',
-      reason: isEarly ? 'Early collection - asked for by the agent' : 'Plan matured - customer redemption',
+      reason: isEarly ? 'Early redemption - asked for by the agent' : 'Plan matured - customer redemption',
       status: 'Pending',
       balance: plan.balance,
       penalty: deduction,
@@ -110,7 +110,7 @@ export async function POST(req: NextRequest) {
     const destination = isBank && resolvedBankName
       ? `${payoutDestination(resolvedBankName, String(accountNumber))}${nameCheckHeld && resolvedAccountName ? ` ${otherNameWarning(resolvedAccountName)}` : ''}`
       : ''
-    const smsBody = `Vochus Easy Save: Your redemption token is ${token}. Present this to your agent to collect N${netPayout.toLocaleString()}. Expires ${expiryStr}.${destination ? ` ${destination}` : ''}`
+    const smsBody = `Vochus Easy Save: Your redemption token is ${token}. Present this to your agent to redeem N${netPayout.toLocaleString()}. Expires ${expiryStr}.${destination ? ` ${destination}` : ''}`
 
     // The plaintext token is delivered only out-of-band (SMS/email) — never
     // logged. Only its hash is stored (createRedemptionWithUniqueCode above).
@@ -124,7 +124,7 @@ export async function POST(req: NextRequest) {
       sendMail({
         to: plan.customer.email,
         subject: 'Your Vochus Easy Save Redemption Token',
-        html: `<p>Hi ${plan.customer.firstName},</p><p>${isEarly ? `You asked to collect from your savings plan before its end date (${shortDate(plan.maturityDate)}).` : 'Your savings plan has matured.'} Present the token below to your agent to collect your payout.</p><div style="background:#1a3c2e;border-radius:12px;padding:24px;text-align:center;margin:24px 0"><p style="color:#8fc9a9;font-size:12px;letter-spacing:2px;margin:0 0 8px">REDEMPTION TOKEN</p><p style="color:#4ade80;font-size:48px;font-weight:900;font-family:monospace;letter-spacing:8px;margin:0">${token}</p><p style="color:#8fc9a9;font-size:12px;margin:8px 0 0">Expires: ${expiryStr}</p></div><p>Balance: <strong>N${plan.balance.toLocaleString()}</strong><br/>Deduction: <strong>N${deduction.toLocaleString()}</strong><br/>Payout amount: <strong>N${netPayout.toLocaleString()}</strong></p>${destination ? `<p>${escapeHtml(destination)}</p>` : ''}<p>Ref: <code>${ref}</code></p><p>Do not share this token with anyone other than your registered Vochus agent.</p>`,
+        html: `<p>Hi ${plan.customer.firstName},</p><p>${isEarly ? `You asked to redeem from your savings plan before its end date (${shortDate(plan.maturityDate)}).` : 'Your savings plan has matured.'} Present the token below to your agent to redeem your payout.</p><div style="background:#1a3c2e;border-radius:12px;padding:24px;text-align:center;margin:24px 0"><p style="color:#8fc9a9;font-size:12px;letter-spacing:2px;margin:0 0 8px">REDEMPTION TOKEN</p><p style="color:#4ade80;font-size:48px;font-weight:900;font-family:monospace;letter-spacing:8px;margin:0">${token}</p><p style="color:#8fc9a9;font-size:12px;margin:8px 0 0">Expires: ${expiryStr}</p></div><p>Balance: <strong>N${plan.balance.toLocaleString()}</strong><br/>Deduction: <strong>N${deduction.toLocaleString()}</strong><br/>Payout amount: <strong>N${netPayout.toLocaleString()}</strong></p>${destination ? `<p>${escapeHtml(destination)}</p>` : ''}<p>Ref: <code>${ref}</code></p><p>Do not share this token with anyone other than your registered Vochus agent.</p>`,
       }).catch(() => {})
     }
 
@@ -140,7 +140,7 @@ export async function POST(req: NextRequest) {
     // Super admins are notified at the admin-approval stage (when the agent approves and
     // sends to admin — see api/agent/redemption/[id]), not at request creation.
     const nameCheckNote = nameCheckHeld
-      ? `This account is in the name ${resolvedAccountName}, not ${customerName}. A super admin will have to check it before it can be paid. The customer can also collect in their Vochus app if they have it.`
+      ? `This account is in the name ${resolvedAccountName}, not ${customerName}. A super admin will have to check it before it can be paid. The customer can also redeem in their Vochus app if they have it.`
       : undefined
     return NextResponse.json({ ref, nameCheckNote, tokenExpiry, balance: plan.balance, deduction, netPayout, customerName, sentTo: { phone: plan.customer.phone, email: channels.includes('email') ? plan.customer.email : null } })
   } catch (err: any) {

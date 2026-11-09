@@ -243,7 +243,7 @@ function AddPlanContent() {
 
         <button type="button" role="checkbox" aria-checked={agreed} className={`ag-agree${agreed ? ' is-on' : ''}`} onClick={() => { setAgreed(a => !a); setError('') }}>
           <span className="ag-agree-box" aria-hidden="true">{agreed && <Icons.check size={16} />}</span>
-          <span>{flexible ? 'The customer has agreed to this plan and its terms, including the charges when they collect.' : 'The customer has agreed to this plan and its terms, including the platform fee.'}</span>
+          <span>{flexible ? 'The customer has agreed to this plan and its terms, including the charges when they redeem.' : 'The customer has agreed to this plan and its terms, including the platform fee.'}</span>
         </button>
 
         <FormError message={error} />

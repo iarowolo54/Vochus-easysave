@@ -59,7 +59,7 @@ test('plan previews: daily shows the first-day amount, weekly the percentage of 
 })
 
 test('feeSentence says what the old rule says before go-live', () => {
-  assert.equal(feeSentence({ live: false, cadence: 'daily', amountPerPayment: 500, periodicFeePct: 7.5 }), 'A platform fee is taken when they collect.')
+  assert.equal(feeSentence({ live: false, cadence: 'daily', amountPerPayment: 500, periodicFeePct: 7.5 }), 'A platform fee is taken when they redeem.')
 })
 
 test('feeSentence for a live daily plan names the first day\'s amount', () => {
@@ -87,7 +87,7 @@ test('a flexible plan preview has no per-deposit fee', () => {
 
 test('feeSentence for flexible names the commission and the penalty (cash) or only the penalty (online)', () => {
   const base = { live: true, cadence: 'flexible', amountPerPayment: 0, periodicFeePct: 7.5 }
-  assert.equal(feeSentence({ ...base, flexible: { cashCommissionPct: 5, penaltyPct: 5, online: false } }), '5% is taken when they collect, plus 5% if they stop before the end date.')
+  assert.equal(feeSentence({ ...base, flexible: { cashCommissionPct: 5, penaltyPct: 5, online: false } }), '5% is taken when they redeem, plus 5% if they stop before the end date.')
   assert.equal(feeSentence({ ...base, flexible: { cashCommissionPct: 5, penaltyPct: 5, online: true } }), 'No charge if you keep it to the end date. Stopping early costs 5%.')
   assert.equal(feeSentence({ ...base, live: false, flexible: { cashCommissionPct: 5, penaltyPct: 5, online: true } }), 'No charge if you keep it to the end date. Stopping early costs 5%.')
 })

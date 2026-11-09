@@ -42,7 +42,7 @@ export default function PlanEnded({ plan, hideAmounts, onCollect, onNewPlan, not
           : <>Plan ended {formatDate(plan.maturityDate)}</>}
       </p>
 
-      <div className="ui-ring" role="img" aria-label={hideAmounts ? 'Savings ready to collect' : goal > 0 ? `${formatNaira(plan.balance)} saved of ${formatNaira(goal)} goal` : `${formatNaira(plan.balance)} saved`}>
+      <div className="ui-ring" role="img" aria-label={hideAmounts ? 'Savings ready to redeem' : goal > 0 ? `${formatNaira(plan.balance)} saved of ${formatNaira(goal)} goal` : `${formatNaira(plan.balance)} saved`}>
         <svg width={RING} height={RING} viewBox={`0 0 ${RING} ${RING}`} aria-hidden="true">
           <circle cx={RING / 2} cy={RING / 2} r={R} fill="none" stroke="var(--ui-line)" strokeWidth={STROKE} />
           <circle
@@ -53,7 +53,7 @@ export default function PlanEnded({ plan, hideAmounts, onCollect, onNewPlan, not
           />
         </svg>
         <div className="ui-ring-inner" aria-hidden="true">
-          <span className="ui-ring-label">Ready to collect</span>
+          <span className="ui-ring-label">Ready to redeem</span>
           {hideAmounts
             ? <span className="ui-amount ui-ring-amount">₦ ••••</span>
             : <span className={`ui-ring-amount${long ? ' ui-ring-amount--long' : ''}`}><Amount value={plan.balance} animate /></span>}
@@ -63,7 +63,7 @@ export default function PlanEnded({ plan, hideAmounts, onCollect, onNewPlan, not
 
       <p className="ui-hero-sub">
         {hideAmounts
-          ? 'Your savings are ready to collect.'
+          ? 'Your savings are ready to redeem.'
           : reached
             ? <>You reached your {formatNaira(goal, { minor: false })} goal over {span}.</>
             : <>You saved <strong>{formatNaira(plan.balance)}</strong> over {span}.</>}
@@ -72,7 +72,7 @@ export default function PlanEnded({ plan, hideAmounts, onCollect, onNewPlan, not
 
       <div className="ui-plan-ended-actions">
         <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={onCollect}>
-          {hideAmounts ? 'Collect my savings' : `Collect ${formatNaira(plan.balance)}`}
+          {hideAmounts ? 'Redeem my savings' : `Redeem ${formatNaira(plan.balance)}`}
         </button>
         <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={onNewPlan}>
           <Icons.add size={18} aria-hidden="true" /> Start a new plan

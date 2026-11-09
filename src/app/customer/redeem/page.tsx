@@ -1,5 +1,5 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import CustomerBottomNav from '@/components/customer/CustomerBottomNav'
 import BankSelect from '@/components/ui/BankSelect'
@@ -56,6 +56,7 @@ function codeWhere(sentBy: string[]): string {
 }
 
 export default function CustomerRedeemPage() {
+  const planIdRef = useRef<string | null>(null)
   const flexTerms = useFlexibleTerms()
   const router = useRouter()
   const [plan, setPlan] = useState<Plan | null>(null)
@@ -79,12 +80,15 @@ export default function CustomerRedeemPage() {
   const [selectedRedemption, setSelectedRedemption] = useState<Redemption | null>(null)
 
   useEffect(() => {
+    // The plan Redeem was opened from; with none named, the customer's newest plan.
+    const wantedPlan = new URLSearchParams(window.location.search).get('planId')
+    planIdRef.current = wantedPlan
     fetch('/api/customer/me')
       .then(r => { if (r.status === 401) { router.push('/customer/login'); return null } return r.json() })
-      .then(d => { if (d) setPlan(d.plan) })
+      .then(d => { if (d) setPlan(wantedPlan ? d.plans?.find((p: { id: string }) => p.id === wantedPlan) ?? d.plan : d.plan) })
       .catch(() => {})
 
-    fetch('/api/customer/redeem')
+    fetch(`/api/customer/redeem${wantedPlan ? `?planId=${encodeURIComponent(wantedPlan)}` : ''}`)
       .then(r => r.json())
       .then(d => { if (d.redemptions) setRedemptions(d.redemptions) })
       .catch(() => {})
@@ -93,7 +97,7 @@ export default function CustomerRedeemPage() {
 
   async function submitRequest() {
     setError('')
-    if (!reason) { setError('Choose why you’re collecting.'); return }
+    if (!reason) { setError('Choose why you’re redeeming.'); return }
     if (useBankTransfer && (!bankCode || accountNumber.length !== 10 || !cleanAccountName(accountName))) { setError('Choose your bank, enter your 10-digit account number and the account name, or choose cash from your agent.'); return }
     setSubmitting(true)
     try {
@@ -102,6 +106,7 @@ export default function CustomerRedeemPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           reason,
+          ...(planIdRef.current ? { planId: planIdRef.current } : {}),
           ...(useBankTransfer ? { accountNumber, accountName: accountName.trim(), bankCode } : {}),
         }),
       })
@@ -178,7 +183,7 @@ export default function CustomerRedeemPage() {
   const netPayout = plan ? Math.round((plan.balance - savingsFee + interest) * 100) / 100 : 0
   const inProgress = redemptions.find(r => OPEN_REDEMPTION_STATUSES.includes(r.status) && !r.expired) ?? null
 
-  const title = step === 'form' ? 'Collect savings' : step === 'token' || step === 'resume-token' ? 'Confirm your request' : step === 'awaiting' ? 'Your request' : step === 'done' ? 'Request sent' : 'Collect'
+  const title = step === 'form' ? 'Redeem savings' : step === 'token' || step === 'resume-token' ? 'Confirm your request' : step === 'awaiting' ? 'Your request' : step === 'done' ? 'Request sent' : 'Redeem'
 
   return (
     <div className="ui-screen">
@@ -253,7 +258,7 @@ export default function CustomerRedeemPage() {
           <>
             <section className="ui-card">
               <h2 className="ag-q ag-q--amount"><span className="ag-q-kicker">You’ll receive</span>{formatNaira(netPayout)}</h2>
-              {isEarly && <p className="ag-early"><Icons.pending size={16} aria-hidden="true" /> Your plan ends {formatDate(plan.maturityDate)}, so this is an early collection.</p>}
+              {isEarly && <p className="ag-early"><Icons.pending size={16} aria-hidden="true" /> Your plan ends {formatDate(plan.maturityDate)}, so this is an early redemption.</p>}
               <dl className="ag-breakdown">
                 <div><dt>Saved</dt><dd>{formatNaira(plan.balance)}</dd></div>
                 {flexDeduct ? <>
@@ -264,7 +269,7 @@ export default function CustomerRedeemPage() {
                 <div className="ag-breakdown-total"><dt>You’ll receive</dt><dd>{formatNaira(netPayout)}</dd></div>
               </dl>
 
-              <p className="ag-label">Why are you collecting?</p>
+              <p className="ag-label">Why are you redeeming?</p>
               <div className="ag-goal-chips" role="group" aria-label="Reason">
                 {REASONS.map(r => (
                   <button key={r} type="button" className="ag-chip" aria-pressed={reason === r} onClick={() => { setReason(r); setError('') }}>{r}</button>
@@ -315,33 +320,33 @@ export default function CustomerRedeemPage() {
 
               <FormError message={error} />
               <button type="button" className="ui-btn ui-btn--primary ui-btn--block ag-confirm-btn" disabled={submitting} onClick={submitRequest}>
-                {submitting ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Sending…</> : 'Request collection'}
+                {submitting ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Sending…</> : 'Request redemption'}
               </button>
             </section>
-            <p className="ui-safety"><Icons.locked size={16} aria-hidden="true" /> Your agent and Vochus both approve every collection before money is paid.</p>
+            <p className="ui-safety"><Icons.locked size={16} aria-hidden="true" /> Your agent and Vochus both approve every redemption before money is paid.</p>
           </>
 
         ) : (
           <>
             {plan ? (
               <section className="ui-card ag-collect-hero">
-                <span className="ui-row-sub">{plan.goal ? `${plan.goal} · ` : ''}Available to collect</span>
+                <span className="ui-row-sub">{plan.goal ? `${plan.goal} · ` : ''}Available to redeem</span>
                 <p className="ag-status-amount">{formatNaira(plan.balance)}</p>
                 {plan.balance > 0
                   ? <p className="ui-row-sub">You receive <strong className="ag-strong">{formatNaira(netPayout)}</strong> {savingsFee > 0 ? ` after ${flexDeduct ? (flexDeduct.penalty > 0 ? 'the early-stop charge' : 'the commission') : 'the platform fee'}${interest > 0 ? ' and interest' : ''}` : interest > 0 ? ' including interest' : ''}</p>
-                  : <p className="ui-row-sub">Nothing saved in this plan yet. Save first, then you can collect.</p>}
-                {isEarly && plan.balance > 0 && <p className="ag-early"><Icons.pending size={16} aria-hidden="true" /> Ends {formatDate(plan.maturityDate)}. Collecting now is an early collection.</p>}
+                  : <p className="ui-row-sub">Nothing saved in this plan yet. Save first, then you can redeem.</p>}
+                {isEarly && plan.balance > 0 && <p className="ag-early"><Icons.pending size={16} aria-hidden="true" /> Ends {formatDate(plan.maturityDate)}. Redeeming now is an early redemption.</p>}
                 {inProgress ? (
                   <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => openRedemption(inProgress)}>
                     {inProgress.status === 'Pending' ? 'Enter your code to confirm' : 'See your request'}
                   </button>
                 ) : plan.balance > 0 ? (
-                  <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => { setError(''); setStep('form') }}>Collect my savings</button>
+                  <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => { setError(''); setStep('form') }}>Redeem my savings</button>
                 ) : null}
               </section>
             ) : (
               <section className="ui-card">
-                <EmptyState icon="plan" title="Nothing to collect" text="You don’t have an active savings plan right now." />
+                <EmptyState icon="plan" title="Nothing to redeem" text="You don’t have an active savings plan right now." />
               </section>
             )}
 
@@ -361,7 +366,7 @@ export default function CustomerRedeemPage() {
                       <ListRow
                         key={r.id}
                         icon="withdraw"
-                        title={r.reason || 'Collection'}
+                        title={r.reason || 'Redemption'}
                         sub={formatDate(r.requestedAt)}
                         value={value}
                         onClick={clickable ? () => openRedemption(r) : undefined}

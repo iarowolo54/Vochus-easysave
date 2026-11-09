@@ -7,7 +7,8 @@ import { assertSufficient, insufficientResponse, InsufficientFundsError, money }
 import { debitAgentBalance } from '@/lib/wallet-debit'
 import { creditRegistrationReward } from '@/lib/reward'
 import { maxSinglePayment, overCapMessage } from '@/lib/payment-cap'
-import { selectActivePlan, depositCreatedAt, hasSavingOnDay, ALREADY_SAVED_TODAY } from '@/lib/saving-plan'
+import { selectActivePlan, depositCreatedAt, hasSavingOnDay, alreadySavedMessage } from '@/lib/saving-plan'
+import { periodSavedOn } from '@/lib/bulk-savings'
 import { depositDayInPlan, outsidePlanMessage, planHasEnded, PLAN_ENDED } from '@/lib/plan-credit'
 import { creditOpenPlan, hasOpenRedemption, PLAN_CLOSED, PlanClosedError, SAVING_BLOCKED } from '@/lib/redemption-balance'
 import { depositFeeOps } from '@/lib/commission-ledger'
@@ -45,7 +46,7 @@ export async function POST(req: NextRequest) {
   }
   const plan = selected.plan
 
-  const dates = await prisma.savingsPlan.findUnique({ where: { id: plan.id }, select: { startDate: true, maturityDate: true, cadence: true, goal: true, dailyAmount: true } })
+  const dates = await prisma.savingsPlan.findUnique({ where: { id: plan.id }, select: { startDate: true, maturityDate: true, cadence: true, goal: true, dailyAmount: true, periodDays: true } })
   if (!dates || planHasEnded(dates)) return NextResponse.json({ error: PLAN_ENDED }, { status: 409 })
 
   if (await hasOpenRedemption(prisma, plan.id)) return NextResponse.json({ error: SAVING_BLOCKED }, { status: 409 })
@@ -81,11 +82,16 @@ export async function POST(req: NextRequest) {
   const txnCount = await prisma.transaction.count()
   const ref = `TXN-${String(9000 + txnCount + 1)}`
 
+  // Weekly and monthly cash plans keep the one-saving-a-day rule until whole-period Bulk Savings goes live.
+  const cashPeriod = plan.source !== 'self' && (dates.cadence === 'weekly' || dates.cadence === 'monthly')
+
   let txn
   try {
     txn = await prisma.$transaction(async (tx) => {
       // One saving per plan per day. Checked inside the write so two quick taps can't both pass.
       if (!flexible && await hasSavingOnDay(tx, plan.id, createdAt ?? new Date())) throw new AlreadySavedError()
+      // An online week or month holds one saving too, and a day bought through Bulk Savings is already paid.
+      if (!cashPeriod && await periodSavedOn(tx, { ...dates, id: plan.id }, createdAt ?? new Date())) throw new AlreadySavedError()
       // Atomically debit the agent's wallet; concurrent savings can't overdraw.
       const debited = await debitAgentBalance(tx, agent.id, 'walletBalance', rounded)
       if (!debited) throw new InsufficientFundsError('Agent wallet', agent.walletBalance, rounded)
@@ -115,7 +121,7 @@ export async function POST(req: NextRequest) {
     })
   } catch (e) {
     if (e instanceof InsufficientFundsError) return insufficientResponse(e)
-    if (e instanceof AlreadySavedError) return NextResponse.json({ error: ALREADY_SAVED_TODAY }, { status: 409 })
+    if (e instanceof AlreadySavedError) return NextResponse.json({ error: alreadySavedMessage(cashPeriod ? 'daily' : dates.cadence) }, { status: 409 })
     if (e instanceof PlanClosedError) return NextResponse.json({ error: PLAN_CLOSED }, { status: 409 })
     throw e
   }

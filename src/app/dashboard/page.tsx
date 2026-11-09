@@ -24,7 +24,7 @@ function daysDiff(date: Date): number {
 
 const TXN: Record<string, { label: string; icon: IconName; sign: '+' | '−' | '' }> = {
   saving:         { label: 'Saving',          icon: 'deposit',  sign: '+' },
-  redemption:     { label: 'Collection paid', icon: 'collect',  sign: '−' },
+  redemption:     { label: 'Redemption paid', icon: 'collect',  sign: '−' },
   repayment:      { label: 'Loan repayment',  icon: 'repay',    sign: '' },
   disbursement:   { label: 'Loan disbursed',  icon: 'loan',     sign: '' },
   enrolment:      { label: 'New customer',    icon: 'enrol',    sign: '' },
@@ -147,7 +147,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
         <nav className="ag-hello-actions" aria-label="Main actions">
           <Link href="/dashboard/savings" className="ui-btn ui-btn--primary"><Icons.plan size={18} aria-hidden="true" /> Record saving</Link>
           <Link href="/dashboard/enrol" className="ui-btn ui-btn--secondary"><Icons.enrol size={18} aria-hidden="true" /> Enrol customer</Link>
-          <Link href="/dashboard/redeem" className="ui-btn ui-btn--secondary"><Icons.collect size={18} aria-hidden="true" /> Collections</Link>
+          <Link href="/dashboard/redeem" className="ui-btn ui-btn--secondary"><Icons.collect size={18} aria-hidden="true" /> Redemptions</Link>
         </nav>
       </section>
 
@@ -176,7 +176,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             <span className="ui-action-circle" aria-hidden="true"><Icons.enrol size={24} /></span>Enrol
           </Link>
           <Link href="/dashboard/redeem" className="ui-action">
-            <span className="ui-action-circle" aria-hidden="true"><Icons.collect size={24} /></span>Collections
+            <span className="ui-action-circle" aria-hidden="true"><Icons.collect size={24} /></span>Redemptions
           </Link>
         </nav>
         <Collected label="Collected today" cash={cashToday} online={onlineToday} />

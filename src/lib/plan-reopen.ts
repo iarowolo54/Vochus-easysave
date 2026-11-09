@@ -10,7 +10,7 @@ import { maturityFrom } from '@/lib/saving-plan'
 
 type Client = Pick<PrismaClient, 'savingsPlan' | 'earlyRedemption'> | Prisma.TransactionClient
 
-export const REOPEN_COLLECTING = 'A collection has been requested on this plan. Wait for it to finish before saving into it again.'
+export const REOPEN_COLLECTING = 'A redemption has been requested on this plan. Wait for it to finish before saving into it again.'
 export const REOPEN_NOT_FINISHED = 'This plan is still running, so you can keep saving into it.'
 export const REOPEN_NOT_FOUND = 'Plan not found'
 

@@ -29,17 +29,17 @@ test('a saving that paid a platform fee says how much went into the balance', ()
 test('collection steps: requested, approved, paid, declined — customer always, agent where it concerns them', () => {
   const byCustomer = N.collectionRequested({ ...rec, byCustomer: true })
   assert.deepEqual(byCustomer.map(e => [e.recipient.type, e.title]), [
-    ['customer', 'Your collection request was sent'],
-    ['agent', 'Ngozi Eze wants to collect ₦18,500'],
+    ['customer', 'Your redemption request was sent'],
+    ['agent', 'Ngozi Eze wants to redeem ₦18,500'],
   ])
   const byAgent = N.collectionRequested({ ...rec, byCustomer: false })
   assert.deepEqual(byAgent.map(e => e.recipient.type), ['customer'])
-  assert.equal(N.collectionApproved(rec)[0].title, 'Your collection was approved')
+  assert.equal(N.collectionApproved(rec)[0].title, 'Your redemption was approved')
   const paid = N.collectionPaid(rec)
-  assert.deepEqual(paid.map(e => e.title), ['₦18,500 has been paid to you', 'Ngozi Eze’s collection of ₦18,500 was paid'])
+  assert.deepEqual(paid.map(e => e.title), ['₦18,500 has been paid to you', 'Ngozi Eze’s redemption of ₦18,500 was paid'])
   assert.equal(paid[0].dedupeKey, 'collection-paid:r1')
   const declined = N.collectionDeclined({ ...rec, reason: 'Balance changed' })
-  assert.equal(declined[0].title, 'Your collection request was declined')
+  assert.equal(declined[0].title, 'Your redemption request was declined')
   assert.equal(declined[0].body, 'Reason: Balance changed')
   assert.equal(N.collectionDeclined({ ...rec, reason: null })[0].body, undefined)
   assert.deepEqual(N.collectionDeclined({ ...rec, byAgent: true }).map(e => e.recipient.type), ['customer'])

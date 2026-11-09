@@ -110,15 +110,15 @@ export async function runUncollectedReminders(client: PrismaClient, now: Date = 
     }
     const html = renderEmail({
       subject: `Your ${r.goal} plan has ended. Your money is waiting`,
-      preheader: `${formatNaira(r.balance)} is ready to collect.`,
+      preheader: `${formatNaira(r.balance)} is ready to redeem.`,
       tone: 'warning',
-      statusLabel: 'Ready to collect',
+      statusLabel: 'Ready to redeem',
       heading: `Hi ${displayName(r.customer.firstName)}, your money is waiting`,
       intro: `Your ${r.goal} plan ended on ${formatDate(r.maturityDate)} and still has money in it.`,
       amount: formatNaira(r.balance),
       amountLabel: 'In your plan',
       rows: [['Plan', r.goal], ['Ended on', formatDate(r.maturityDate)]],
-      note: 'Open the Vochus Easy Save app to collect it, or keep saving into the plan again from Home. Your agent can help too.',
+      note: 'Open the Vochus Easy Save app to redeem it, or keep saving into the plan again from Home. Your agent can help too.',
     })
     if (await mail(to, `Your ${r.goal} plan has ended. Your money is waiting`, html)) emails++
   }
@@ -135,18 +135,18 @@ export async function runUncollectedReminders(client: PrismaClient, now: Date = 
       const shown = mine.slice(0, AGENT_LIST_MAX)
       const more = mine.length - shown.length
       const html = renderEmail({
-        subject: 'Customers who haven’t collected their money',
+        subject: 'Customers who haven’t redeemed their money',
         preheader: `${mine.length} customer${mine.length === 1 ? '' : 's'}, ${formatNaira(total)} waiting.`,
         tone: 'warning',
         statusLabel: 'Weekly list',
-        heading: `Hi ${displayName(a.name)}, these customers haven’t collected yet`,
-        intro: 'Their plans have ended but the money is still in them. A quick call can help them collect or start saving again.',
+        heading: `Hi ${displayName(a.name)}, these customers haven’t redeemed yet`,
+        intro: 'Their plans have ended but the money is still in them. A quick call can help them redeem or start saving again.',
         amount: formatNaira(total),
         amountLabel: `Waiting, ${mine.length} customer${mine.length === 1 ? '' : 's'}`,
         rows: shown.map(p => [displayName(p.customerName), `${formatNaira(p.balance)} · ${p.goal} · ended ${formatDate(p.maturityDate)}`]),
-        note: more > 0 ? `And ${more} more. See them all under Collections in the app.` : 'See them under Collections in the app.',
+        note: more > 0 ? `And ${more} more. See them all under Redemptions in the app.` : 'See them under Redemptions in the app.',
       })
-      if (await mail(to, 'Customers who haven’t collected their money', html)) emails++
+      if (await mail(to, 'Customers who haven’t redeemed their money', html)) emails++
     }
   }
 

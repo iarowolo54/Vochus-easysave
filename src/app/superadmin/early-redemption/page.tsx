@@ -996,7 +996,7 @@ export default function RedemptionsPage() {
           </> : <button type="button" className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>}>
           {detail.balanceChanged && (detail.status === 'AwaitingOTP'
             ? <p className="a-alert a-alert-r cm-gap" role="alert">This plan now holds {nairaKobo(detail.currentBalance)}, which arrived while this payout was waiting for its code. Nothing has been paid. Don’t enter the code. Once it expires, about 30 minutes after it was sent, use Check with Paystack and ask them to request again.</p>
-            : <p className="a-alert a-alert-r cm-gap" role="alert">The balance has changed. They asked to collect from {nairaKobo(detail.balance)}, and the plan now holds {nairaKobo(detail.currentBalance)}. Reject this request and ask them to request again.</p>)}
+            : <p className="a-alert a-alert-r cm-gap" role="alert">The balance has changed. They asked to redeem from {nairaKobo(detail.balance)}, and the plan now holds {nairaKobo(detail.currentBalance)}. Reject this request and ask them to request again.</p>)}
           {cashBlocked(detail) && DECIDABLE.includes(detail.status) && <p className="a-alert a-alert-r cm-gap" role="alert">This customer’s agent isn’t active, so cash can’t be paid through them. Reject this request and ask the customer to request again with a bank account.</p>}
           {detail.nameMismatch && DECIDABLE.includes(detail.status) && (
             <div className="a-alert a-alert-r cm-gap" role="alert">
@@ -1013,7 +1013,7 @@ export default function RedemptionsPage() {
             : <p className="a-alert a-alert-a cm-gap" role="status">{detail.bankTransferStatus ? `Paystack last said “${detail.bankTransferStatus}”. ` : 'We lost contact with Paystack during this transfer. '}It may or may not have gone out, so check before doing anything else.</p>)}
           {detail.needsReview && <p className="a-alert a-alert-r cm-gap" role="alert">Needs review. This was paid, but the closed plan still holds {nairaKobo(detail.currentBalance)} that arrived during the payout.</p>}
           <div className="dlg-hero">
-            <div className="dlg-hero-lbl">Amount to collect</div>
+            <div className="dlg-hero-lbl">Amount to redeem</div>
             <div className="dlg-hero-amt">{nairaKobo(detail.netPayout)}</div>
             <span className="cm-badges"><StatusBadge status={detail.status} /><TypeBadge type={detail.type} /></span>
           </div>
@@ -1057,7 +1057,7 @@ export default function RedemptionsPage() {
             <dl className="dlg-ledger">
               <DlRow label="Plan balance">{nairaKobo(detail.balance)}</DlRow>
               {detail.penalty > 0 && <DlRow label="Fee deducted (commission)"><span className="cm-neg">−{nairaKobo(detail.penalty)}</span></DlRow>}
-              <DlRow label="Amount to collect" total>{nairaKobo(detail.netPayout)}</DlRow>
+              <DlRow label="Amount to redeem" total>{nairaKobo(detail.netPayout)}</DlRow>
               <DlRow label="Method">{detail.payoutMethod ?? 'Cash'}</DlRow>
             </dl>
           </div>
