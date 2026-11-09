@@ -9,6 +9,7 @@ import {
 } from '../_components/admin-ui'
 import { CommissionHistoryDrawer } from '../_components/commission-history-drawer'
 import { FlexibleSavingsCard } from '../_components/flexible-savings-card'
+import { OnlineRedeemFeeCard } from '../_components/online-redeem-fee-card'
 
 interface LeaderboardEntry {
   rank: number
@@ -405,6 +406,7 @@ export default function CommissionPage() {
       </section>
 
       <FlexibleSavingsCard />
+      <OnlineRedeemFeeCard />
 
       {/* Loan interest */}
       <section className="card am-section" aria-labelledby="loan-h">

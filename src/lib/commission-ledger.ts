@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@prisma/client'
+import { getOnlineRedeemFee, isEarlyRedemption, onlineFeeOn } from '@/lib/online-redeem-fee'
 import { ajoPlanFee } from '@/lib/ajo-fee'
 import { money } from '@/lib/money'
 import { feeRulesOf, getCommissionRates, pct, type CommissionRates } from '@/lib/commission-rates'
@@ -102,15 +103,20 @@ export async function collectionFee(
     const f = await ajoPlanFee(client, plan.id, balance)
     return { feeRule: 'v2', penalty: f.fee, feeAgent: f.agent }
   }
+  // Online savers pay the Platform Fee when they redeem: on the amount saved, whatever the plan type or go-live date.
+  const online = plan.source === 'self' && plan.maturityDate
+    ? onlineFeeOn(balance, await getOnlineRedeemFee(client), isEarlyRedemption({ cadence: plan.cadence, maturityDate: plan.maturityDate }, at))
+    : { fee: 0, agent: 0 }
   // Flexible plans: commission (cash) and, before the end date, a penalty (cash and online). New plan type, so no v1 rule.
   if (isFlexible(plan.cadence)) {
     if (!plan.maturityDate) throw new Error('collectionFee: flexible plan needs maturityDate')
     const d = flexibleDeduction({ source: plan.source, balance, maturityDate: plan.maturityDate, at }, await getFlexibleSettings(client))
-    return { feeRule: 'v2', penalty: d.deduction, feeAgent: d.feeAgent }
+    const penalty = money(Math.min(Math.max(0, balance), d.deduction + online.fee))
+    return { feeRule: 'v2', penalty, feeAgent: money(Math.min(penalty, d.feeAgent + online.agent)) }
   }
+  if (plan.source === 'self') return { feeRule: 'v2', penalty: online.fee, feeAgent: online.agent }
   const goLive = await getGoLive(client)
   if (!goLive || at.getTime() < goLive.getTime()) return { feeRule: 'v1' }
-  if (plan.source === 'self') return { feeRule: 'v2', penalty: 0, feeAgent: 0 }
   const sum = await client.transaction.aggregate({ where: { planId: plan.id, type: 'saving', feeTaken: 0, createdAt: { lt: goLive } }, _sum: { amount: true } })
   const rates = await getCommissionRates(client)
   const out = settleUpFee({ cadence: plan.cadence, dailyAmount: plan.dailyAmount, feeCollected: plan.feeCollected, balance, preGoLiveDeposits: sum._sum.amount ?? 0 }, feeRulesOf(rates))

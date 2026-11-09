@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { getOnlineRedeemFee, isEarlyRedemption, onlineFeeOn } from '@/lib/online-redeem-fee'
 import { ajoPlanFees } from '@/lib/ajo-fee'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
@@ -75,9 +76,18 @@ export async function GET() {
   const coveringRefs = await coveringRefsByPlan(prisma, planIds)
   // What collecting each Ajo pot will cost, from the server's own rule, so the screen never estimates it.
   const ajoFees = await ajoPlanFees(prisma, plansBase.filter(p => p.cadence === 'ajo'))
+  // The online Platform Fee if this plan were redeemed now, so the screen shows what the server will charge.
+  const onlineRate = await getOnlineRedeemFee(prisma)
+  const nowForFee = new Date()
+  const onlineFeeFor = (p: (typeof plansBase)[number]) => {
+    if (p.source !== 'self' || p.cadence === 'ajo') return {}
+    const f = onlineFeeOn(p.balance, onlineRate, isEarlyRedemption({ cadence: p.cadence, maturityDate: p.maturityDate }, nowForFee))
+    return { onlineFee: f.fee, onlineFeePct: f.pct }
+  }
   const plans = plansBase.map(p => ({
     ajoFee: ajoFees.get(p.id)?.fee,
     ajoFeePct: ajoFees.get(p.id)?.feePct,
+    ...onlineFeeFor(p),
     ...p,
     coveredKeys: coverageRows.filter(r => r.savingsPlanId === p.id).map(r => r.coversKey),
     coveredRefs: coveringRefs.get(p.id) ?? [],

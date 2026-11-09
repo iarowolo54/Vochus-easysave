@@ -21,7 +21,7 @@ type Redemption = {
   netPayout: number; requestedAt: string; token?: string; tokenExpiry?: string
   reason: string; type: string; expired?: boolean
 }
-type Plan = { ajoFee?: number; ajoFeePct?: number; source?: string; balance: number; interest?: number; dailyAmount: number; cadence?: string; maturityDate: string; hasCashDeposit?: boolean; goal?: string }
+type Plan = { onlineFee?: number; onlineFeePct?: number; ajoFee?: number; ajoFeePct?: number; source?: string; balance: number; interest?: number; dailyAmount: number; cadence?: string; maturityDate: string; hasCashDeposit?: boolean; goal?: string }
 type Result = { balance?: number; netPayout?: number }
 
 const REASONS = ['Plan matured', 'Medical emergency', 'School fees', 'Business need', 'Personal emergency', 'Other']
@@ -181,6 +181,9 @@ export default function CustomerRedeemPage() {
       savingsFee = Math.round(plan.balance * totalRate * 100) / 100
     }
   }
+  // Online savers' Platform Fee: the server's figure. Comes on top of a flexible plan's early-stop penalty.
+  const onlineFee = plan?.onlineFee ?? 0
+  if (plan && onlineFee > 0) savingsFee = Math.min(plan.balance, Math.round((savingsFee + onlineFee) * 100) / 100)
   const interest = plan?.interest ?? 0
   const netPayout = plan ? Math.round((plan.balance - savingsFee + interest) * 100) / 100 : 0
   const inProgress = redemptions.find(r => OPEN_REDEMPTION_STATUSES.includes(r.status) && !r.expired) ?? null
@@ -266,7 +269,8 @@ export default function CustomerRedeemPage() {
                 {flexDeduct ? <>
                   {flexDeduct.commission > 0 && <div><dt>Commission ({flexTerms.cashCommissionPct}%)</dt><dd className="ag-neg">−{formatNaira(flexDeduct.commission)}</dd></div>}
                   {flexDeduct.penalty > 0 && <div><dt>Stopping early ({flexTerms.penaltyPct}%)</dt><dd className="ag-neg">−{formatNaira(flexDeduct.penalty)}</dd></div>}
-                </> : savingsFee > 0 && <div><dt>{plan.cadence === 'ajo' ? `Platform Fee (${plan.ajoFeePct ?? 0}%)` : 'Platform fee'}</dt><dd className="ag-neg">−{formatNaira(savingsFee)}</dd></div>}
+                {onlineFee > 0 && <div><dt>Platform Fee ({plan.onlineFeePct ?? 0}%)</dt><dd className="ag-neg">−{formatNaira(onlineFee)}</dd></div>}
+                </> : savingsFee > 0 && <div><dt>{plan.cadence === 'ajo' ? `Platform Fee (${plan.ajoFeePct ?? 0}%)` : onlineFee > 0 ? `Platform Fee (${plan.onlineFeePct ?? 0}%)` : 'Platform fee'}</dt><dd className="ag-neg">−{formatNaira(savingsFee)}</dd></div>}
                 <div><dt>Interest earned</dt><dd>+{formatNaira(interest)}</dd></div>
                 <div className="ag-breakdown-total"><dt>You’ll receive</dt><dd>{formatNaira(netPayout)}</dd></div>
               </dl>
