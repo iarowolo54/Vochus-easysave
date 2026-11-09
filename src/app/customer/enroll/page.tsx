@@ -16,6 +16,7 @@ import { NG_STATES, lgasOf } from '@/lib/ng-lgas'
 import { addDays, isoDate, MAX_PLAN_DAYS, parseDateInput, today } from '@/lib/plan-dates'
 import { earliestEnd } from '@/lib/flexible-savings'
 import { feeSentence } from '@/lib/savings-fee'
+import OnlineFeeNote from '@/components/customer/OnlineFeeNote'
 import { useFlexibleTerms } from '@/lib/use-flexible-terms'
 
 type Cadence = 'daily' | 'weekly' | 'monthly'
@@ -1018,6 +1019,8 @@ function EnrollContent() {
             </ul>
             <button type="button" className="cu-add" onClick={addPlan}><Icons.add size={18} aria-hidden="true" /> Add another plan</button>
 
+
+            <OnlineFeeNote />
 
             <button type="button" role="checkbox" aria-checked={terms} className={`ag-agree cu-agree${terms ? ' is-on' : ''}`} onClick={() => { setTerms(t => !t); setError('') }}>
               <span className="ag-agree-box" aria-hidden="true">{terms && <Icons.check size={16} />}</span>

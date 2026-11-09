@@ -26,7 +26,6 @@ const naira = (n: number) => formatNaira(n, Number.isInteger(n) ? { minor: false
 function statusOf(g: MyGroup): [string, string] {
   if (g.status === 'Forming') return ['Waiting to start', 'ui-status--warn']
   if (g.status === 'Completed') return ['Finished', 'ui-status--neutral']
-  if (g.status === 'Stopped') return ['Stopped', 'ui-status--neutral']
   const open = g.currentRound ? g.rounds[g.currentRound - 1] : null
   if (open && g.me && !open.paidMemberIds.includes(g.me.memberId)) return ['Payment due', 'ui-status--danger']
   return ['Paid this turn', 'ui-status--success']

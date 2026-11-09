@@ -26,11 +26,12 @@ export function parseOnlineRedeemFee(raw: unknown): { ok: true; value: OnlineRed
   return { ok: true, value: { maturedPct: cents(maturedPct), earlyPct: cents(earlyPct), agentSharePct: cents(agentSharePct) } }
 }
 
-/** The current setting. Anything unreadable means no fee, so a bad row can never overcharge anyone. */
+/** The current setting. A corrupt row means no fee, so it can never overcharge anyone. */
 export async function getOnlineRedeemFee(client: Pick<PrismaClient, 'platformSetting'>): Promise<OnlineRedeemFee> {
+  // A database error is not "no fee": it stops here, rather than letting a redemption through uncharged.
+  const s = await client.platformSetting.findUnique({ where: { key: ONLINE_REDEEM_FEE_KEY } })
+  if (!s) return { ...ONLINE_REDEEM_FEE_DEFAULT }
   try {
-    const s = await client.platformSetting.findUnique({ where: { key: ONLINE_REDEEM_FEE_KEY } })
-    if (!s) return { ...ONLINE_REDEEM_FEE_DEFAULT }
     const parsed = parseOnlineRedeemFee(JSON.parse(s.value))
     return parsed.ok ? parsed.value : { ...ONLINE_REDEEM_FEE_DEFAULT }
   } catch {
@@ -48,4 +49,11 @@ export function onlineFeeOn(saved: number, rate: OnlineRedeemFee, early: boolean
   const pct = early ? rate.earlyPct : rate.maturedPct
   const fee = cents(Math.max(0, saved) * pct / 100)
   return { fee, agent: cents(fee * rate.agentSharePct / 100), pct }
+}
+
+/** The line shown when someone opens an online plan; null while there is no fee. */
+export function onlineFeeNote(maturedPct: number, earlyPct: number): string | null {
+  if (!(maturedPct > 0) && !(earlyPct > 0)) return null
+  const rates = maturedPct === earlyPct ? `${maturedPct}%` : `${maturedPct}%, or ${earlyPct}% if you redeem before your plan ends`
+  return `When you redeem, a Platform Fee of ${rates} comes off what you’ve saved. There’s no fee on deposits, and your interest isn’t charged.`
 }

@@ -153,8 +153,6 @@ export default function CustomerAjoGroupPage() {
           </>
         )}
 
-        {g.status === 'Stopped' && <section className="ui-card ui-gap-top"><EmptyState icon="error" title="This group was stopped" text="If you paid for the open turn, that money is ready to collect from Home." /></section>}
-
         {g.status === 'Completed' && <section className="ui-card ui-gap-top"><EmptyState icon="check" title="This group has finished" text="Every member has had their turn." /></section>}
 
         {g.status !== 'Forming' && (

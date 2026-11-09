@@ -85,10 +85,12 @@ export async function completeRoundIfFunded(tx: Tx, groupId: string, round: numb
  */
 export async function recordContribution(tx: Tx, input: {
   groupId: string; memberId: string; round: number; amount: number; method: 'transfer' | 'cash'; ref: string; agentId?: string; walletAfter?: number
+  /** For a bank transfer: who paid. If that place has since been handed to someone else, the payment goes to staff. */
+  payerCustomerId?: string
 }): Promise<{ payout: PayoutDone | null }> {
   const g = await tx.ajoGroup.findUnique({ where: { id: input.groupId }, select: { name: true, cadence: true, startDate: true, status: true, size: true, agentId: true, payouts: { select: { round: true } } } })
   if (!g || g.status !== 'Running' || openRound(g.size, g.payouts.map(p => p.round)) !== input.round) throw new AjoRoundClosedError()
-  const member = await tx.ajoMember.findFirst({ where: { id: input.memberId, groupId: input.groupId }, select: { customerId: true, customer: { select: { firstName: true, lastName: true } } } })
+  const member = await tx.ajoMember.findFirst({ where: { id: input.memberId, groupId: input.groupId, ...(input.payerCustomerId ? { customerId: input.payerCustomerId } : {}) }, select: { customerId: true, customer: { select: { firstName: true, lastName: true } } } })
   if (!member) throw new AjoRoundClosedError()
   if (await tx.ajoContribution.count({ where: { memberId: input.memberId, round: input.round } })) throw new AjoAlreadyPaidError()
 
@@ -137,7 +139,7 @@ export async function settleAjoTransfer(client: PrismaClient, input: Settle): Pr
       if (!(await consumePaymentIntent(tx, reference, { customerId: intent.customerId! }))) return false
       if (input.manual) await recordManualCredit(tx, { ref: reference, amount, who: `Ajo group "${member.group.name}", round ${intent.ajoRound}`, manual: input.manual })
       payout = (await recordContribution(tx, {
-        groupId: member.groupId, memberId: member.id, round: intent.ajoRound!, amount, method: 'transfer', ref: reference,
+        groupId: member.groupId, memberId: member.id, round: intent.ajoRound!, amount, method: 'transfer', ref: reference, payerCustomerId: intent.customerId!,
       })).payout
       if (input.inTx) await input.inTx(tx)
       return true

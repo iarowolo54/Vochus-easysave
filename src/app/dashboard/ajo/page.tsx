@@ -14,7 +14,7 @@ type Group = { id: string; name: string; cadence: string; size: number; contribu
 const EVERY: Record<string, string> = { daily: 'a day', weekly: 'a week', monthly: 'a month' }
 const STATUS: Record<string, [string, string]> = {
   Forming: ['Getting members', 'ui-status--warn'], Running: ['Running', 'ui-status--success'],
-  Completed: ['Finished', 'ui-status--neutral'], Cancelled: ['Cancelled', 'ui-status--neutral'], Stopped: ['Stopped', 'ui-status--neutral'],
+  Completed: ['Finished', 'ui-status--neutral'], Cancelled: ['Cancelled', 'ui-status--neutral'],
 }
 
 export default function AjoGroupsPage() {

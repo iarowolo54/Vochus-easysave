@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { isEarlyRedemption, onlineFeeOn, parseOnlineRedeemFee } from '../src/lib/online-redeem-fee'
+import { isEarlyRedemption, onlineFeeNote, onlineFeeOn, parseOnlineRedeemFee } from '../src/lib/online-redeem-fee'
 import { collectionFee } from '../src/lib/commission-ledger'
 
 const now = new Date('2026-11-09T10:00:00Z')
@@ -45,4 +45,10 @@ test('flexible online plans pay it on top of the early-stop penalty', async () =
 test('cash plans are not touched', async () => {
   const cash = await collectionFee(client(), plan({ source: 'agent' }), 10000, now)
   assert.notDeepEqual(cash, { feeRule: 'v2', penalty: 500, feeAgent: 125 })
+})
+
+test('the line on the new-plan screen', () => {
+  assert.equal(onlineFeeNote(0, 0), null)
+  assert.match(onlineFeeNote(2, 5)!, /2%, or 5% if you redeem before your plan ends/)
+  assert.match(onlineFeeNote(3, 3)!, /Platform Fee of 3% comes off/)
 })

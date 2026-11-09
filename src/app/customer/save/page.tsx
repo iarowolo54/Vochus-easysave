@@ -19,6 +19,7 @@ import { addDays, isoDate, lengthLabel, MAX_PLAN_DAYS, parseDateInput, today } f
 import { earliestEnd, isFlexible } from '@/lib/flexible-savings'
 import { isOpenForSaving } from '@/lib/plan-credit'
 import { feeSentence } from '@/lib/savings-fee'
+import OnlineFeeNote from '@/components/customer/OnlineFeeNote'
 import { useFlexibleTerms } from '@/lib/use-flexible-terms'
 import { useFundingMode } from '@/lib/use-funding-mode'
 
@@ -492,6 +493,8 @@ function SavePageInner() {
                 </span>
               </section>
             )}
+
+            <OnlineFeeNote />
 
             <FormError message={error} />
 

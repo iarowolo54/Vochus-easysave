@@ -4,11 +4,12 @@ import { AJO_FEE_DEFAULT, ajoFeeOn, parseAjoFee, type AjoFee } from '@/lib/ajo'
 
 export const AJO_FEE_SETTING_KEY = 'ajoPlatformFee'
 
-/** The current setting. Anything unreadable means no fee, so a bad row can never overcharge anyone. */
+/** The current setting. A corrupt row means no fee, so it can never overcharge anyone. */
 export async function getAjoFee(client: Pick<PrismaClient, 'platformSetting'>): Promise<AjoFee> {
+  // A database error is not "no fee": it stops here, so it can't lock a group at 0% for good.
+  const s = await client.platformSetting.findUnique({ where: { key: AJO_FEE_SETTING_KEY } })
+  if (!s) return { ...AJO_FEE_DEFAULT }
   try {
-    const s = await client.platformSetting.findUnique({ where: { key: AJO_FEE_SETTING_KEY } })
-    if (!s) return { ...AJO_FEE_DEFAULT }
     const parsed = parseAjoFee(JSON.parse(s.value))
     return parsed.ok ? parsed.value : { ...AJO_FEE_DEFAULT }
   } catch {

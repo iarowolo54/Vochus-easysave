@@ -98,6 +98,9 @@ export function parseNewGroup(raw: unknown, now: Date = new Date()): { ok: true;
   return { ok: true, value: { name, cadence: cadence as AjoCadence, size, contribution, startDate: lagosMidnight(start) } }
 }
 
+/** The first half of a group's turns: a collector here still owes most of their payments, so staff look before approving. */
+export const isEarlyTurn = (round: number, size: number) => round * 2 <= size
+
 /** First come, first served: the order people joined decides the turns. Nobody can set or change it. */
 export function byJoinOrder<T extends { id: string; joinedAt: Date | string }>(members: T[]): T[] {
   return [...members].sort((x, y) => new Date(x.joinedAt).getTime() - new Date(y.joinedAt).getTime() || x.id.localeCompare(y.id))

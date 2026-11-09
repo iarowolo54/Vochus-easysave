@@ -12,7 +12,7 @@ type Group = {
 }
 
 const STATUS: Record<string, [string, string]> = {
-  Forming: ['Getting members', 'bdg-b'], Running: ['Running', 'bdg-g'], Completed: ['Finished', 'bdg-grey'], Cancelled: ['Cancelled', 'bdg-grey'], Stopped: ['Stopped', 'bdg-r'],
+  Forming: ['Getting members', 'bdg-b'], Running: ['Running', 'bdg-g'], Completed: ['Finished', 'bdg-grey'], Cancelled: ['Cancelled', 'bdg-grey'],
 }
 
 export default function AjoGroupsAdminPage() {
@@ -149,10 +149,10 @@ function EditFee({ fee, onClose, onDone }: { fee: Fee; onClose: () => void; onDo
 
 type Detail = { members: { id: string; slot: number | null; name: string; customerCode: string }[]; rounds: { round: number; label: string; paid: { memberId: string }[]; payout: { memberId: string } | null }[]; currentRound: number | null }
 
-/** Staff actions for a stuck group: put someone in a member's place, or stop it and refund the open turn. */
+/** Staff action for a stuck group: put someone in a member's place. */
 function ManageGroup({ group, onClose, onDone }: { group: Group; onClose: () => void; onDone: (msg: string) => void }) {
   const [detail, setDetail] = useState<Detail | null>(null)
-  const [mode, setMode] = useState<{ kind: 'replace'; memberId: string; name: string } | { kind: 'stop' } | null>(null)
+  const [mode, setMode] = useState<{ memberId: string; name: string } | null>(null)
   const [code, setCode] = useState('')
   const [note, setNote] = useState('')
   const [pin, setPin] = useState('')
@@ -172,11 +172,11 @@ function ManageGroup({ group, onClose, onDone }: { group: Group; onClose: () => 
     if (!mode) return
     setBusy(true); setError('')
     try {
-      const res = await fetch(`/api/admin/ajo/${group.id}/${mode.kind}`, {
+      const res = await fetch(`/api/admin/ajo/${group.id}/replace`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ note: note.trim(), pin, ...(mode.kind === 'replace' ? { memberId: mode.memberId, customerCode: code.trim() } : {}) }),
+        body: JSON.stringify({ note: note.trim(), pin, memberId: mode.memberId, customerCode: code.trim() }),
       })
-      if (res.ok) { onDone(mode.kind === 'replace' ? 'Member replaced' : 'Group stopped and open turn refunded'); return }
+      if (res.ok) { onDone('Member replaced'); return }
       const d = await res.json().catch(() => ({})) as { error?: string }
       setError(d.error ?? 'That didn’t go through. Try again.')
     } catch {
@@ -187,19 +187,16 @@ function ManageGroup({ group, onClose, onDone }: { group: Group; onClose: () => 
   }
 
   const open = detail?.currentRound ? detail.rounds[detail.currentRound - 1] : null
-  const ready = note.trim().length >= 3 && pin.length > 0 && (mode?.kind !== 'replace' || code.trim().length > 0)
+  const ready = note.trim().length >= 3 && pin.length > 0 && code.trim().length > 0
   return (
-    <Modal icon="staff" size="lg" title={mode?.kind === 'stop' ? `Stop ${group.name}?` : mode ? `Replace ${mode.name}` : group.name}
-      sub={mode?.kind === 'stop'
-        ? 'The group closes for good. Everyone who paid the open turn gets that money back to redeem. Turns already paid out aren’t affected.'
-        : mode ? 'The new customer takes over this turn and pays every turn from now on. What this member already paid comes out of that turn’s pot and goes back to them.' : undefined}
+    <Modal icon="staff" size="lg" title={mode ? `Replace ${mode.name}` : group.name}
+      sub={mode ? 'The new customer takes over this turn and pays every turn from now on. What this member already paid comes out of that turn’s pot and goes back to them.' : undefined}
       onClose={onClose} busy={busy} error={error || undefined}
       footer={mode ? <>
         <button type="button" className="btn btn-outline" onClick={() => choose(null)} disabled={busy}>Back</button>
-        <button type="button" className={`btn ${mode.kind === 'stop' ? 'btn-danger' : 'btn-green'}`} onClick={submit} disabled={busy || !ready}>{busy ? 'Saving…' : mode.kind === 'stop' ? 'Stop and refund' : 'Replace member'}</button>
+        <button type="button" className="btn btn-green" onClick={submit} disabled={busy || !ready}>{busy ? 'Saving…' : 'Replace member'}</button>
       </> : <>
         <button type="button" className="btn btn-outline" onClick={onClose}>Close</button>
-        <button type="button" className="btn btn-danger" onClick={() => choose({ kind: 'stop' })} disabled={!detail}>Stop group and refund</button>
       </>}>
       {!detail && !error && <TableSkeleton rows={3} cols={3} />}
       {detail && !mode && (
@@ -215,7 +212,7 @@ function ManageGroup({ group, onClose, onDone }: { group: Group; onClose: () => 
                     <td className="am-nowrap" data-label="Turn">{m.slot ? detail.rounds[m.slot - 1].label : ''}</td>
                     <td className="td-name">{m.name}<div className="am-muted">{m.customerCode}</div></td>
                     <td data-label="This turn"><span className={`bdg ${paid ? 'bdg-g' : 'bdg-a'}`}>{paid ? 'Paid' : 'Not paid'}</span></td>
-                    <td>{collected ? <span className="am-muted">Redeemed</span> : <button type="button" className="btn btn-sm btn-outline" onClick={() => choose({ kind: 'replace', memberId: m.id, name: m.name })}>Replace</button>}</td>
+                    <td>{collected ? <span className="am-muted">Redeemed</span> : <button type="button" className="btn btn-sm btn-outline" onClick={() => choose({ memberId: m.id, name: m.name })}>Replace</button>}</td>
                   </tr>
                 )
               })}
@@ -225,9 +222,9 @@ function ManageGroup({ group, onClose, onDone }: { group: Group; onClose: () => 
       )}
       {mode && (
         <form onSubmit={e => { e.preventDefault(); if (ready) submit() }} noValidate>
-          {mode.kind === 'replace' && <Field id="aj-code" label="New customer’s ID" hint="They must belong to this group’s agent.">
+          <Field id="aj-code" label="New customer’s ID" hint="They must belong to this group’s agent.">
             <input id="aj-code" className="a-input" value={code} autoComplete="off" placeholder="CST-00123" onChange={e => setCode(e.target.value)} />
-          </Field>}
+          </Field>
           <Field id="aj-note" label="Why"><input id="aj-note" className="a-input" value={note} maxLength={300} autoComplete="off" onChange={e => setNote(e.target.value)} /></Field>
           <Field id="aj-pin" label="Approval PIN"><input id="aj-pin" className="a-input am-pin" type="password" inputMode="numeric" maxLength={6} autoComplete="off" placeholder="••••" value={pin} onChange={e => setPin(e.target.value)} /></Field>
         </form>

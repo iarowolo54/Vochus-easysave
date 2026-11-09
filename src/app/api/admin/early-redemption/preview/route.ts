@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { accruedInterestForPlan } from '@/lib/savings-interest-plan'
 import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { money } from '@/lib/money'
@@ -19,5 +20,6 @@ export async function GET(req: NextRequest) {
     hasCashDeposit: await planHasCashDeposit(prisma, plan.id), periodDays: plan.periodDays, initiator: 'admin', source: plan.source,
   }).total
   const deduction = money(Math.min(fee.feeRule === 'v2' ? fee.penalty : legacy, plan.balance))
-  return NextResponse.json({ balance: money(plan.balance), fee: deduction, netPayout: money(plan.balance - deduction) })
+  const interest = await accruedInterestForPlan(prisma, plan, new Date())
+  return NextResponse.json({ balance: money(plan.balance), fee: deduction, netPayout: money(plan.balance - deduction + interest) })
 }

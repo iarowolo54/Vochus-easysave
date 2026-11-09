@@ -1,4 +1,6 @@
 import { NextResponse } from 'next/server'
+import { accruedInterestForPlan } from '@/lib/savings-interest-plan'
+import { isEarlyTurn } from '@/lib/ajo'
 import { randomBytes } from 'crypto'
 import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
@@ -47,6 +49,16 @@ export async function GET() {
   })
 
   const now = new Date()
+
+  // A cash member collecting an early Ajo turn still owes most of their payments, so staff get a warning with their history.
+  const ajoPlanIds = records.filter(r => AWAITING_ACTION_STATUSES.includes(r.status) && r.savingsPlan.cadence === 'ajo' && r.savingsPlan.source !== 'self').map(r => r.savingsPlanId)
+  const ajoTurns = ajoPlanIds.length ? await prisma.ajoPayout.findMany({ where: { savingsPlanId: { in: ajoPlanIds } }, select: { savingsPlanId: true, round: true, memberId: true, group: { select: { size: true } } } }) : []
+  const earlyTurns = ajoTurns.filter(t => isEarlyTurn(t.round, t.group.size))
+  const ajoPaid = earlyTurns.length ? await prisma.ajoContribution.findMany({ where: { memberId: { in: earlyTurns.map(t => t.memberId) } }, select: { memberId: true, method: true } }) : []
+  const ajoEarlyTurn = new Map(earlyTurns.map(t => {
+    const mine = ajoPaid.filter(c => c.memberId === t.memberId)
+    return [t.savingsPlanId, { round: t.round, size: t.group.size, paid: mine.length, allCash: mine.every(c => c.method === 'cash') }]
+  }))
 
   // The redeemer's full plan list is only shown in the detail of an actionable record, so fetch it
   // once for just those customers (not joined onto every historical row). id is used server-side only.
@@ -115,6 +127,7 @@ export async function GET() {
       agentActive: r.savingsPlan.customer.agent.status === 'Active',
       nameMismatch: heldForNameCheck(r, r.savingsPlan.customer),
       savingsPlanId: r.savingsPlanId,
+      ajoEarlyTurn: ajoEarlyTurn.get(r.savingsPlanId) ?? null,
       planStatus: r.savingsPlan.status,
       // The plan being redeemed.
       planGoal: r.savingsPlan.goal,
@@ -150,7 +163,9 @@ export async function POST(req: Request) {
   const fee = await collectionFee(prisma, { id: plan.id, cadence: plan.cadence, dailyAmount: plan.dailyAmount, source: plan.source, feeCollected: plan.feeCollected, maturityDate: plan.maturityDate }, plan.balance, new Date())
   const rates = redemptionDeduction({ balance: plan.balance, dailyAmount: plan.dailyAmount, cadence: plan.cadence, hasCashDeposit, periodDays: plan.periodDays, initiator: 'admin', source: (plan as any).source })
   const deduction = money(fee.feeRule === 'v2' ? fee.penalty : rates.total)
-  const netPayout = money(gross - deduction)
+  // Earned interest is paid out with the money, the same as when the customer starts the collection. 0 for cash plans.
+  const interest = await accruedInterestForPlan(prisma, plan, new Date())
+  const netPayout = money(gross - deduction + interest)
 
   const record = await prisma.$transaction(async tx => {
     // notify: collectionRequested
@@ -165,6 +180,7 @@ export async function POST(req: Request) {
       balance: gross,
       penalty: deduction,
       netPayout,
+      interestAmount: interest,
       feeRule: fee.feeRule,
       feeAgent: fee.feeRule === 'v2' ? fee.feeAgent : 0,
     },

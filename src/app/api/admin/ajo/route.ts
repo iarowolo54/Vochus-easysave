@@ -15,7 +15,7 @@ export async function GET() {
       id: true, name: true, code: true, cadence: true, size: true, contribution: true, startDate: true, status: true,
       agent: { select: { name: true, agentId: true } },
       payouts: { select: { round: true, amount: true } },
-      contributions: { select: { round: true, amount: true, refundPlanId: true } },
+      contributions: { select: { round: true, amount: true } },
       _count: { select: { members: true } },
     },
   })
@@ -24,8 +24,7 @@ export async function GET() {
     const round = g.status === 'Running' ? openRound(g.size, g.payouts.map(p => p.round)) : null
     const paidThisRound = round ? g.contributions.filter(c => c.round === round).length : 0
     const dueDay = round ? roundDueDay(g.startDate, cadence, round) : null
-    // Refunded payments have left the pool, the same as payouts.
-    const paidIn = g.contributions.filter(c => !c.refundPlanId).reduce((s, c) => s + c.amount, 0)
+    const paidIn = g.contributions.reduce((s, c) => s + c.amount, 0)
     const paidOut = g.payouts.reduce((s, p) => s + p.amount, 0)
     return {
       id: g.id, name: g.name, status: g.status, cadence, size: g.size, contribution: g.contribution, pot: potOf(g),

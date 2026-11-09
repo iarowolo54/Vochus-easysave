@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ajoFeeOn, parseAjoFee, byJoinOrder, isJoinCode, isRoundFunded, lagosMidnight, openRound, parseNewGroup, potOf, roundDueDay, roundLabel } from '../src/lib/ajo'
+import { ajoFeeOn, isEarlyTurn, parseAjoFee, byJoinOrder, isJoinCode, isRoundFunded, lagosMidnight, openRound, parseNewGroup, potOf, roundDueDay, roundLabel } from '../src/lib/ajo'
 
 const start = lagosMidnight('2026-11-10')
 
@@ -65,4 +65,9 @@ test('platform fee: amounts add up exactly', () => {
 test('platform fee setting: limits', () => {
   assert.deepEqual(parseAjoFee({ feePct: '2.5', agentSharePct: '40' }), { ok: true, value: { feePct: 2.5, agentSharePct: 40 } })
   for (const bad of [{ feePct: '', agentSharePct: '10' }, { feePct: '51', agentSharePct: '10' }, { feePct: '-1', agentSharePct: '10' }, { feePct: '2', agentSharePct: '101' }, { feePct: 'x', agentSharePct: '1' }]) assert.equal(parseAjoFee(bad).ok, false, JSON.stringify(bad))
+})
+
+test('early turns are the first half of the group', () => {
+  assert.ok(isEarlyTurn(1, 10) && isEarlyTurn(5, 10))
+  assert.ok(!isEarlyTurn(6, 10) && !isEarlyTurn(2, 3))
 })

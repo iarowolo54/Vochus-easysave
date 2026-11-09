@@ -130,11 +130,9 @@ export default function AjoGroupPage() {
         </>
       )}
 
-      {g.status === 'Stopped' && <section className="ui-card ui-gap-top"><EmptyState icon="error" title="This group was stopped" text="Vochus staff stopped it. Anyone who paid the open turn can collect that money back from Collections." /></section>}
-
       {g.status === 'Cancelled' && <section className="ui-card ui-gap-top"><EmptyState icon="error" title="This group was cancelled" text="It never started, so no money moved." /></section>}
 
-      {!forming && g.status !== 'Cancelled' && g.status !== 'Stopped' && (
+      {!forming && g.status !== 'Cancelled' && (
         <>
           {current && (
             <>

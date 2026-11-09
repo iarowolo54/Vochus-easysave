@@ -5,7 +5,7 @@ import { prisma } from '../src/lib/prisma'
 import { recordContribution, ajoRef, AjoAlreadyPaidError, AjoRoundClosedError } from '../src/lib/ajo-settle'
 import { settleIntentPayment } from '../src/lib/customer-settle'
 import { lagosMidnight } from '../src/lib/ajo'
-import { replaceMember, stopAndRefund } from '../src/lib/ajo-admin'
+import { replaceMember } from '../src/lib/ajo-admin'
 
 test('ajo: rounds, races, transfers and payouts on a real database', async () => {
   const agent = await prisma.agent.findFirstOrThrow({ where: { agentId: 'AGT-UITEST' } })
@@ -101,19 +101,5 @@ test('ajo staff: a replacement takes the turn and the old member is paid back fr
     assert.ok(done.payout!.groupCompleted)
     const back = await prisma.savingsPlan.findFirstOrThrow({ where: { cadence: 'ajo', customerId: custs[1].id, notes: { contains: g.id } } })
     assert.equal(back.balance, 1000); assert.match(back.goal, /^Ajo refund/)
-  } finally { await clean() }
-})
-
-test('ajo staff: stopping refunds the open turn once, to the people who paid', async () => {
-  const { g, custs, members, pay, clean } = await setup(3)
-  try {
-    await pay(members[0], 1); await pay(members[1], 1)
-    const both = await Promise.all([stopAndRefund(prisma, { groupId: g.id, note: 'test', actor }), stopAndRefund(prisma, { groupId: g.id, note: 'test', actor })])
-    assert.equal(both.filter(r => r.ok).length, 1, 'two staff stopping at once refund once')
-    const plans = await prisma.savingsPlan.findMany({ where: { cadence: 'ajo', notes: { contains: g.id } } })
-    assert.deepEqual(plans.map(p => p.customerId).sort(), [custs[0].id, custs[1].id].sort())
-    assert.ok(plans.every(p => p.balance === 1000))
-    assert.equal((await prisma.ajoGroup.findUniqueOrThrow({ where: { id: g.id } })).status, 'Stopped')
-    await assert.rejects(pay(members[2], 1), AjoRoundClosedError)
   } finally { await clean(); await prisma.$disconnect() }
 })

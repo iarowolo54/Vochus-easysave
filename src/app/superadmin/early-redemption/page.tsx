@@ -13,6 +13,7 @@ import { ManualModeBanner, PayoutModeError, usePayoutMode } from '../_components
 
 interface RedemptionRecord {
   id: string
+  ajoEarlyTurn?: { round: number; size: number; paid: number; allCash: boolean } | null
   ref: string
   type: string
   reason: string
@@ -648,7 +649,13 @@ export default function RedemptionsPage() {
                             <div className="td-name">{r.agentName}</div>
                             <div className="td-sub">{r.agentId}</div>
                           </td>
-                          <td data-label="Type"><TypeBadge type={r.type} /></td>
+                          <td data-label="Type">
+                            <TypeBadge type={r.type} />
+                            {r.ajoEarlyTurn && <>
+                              <div><span className="bdg bdg-a">Early Ajo turn</span></div>
+                              <div className="td-sub">Turn {r.ajoEarlyTurn.round} of {r.ajoEarlyTurn.size}. Has paid {r.ajoEarlyTurn.paid} turn{r.ajoEarlyTurn.paid === 1 ? '' : 's'}{r.ajoEarlyTurn.allCash ? ', all cash through the agent' : ''}. Check before approving.</div>
+                            </>}
+                          </td>
                           <td className="num cm-strong" data-label="Net payout">{nairaKobo(r.netPayout)}</td>
                           <td data-label="Payout method">
                             <div>{r.payoutMethod ?? 'Cash'}</div>
