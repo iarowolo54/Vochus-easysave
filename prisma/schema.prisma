@@ -862,7 +862,7 @@ model AjoMember {
   group            AjoGroup          @relation(fields: [groupId], references: [id])
   customerId       String
   customer         Customer          @relation(fields: [customerId], references: [id])
-  /// The round this member collects, set from join order when the group starts. Null while forming.
+  /// The round this member collects. While forming, the place the agent has arranged (null until then); fixed when the group starts.
   slot             Int?
   joinedAt         DateTime          @default(now())
   /// Set when staff replaced this member: who they replaced and what that person had paid in. It comes out of this

@@ -12,7 +12,7 @@ import { formatDate, formatNaira } from '@/lib/format'
 
 type Preview = {
   id: string; name: string; cadence: string; size: number; contribution: number; pot: number; feePct: number; platformFee: number; startDate: string
-  firstRound: string; lastRound: string; agentName: string; memberCount: number; yourTurn: string | null; full: boolean; alreadyIn: boolean
+  firstRound: string; lastRound: string; agentName: string; memberCount: number; full: boolean; alreadyIn: boolean
 }
 type MyGroup = {
   id: string; name: string; cadence: string; size: number; contribution: number; status: string; currentRound: number | null; memberCount: number
@@ -107,7 +107,6 @@ export default function GroupAjoPage() {
                 <div className="ui-row"><dt className="ui-row-main ui-row-sub">You pay</dt><dd className="ui-review-value">{naira(preview.contribution)} {EVERY[preview.cadence]}</dd></div>
                 <div className="ui-row"><dt className="ui-row-main ui-row-sub">You redeem once</dt><dd className="ui-review-value">{naira(preview.pot - preview.platformFee)}</dd></div>
                 {preview.feePct > 0 && <div className="ui-row"><dt className="ui-row-main ui-row-sub">Platform Fee ({preview.feePct}%)</dt><dd className="ui-review-value">{naira(preview.platformFee)}</dd></div>}
-                {preview.yourTurn && !preview.alreadyIn && <div className="ui-row"><dt className="ui-row-main ui-row-sub">Your turn if you join now</dt><dd className="ui-review-value">{preview.yourTurn}</dd></div>}
                 <div className="ui-row"><dt className="ui-row-main ui-row-sub">Runs</dt><dd className="ui-review-value">{preview.firstRound} to {preview.lastRound}</dd></div>
                 <div className="ui-row"><dt className="ui-row-main ui-row-sub">First payment</dt><dd className="ui-review-value">{formatDate(preview.startDate)}</dd></div>
                 <div className="ui-row"><dt className="ui-row-main ui-row-sub">Members</dt><dd className="ui-review-value">{preview.memberCount} of {preview.size} joined</dd></div>
@@ -118,7 +117,7 @@ export default function GroupAjoPage() {
                 : preview.full
                   ? <p className="ui-note ui-note--center">This group is full.</p>
                   : <>
-                      <p className="ui-note">Turns follow the order people join. Once the group starts, you can’t leave it, and you pay every turn until the last one.</p>
+                      <p className="ui-note">Your agent sets the order of turns before the group starts. Once it starts, you can’t leave it, and you pay every turn until the last one.</p>
                       <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={join} disabled={joining} aria-busy={joining}>{joining ? 'Joining…' : 'Join the group'}</button>
                     </>}
             </div>

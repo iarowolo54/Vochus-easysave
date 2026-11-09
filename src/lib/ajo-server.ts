@@ -6,7 +6,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { customerType } from '@/lib/customer-type'
 import { displayName } from '@/lib/format'
-import { ajoFeeOn, openRound, potOf, roundDueDay, roundLabel, type AjoCadence } from '@/lib/ajo'
+import { ajoFeeOn, arrangedOrder, openRound, potOf, roundDueDay, roundLabel, type AjoCadence } from '@/lib/ajo'
 import { getAjoFee } from '@/lib/ajo-fee'
 import { notifications, notify } from '@/lib/notifications'
 
@@ -73,9 +73,11 @@ export async function loadGroup(client: PrismaClient | Prisma.TransactionClient,
   // Until the group starts it shows today's rate; from then on, the rate locked for it.
   const rate = g.status === 'Forming' ? await getAjoFee(client) : { feePct: g.feePct, agentSharePct: g.feeAgentSharePct }
   const current = g.status === 'Running' ? openRound(g.size, paidOut) : null
-  const members = g.members.map(m => ({
+  // Until the group starts the agent can still move people, so a saved place isn't anyone's turn yet.
+  const turnsFixed = g.status !== 'Forming' && g.status !== 'Cancelled'
+  const members = arrangedOrder(g.members).map(m => ({
     id: m.id,
-    slot: m.slot,
+    slot: turnsFixed ? m.slot : null,
     customerDbId: m.customerId,
     customerCode: m.customer.customerId,
     name: displayName(`${m.customer.firstName} ${m.customer.lastName}`),
@@ -89,7 +91,7 @@ export async function loadGroup(client: PrismaClient | Prisma.TransactionClient,
       round,
       label: roundLabel(g.startDate, cadence, round),
       dueDay: roundDueDay(g.startDate, cadence, round),
-      holderId: g.members.find(m => m.slot === round)?.id ?? null,
+      holderId: turnsFixed ? g.members.find(m => m.slot === round)?.id ?? null : null,
       paid: g.contributions.filter(c => c.round === round).map(c => ({ memberId: c.memberId, method: c.method, at: c.createdAt })),
       payout: payout && { memberId: payout.memberId, amount: payout.amount, at: payout.createdAt, savingsPlanId: payout.savingsPlanId },
     }
@@ -108,7 +110,7 @@ export function memberView(g: AjoGroupView, customerDbId: string) {
   return {
     id: g.id, name: g.name, cadence: g.cadence, size: g.size, contribution: g.contribution, pot: g.pot, feePct: g.feePct, platformFee: g.platformFee, startDate: g.startDate,
     status: g.status, currentRound: g.currentRound, memberCount: g.members.length,
-    me: me && { memberId: me.id, slot: me.slot, position: g.members.findIndex(m => m.id === me.id) + 1, payoutPlanId: me.slot ? g.rounds[me.slot - 1]?.payout?.savingsPlanId ?? null : null },
+    me: me && { memberId: me.id, slot: me.slot, payoutPlanId: me.slot ? g.rounds[me.slot - 1]?.payout?.savingsPlanId ?? null : null },
     members: g.members.map(m => ({ id: m.id, name: m.name, slot: m.slot, isMe: m.id === me?.id })),
     rounds: g.rounds.map(r => ({ round: r.round, label: r.label, dueDay: r.dueDay, holderId: r.holderId, paidMemberIds: r.paid.map(p => p.memberId), paidOut: !!r.payout })),
   }

@@ -101,9 +101,39 @@ export function parseNewGroup(raw: unknown, now: Date = new Date()): { ok: true;
 /** The first half of a group's turns: a collector here still owes most of their payments, so staff look before approving. */
 export const isEarlyTurn = (round: number, size: number) => round * 2 <= size
 
-/** First come, first served: the order people joined decides the turns. Nobody can set or change it. */
 export function byJoinOrder<T extends { id: string; joinedAt: Date | string }>(members: T[]): T[] {
   return [...members].sort((x, y) => new Date(x.joinedAt).getTime() - new Date(y.joinedAt).getTime() || x.id.localeCompare(y.id))
+}
+
+/** The turn order: the places the agent has set, then anyone who joined after that, in the order they joined. */
+export function arrangedOrder<T extends { id: string; joinedAt: Date | string; slot: number | null }>(members: T[]): T[] {
+  const placed = members.filter(m => m.slot !== null).sort((x, y) => x.slot! - y.slot!)
+  return [...placed, ...byJoinOrder(members.filter(m => m.slot === null))]
+}
+
+/** Move one entry to a new position; the others shift to make room. */
+export function moveTo<T>(list: T[], from: number, to: number): T[] {
+  const next = [...list]
+  const [moved] = next.splice(from, 1)
+  next.splice(to, 0, moved)
+  return next
+}
+
+/** `ids` names every current member exactly once. */
+export function isEveryMember(ids: unknown, memberIds: string[]): ids is string[] {
+  if (!Array.isArray(ids) || ids.length !== memberIds.length) return false
+  const members = new Set(memberIds)
+  return new Set(ids).size === ids.length && ids.every(id => typeof id === 'string' && members.has(id))
+}
+
+export const AJO_CODE_NOT_FOUND = 'No group with that code. Check it with your agent.'
+
+/** Why this customer can't use a group's code, or null when they can. Only the customer's own agent's groups can be joined. */
+export function ajoCodeProblem(g: { agentId: string; status: string } | null, customerAgentId: string): string | null {
+  if (!g || g.status === 'Cancelled') return AJO_CODE_NOT_FOUND
+  if (g.agentId !== customerAgentId) return 'This group is run by a different agent. You can only join groups run by your own agent.'
+  if (g.status !== 'Forming') return 'This group has already started, so no one can join now.'
+  return null
 }
 
 // Platform Fee: a percentage of each pot, taken when its member collects. Super admin sets it; a group's rate is locked

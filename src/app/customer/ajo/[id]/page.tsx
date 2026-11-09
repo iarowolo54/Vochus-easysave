@@ -14,7 +14,7 @@ import { formatDate, formatNaira } from '@/lib/format'
 type Group = {
   id: string; name: string; cadence: string; size: number; contribution: number; pot: number; feePct: number; platformFee: number; startDate: string
   status: string; currentRound: number | null; memberCount: number
-  me: { memberId: string; slot: number | null; position: number; payoutPlanId: string | null } | null
+  me: { memberId: string; slot: number | null; payoutPlanId: string | null } | null
   members: { id: string; name: string; slot: number | null; isMe: boolean }[]
   rounds: { round: number; label: string; dueDay: string; holderId: string | null; paidMemberIds: string[]; paidOut: boolean }[]
 }
@@ -125,7 +125,7 @@ export default function CustomerAjoGroupPage() {
           <p className="ui-row-sub">You pay {naira(g.contribution)} {EVERY[g.cadence]}</p>
           <p className="ag-ajo-pot">{naira(g.pot - g.platformFee)}</p>
           {g.feePct > 0 && <p className="ui-row-sub">After a {g.feePct}% Platform Fee of {naira(g.platformFee)}</p>}
-          <p className="ui-row-sub">{myRound ? `You redeem in ${myRound.label}` : g.me ? `You’re number ${g.me.position}: ${g.rounds[g.me.position - 1].label}, unless someone ahead leaves` : ''}</p>
+          <p className="ui-row-sub">{myRound ? `You redeem in ${myRound.label}` : g.me ? 'Your agent will set your turn before the group starts' : ''}</p>
         </section>
 
         {g.status === 'Forming' && (

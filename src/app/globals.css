@@ -2703,3 +2703,5 @@ button.ui-cal-day:disabled:active { transform: none; }
 .ag-ajo-review .ui-row { gap: var(--ui-s3); }
 .ag-ajo-review dt { flex: none; }
 .ag-ajo-review dd { margin-left: auto; }
+.ui-row:has(.ag-ajo-turn) .ui-row-title { white-space: normal; overflow-wrap: anywhere; }
+:is(.ui-screen, .ag-shell) .ag-ajo-turn { width: 116px; min-height: 44px; padding-left: var(--ui-s3); padding-right: 32px; background-position: right 12px center; }

@@ -1,6 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { ajoFeeOn, isEarlyTurn, parseAjoFee, byJoinOrder, isJoinCode, isRoundFunded, lagosMidnight, openRound, parseNewGroup, potOf, roundDueDay, roundLabel } from '../src/lib/ajo'
+import { ajoCodeProblem, ajoFeeOn, arrangedOrder, isEarlyTurn, isEveryMember, moveTo, parseAjoFee, byJoinOrder, isJoinCode, isRoundFunded, lagosMidnight, openRound, parseNewGroup, potOf, roundDueDay, roundLabel } from '../src/lib/ajo'
 
 const start = lagosMidnight('2026-11-10')
 
@@ -45,9 +45,42 @@ test('new group: every bad field is named; past start refused', () => {
   if (!r.ok) assert.deepEqual(Object.keys(r.errors).sort(), ['cadence', 'contribution', 'name', 'size', 'startDate'])
 })
 
-test('turns follow join order, whatever order the rows arrive in', () => {
+test('before the agent arranges anyone, turns follow join order, whatever order the rows arrive in', () => {
   const m = [{ id: 'c', joinedAt: '2026-11-08T10:02:00Z' }, { id: 'a', joinedAt: '2026-11-08T10:00:00Z' }, { id: 'b', joinedAt: '2026-11-08T10:00:00Z' }]
   assert.deepEqual(byJoinOrder(m).map(x => x.id), ['a', 'b', 'c'])
+  assert.deepEqual(arrangedOrder(m.map(x => ({ ...x, slot: null }))).map(x => x.id), ['a', 'b', 'c'])
+})
+
+test('the agent’s order comes first, and someone who joins later goes to the end', () => {
+  const m = [
+    { id: 'first-joined', joinedAt: '2026-11-08T10:00:00Z', slot: 2 },
+    { id: 'late', joinedAt: '2026-11-08T12:00:00Z', slot: null },
+    { id: 'moved-up', joinedAt: '2026-11-08T11:00:00Z', slot: 1 },
+  ]
+  assert.deepEqual(arrangedOrder(m).map(x => x.id), ['moved-up', 'first-joined', 'late'])
+})
+
+test('moving someone to any position shifts the others', () => {
+  assert.deepEqual(moveTo(['a', 'b', 'c', 'd'], 3, 0), ['d', 'a', 'b', 'c'])
+  assert.deepEqual(moveTo(['a', 'b', 'c', 'd'], 0, 2), ['b', 'c', 'a', 'd'])
+  assert.deepEqual(moveTo(['a', 'b'], 1, 1), ['a', 'b'])
+})
+
+test('an arrangement must name every member exactly once', () => {
+  assert.ok(isEveryMember(['b', 'a'], ['a', 'b']))
+  assert.ok(!isEveryMember(['a'], ['a', 'b']))
+  assert.ok(!isEveryMember(['a', 'a'], ['a', 'b']))
+  assert.ok(!isEveryMember(['a', 'x'], ['a', 'b']))
+  assert.ok(!isEveryMember('a,b', ['a', 'b']))
+})
+
+test('a join code says why it can’t be used', () => {
+  const mine = 'agent-1'
+  assert.equal(ajoCodeProblem({ agentId: mine, status: 'Forming' }, mine), null)
+  assert.match(ajoCodeProblem({ agentId: 'agent-2', status: 'Forming' }, mine)!, /different agent/)
+  assert.match(ajoCodeProblem({ agentId: mine, status: 'Running' }, mine)!, /already started/)
+  assert.match(ajoCodeProblem({ agentId: mine, status: 'Cancelled' }, mine)!, /No group/)
+  assert.match(ajoCodeProblem(null, mine)!, /No group/)
 })
 
 test('join codes are six digits', () => {

@@ -42,7 +42,7 @@ export async function DELETE(req: NextRequest, { params }: Ctx) {
   const group = await prisma.ajoGroup.findFirst({ where: { id, agentId: agent.id }, select: { id: true, name: true, status: true } })
   if (!group) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (group.status !== 'Forming') return NextResponse.json({ error: 'This group has started, so members can’t be removed.' }, { status: 409 })
-  // Online members leave for themselves. If an agent could remove them, removing and re-adding would change who is first.
+  // Online members joined for themselves, so they leave for themselves.
   const target = await prisma.ajoMember.findFirst({ where: { id: memberId, groupId: group.id }, select: { customer: { select: { savingsPlans: { select: { source: true } } } } } })
   if (!target) return NextResponse.json({ error: 'Member not found' }, { status: 404 })
   if (customerType(target.customer.savingsPlans) === 'online') return NextResponse.json({ error: 'Online members leave the group themselves.' }, { status: 403 })

@@ -7,6 +7,7 @@ import EmptyState from '@/components/ui/EmptyState'
 import ListRow from '@/components/ui/ListRow'
 import { ListSkeleton } from '@/components/ui/Skeleton'
 import { Icons } from '@/components/ui/icons'
+import { moveTo } from '@/lib/ajo'
 import { displayName, formatDate, formatNaira } from '@/lib/format'
 
 type Member = { id: string; slot: number | null; customerDbId: string; customerCode: string; name: string; phone: string; type: string }
@@ -38,7 +39,7 @@ export default function AjoGroupPage() {
   const [group, setGroup] = useState<Group | null>(null)
   const [failed, setFailed] = useState(false)
   const [copied, setCopied] = useState(false)
-  const [sheet, setSheet] = useState<null | 'add' | 'start' | 'cancel'>(null)
+  const [sheet, setSheet] = useState<null | 'add' | 'arrange' | 'start' | 'cancel'>(null)
   const [cashFor, setCashFor] = useState<Member | null>(null)
   const [removing, setRemoving] = useState<Member | null>(null)
   const [busy, setBusy] = useState(false)
@@ -61,7 +62,7 @@ export default function AjoGroupPage() {
     setBusy(true); setError('')
     const err = await send(url, method, body)
     setBusy(false)
-    if (err) { setError(err); return false }
+    if (err) { setError(err); await load(); return false }
     setSheet(null); setCashFor(null); setRemoving(null)
     after?.()
     await load()
@@ -120,9 +121,9 @@ export default function AjoGroupPage() {
                 value={m.type === 'online' ? undefined : <button type="button" className="ui-link" onClick={() => { setError(''); setRemoving(m) }} aria-label={`Remove ${m.name}`}>Remove</button>} />
             ))}
           </div>
-          <p className="ui-note">Turns follow the order people joined. No one can change them.</p>
           <div className="ui-stack ui-gap-top">
             {!full && <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => openSheet('add')}><Icons.add size={18} aria-hidden="true" /> Add a cash customer</button>}
+            {g.members.length >= 2 && <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => openSheet('arrange')}>Arrange turns</button>}
             <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={!full} onClick={() => openSheet('start')}>Start the group</button>
             {!full && <p className="ui-note ui-note--center">You need {g.size - g.members.length} more member{g.size - g.members.length === 1 ? '' : 's'} to start.</p>}
             <button type="button" className="ui-btn ui-btn--plain ui-btn--block" onClick={() => openSheet('cancel')}>Cancel this group</button>
@@ -175,10 +176,18 @@ export default function AjoGroupPage() {
           onPick={c => act(`/api/agent/ajo/${g.id}/members`, 'POST', { customerId: c.id })} />}
       </BottomSheet>
 
+      <BottomSheet open={sheet === 'arrange'} onClose={closeAll} title="Arrange turns">
+        {sheet === 'arrange' && <ArrangeTurns key={g.members.map(m => m.id).join()} members={g.members} rounds={g.rounds} full={full} busy={busy} error={error}
+          onSave={memberIds => act(`/api/agent/ajo/${g.id}/order`, 'PUT', { memberIds })} />}
+      </BottomSheet>
+
       <BottomSheet open={sheet === 'start'} onClose={closeAll} title="Start this group?">
+        <dl className="ui-review-rows ag-ajo-review">
+          {g.members.map((m, i) => <div className="ui-row" key={m.id}><dt className="ui-row-main ui-row-sub">{g.rounds[i].label}</dt><dd className="ui-review-value">{m.name}</dd></div>)}
+        </dl>
         <p className="ui-note">Once it starts, members and turns can’t change. Everyone is told when they redeem, and the first payment is due {dayText(g.rounds[0].dueDay)}.</p>
         {error && <p className="ui-field-error" role="alert"><Icons.error size={16} aria-hidden="true" /> {error}</p>}
-        <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={busy} aria-busy={busy} onClick={() => act(`/api/agent/ajo/${g.id}/lock`, 'POST')}>{busy ? 'Starting…' : 'Start the group'}</button>
+        <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={busy} aria-busy={busy} onClick={() => act(`/api/agent/ajo/${g.id}/lock`, 'POST', { memberIds: g.members.map(m => m.id) })}>{busy ? 'Starting…' : 'Start the group'}</button>
       </BottomSheet>
 
       <BottomSheet open={sheet === 'cancel'} onClose={closeAll} title="Cancel this group?">
@@ -203,6 +212,26 @@ export default function AjoGroupPage() {
         )}
       </BottomSheet>
     </div>
+  )
+}
+
+function ArrangeTurns({ members, rounds, full, busy, error, onSave }: { members: Member[]; rounds: Round[]; full: boolean; busy: boolean; error: string; onSave: (memberIds: string[]) => void }) {
+  const [order, setOrder] = useState(members)
+  const changed = order.some((m, i) => m.id !== members[i].id)
+  return (
+    <>
+      <p className="ui-note">Choose each member’s turn. Turn 1 redeems first.{full ? '' : ' Anyone who joins after this goes to the end.'}</p>
+      <div className="ui-card--list">
+        {order.map((m, i) => (
+          <ListRow key={m.id} icon="customers" title={m.name} sub={rounds[i].label}
+            value={<select className="ui-input ui-select ag-ajo-turn" aria-label={`Turn for ${m.name}`} value={i} disabled={busy} onChange={e => setOrder(moveTo(order, i, Number(e.target.value)))}>
+              {order.map((_, n) => <option key={n} value={n}>Turn {n + 1}</option>)}
+            </select>} />
+        ))}
+      </div>
+      {error && <p className="ui-field-error" role="alert"><Icons.error size={16} aria-hidden="true" /> {error}</p>}
+      <button type="button" className="ui-btn ui-btn--primary ui-btn--block ui-gap-top" disabled={busy || !changed} aria-busy={busy} onClick={() => onSave(order.map(m => m.id))}>{busy ? 'Saving…' : 'Save turns'}</button>
+    </>
   )
 }
 
