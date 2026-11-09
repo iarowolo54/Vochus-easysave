@@ -54,6 +54,6 @@ export function onlineFeeOn(saved: number, rate: OnlineRedeemFee, early: boolean
 /** The line shown when someone opens an online plan; null while there is no fee. */
 export function onlineFeeNote(maturedPct: number, earlyPct: number): string | null {
   if (!(maturedPct > 0) && !(earlyPct > 0)) return null
-  const rates = maturedPct === earlyPct ? `${maturedPct}%` : `${maturedPct}%, or ${earlyPct}% if you redeem before your plan ends`
+  const rates = maturedPct === earlyPct ? `${maturedPct}%` : `${maturedPct}%, or ${earlyPct}% if you redeem before your plan ends,`
   return `When you redeem, a Platform Fee of ${rates} comes off what you’ve saved. There’s no fee on deposits, and your interest isn’t charged.`
 }
