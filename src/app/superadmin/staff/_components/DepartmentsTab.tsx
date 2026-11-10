@@ -1,62 +1,46 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
 import { Icons } from '@/components/ui/icons'
-import { ConfirmModal, Empty, Field, LoadError, Modal, TableSkeleton } from '../../_components/admin-ui'
+import { ConfirmModal, Empty, Field, Modal } from '../../_components/admin-ui'
 import type { Perm } from '@/lib/permissions'
-import DepartmentHub from './DepartmentHub'
 import PermissionMatrix from './PermissionMatrix'
-import { type Department, sendJson } from './shared'
+import { sendJson, type Department, type StaffData, type Toast } from './shared'
 
 type RoleDraft = { key: number; name: string; perms: Perm[] }
 
-/**
- * The department hub. The owner sees every department (and can open one); a lead is shown their own
- * department's hub directly. Creating a department can add its first roles in the same dialog.
- */
-export default function DepartmentsView({ toast, isOwner, ceiling }: {
-  toast: (m: string, t?: 'success' | 'error') => void
-  isOwner: boolean
-  ceiling: Perm[] | null
+/** Owner only. Creating a department can add its first roles in the same dialog. */
+export default function DepartmentsTab({ data, toast, reload, onViewPeople }: {
+  data: StaffData
+  toast: Toast
+  reload: () => void
+  onViewPeople: (departmentId: string) => void
 }) {
-  const [items, setItems] = useState<Department[]>([])
-  const [loading, setLoading] = useState(true)
-  const [failed, setFailed] = useState(false)
-  const [openId, setOpenId] = useState<string | null>(null)
-
+  const { departments: items, staff } = data
   const [editing, setEditing] = useState<Department | 'new' | null>(null)
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  const [leadId, setLeadId] = useState('')
   const [drafts, setDrafts] = useState<RoleDraft[]>([])
   const [nameError, setNameError] = useState('')
   const [formError, setFormError] = useState('')
   const [busy, setBusy] = useState(false)
-
   const [statusTarget, setStatusTarget] = useState<Department | null>(null)
   const [actionError, setActionError] = useState('')
 
-  const load = useCallback(async () => {
-    setLoading(true); setFailed(false)
-    try {
-      const res = await fetch('/api/admin/departments')
-      if (!res.ok) throw new Error()
-      const d = await res.json()
-      setItems(d.departments ?? [])
-    } catch { setFailed(true) } finally { setLoading(false) }
-  }, [])
-  useEffect(() => { load() }, [load])
-
-  // A lead has exactly one department: show its hub straight away.
-  const leadDept = !isOwner && items.length === 1 ? items[0] : null
-  const hubDept = leadDept ?? items.find(d => d.id === openId) ?? null
-
   function open(d: Department | 'new') {
     setEditing(d); setNameError(''); setFormError(''); setDrafts([])
-    setName(d === 'new' ? '' : d.name); setDescription(d === 'new' ? '' : d.description ?? '')
+    setName(d === 'new' ? '' : d.name)
+    setDescription(d === 'new' ? '' : d.description ?? '')
+    setLeadId(d === 'new' ? '' : d.lead?.id ?? '')
   }
 
   const addDraft = () => setDrafts(ds => [...ds, { key: Date.now() + ds.length, name: '', perms: [] }])
   const patchDraft = (key: number, patch: Partial<RoleDraft>) => setDrafts(ds => ds.map(d => d.key === key ? { ...d, ...patch } : d))
+
+  // Only Active people of this department can be appointed lead.
+  const candidates = editing && editing !== 'new' ? staff.filter(s => s.department?.id === editing.id && s.status === 'Active') : []
+  const currentLead = editing && editing !== 'new' ? editing.lead : null
 
   async function save() {
     if (!editing) return
@@ -68,11 +52,14 @@ export default function DepartmentsView({ toast, isOwner, ceiling }: {
           name: name.trim(), description: description.trim() || undefined,
           roles: drafts.map(d => ({ name: d.name.trim(), permissions: d.perms })),
         })
-      : await sendJson(`/api/admin/departments/${editing.id}`, 'PATCH', { name: name.trim(), description: description.trim() || null })
+      : await sendJson(`/api/admin/departments/${editing.id}`, 'PATCH', {
+          name: name.trim(), description: description.trim() || null,
+          ...(leadId !== (editing.lead?.id ?? '') ? { leadId: leadId || null } : {}),
+        })
     setBusy(false)
     if (!r.ok) { setFormError(r.error); return }
     toast(editing === 'new' ? `${name.trim()} department created` : 'Department updated', 'success')
-    setEditing(null); load()
+    setEditing(null); reload()
   }
 
   async function toggleStatus() {
@@ -84,29 +71,7 @@ export default function DepartmentsView({ toast, isOwner, ceiling }: {
     setBusy(false)
     if (!r.ok) { setActionError(r.error); return }
     toast(`${d.name} ${next === 'Active' ? 'reactivated' : 'archived'}`, 'success')
-    setStatusTarget(null); load()
-  }
-
-  if (hubDept) {
-    return (
-      <>
-        {isOwner && (
-          <button type="button" className="btn btn-outline cs-hub-back" onClick={() => setOpenId(null)}>← All departments</button>
-        )}
-        <h2 className="td-name">{hubDept.name}</h2>
-        {hubDept.description && <p className="td-sub">{hubDept.description}</p>}
-        <DepartmentHub department={hubDept} isOwner={isOwner} ceiling={ceiling} toast={toast} onChanged={load} />
-      </>
-    )
-  }
-
-  if (!isOwner) {
-    return (
-      <section className="card">
-        {loading ? <TableSkeleton rows={3} cols={3} /> : failed ? <LoadError what="your department" onRetry={load} />
-          : <Empty icon="staff" title="No department to manage" text="You are not the lead of a department." />}
-      </section>
-    )
+    setStatusTarget(null); reload()
   }
 
   return (
@@ -116,43 +81,41 @@ export default function DepartmentsView({ toast, isOwner, ceiling }: {
       </div>
 
       <section className="card" aria-label="Departments">
-        {loading && !items.length ? <TableSkeleton rows={4} cols={5} />
-          : failed ? <LoadError what="departments" onRetry={load} />
-          : items.length === 0 ? (
-            <Empty icon="staff" title="No departments yet" text="A department groups roles and people, like Finance or Support. Create one and add its roles in the same step."
-              action={<button type="button" className="btn btn-green" onClick={() => open('new')}>Add department</button>} />
-          ) : (
-            <div className="tbl-wrap tbl-stack">
-              <table>
-                <thead>
-                  <tr><th>Department</th><th>Lead</th><th>Roles</th><th>People</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr>
-                </thead>
-                <tbody>
-                  {items.map(d => (
-                    <tr key={d.id}>
-                      <td>
-                        <span className="td-name ui-block">{d.name}</span>
-                        {d.description && <span className="td-sub ui-block">{d.description}</span>}
-                      </td>
-                      <td data-label="Lead">{d.lead ? d.lead.name : <span className="cs-muted">None</span>}</td>
-                      <td data-label="Roles">{d.roleCount}</td>
-                      <td data-label="People">{d.memberCount}</td>
-                      <td data-label="Status">{d.status === 'Active' ? <span className="bdg bdg-g">Active</span> : <span className="bdg bdg-grey">Archived</span>}</td>
-                      <td>
-                        <div className="a-row-actions">
-                          <button type="button" className="btn btn-sm btn-green" onClick={() => setOpenId(d.id)}>Open</button>
-                          <button type="button" className="btn btn-sm btn-outline" onClick={() => open(d)}>Edit</button>
-                          <button type="button" className="btn btn-sm btn-outline" onClick={() => { setActionError(''); setStatusTarget(d) }}>
-                            {d.status === 'Active' ? 'Archive' : 'Reactivate'}
-                          </button>
-                        </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
+        {items.length === 0 ? (
+          <Empty icon="staff" title="No departments yet" text="A department groups roles and people, like Finance or Support. Create one and add its roles in the same step."
+            action={<button type="button" className="btn btn-green" onClick={() => open('new')}>Add department</button>} />
+        ) : (
+          <div className="tbl-wrap tbl-stack">
+            <table>
+              <thead>
+                <tr><th>Department</th><th>Lead</th><th>Roles</th><th>People</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr>
+              </thead>
+              <tbody>
+                {items.map(d => (
+                  <tr key={d.id}>
+                    <td>
+                      <span className="td-name ui-block">{d.name}</span>
+                      {d.description && <span className="td-sub ui-block">{d.description}</span>}
+                    </td>
+                    <td data-label="Lead">{d.lead ? d.lead.name : <span className="cs-muted">None</span>}</td>
+                    <td data-label="Roles">{d.roleCount}</td>
+                    <td data-label="People">{d.memberCount}</td>
+                    <td data-label="Status">{d.status === 'Active' ? <span className="bdg bdg-g">Active</span> : <span className="bdg bdg-grey">Archived</span>}</td>
+                    <td>
+                      <div className="a-row-actions">
+                        <button type="button" className="btn btn-sm btn-outline" onClick={() => onViewPeople(d.id)}>View people</button>
+                        <button type="button" className="btn btn-sm btn-outline" onClick={() => open(d)}>Edit</button>
+                        <button type="button" className="btn btn-sm btn-outline" onClick={() => { setActionError(''); setStatusTarget(d) }}>
+                          {d.status === 'Active' ? 'Archive' : 'Reactivate'}
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
       {editing && (
@@ -171,6 +134,19 @@ export default function DepartmentsView({ toast, isOwner, ceiling }: {
             <Field id="dp-desc" label="Description (optional)">
               <input id="dp-desc" className="a-input" autoComplete="off" value={description} onChange={e => setDescription(e.target.value)} />
             </Field>
+
+            {editing !== 'new' && (
+              <Field id="dp-lead" label="Department lead"
+                hint={candidates.length === 0 && !currentLead
+                  ? 'Add and activate someone in this department first, then appoint them lead.'
+                  : 'A lead manages this department’s roles and people, but can only give access they hold themselves.'}>
+                <select id="dp-lead" className="a-input" value={leadId} disabled={candidates.length === 0 && !currentLead} onChange={e => setLeadId(e.target.value)}>
+                  <option value="">No lead</option>
+                  {currentLead && !candidates.some(m => m.id === currentLead.id) && <option value={currentLead.id}>{currentLead.name} (not active)</option>}
+                  {candidates.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+                </select>
+              </Field>
+            )}
 
             {editing === 'new' && (
               <>

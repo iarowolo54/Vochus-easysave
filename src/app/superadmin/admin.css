@@ -1481,8 +1481,6 @@
 .admin-root .cs-matrix-cell { display: flex; align-items: center; gap: 8px; min-height: 44px; font-size: 14px; }
 .admin-root .cs-matrix-cell input { width: 20px; height: 20px; accent-color: var(--green); flex-shrink: 0; }
 .admin-root .cs-matrix-cell input:disabled + span { color: var(--text3); }
-.admin-root .cs-hub-back { margin-bottom: 12px; }
-.admin-root .cs-hub-sec { margin-top: 20px; }
 .admin-root .cs-role-draft { border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-bottom: 10px; }
 .admin-root .cs-role-draft > summary { cursor: pointer; font-weight: 600; min-height: 44px; display: flex; align-items: center; }
 .admin-root .cs-linkbox { word-break: break-all; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px; padding: 10px 12px; background: var(--surface2); border-radius: 10px; }
@@ -1558,3 +1556,88 @@
 .admin-root .an-net { font-size: 14px; color: var(--text2); margin: 4px 0 0; }
 .admin-root .an-lead { font-size: 14px; color: var(--text2); margin: 0 0 12px; }
 @media (prefers-reduced-motion: reduce) { .admin-root .an-fill { animation: none; transition: none; } }
+
+/* STAFF AND ACCESS */
+.admin-root .um-tabs .seg { border-radius: 22px; }
+.admin-root .um-filters { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-bottom: 16px; }
+.admin-root .um-filters .a-search { flex: 1 1 260px; max-width: 380px; }
+.admin-root .um-filters select.a-input { flex: 0 1 180px; width: auto; min-width: 0; min-height: 44px; border-radius: 999px; padding: 0 34px 0 14px; }
+.admin-root .um-filters .btn { margin-left: auto; }
+.admin-root .um-check { width: 20px; height: 20px; accent-color: var(--green); flex-shrink: 0; cursor: pointer; }
+.admin-root .um-check:disabled { cursor: not-allowed; }
+.admin-root .um-th-person { display: inline-flex; align-items: center; gap: 12px; }
+.admin-root .um-person { min-width: 0; }
+.admin-root .um-lead { margin-left: 8px; }
+.admin-root .um-link { color: var(--accent2); font-size: 14px; font-weight: 600; min-height: 44px; display: inline-flex; align-items: center; gap: 4px; background: none; border: none; padding: 0; cursor: pointer; }
+.admin-root .um-danger { color: var(--red); }
+.admin-root .um-bulk { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 14px; margin-bottom: 12px; background: var(--accent-lt); border-radius: 12px; }
+.admin-root .um-bulk-role { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.admin-root .um-bulk-role select.a-input { width: 170px; min-height: 36px; padding: 0 30px 0 10px; background-color: var(--surface); }
+.admin-root .um-bulk .btn-outline { background: var(--surface); }
+.admin-root .um-bulk-clear { margin-left: auto; }
+.admin-root .um-section { margin-top: 18px; }
+.admin-root .um-section-title { font-size: 14px; font-weight: 700; color: var(--text); margin-bottom: 8px; }
+.admin-root .um-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.admin-root .um-roles { display: grid; grid-template-columns: 300px minmax(0, 1fr); gap: 16px; align-items: start; }
+.admin-root .um-rolegroup + .um-rolegroup { margin-top: 14px; }
+.admin-root .um-role { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; min-height: 56px; padding: 8px 12px; margin-top: 4px; border: 1px solid transparent; border-radius: 12px; background: none; text-align: left; cursor: pointer; }
+.admin-root .um-role:hover { background: var(--surface2); }
+.admin-root .um-role[aria-pressed="true"] { background: var(--accent-lt); border-color: var(--accent-md); }
+.admin-root .um-role-text { min-width: 0; flex: 1; overflow-wrap: anywhere; }
+.admin-root .um-role-text .td-name, .admin-root .um-person .td-name, .admin-root .um-person .td-sub { white-space: normal; overflow-wrap: anywhere; }
+.admin-root .um-role-count { flex-shrink: 0; font-size: 13px; color: var(--text2); }
+.admin-root .um-editor { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.admin-root .um-back { display: none; }
+.admin-root .um-editor-hd { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.admin-root .um-editor-title { min-width: 0; overflow-wrap: anywhere; }
+.admin-root .um-role-name { font-family: var(--display); font-size: 20px; font-weight: 700; color: var(--text); }
+.admin-root .um-editor-tools { display: flex; flex-wrap: wrap; align-items: center; column-gap: 16px; margin-top: 8px; }
+.admin-root .um-editor .cs-matrix { gap: 8px; }
+.admin-root .um-group { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; overflow: hidden; }
+.admin-root .um-group-hd { display: flex; align-items: center; gap: 10px; padding-right: 14px; }
+.admin-root .um-group-btn { flex: 1; min-width: 0; min-height: 52px; display: flex; align-items: center; gap: 10px; padding: 0 14px; background: none; border: none; cursor: pointer; text-align: left; }
+.admin-root .um-chev { transform: rotate(180deg); transition: transform .15s; color: var(--text3); flex-shrink: 0; }
+.admin-root .um-chev.is-open { transform: rotate(270deg); }
+.admin-root .um-group-body { padding: 0 14px 6px; }
+.admin-root .um-savebar { position: sticky; bottom: 0; display: flex; align-items: center; gap: 8px; padding: 12px 14px; background: var(--surface); border: 1px solid var(--border2); border-radius: 14px; box-shadow: 0 6px 20px rgba(15, 42, 29, .1); }
+.admin-root .um-savebar > span { margin-right: auto; font-size: 14px; font-weight: 600; color: var(--amber); }
+
+.admin-root .um-access { border-collapse: separate; border-spacing: 0; table-layout: fixed; }
+.admin-root .um-access th, .admin-root .um-access td { box-sizing: border-box; height: 52px; padding: 8px 12px; text-align: center; vertical-align: middle; border-bottom: 1px solid var(--border); font-size: 14px; }
+.admin-root .um-access thead th { height: auto; padding: 0 12px 10px; vertical-align: bottom; white-space: normal; overflow-wrap: anywhere; }
+.admin-root .um-access tbody tr:last-child th, .admin-root .um-access tbody tr:last-child td { border-bottom: none; }
+.admin-root .um-access th:first-child { position: sticky; left: 0; z-index: 1; width: 190px; padding-left: 0; background: var(--surface); text-align: left; }
+/* Covers .tbl-wrap's side padding, where cells scrolling under the pinned column would otherwise show. */
+.admin-root .um-access th:first-child::before { content: ''; position: absolute; top: 0; bottom: -1px; right: 100%; width: var(--um-gutter, 24px); background: var(--surface); }
+.admin-root .um-access tbody th:first-child { font-size: 14px; font-weight: 600; letter-spacing: 0; text-transform: none; color: var(--text); white-space: normal; }
+.admin-root .um-access tbody tr:not(.um-access-gh):hover th, .admin-root .um-access tbody tr:not(.um-access-gh):hover td { background: var(--surface2); }
+.admin-root .um-access .um-access-gh th { position: static; height: auto; padding: 20px 0 8px; }
+.admin-root .um-access .um-access-gh th::before { display: none; }
+.admin-root .um-access-gl { position: sticky; left: 0; font-size: 12px; font-weight: 700; letter-spacing: .4px; text-transform: uppercase; color: var(--text3); }
+.admin-root .um-access-dept { font-weight: 500; color: var(--text3); }
+@media (max-width: 640px) {
+  .admin-root .um-access { --um-gutter: 16px; }
+  .admin-root .um-access th:first-child { width: 150px; padding-right: 8px; }
+}
+
+.admin-root .um-log { list-style: none; margin: 0; padding: 0; }
+.admin-root .um-log li { display: flex; justify-content: space-between; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--border); }
+.admin-root .um-log li:first-child { padding-top: 0; }
+.admin-root .um-log li:last-child { border-bottom: none; padding-bottom: 0; }
+.admin-root .um-log-main { min-width: 0; overflow-wrap: anywhere; }
+.admin-root .um-log-meta { flex-shrink: 0; text-align: right; font-size: 13px; color: var(--text2); }
+
+@media (max-width: 860px) {
+  .admin-root .um-roles { grid-template-columns: minmax(0, 1fr); }
+  .admin-root .um-roles:not(.is-detail) .um-editor { display: none; }
+  .admin-root .um-roles.is-detail .um-rolelist { display: none; }
+  .admin-root .um-back { display: inline-flex; margin-top: -8px; }
+  .admin-root .um-filters .a-search { flex-basis: 100%; max-width: none; }
+  .admin-root .um-filters select.a-input { flex: 1 1 130px; }
+  .admin-root .um-filters .btn { margin-left: 0; flex: 1 1 100%; }
+  .admin-root .um-bulk-role { flex: 1 1 100%; }
+  .admin-root .um-bulk-role select.a-input { flex: 1; width: auto; }
+  .admin-root .um-log li { flex-direction: column; gap: 4px; }
+  .admin-root .um-log-meta { text-align: left; }
+}
