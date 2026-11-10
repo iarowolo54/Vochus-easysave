@@ -6,6 +6,7 @@ import {
   dateTime, nairaKobo, useDebounced, useToast,
 } from '../_components/admin-ui'
 import NoAccess from '../_components/NoAccess'
+import DayChoice from './DayChoice'
 
 type Status = 'paid' | 'waiting' | 'not-paid' | 'cancelled' | 'needs-review' | 'by-hand'
 type Filter = 'all' | Status
@@ -334,6 +335,8 @@ function ActionDialog({ dialog, onClose, onDone }: { dialog: Exclude<Dialog, { t
   // Held money that looks like a payment already credited by hand needs a tick to say it was checked.
   const [ack, setAck] = useState(false)
   const needsAck = (dialog.type === 'alert' || dialog.type === 'request') && row.lookalike
+  const [days, setDays] = useState<string[]>([])
+  useEffect(() => { setDays([]) }, [planId])
 
   useEffect(() => {
     if (dialog.type !== 'alert' || q.length < 2) { setPeople([]); return }
@@ -363,7 +366,7 @@ function ActionDialog({ dialog, onClose, onDone }: { dialog: Exclude<Dialog, { t
     const [url, body] =
       dialog.type === 'request' ? ['credit-request', { ref: row.ref }] as const
       : dialog.type === 'dismiss' ? ['dismiss-alert', { alertId: row.id }] as const
-      : ['credit-alert', { alertId: row.id, target: kind === 'agent' ? { kind, agentId: person?.id } : { kind, customerId: person?.id, planId } }] as const
+      : ['credit-alert', { alertId: row.id, target: kind === 'agent' ? { kind, agentId: person?.id } : { kind, customerId: person?.id, planId, ...(days.length > 0 ? { days } : {}) } }] as const
     try {
       const res = await fetch(`/api/admin/bank-transfers/${url}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -443,6 +446,7 @@ function ActionDialog({ dialog, onClose, onDone }: { dialog: Exclude<Dialog, { t
               <LedgerRow label=""><button type="button" className="ui-link" onClick={() => { setPerson(null); setPlanId('') }}>Choose someone else</button></LedgerRow>
             </Ledger>
           )}
+          {person && kind === 'customer' && planId && <DayChoice planId={planId} amount={row.amount} value={days} onChange={setDays} />}
         </>
       )}
 

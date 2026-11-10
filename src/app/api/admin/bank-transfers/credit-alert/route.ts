@@ -20,7 +20,10 @@ export async function POST(req: NextRequest) {
   if (typeof b.alertId !== 'string' || !b.alertId) return NextResponse.json({ error: 'Missing held payment.' }, { status: 400 })
   const t = (b.target && typeof b.target === 'object' ? b.target : {}) as Record<string, unknown>
   let target: AlertTarget | null = null
-  if (t.kind === 'customer' && typeof t.customerId === 'string' && typeof t.planId === 'string') target = { kind: 'customer', customerId: t.customerId, planId: t.planId }
+  if (t.days !== undefined && !(Array.isArray(t.days) && t.days.length <= 90 && t.days.every((d) => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)))) {
+    return NextResponse.json({ error: 'Those days aren’t valid.' }, { status: 400 })
+  }
+  if (t.kind === 'customer' && typeof t.customerId === 'string' && typeof t.planId === 'string') target = { kind: 'customer', customerId: t.customerId, planId: t.planId, days: t.days as string[] | undefined }
   if (t.kind === 'agent' && typeof t.agentId === 'string') target = { kind: 'agent', agentId: t.agentId }
   if (!target) return NextResponse.json({ error: 'Choose who to credit.' }, { status: 400 })
   const r = await creditAlertByHand(prisma, { alertId: b.alertId, target, admin, note, ackLookalike: b.ackLookalike === true })

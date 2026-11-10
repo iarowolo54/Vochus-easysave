@@ -9,11 +9,13 @@ import { INTENT_PENDING, INTENT_SUPERSEDED, type ManualActor } from '@/lib/payme
 import { settleIntentPayment } from '@/lib/customer-settle'
 import { settleAgentTransfer } from '@/lib/agent-settle'
 import { TRANSFER_METHOD } from '@/lib/transfer-intent'
+import { checkBulkSelection } from '@/lib/bulk-savings'
+import { readableKey } from '@/lib/catchup'
 import { LATE_ALLOWANCE_MS, handCreditSince, nearAmount } from '@/lib/transfer-figure'
 import { money } from '@/lib/wallet-guard'
 
 export type Admin = { id?: string; name: string }
-export type ManualResult = { ok: true; amount: number } | { ok: false; status: 404 | 409 | 422; error: string }
+export type ManualResult = { ok: true; amount: number } | { ok: false; status: 400 | 404 | 409 | 422; error: string }
 
 export const NOTE_MIN = 3
 export const NOTE_MAX = 300
@@ -102,7 +104,8 @@ export async function creditRequestByHand(
   return { ok: true, amount: intent.amount }
 }
 
-export type AlertTarget = { kind: 'customer'; customerId: string; planId: string } | { kind: 'agent'; agentId: string }
+/** `days` names the unpaid days the money pays for. Without it the credit counts for the day it is made. */
+export type AlertTarget = { kind: 'customer'; customerId: string; planId: string; days?: string[] } | { kind: 'agent'; agentId: string }
 
 /** Money that arrived and was held. Credited to the customer's plan or the agent's wallet staff choose. */
 export async function creditAlertByHand(
@@ -113,9 +116,16 @@ export async function creditAlertByHand(
   if (!alert) return { ok: false, status: 404, error: 'Held payment not found.' }
 
   // The target must exist, and a plan must belong to the customer, before anything is claimed.
+  const days = input.target.kind === 'customer' ? input.target.days ?? [] : []
   if (input.target.kind === 'customer') {
-    const plan = await client.savingsPlan.findFirst({ where: { id: input.target.planId, customerId: input.target.customerId }, select: { id: true } })
+    const plan = await client.savingsPlan.findFirst({ where: { id: input.target.planId, customerId: input.target.customerId } })
     if (!plan) return { ok: false, status: 404, error: 'That customer or plan wasn’t found.' }
+    if (days.length > 0) {
+      // The same rules as a customer buying these days: unpaid, on an open plan, not being charged right now.
+      const check = await checkBulkSelection(client, plan, days, new Date(), { kind: 'customer', customerId: input.target.customerId })
+      if (!check.ok) return { ok: false, status: check.status, error: check.error }
+      if (check.total > money(alert.amount)) return { ok: false, status: 400, error: 'This payment isn’t enough for that many days. Choose fewer.' }
+    }
   } else {
     const agent = await client.agent.findUnique({ where: { id: input.target.agentId }, select: { id: true } })
     if (!agent) return { ok: false, status: 404, error: 'That agent wasn’t found.' }
@@ -133,6 +143,7 @@ export async function creditAlertByHand(
     data: {
       ref, method: TRANSFER_METHOD, amount, expiresAt: new Date(Date.now() - 3_600_000),
       manualBy: input.admin.name, manualNote: input.note,
+      ...(days.length > 0 ? { coversKeys: JSON.stringify(days) } : {}),
       ...(input.target.kind === 'customer'
         ? { actorType: 'customer', customerId: input.target.customerId, planId: input.target.planId }
         : { actorType: 'agent', agentId: input.target.agentId }),
@@ -163,7 +174,8 @@ export async function creditAlertByHand(
 
   let result
   try {
-    result = await settle(client, intent, input.admin, input.note, claim)
+    const logged = days.length > 0 ? `${input.note} (for ${days.map(readableKey).join(', ')})` : input.note
+    result = await settle(client, intent, input.admin, logged, claim)
   } catch (e) {
     await client.paymentIntent.deleteMany({ where: { id: intent.id, status: INTENT_PENDING } })
     throw e

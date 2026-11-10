@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PrismaClient } from '@prisma/client'
 import { creditRequestByHand, creditAlertByHand, dismissAlert } from '../src/lib/manual-credit'
+import { watKey } from '../src/lib/savings-card'
 
 const dir = mkdtempSync(join(tmpdir(), 'manual-credit-'))
 const copy = join(dir, 'copy.db')
@@ -277,4 +278,69 @@ test('crediting a request by hand leaves a NEWER request for the same figure ope
   await newIntent(newer, { amount: 13000.62, createdAt: new Date(Date.now() - 1 * 60_000), expiresAt: new Date(Date.now() + 29 * 60_000) })
   assert.equal((await creditRequestByHand(db, { ref: credited, admin, note: 'paid, seen in bank app' })).ok, true)
   assert.equal((await db.paymentIntent.findFirstOrThrow({ where: { ref: newer } })).status, 'Pending')
+})
+
+const dayKey = (daysAgo: number) => watKey(new Date(Date.now() - daysAgo * 86_400_000))
+
+async function onlinePlan(daily = 300) {
+  return db.savingsPlan.create({
+    data: {
+      customerId, dailyAmount: daily, periodDays: 30, cadence: 'daily', source: 'self', goal: `Days ${rid}`,
+      startDate: new Date(Date.now() - 5 * 86_400_000), maturityDate: new Date(Date.now() + 25 * 86_400_000),
+    },
+  })
+}
+
+test('held money credited for a chosen missed day counts for that day', async () => {
+  const plan = await onlinePlan()
+  const alert = await newAlert('d1', 21300.11)
+  const key = dayKey(2)
+  const r = await creditAlertByHand(db, { alertId: alert.id, target: { kind: 'customer', customerId, planId: plan.id, days: [key] }, admin, note: 'for a missed day', ackLookalike: true })
+  assert.equal(r.ok, true)
+  const { intentRef } = await db.bankAlert.findUniqueOrThrow({ where: { id: alert.id } })
+  const rows = await db.planDayCoverage.findMany({ where: { savingsPlanId: plan.id } })
+  assert.deepEqual(rows.map((c) => [c.coversKey, c.ref]), [[key, intentRef]])
+})
+
+test('held money credited with no day chosen covers no day, as before', async () => {
+  const plan = await onlinePlan()
+  const alert = await newAlert('d2', 22300.11)
+  const r = await creditAlertByHand(db, { alertId: alert.id, target: { kind: 'customer', customerId, planId: plan.id }, admin, note: 'no day', ackLookalike: true })
+  assert.equal(r.ok, true)
+  assert.equal(await db.planDayCoverage.count({ where: { savingsPlanId: plan.id } }), 0)
+})
+
+test('a day already paid is refused and the money stays held, with no stray request', async () => {
+  const plan = await onlinePlan()
+  const key = dayKey(1)
+  await db.planDayCoverage.create({ data: { savingsPlanId: plan.id, coversKey: key, ref: `taken-${rid}` } })
+  const alert = await newAlert('d3', 23300.11)
+  const count = await db.paymentIntent.count({ where: { planId: plan.id } })
+  const r = await creditAlertByHand(db, { alertId: alert.id, target: { kind: 'customer', customerId, planId: plan.id, days: [key] }, admin, note: 'taken day', ackLookalike: true })
+  assert.equal(r.ok, false)
+  assert.equal((await db.bankAlert.findUniqueOrThrow({ where: { id: alert.id } })).status, 'Unmatched')
+  assert.equal(await db.paymentIntent.count({ where: { planId: plan.id } }), count)
+})
+
+test('more days than the payment can pay for are refused', async () => {
+  const plan = await onlinePlan(24000)
+  const alert = await newAlert('d4', 24000.11)
+  const r = await creditAlertByHand(db, { alertId: alert.id, target: { kind: 'customer', customerId, planId: plan.id, days: [dayKey(3), dayKey(2)] }, admin, note: 'too many', ackLookalike: true })
+  assert.deepEqual(r, { ok: false, status: 400, error: 'This payment isn’t enough for that many days. Choose fewer.' })
+  assert.equal((await db.bankAlert.findUniqueOrThrow({ where: { id: alert.id } })).status, 'Unmatched')
+})
+
+test('a day that is not part of the plan is refused', async () => {
+  const plan = await onlinePlan()
+  const alert = await newAlert('d5', 25300.11)
+  const r = await creditAlertByHand(db, { alertId: alert.id, target: { kind: 'customer', customerId, planId: plan.id, days: [dayKey(40)] }, admin, note: 'before the plan', ackLookalike: true })
+  assert.equal(r.ok, false)
+  assert.equal(await db.planDayCoverage.count({ where: { savingsPlanId: plan.id } }), 0)
+})
+
+test('a cash plan can\'t take chosen days', async () => {
+  const alert = await newAlert('d6', 26300.11)
+  const r = await creditAlertByHand(db, { alertId: alert.id, target: { kind: 'customer', customerId, planId, days: [dayKey(1)] }, admin, note: 'cash plan', ackLookalike: true })
+  assert.equal(r.ok, false)
+  assert.equal((await db.bankAlert.findUniqueOrThrow({ where: { id: alert.id } })).status, 'Unmatched')
 })
