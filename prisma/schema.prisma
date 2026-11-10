@@ -54,6 +54,7 @@ model Agent {
   reports             IssueReport[]
   commissions         Commission[]
   documents           AgentDocument[]
+  documentVersions    AgentDocumentVersion[]
   memberCards         MemberCard[]
   customerInvites     CustomerInvite[]
   agentRewards        AgentReward[]
@@ -73,6 +74,22 @@ model AgentDocument {
   docRejectionReason String?
 
   @@unique([agentId, docType])
+}
+
+/// A file that was replaced. Written whenever an AgentDocument's file is overwritten, so onboarding records are never lost.
+model AgentDocumentVersion {
+  id                String   @id @default(cuid())
+  agentId           String
+  agent             Agent    @relation(fields: [agentId], references: [id])
+  docType           String
+  fileName          String
+  fileData          String
+  docApprovalStatus String
+  uploadedAt        DateTime
+  replacedAt        DateTime @default(now())
+  replacedBy        String
+
+  @@index([agentId, docType])
 }
 
 model Customer {

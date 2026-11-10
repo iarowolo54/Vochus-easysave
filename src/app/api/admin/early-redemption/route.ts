@@ -7,14 +7,12 @@ import { prisma } from '@/lib/prisma'
 import { redemptionDeduction, planHasCashDeposit } from '@/lib/wallet-rates'
 import { collectionFee } from '@/lib/commission-ledger'
 import { money } from '@/lib/wallet-guard'
-import { excludeExpiredPending, IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
+import { AWAITING_ACTION_REDEMPTION_STATUSES, excludeExpiredPending, IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
 import { balanceUnchanged, readyToFinalize } from '@/lib/redemption-balance'
 import { notifications, notify } from '@/lib/notifications'
 import { heldForNameCheck } from '@/lib/payout-account'
 
-// Awaiting admin action = in flight but not yet Approved (incl. AwaitingOTP / Finalizing), or a transfer
-// whose outcome the admin needs to check (Processing).
-const AWAITING_ACTION_STATUSES = [...IN_FLIGHT_REDEMPTION_STATUSES.filter(s => s !== 'Approved'), 'Processing']
+const AWAITING_ACTION_STATUSES = AWAITING_ACTION_REDEMPTION_STATUSES
 const DECIDABLE_STATUSES = ['Pending', 'TokenValidated', 'AgentApproved']
 
 /** Whether approving, or entering the Paystack code, would now be refused because money moved. */

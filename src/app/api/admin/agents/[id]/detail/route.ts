@@ -45,6 +45,7 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
       },
       transactions: { select: txSelect, orderBy: { createdAt: 'desc' }, take: 200 },
       memberCards: { select: { serial: true, status: true }, orderBy: { createdAt: 'desc' } },
+      _count: { select: { documents: true } },
     },
   })
 

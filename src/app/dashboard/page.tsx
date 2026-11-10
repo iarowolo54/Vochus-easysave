@@ -73,11 +73,10 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const startOfMonth = new Date(currentYear, currentMonth - 1, 1)
   const endOfMonth = new Date(currentYear, currentMonth, 0, 23, 59, 59)
 
-  const [customerCount, activeLoansCount, commissionRecord, monthSavingAgg, monthRegistrationCount, recentTxns, maturingSoon, maturingTotal, loanPortfolio, weeklyTxns,
+  const [customerCount, activeLoansCount, monthSavingAgg, monthRegistrationCount, recentTxns, maturingSoon, maturingTotal, loanPortfolio, weeklyTxns,
     onlineSavingDay, onlineSavingWeek, cashSavingDay, cashSavingWeek] = await Promise.all([
     prisma.customer.count({ where: { agentId: agent.id } }),
     prisma.loan.count({ where: { agentId: agent.id, status: 'Disbursed' } }),
-    prisma.commission.findFirst({ where: { agentId: agent.id, month: currentMonth, year: currentYear } }),
     prisma.transaction.aggregate({
       where: { agentId: agent.id, type: 'saving', createdAt: { gte: startOfMonth, lte: endOfMonth } },
       _sum: { amount: true },
@@ -117,7 +116,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const totalPages = Math.ceil(maturingTotal / PAGE_SIZE)
 
   // Show actual credited commission balance (matches Withdraw page)
-  const commissionAmount = commissionRecord?.amount ?? Math.round(agent.commissionBalance * 100) / 100
+  const commissionAmount = Math.round(agent.commissionBalance * 100) / 100
 
   const weeklyCollections: { label: string; total: number }[] = []
   for (let w = 3; w >= 0; w--) {
@@ -135,7 +134,6 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
   const onlineToday = onlineSavingDay._sum.amount ?? 0
   const cashWeek = cashSavingWeek._sum.amount ?? 0
   const onlineWeek = onlineSavingWeek._sum.amount ?? 0
-  const monthLabel = now.toLocaleString('en-GB', { month: 'long' })
 
   return (
     <div className="ag-home">
@@ -228,7 +226,7 @@ export default async function DashboardPage({ searchParams }: { searchParams: Pr
             </Link>
             <Link href="/dashboard/commission" className="ui-row ui-row--button ag-overview-row">
               <span className="ui-row-icon" aria-hidden="true"><Icons.commission size={20} /></span>
-              <span className="ui-row-main"><span className="ui-row-sub ui-block">Commission · {monthLabel}</span><span className="ui-row-title ui-block">{formatNaira(commissionAmount)}</span></span>
+              <span className="ui-row-main"><span className="ui-row-sub ui-block">Commission to withdraw</span><span className="ui-row-title ui-block">{formatNaira(commissionAmount)}</span></span>
               <Icons.next size={18} className="ui-row-chevron" aria-hidden="true" />
             </Link>
             <Link href="/dashboard/loan-repay" className="ui-row ui-row--button ag-overview-row">

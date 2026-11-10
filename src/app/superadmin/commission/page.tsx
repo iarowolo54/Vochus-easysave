@@ -5,7 +5,7 @@ import Link from 'next/link'
 import { blockMinus, nonNegativeString } from '@/lib/numeric'
 import { Icons } from '@/components/ui/icons'
 import {
-  Avatar, ConfirmModal, Empty, Field, LoadError, Modal, PageHeader, Pager, TableSkeleton, naira, nairaKobo, shortDate, useToast,
+  Avatar, ConfirmModal, Empty, Field, LoadError, PageHeader, Pager, TableSkeleton, naira, nairaKobo, shortDate, useToast,
 } from '../_components/admin-ui'
 import { CommissionHistoryDrawer } from '../_components/commission-history-drawer'
 import { FlexibleSavingsCard } from '../_components/flexible-savings-card'
@@ -28,6 +28,7 @@ interface SystemCommission { savingsFees: number; loanShare: number; total: numb
 interface PageData {
   totalPending: number
   totalDisbursed: number
+  totalEarned: number
   leaderboard: LeaderboardEntry[]
   systemCommission: SystemCommission
 }
@@ -81,12 +82,9 @@ type Confirm =
   | { kind: 'commReset' }
   | { kind: 'loan' }
   | { kind: 'savings' }
-  | { kind: 'pay'; agent: LeaderboardEntry }
 
 /** GET /api/admin/savings-interest: the current annual rate and its change history (forward-only). */
 interface SavingsRateData { current: number; history: { effectiveFrom: string; annualRate: number }[] }
-
-type BatchResult = { id: string; name: string; amount: number; ok: boolean; error?: string }
 
 async function errorOf(res: Response, fallback: string) {
   const d = await res.json().catch(() => ({})) as { error?: string }
@@ -105,7 +103,7 @@ function PctInput({ id, value, invalid, onChange, label }: { id: string; value: 
 
 export default function CommissionPage() {
   const [ratePin, setRatePin] = useState('')
-  const [data, setData] = useState<PageData>({ totalPending: 0, totalDisbursed: 0, leaderboard: [], systemCommission: { savingsFees: 0, loanShare: 0, total: 0 } })
+  const [data, setData] = useState<PageData>({ totalPending: 0, totalDisbursed: 0, totalEarned: 0, leaderboard: [], systemCommission: { savingsFees: 0, loanShare: 0, total: 0 } })
   const [lbPage, setLbPage] = useState(1)
   const [historyAgent, setHistoryAgent] = useState<LeaderboardEntry | null>(null)
   const [loading, setLoading] = useState(true)
@@ -114,7 +112,7 @@ export default function CommissionPage() {
   const [loanFailed, setLoanFailed] = useState(false)
   const [commLoaded, setCommLoaded] = useState(false)
   const [loanLoaded, setLoanLoaded] = useState(false)
-  // Drafts are filled from the server once; later reloads (after a payout) mustn't wipe unsaved edits.
+  // Drafts are filled from the server once; later reloads (a retry after a failed section) mustn't wipe unsaved edits.
   const commInit = useRef(false)
   const loanInit = useRef(false)
   const [toastNode, toast] = useToast()
@@ -137,8 +135,6 @@ export default function CommissionPage() {
   const [savingsRateFailed, setSavingsRateFailed] = useState(false)
   const [newSavingsRate, setNewSavingsRate] = useState('')
 
-  const [batch, setBatch] = useState<{ step: 'confirm' | 'running' | 'done'; results: BatchResult[] } | null>(null)
-
   const nowStr = () => new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
 
   const load = useCallback(async () => {
@@ -152,7 +148,7 @@ export default function CommissionPage() {
 
     const board = commD as Partial<PageData> | null
     setBoardFailed(!board)
-    if (board) setData({ totalPending: board.totalPending ?? 0, totalDisbursed: board.totalDisbursed ?? 0, leaderboard: board.leaderboard ?? [], systemCommission: board.systemCommission ?? { savingsFees: 0, loanShare: 0, total: 0 } })
+    if (board) setData({ totalPending: board.totalPending ?? 0, totalDisbursed: board.totalDisbursed ?? 0, totalEarned: board.totalEarned ?? 0, leaderboard: board.leaderboard ?? [], systemCommission: board.systemCommission ?? { savingsFees: 0, loanShare: 0, total: 0 } })
 
     const loan = ratesD as { rates?: { durationDays: number; rate: number; maxAmount?: number | null; enabled?: boolean }[] } | null
     setLoanFailed(!loan || !Array.isArray(loan.rates))
@@ -229,7 +225,6 @@ export default function CommissionPage() {
   const maxLoanRate = Math.max(...TERMS.map(t => loanParsed[t] ?? 0))
 
   const owed = data.leaderboard.filter(a => a.commissionBalance > 0)
-  const owedTotal = owed.reduce((s, a) => s + a.commissionBalance, 0)
 
   function openConfirm(c: Confirm) { setConfirmError(''); setConfirm(c) }
 
@@ -274,68 +269,19 @@ export default function CommissionPage() {
     }
   }
 
-  async function payOne(agentId: string) {
-    const res = await fetch('/api/admin/wallets/commission-payout', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agentId }),
-    })
-    if (!res.ok) return { ok: false as const, error: await errorOf(res, 'Payout failed') }
-    const d = await res.json().catch(() => ({})) as { amount?: number }
-    return { ok: true as const, amount: d.amount }
-  }
-
-  async function handlePayout(a: LeaderboardEntry) {
-    setBusy(true); setConfirmError('')
-    try {
-      const r = await payOne(a.id)
-      if (!r.ok) { setConfirmError(r.error); return }
-      setConfirm(null)
-      toast(`${naira(r.amount ?? a.commissionBalance)} commission paid out to ${a.name}`, 'success')
-      load()
-    } catch {
-      setConfirmError('No connection. We can’t tell if the payout went through, so reload before trying again.')
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  // One at a time, so SQLite isn't hit with parallel writes and each result is clear.
-  async function runBatch() {
-    const targets = owed
-    setBatch({ step: 'running', results: [] })
-    const results: BatchResult[] = []
-    for (const a of targets) {
-      try {
-        const r = await payOne(a.id)
-        results.push(r.ok ? { id: a.id, name: a.name, amount: r.amount ?? a.commissionBalance, ok: true } : { id: a.id, name: a.name, amount: a.commissionBalance, ok: false, error: r.error })
-      } catch {
-        results.push({ id: a.id, name: a.name, amount: a.commissionBalance, ok: false, error: 'No connection' })
-      }
-      setBatch({ step: 'running', results: [...results] })
-    }
-    setBatch({ step: 'done', results })
-    load()
-  }
-
   const firstLoad = loading && !data.leaderboard.length && !boardFailed
-  const paidCount = batch?.results.filter(r => r.ok).length ?? 0
-  const paidSum = batch?.results.filter(r => r.ok).reduce((s, r) => s + r.amount, 0) ?? 0
-  const failedResults = batch?.results.filter(r => !r.ok) ?? []
 
   return (
     <>
       <PageHeader
         title="Commission"
-        sub="Set what agents and the platform earn, set loan interest, and pay agents what they’re owed."
-        actions={<button type="button" className="btn btn-green" disabled={!owed.length || loading} onClick={() => setBatch({ step: 'confirm', results: [] })}>
-          <Icons.commission size={18} aria-hidden="true" /> Pay all owed commission
-        </button>}
+        sub="Set what agents and the platform earn, and set loan interest."
       />
 
       <div className="stats-grid am-stats-4">
         <div className="stat">
           <div className="stat-lbl">Total commission earned</div>
-          <div className="stat-val">{firstLoad ? '—' : naira(data.totalPending + data.totalDisbursed)}</div>
+          <div className="stat-val">{firstLoad ? '—' : naira(data.totalEarned)}</div>
           <div className="stat-sub">{data.leaderboard.length.toLocaleString('en-NG')} agents</div>
         </div>
         <div className="stat">
@@ -346,7 +292,7 @@ export default function CommissionPage() {
         <div className="stat">
           <div className="stat-lbl">Paid out</div>
           <div className="stat-val">{firstLoad ? '—' : naira(data.totalDisbursed)}</div>
-          <div className="stat-sub">All time</div>
+          <div className="stat-sub">Agent withdrawals, all time</div>
         </div>
         <div className="stat">
           <div className="stat-lbl">System commission</div>
@@ -531,7 +477,7 @@ export default function CommissionPage() {
             <p className="am-card-sub">Ranked by commission owed now. Savings volume is all time.</p>
           </div>
         </div>
-        {firstLoad ? <TableSkeleton rows={6} cols={6} />
+        {firstLoad ? <TableSkeleton rows={6} cols={5} />
           : boardFailed && !data.leaderboard.length ? <LoadError what="agent commission" onRetry={load} />
           : data.leaderboard.length === 0 ? <Empty icon="customers" title="No agents yet" text="Agents and the commission they earn will show here."
               action={<Link href="/superadmin/agents" className="btn btn-outline">Go to agents</Link>} />
@@ -540,7 +486,7 @@ export default function CommissionPage() {
               <div className="tbl-wrap tbl-stack">
                 <table>
                   <thead>
-                    <tr><th>Agent</th><th className="num">Customers</th><th className="num">Savings volume</th><th className="num">Commission owed</th><th>Status</th><th><span className="sr-only">Actions</span></th></tr>
+                    <tr><th>Agent</th><th className="num">Customers</th><th className="num">Savings volume</th><th className="num">Commission owed</th><th>Status</th></tr>
                   </thead>
                   <tbody>
                     {data.leaderboard.slice((lbPage - 1) * PAGE_SIZE, lbPage * PAGE_SIZE).map(a => {
@@ -562,14 +508,6 @@ export default function CommissionPage() {
                           <td className="num" data-label="Savings volume">{naira(a.savingsVolume)}</td>
                           <td className="num am-strong" data-label="Commission owed">{naira(a.commissionBalance)}</td>
                           <td data-label="Status"><span className={`bdg ${hasPending ? 'bdg-a' : 'bdg-g'}`}>{hasPending ? 'Owed' : 'Paid up'}</span></td>
-                          <td>
-                            {hasPending && (
-                              <div className="a-row-actions">
-                                <button type="button" className="btn btn-sm btn-soft" onClick={() => openConfirm({ kind: 'pay', agent: a })}
-                                  aria-label={`Pay ${naira(a.commissionBalance)} to ${a.name}`}>Pay</button>
-                              </div>
-                            )}
-                          </td>
                         </tr>
                       )
                     })}
@@ -643,57 +581,6 @@ export default function CommissionPage() {
             </ul>
           </>}
           onConfirm={handleSetSavingsRate} onClose={() => setConfirm(null)} />
-      )}
-
-      {confirm?.kind === 'pay' && (
-        <ConfirmModal icon="commission" tone="money" title={`Pay ${confirm.agent.name}’s commission?`} confirmLabel={`Pay ${naira(confirm.agent.commissionBalance)}`} busy={busy} error={confirmError}
-          body={<>
-            <dl className="dlg-ledger">
-              <div><dt>Commission</dt><dd className="dlg-strong">{naira(confirm.agent.commissionBalance)}</dd></div>
-              <div><dt>Agent</dt><dd>{confirm.agent.name} · {confirm.agent.agentId}</dd></div>
-            </dl>
-            <p className="dlg-note">The amount comes out of the Float wallet and their commission balance goes to {naira(0)}. No bank transfer is sent from here.</p>
-          </>}
-          onConfirm={() => handlePayout(confirm.agent)} onClose={() => setConfirm(null)} />
-      )}
-
-      {batch && (
-        <Modal icon="commission" tone="money" title={batch.step === 'done' ? 'Payouts finished' : 'Pay all owed commission?'} onClose={() => setBatch(null)} busy={batch.step === 'running'}
-          footer={batch.step === 'confirm' ? <>
-            <button type="button" className="btn btn-outline" onClick={() => setBatch(null)}>Cancel</button>
-            <button type="button" className="btn btn-green" onClick={runBatch}>Pay {naira(owedTotal)} to {owed.length} agent{owed.length === 1 ? '' : 's'}</button>
-          </> : batch.step === 'running' ? (
-            <button type="button" className="btn btn-green" disabled>Paying {batch.results.length + 1} of {owed.length}…</button>
-          ) : <button type="button" className="btn btn-green" onClick={() => setBatch(null)}>Done</button>}>
-          {batch.step === 'confirm' && (
-            <>
-              <dl className="dlg-ledger">
-                <div><dt>Total</dt><dd className="dlg-strong">{naira(owedTotal)}</dd></div>
-                <div><dt>Agents</dt><dd>{owed.length}</dd></div>
-              </dl>
-              <p className="dlg-note">Each agent is paid in turn from the Float wallet and their commission balance goes to {naira(0)}. No bank transfers are sent from here. If the Float wallet runs out, the rest won’t be paid.</p>
-              <ul className="am-batch">
-                {owed.map(a => <li key={a.id}><span>{a.name}</span><span className="am-diff-val">{naira(a.commissionBalance)}</span></li>)}
-              </ul>
-            </>
-          )}
-          {batch.step !== 'confirm' && (
-            <>
-              <p className="dlg-note" role="status">
-                {batch.step === 'running' ? `Paid ${paidCount} so far. Keep this open until it finishes.`
-                  : `Paid ${naira(paidSum)} to ${paidCount} of ${batch.results.length} agent${batch.results.length === 1 ? '' : 's'}.`}
-              </p>
-              {batch.step === 'done' && failedResults.length > 0 && (
-                <>
-                  <p className="a-alert a-alert-r" role="alert">{failedResults.length} payout{failedResults.length === 1 ? '' : 's'} didn’t go through. Fix the reason below, then pay them one by one.</p>
-                  <ul className="am-batch">
-                    {failedResults.map(r => <li key={r.id} className="is-failed"><span>{r.name}</span><span>{r.error}</span></li>)}
-                  </ul>
-                </>
-              )}
-            </>
-          )}
-        </Modal>
       )}
 
       {toastNode}

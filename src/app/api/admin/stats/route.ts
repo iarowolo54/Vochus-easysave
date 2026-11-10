@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server'
 import { requireAdminArea, requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { depositPeriodStarts, summariseDeposits } from '@/lib/deposit-periods'
+import { AWAITING_ACTION_REDEMPTION_STATUSES, excludeExpiredPending } from '@/lib/redemption-statuses'
 
 export async function GET() {
   const guard = await requireAdminArea()
@@ -24,7 +25,8 @@ export async function GET() {
     prisma.savingsPlan.findMany({ select: { balance: true } }),
     prisma.loan.findMany({ where: { status: 'Disbursed' }, select: { principal: true } }),
     prisma.loan.count({ where: { status: 'Pending' } }),
-    prisma.transaction.count({ where: { type: 'redemption', status: 'Pending' } }),
+    // Requests live in EarlyRedemption; a redemption Transaction is only written once it's paid.
+    prisma.earlyRedemption.count({ where: { status: { in: AWAITING_ACTION_REDEMPTION_STATUSES }, ...excludeExpiredPending() } }),
     // Only two small columns, from the start of last month: enough for the periods and the month chart.
     canSeeDeposits ? prisma.transaction.findMany({
       where: { type: 'saving', status: 'Done', createdAt: { gte: depositPeriodStarts().prevMonth } },

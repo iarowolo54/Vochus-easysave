@@ -3,13 +3,14 @@ import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { money } from '@/lib/money'
 import { legacyPlatformShare } from '@/lib/commission-ledger'
+import { IN_FLIGHT_WITHDRAWAL_STATUSES } from '@/lib/redemption-statuses'
 
 export async function GET() {
   const guard = await requirePermission('commission', 'view')
   if (!guard.ok) return guard.response
   const session = guard.session
 
-  const [agents, payoutTxns] = await Promise.all([
+  const [agents, withdrawals, oldPayouts] = await Promise.all([
     prisma.agent.findMany({
       select: {
         id: true,
@@ -25,14 +26,18 @@ export async function GET() {
       },
       orderBy: { commissionBalance: 'desc' },
     }),
-    prisma.transaction.findMany({
-      where: { type: 'commission_payout' },
-      select: { amount: true },
-    }),
+    prisma.agentWithdrawal.groupBy({ by: ['status'], _sum: { amount: true } }),
+    // The retired "Pay commission" buttons: these took commission off the agent's balance without paying them.
+    prisma.transaction.aggregate({ where: { type: 'commission_payout' }, _sum: { amount: true } }),
   ])
 
   const totalPending = agents.reduce((s, a) => s + a.commissionBalance, 0)
-  const totalDisbursed = payoutTxns.reduce((s, t) => s + t.amount, 0)
+  // Paid out means an approved agent withdrawal, the same figure as the Withdrawals screen.
+  const withdrawn = (statuses: readonly string[]) =>
+    withdrawals.filter(w => statuses.includes(w.status)).reduce((s, w) => s + (w._sum.amount ?? 0), 0)
+  const totalDisbursed = money(withdrawn(['Approved']))
+  // A withdrawal leaves the balance when it's requested, so requests still in progress count as earned too.
+  const totalEarned = money(totalPending + totalDisbursed + withdrawn(IN_FLIGHT_WITHDRAWAL_STATUSES) + (oldPayouts._sum.amount ?? 0))
 
   const leaderboard = agents.map((a, i) => ({
     rank: i + 1,
@@ -58,5 +63,5 @@ export async function GET() {
   const loanShare = money(sumOf('loan'))
   const systemCommission = { savingsFees, loanShare, total: money(savingsFees + loanShare) }
 
-  return NextResponse.json({ totalPending, totalDisbursed, leaderboard, systemCommission })
+  return NextResponse.json({ totalPending, totalDisbursed, totalEarned, leaderboard, systemCommission })
 }
