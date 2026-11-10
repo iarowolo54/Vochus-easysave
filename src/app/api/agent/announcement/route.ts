@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { dismissAnnouncement, nextAnnouncement } from '@/lib/announcements'
+import { currentAnnouncements, dismissAnnouncement } from '@/lib/announcements'
 
 async function agentId(): Promise<string | null> {
   const session = await getServerSession(authOptions)
@@ -13,14 +13,14 @@ async function agentId(): Promise<string | null> {
   return agent?.id ?? null
 }
 
-/** The pop-up message to show this agent now, if any. */
+/** The pop-up messages to show this agent now, oldest first. */
 export async function GET() {
   const id = await agentId()
   if (!id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  return NextResponse.json({ announcement: await nextAnnouncement(prisma, 'agent', id) }, { headers: { 'Cache-Control': 'no-store' } })
+  return NextResponse.json({ announcements: await currentAnnouncements(prisma, 'agent') }, { headers: { 'Cache-Control': 'no-store' } })
 }
 
-/** The agent tapped OK: don't show it to them again. */
+/** The agent closed it: count them once. It still shows next time. */
 export async function POST(req: NextRequest) {
   const id = await agentId()
   if (!id) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })

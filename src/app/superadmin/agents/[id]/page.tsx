@@ -8,6 +8,7 @@ import {
   Avatar, ConfirmModal, Empty, LoadError, Pager, Segmented, TableSkeleton, nairaKobo, shortDate, useToast,
 } from '../../_components/admin-ui'
 import { SendResetCodeModal } from '../../_components/send-reset-code'
+import { AgentDocumentsTab } from '../../_components/agent-documents-tab'
 
 interface Tx {
   id: string; ref: string; type: string; amount: number; method: string | null
@@ -43,9 +44,10 @@ interface AgentDetail {
   customers: Customer[]
   transactions: Tx[]
   memberCards: { serial: string; status: string }[]
+  _count?: { documents: number }
 }
 
-type Tab = 'customers' | 'transactions' | 'loans' | 'cards'
+type Tab = 'customers' | 'transactions' | 'loans' | 'cards' | 'documents'
 type CustTab = 'plans' | 'loans' | 'cards'
 
 const PLAN_TX_LIMIT = 20
@@ -98,6 +100,7 @@ export default function AgentDetailPage() {
   const [customerTab, setCustomerTab] = useState<Record<string, CustTab>>({})
   const [toastNode, toast] = useToast()
 
+  const [docCount, setDocCount] = useState<number | null>(null)
   const [confirmReset, setConfirmReset] = useState(false)
   const [sendCode, setSendCode] = useState(false)
   const [resetting, setResetting] = useState(false)
@@ -183,7 +186,7 @@ export default function AgentDetailPage() {
   }
 
   const totalSavings = agent.customers.reduce((s, c) => s + c.savingsPlans.reduce((a, p) => a + p.balance, 0), 0)
-  const totalLoans = agent.customers.reduce((s, c) => s + c.loans.filter(l => l.status === 'Approved').reduce((a, l) => a + l.principal, 0), 0)
+  const totalLoans = agent.customers.reduce((s, c) => s + c.loans.filter(l => l.status === 'Disbursed').reduce((a, l) => a + l.principal, 0), 0)
   const allLoans = agent.customers.flatMap(c => c.loans.map(l => ({ ...l, customerName: fullName(c), customerId: c.customerId })))
 
   const pageOf = <T,>(rows: T[], n: number) => rows.slice((n - 1) * PAGE_SIZE, n * PAGE_SIZE)
@@ -196,6 +199,7 @@ export default function AgentDetailPage() {
     { key: 'transactions', label: 'Transactions', count: agent.transactions.length },
     { key: 'loans', label: 'Loans', count: allLoans.length },
     { key: 'cards', label: 'Cards', count: agent.memberCards.length },
+    { key: 'documents', label: 'Documents', count: docCount ?? agent._count?.documents ?? 0 },
   ]
 
   return (
@@ -239,7 +243,7 @@ export default function AgentDetailPage() {
         <div className="stat">
           <div className="stat-lbl">Active loans</div>
           <div className="stat-val">{nairaKobo(totalLoans)}</div>
-          <div className="stat-sub">Approved, not yet repaid</div>
+          <div className="stat-sub">Paid out, not yet repaid</div>
         </div>
         <div className="stat">
           <div className="stat-lbl">Wallet balance</div>
@@ -441,6 +445,8 @@ export default function AgentDetailPage() {
             )}
           </section>
         )}
+
+        {tab === 'documents' && <AgentDocumentsTab agentId={agent.id} onCount={setDocCount} />}
 
         {tab === 'cards' && (
           <section className="card" aria-label="Cards">

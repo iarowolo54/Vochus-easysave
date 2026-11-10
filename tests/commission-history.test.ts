@@ -8,6 +8,7 @@ import {
   sumCommission,
   entriesFromLedger,
   mergeHistory,
+  summariseByMonth,
   type CommissionEntry,
 } from '../src/lib/commission-history'
 
@@ -81,4 +82,20 @@ test('mergeHistory drops a reconstructed entry the ledger already has, and keeps
 test('mergeHistory does not treat a loan and a repayment with the same ref as the same event', () => {
   const ledger = entriesFromLedger([L({ source: 'loan', sourceRef: 'X-1' })], new Map())
   assert.equal(mergeHistory(ledger, [E({ id: 'r', source: 'repayment', ref: 'X-1' })]).length, 2)
+})
+
+test('summariseByMonth: real earnings per month, current month always first', () => {
+  const entry = (date: string, source: CommissionEntry['source'], commission: number): CommissionEntry => ({
+    id: date + source, date, source, commission, baseAmount: 0, customerId: null, customerName: null, planGoal: null, ref: null, status: 'Done',
+  })
+  const now = new Date(2026, 10, 10)
+  const months = summariseByMonth([
+    entry(new Date(2026, 10, 2).toISOString(), 'savings', 100.1),
+    entry(new Date(2026, 10, 3).toISOString(), 'savings', 0.2),
+    entry(new Date(2026, 10, 4).toISOString(), 'reward', 500),
+    entry(new Date(2026, 8, 4).toISOString(), 'redemption', 60),
+  ], now)
+  assert.deepEqual(months.map(m => [m.year, m.month, m.total]), [[2026, 11, 600.3], [2026, 9, 60]])
+  assert.equal(months[0].bySource.savings, 100.3)
+  assert.deepEqual(summariseByMonth([], now).map(m => [m.month, m.total]), [[11, 0]])
 })

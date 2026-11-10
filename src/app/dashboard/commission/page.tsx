@@ -20,6 +20,7 @@ interface Reward {
 interface Breakdown {
   savings?: { count: number; volume: number; commission?: number }
   redemptions?: { count: number; volume: number; commission?: number }
+  loans?: { commission: number }
   enrolments?: { count: number }
   rewards?: { customerId: string; customerName: string; amount: number; type: string }[]
 }
@@ -34,6 +35,7 @@ function parseBreakdown(s: string | null): Breakdown | null {
 export default function CommissionPage() {
   const [commissions, setCommissions] = useState<Commission[]>([])
   const [rewards, setRewards] = useState<Reward[]>([])
+  const [available, setAvailable] = useState(0)
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
 
@@ -41,6 +43,7 @@ export default function CommissionPage() {
     fetch('/api/commission').then(r => r.json()).then(d => {
       setCommissions(d.commissions ?? [])
       setRewards(d.rewards ?? [])
+      setAvailable(d.available ?? 0)
     }).catch(() => setFailed(true)).finally(() => setLoading(false))
   }, [])
 
@@ -86,6 +89,7 @@ export default function CommissionPage() {
             <span className="ui-row-sub">Earned in {MONTHS[current.month]} {current.year}</span>
             <p className="ag-earn-amount">{formatNaira(current.amount)}</p>
             {breakdown && <p className="ui-row-sub">From {txCount} transaction{txCount === 1 ? '' : 's'} · {formatNaira(volume, { minor: false })} handled</p>}
+            <p className="ui-row-sub">{formatNaira(available)} to withdraw</p>
             <Link href="/dashboard/withdraw" className="ui-btn ui-btn--primary ag-earn-btn"><Icons.withdraw size={18} aria-hidden="true" /> Withdraw commission</Link>
           </section>
 
@@ -101,9 +105,8 @@ export default function CommissionPage() {
                   <ListRow icon="withdraw" title="Redemptions" sub={`${breakdown.redemptions.count} · ${formatNaira(breakdown.redemptions.volume ?? 0, { minor: false })}`}
                     value={<span className="ui-value-stack ui-amount--positive">{formatNaira(breakdown.redemptions.commission ?? 0)}</span>} />
                 )}
-                {breakdown.enrolments && (
-                  <ListRow icon="enrol" title="Enrolments" sub={`${breakdown.enrolments.count} new customer${breakdown.enrolments.count === 1 ? '' : 's'}`}
-                    value={<span className="ui-value-stack">{formatNaira(0)}</span>} />
+                {breakdown.loans && (
+                  <ListRow icon="loan" title="Loans" value={<span className="ui-value-stack ui-amount--positive">{formatNaira(breakdown.loans.commission)}</span>} />
                 )}
                 {breakdown.rewards?.map(r => (
                   <ListRow key={r.customerId} icon="commission" title={`Reward · ${displayName(r.customerName)}`} sub={r.type === 'online' ? 'Online sign-up' : 'Enrolled by you'}

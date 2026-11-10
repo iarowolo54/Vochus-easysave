@@ -482,7 +482,7 @@ export default function AgentsPage() {
             <div className="rows">
               {reviewingAgent.documents.map(doc => {
                 const s = doc.docApprovalStatus
-                const href = `/api/agent/documents/${doc.docType}?agentId=${reviewingAgent.id}`
+                const href = `/api/admin/agents/${reviewingAgent.id}/documents/${encodeURIComponent(doc.docType)}`
                 return (
                   <div key={doc.docType} className="row ag-review-row">
                     <span className="row-ic" aria-hidden="true"><Icons.enrol size={18} /></span>
@@ -492,7 +492,7 @@ export default function AgentsPage() {
                       <span className={`bdg ${s === 'approved' ? 'bdg-g' : s === 'rejected' ? 'bdg-r' : 'bdg-a'}`}>{s === 'approved' ? 'Approved' : s === 'rejected' ? 'Rejected' : 'To review'}</span>
                     </div>
                     <div className="row-actions">
-                      {doc.docType === 'agree'
+                      {doc.docType === 'agree' && !/\.pdf$/i.test(doc.fileName)
                         ? <button type="button" className="btn btn-xs btn-outline" onClick={() => setViewingAgreement({ name: reviewingAgent.name, agentId: reviewingAgent.agentId, signatureUrl: href })}>View</button>
                         : <a href={href} target="_blank" rel="noopener noreferrer" className="btn btn-xs btn-outline">View</a>}
                       {s !== 'approved' && <button type="button" className="btn btn-xs btn-green" disabled={docApproving} onClick={() => approveDocument(doc.docType)}>Approve</button>}

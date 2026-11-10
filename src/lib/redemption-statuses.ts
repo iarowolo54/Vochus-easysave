@@ -5,6 +5,9 @@
  *  record re-opens a double-pay window. */
 export const IN_FLIGHT_REDEMPTION_STATUSES = ['Pending', 'TokenValidated', 'AgentApproved', 'AwaitingOTP', 'Finalizing', 'Approved']
 
+/** Waiting for staff: in flight but not yet paid (incl. AwaitingOTP / Finalizing), or a transfer whose outcome needs checking. */
+export const AWAITING_ACTION_REDEMPTION_STATUSES = [...IN_FLIGHT_REDEMPTION_STATUSES.filter(s => s !== 'Approved'), 'Processing']
+
 /** The one definition of an abandoned request: its code ran out before it was confirmed. Nothing changes its
  *  stored status, which stays honest for admins, but it no longer holds the customer back. Requests an admin
  *  made have no code, so they never expire. */

@@ -60,8 +60,8 @@ async function upload(fileName: unknown, fileData: unknown, docType = 'id') {
 }
 
 async function serve(agentId: string, docType = 'id') {
-  const { GET } = await import('../src/app/api/agent/documents/[docType]/route')
-  return GET(new Request(`http://localhost/api/agent/documents/${docType}?agentId=${agentId}`), { params: Promise.resolve({ docType }) })
+  const { GET } = await import('../src/app/api/admin/agents/[id]/documents/[docType]/route')
+  return GET(new NextRequest(`http://localhost/api/admin/agents/${agentId}/documents/${docType}`), { params: Promise.resolve({ id: agentId, docType }) })
 }
 
 const storeRaw = (agentId: string, fileName: string, fileData: string) =>
@@ -80,6 +80,7 @@ const freshIp = () => { const ip = `10.${(n++ % 200) + 1}.${Math.floor(Math.rand
 after(async () => {
   await prisma.customerChatMessage.deleteMany({ where: { customerId: { in: customerIds } } })
   await prisma.customer.deleteMany({ where: { id: { in: customerIds } } })
+  await prisma.agentDocumentVersion.deleteMany({ where: { agentId: { in: created } } })
   await prisma.agentDocument.deleteMany({ where: { agentId: { in: created } } })
   await prisma.biometricToken.deleteMany({ where: { agentId: { in: created } } })
   await prisma.agent.deleteMany({ where: { id: { in: created } } })

@@ -3,6 +3,8 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { validateUpload } from '@/lib/upload-safety'
+import { saveAgentDocument } from '@/lib/agent-document-store'
+import { logAudit } from '@/lib/audit'
 
 const DOC_META: Record<string, { icon: string; label: string; sub: string; required: boolean }> = {
   id:    { icon: '🪪', label: 'Government-Issued ID',  sub: "NIN slip, Passport, Driver's Licence or Voter's Card", required: true },
@@ -61,10 +63,21 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: 'Document not required for this agent' }, { status: 400 })
   }
 
-  await prisma.agentDocument.upsert({
-    where: { agentId_docType: { agentId: agent.id, docType } },
-    update: { fileName: upload.fileName, fileData: upload.fileData, uploadedAt: new Date(), docApprovalStatus: 'pending', docRejectionReason: null },
-    create: { agentId: agent.id, docType, fileName: upload.fileName, fileData: upload.fileData },
+  const saved = await saveAgentDocument({
+    agentId: agent.id, docType, fileName: upload.fileName, fileData: upload.fileData,
+    replacedBy: `Agent ${agent.agentId}`, capUnreviewed: true, statusFor: () => 'pending',
+  })
+
+  logAudit({
+    action: 'agent_document_uploaded',
+    entity: 'AgentDocument',
+    entityId: agent.id,
+    details: saved.unchanged ? `${agent.agentId} re-sent the identical ${docType} file; nothing changed` : `${agent.agentId} uploaded ${docType}: ${upload.fileName}`
+      + (saved.previousFileName ? `, replacing ${saved.previousFileName}` : '')
+      + (saved.droppedFiles.length ? `. Oldest unreviewed files dropped: ${saved.droppedFiles.join(', ')}` : ''),
+    actorType: 'agent',
+    actorId: agent.id,
+    actorName: agent.name,
   })
 
   return NextResponse.json({ ok: true })

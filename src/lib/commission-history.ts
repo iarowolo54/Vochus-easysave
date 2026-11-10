@@ -120,3 +120,25 @@ export function mergeHistory(ledger: CommissionEntry[], reconstructed: Commissio
   const have = new Set(ledger.map(e => `${e.source}:${e.ref}`))
   return [...ledger, ...reconstructed.filter(e => !have.has(`${e.source}:${e.ref}`))]
 }
+
+export interface MonthEarnings { year: number; month: number; total: number; bySource: Record<CommissionSource, number> }
+
+/** Earnings per calendar month, newest first. The current month is always present, even at zero, then only months with earnings. */
+export function summariseByMonth(entries: CommissionEntry[], now = new Date()): MonthEarnings[] {
+  const blank = (year: number, month: number): MonthEarnings => ({
+    year, month, total: 0, bySource: { loan: 0, repayment: 0, redemption: 0, reward: 0, savings: 0 },
+  })
+  const months = new Map<number, MonthEarnings>()
+  const key = (y: number, m: number) => y * 100 + m
+  const nowKey = key(now.getFullYear(), now.getMonth() + 1)
+  months.set(nowKey, blank(now.getFullYear(), now.getMonth() + 1))
+  for (const e of entries) {
+    const d = new Date(e.date)
+    const k = key(d.getFullYear(), d.getMonth() + 1)
+    const row = months.get(k) ?? blank(d.getFullYear(), d.getMonth() + 1)
+    row.total = money(row.total + e.commission)
+    row.bySource[e.source] = money(row.bySource[e.source] + e.commission)
+    months.set(k, row)
+  }
+  return [...months.entries()].sort((a, b) => b[0] - a[0]).map(([, m]) => m)
+}

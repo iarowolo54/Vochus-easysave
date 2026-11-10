@@ -229,6 +229,12 @@ async function getDoc(forAgent: string | null, cookies: Record<string, string>) 
   return GET(new Request(url), { params: Promise.resolve({ docType: 'nin' }) })
 }
 
+async function getStaffDoc(agentId: string, cookies: Record<string, string>) {
+  jar = cookies
+  const { GET } = await import('../src/app/api/admin/agents/[id]/documents/[docType]/route')
+  return GET(new NextRequest(`http://localhost/api/admin/agents/${agentId}/documents/nin`), { params: Promise.resolve({ id: agentId, docType: 'nin' }) })
+}
+
 async function mkDoc(agentId: string) {
   await prisma.agentDocument.create({ data: { agentId, docType: 'nin', fileName: 'nin.pdf', fileData: 'data:application/pdf;base64,JVBERg==' } })
   docAgentIds.push(agentId)
@@ -249,10 +255,10 @@ test("the same token in both cookies still can't read another agent's documents"
   assert.equal(res.status, 403)
 })
 
-test('a super admin can read any agent\'s documents', async () => {
+test('staff can no longer open documents through the agent route, which has no permission check or audit entry', async () => {
   const a = await mkAgent()
   await mkDoc(a.id)
-  assert.equal((await getDoc(a.id, { 'next-admin-auth.session-token': await adminCookie() })).status, 200)
+  assert.equal((await getDoc(a.id, { 'next-admin-auth.session-token': await adminCookie() })).status, 401)
 })
 
 test('an agent can read their own documents, and a suspended one cannot', async () => {
@@ -269,7 +275,7 @@ test('a document with a non-Latin filename still opens for the admin', async () 
   const a = await mkAgent()
   await prisma.agentDocument.create({ data: { agentId: a.id, docType: 'nin', fileName: 'Àṣàkẹ́.pdf', fileData: 'data:application/pdf;base64,JVBERg==' } })
   docAgentIds.push(a.id)
-  const res = await getDoc(a.id, { 'next-admin-auth.session-token': await adminCookie() })
+  const res = await getStaffDoc(a.id, { 'next-admin-auth.session-token': await adminCookie() })
   assert.equal(res.status, 200)
   assert.match(res.headers.get('content-disposition') ?? '', /filename\*=UTF-8''/)
 })
