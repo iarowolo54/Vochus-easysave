@@ -76,7 +76,7 @@ model AgentDocument {
   @@unique([agentId, docType])
 }
 
-/// A file that was replaced. Written whenever an AgentDocument's file is overwritten, so onboarding records are never lost.
+/// A file that was replaced, kept when an AgentDocument is overwritten. The latest five per document are kept (agent-document-store.ts).
 model AgentDocumentVersion {
   id                String   @id @default(cuid())
   agentId           String

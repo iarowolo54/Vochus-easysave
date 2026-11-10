@@ -8,9 +8,9 @@ import { agentDocLabel, canStoreAgentDoc, parseRequiredDocs, statusAfterStaffUpl
 
 type Ctx = { params: Promise<{ id: string; docType: string }> }
 
-/** Opens one document. */
+/** Opens one document. Identity records, so the same permission as approving them, and every open is logged. */
 export async function GET(_req: NextRequest, { params }: Ctx) {
-  const guard = await requirePermission('agents', 'view')
+  const guard = await requirePermission('agents', 'manage')
   if (!guard.ok) return guard.response
 
   const { id, docType } = await params
@@ -19,6 +19,16 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
     select: { fileName: true, fileData: true },
   })
   if (!doc) return NextResponse.json({ error: 'Document not found' }, { status: 404 })
+
+  logAudit({
+    action: 'agent_document_viewed',
+    entity: 'AgentDocument',
+    entityId: id,
+    details: `Opened ${agentDocLabel(docType)} for agent ${id}: ${doc.fileName}`,
+    actorType: guard.actor.type,
+    actorId: guard.actor.id,
+    actorName: guard.actor.name,
+  })
 
   const file = serveStoredFile(doc.fileData, doc.fileName)
   return new NextResponse(new Uint8Array(file.body), { headers: storedFileHeaders(file, doc.fileName) })

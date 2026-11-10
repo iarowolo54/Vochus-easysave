@@ -141,7 +141,7 @@ export function AgentDocumentsTab({ agentId, onCount }: { agentId: string; onCou
                 {doc && <div className="row-sub">{doc.fileName} · {shortDate(doc.uploadedAt)}</div>}
                 {doc?.docApprovalStatus === 'rejected' && doc.docRejectionReason && <div className="row-sub">Reason: {doc.docRejectionReason}</div>}
                 <DocBadge doc={doc} required={required.includes(docType)} />
-                {older.length > 0 && (
+                {canManage && older.length > 0 && (
                   <details className="ag-doc-earlier">
                     <summary>Earlier files ({older.length})</summary>
                     <ul className="am-batch">
@@ -157,7 +157,7 @@ export function AgentDocumentsTab({ agentId, onCount }: { agentId: string; onCou
                 )}
               </div>
               <div className="row-actions">
-                {doc && (
+                {canManage && doc && (
                   <a href={`/api/admin/agents/${agentId}/documents/${encodeURIComponent(docType)}`} target="_blank" rel="noopener noreferrer"
                     className="btn btn-sm btn-outline" aria-label={`View ${label}`}>View</a>
                 )}
