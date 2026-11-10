@@ -1,46 +1,25 @@
 import { NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
-import { adminAuthOptions } from '@/lib/auth-admin'
 import { prisma } from '@/lib/prisma'
 import { serveStoredFile, storedFileHeaders } from '@/lib/upload-safety'
 
+/** An agent opens their own document. Staff use /api/admin/agents/[id]/documents/[docType], which checks permission and logs the open. */
 export async function GET(
   req: Request,
   { params }: { params: Promise<{ docType: string }> }
 ) {
-  const url = new URL(req.url)
-  const agentIdParam = url.searchParams.get('agentId')
-
-  // Accept either an agent's own session OR a super-admin session.
-  const agentSession = await getServerSession(authOptions)
-  const adminSession = agentIdParam
-    ? await getServerSession(adminAuthOptions)
-    : null
-
-  // The role, not just a session: the admin and agent configs share a secret, so an agent's token decodes in the admin cookie.
-  const isAdmin = (adminSession?.user as { role?: string } | undefined)?.role === 'superadmin'
-
-  if (!agentSession?.user && !isAdmin) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  }
+  const session = await getServerSession(authOptions)
+  const agentId = (session?.user as { agentId?: string } | undefined)?.agentId
+  if (!agentId) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { docType } = await params
 
-  // Admins pass ?agentId=; agents view their own docs (agentIdParam optional).
-  const whereAgent = isAdmin && agentIdParam
-    ? { id: agentIdParam }
-    : agentIdParam
-      ? { id: agentIdParam }
-      : { agentId: (agentSession?.user as any).agentId }
-
-  const agent = await prisma.agent.findFirst({ where: whereAgent })
+  const agent = await prisma.agent.findFirst({ where: { agentId }, select: { id: true } })
   if (!agent) return NextResponse.json({ error: 'Agent not found' }, { status: 404 })
 
-  // An agent may only view their own documents.
-  if (!isAdmin && agent.agentId !== (agentSession?.user as any).agentId) {
-    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  }
+  const asked = new URL(req.url).searchParams.get('agentId')
+  if (asked && asked !== agent.id) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const doc = await prisma.agentDocument.findFirst({
     where: { agentId: agent.id, docType },
