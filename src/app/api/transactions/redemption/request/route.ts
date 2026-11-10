@@ -1,3 +1,5 @@
+import { formatNaira } from '@/lib/format'
+import { codeEmailMessage } from '@/lib/email-template'
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
@@ -12,7 +14,6 @@ import { collectionFee } from '@/lib/commission-ledger'
 import { isEarlyCollection, isFlexible, shortDate } from '@/lib/flexible-savings'
 import { money } from '@/lib/wallet-guard'
 import { logAudit } from '@/lib/audit'
-import { escapeHtml } from '@/lib/escape-html'
 import { bankByCode } from '@/lib/banks'
 import { notifications } from '@/lib/notifications'
 import { accountNameMatches, AGENT_REQUEST_PREFIX, cleanAccountName, otherNameWarning, payoutDestination } from '@/lib/payout-account'
@@ -106,7 +107,7 @@ export async function POST(req: NextRequest) {
       amount: netPayout, byCustomer: false,
     }))
 
-    const expiryStr = tokenExpiry.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+    const expiryStr = tokenExpiry.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Lagos' })
     const destination = isBank && resolvedBankName
       ? `${payoutDestination(resolvedBankName, String(accountNumber))}${nameCheckHeld && resolvedAccountName ? ` ${otherNameWarning(resolvedAccountName)}` : ''}`
       : ''
@@ -123,8 +124,16 @@ export async function POST(req: NextRequest) {
     if (channels.includes('email') && plan.customer.email) {
       sendMail({
         to: plan.customer.email,
-        subject: 'Your Vochus Easy Save Redemption Token',
-        html: `<p>Hi ${plan.customer.firstName},</p><p>${isEarly ? `You asked to redeem from your savings plan before its end date (${shortDate(plan.maturityDate)}).` : 'Your savings plan has matured.'} Present the token below to your agent to redeem your payout.</p><div style="background:#1a3c2e;border-radius:12px;padding:24px;text-align:center;margin:24px 0"><p style="color:#8fc9a9;font-size:12px;letter-spacing:2px;margin:0 0 8px">REDEMPTION TOKEN</p><p style="color:#4ade80;font-size:48px;font-weight:900;font-family:monospace;letter-spacing:8px;margin:0">${token}</p><p style="color:#8fc9a9;font-size:12px;margin:8px 0 0">Expires: ${expiryStr}</p></div><p>Balance: <strong>N${plan.balance.toLocaleString()}</strong><br/>Deduction: <strong>N${deduction.toLocaleString()}</strong><br/>Payout amount: <strong>N${netPayout.toLocaleString()}</strong></p>${destination ? `<p>${escapeHtml(destination)}</p>` : ''}<p>Ref: <code>${ref}</code></p><p>Do not share this token with anyone other than your registered Vochus agent.</p>`,
+        ...codeEmailMessage({
+          subject: 'Your Vochus Easy Save Redemption Token',
+          preheader: 'Give this token to your agent to redeem your payout.',
+          heading: `Hi ${plan.customer.firstName}, here is your redemption token`,
+          intro: `${isEarly ? `You asked to redeem from your savings plan before its end date (${shortDate(plan.maturityDate)}).` : 'Your savings plan has ended.'} Give the token below to your agent to redeem your payout.`,
+          code: token,
+          caption: `Expires ${expiryStr}. Do not share this token with anyone other than your registered Vochus agent.`,
+          rows: [['Balance', formatNaira(plan.balance)], ['Deduction', formatNaira(deduction)], ['Payout amount', formatNaira(netPayout), 'strong'], ['Reference', ref]],
+          note: destination || undefined,
+        }),
       }).catch(() => {})
     }
 

@@ -30,23 +30,20 @@ export function paymentAlertEmail(a: PaymentAlert): { subject: string; html: str
     subject,
     preheader: wallet ? `${amount} is now in your wallet.` : `${amount} has been added to your savings.`,
     tone: 'success',
-    statusLabel: 'Payment received',
+    statusLabel: '',
     heading: `Thank you, ${a.name}`,
-    intro: wallet
-      ? 'We have received your bank transfer and added it to your wallet.'
-      : 'We have received your bank transfer and added it to your savings.',
     banner: true,
     amountLabel: 'Vochus received your payment of',
     amount,
     rows: [
-      ['Reference', a.reference],
-      ['Date', loginTimeLabel(at)],
+      [wallet ? 'Credited to' : 'Saved to', a.destination],
+      [wallet ? 'Wallet balance' : 'Plan balance', a.balanceAfter == null ? null : formatNaira(a.balanceAfter), 'strong'],
       ['Paid by', a.via.startsWith('Paystack') ? 'Card or bank transfer' : 'Bank transfer'],
       ['Confirmed by', a.via === 'Staff by hand' ? 'Vochus staff' : null],
-      [wallet ? 'Credited to' : 'Saved to', a.destination],
-      [wallet ? 'Wallet balance' : 'Plan balance', a.balanceAfter == null ? null : formatNaira(a.balanceAfter)],
+      ['Date', loginTimeLabel(at)],
+      ['Reference', a.reference],
     ],
-    note: 'Questions about this payment? Reply to this email or write to support@vochuseasysave.com and quote the reference above.',
+    note: 'Questions about this payment? Write to support@vochuseasysave.com and quote the reference above.',
   })
   return { subject, html }
 }

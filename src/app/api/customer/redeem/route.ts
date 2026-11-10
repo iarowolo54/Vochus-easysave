@@ -1,3 +1,4 @@
+import { codeEmailMessage } from '@/lib/email-template'
 import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
@@ -12,7 +13,6 @@ import { cleanAccountName } from '@/lib/payout-account'
 import { sendSMS } from '@/lib/kudisms'
 import { sendMail } from '@/lib/mail'
 import { collectionCodeChannels } from '@/lib/customer-channels'
-import { escapeHtml } from '@/lib/escape-html'
 import { redemptionTokenMatches } from '@/lib/redemption-token'
 import { createRedemptionWithUniqueCode } from '@/lib/redemption-create'
 import { reserveRedemptionAttempt } from '@/lib/redemption-attempts'
@@ -148,7 +148,7 @@ export async function POST(req: NextRequest) {
   // email if on file) — it is never returned in the response or logged, so the
   // confirmation step proves possession of the registered contact, not just
   // that the customer can read their own screen. sendSMS is a no-op off-prod.
-  const expiryStr = tokenExpiry.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+  const expiryStr = tokenExpiry.toLocaleString('en-GB', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', timeZone: 'Africa/Lagos' })
   const channels = collectionCodeChannels({ online: plan.source === 'self', email: customer.email, emailVerifiedAt: customer.emailVerifiedAt })
   if (channels.includes('sms')) {
     // sms: collection code — cash customers always; online customers only without a confirmed email
@@ -157,8 +157,14 @@ export async function POST(req: NextRequest) {
   if (channels.includes('email') && customer.email) {
     sendMail({
       to: customer.email,
-      subject: 'Your Vochus Easy Save redemption code',
-      html: `<p>Hi ${escapeHtml(customer.firstName)},</p><p>Your redemption confirmation code is:</p><p style="font-size:32px;font-weight:800;letter-spacing:8px;font-family:monospace">${token}</p><p>It expires ${expiryStr}. Do not share this code with anyone.</p>`,
+      ...codeEmailMessage({
+        subject: 'Your Vochus Easy Save redemption code',
+        preheader: 'Use this code to confirm your redemption.',
+        heading: `Hi ${customer.firstName}, confirm your redemption`,
+        intro: 'Your redemption confirmation code is:',
+        code: token,
+        caption: `It expires ${expiryStr}. Do not share this code with anyone.`,
+      }),
     }).catch(() => {})
   }
 

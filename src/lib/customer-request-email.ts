@@ -4,6 +4,7 @@ import type { PrismaClient } from '@prisma/client'
 import { sendMail } from '@/lib/mail'
 import { sendSMS } from '@/lib/kudisms'
 import { renderEmail, type EmailContent } from '@/lib/email-template'
+import { emailAction } from '@/lib/email-brand'
 import { displayName, formatNaira } from '@/lib/format'
 
 async function send(to: string, email: EmailContent): Promise<void> {
@@ -16,21 +17,20 @@ async function send(to: string, email: EmailContent): Promise<void> {
   }
 }
 
-const reviewLink = (path: string) => (process.env.NEXTAUTH_URL ? `${process.env.NEXTAUTH_URL.replace(/\/$/, '')}${path}` : null)
-
 export async function emailRequestSubmitted(client: Pick<PrismaClient, 'superAdmin'>, input: { customerName: string; agentName: string; agentCode: string; resubmitted: boolean }): Promise<void> {
   try {
     const admins = await client.superAdmin.findMany({ where: { email: { not: '' } }, select: { email: true } })
     const name = displayName(input.customerName)
-    const link = reviewLink('/superadmin/customer-requests')
+    const action = emailAction('Review request', '/superadmin/customer-requests')
     await Promise.all(admins.map(a => send(a.email, {
       subject: `Customer request: ${name}`,
       preheader: `${input.agentName} ${input.resubmitted ? 'sent this request again' : 'wants to register a cash saver'}.`,
-      tone: 'warning', statusLabel: 'Waiting for you',
+      tone: 'warning', audience: 'staff', statusLabel: 'Waiting for you',
       heading: input.resubmitted ? 'A request was sent again' : 'New customer request',
       intro: `${input.agentName} ${input.resubmitted ? 'has fixed and resent the request for' : 'wants to register'} ${name}. Check the passport photograph and details, then approve or deny it.`,
       rows: [['Customer', name], ['Agent', `${input.agentName} (${input.agentCode})`]],
-      note: link ? `Review it here: ${link}` : 'Review it under Customer requests in the admin area.',
+      action,
+      note: action ? undefined : 'Review it under Customer requests in the admin area.',
     })))
   } catch (err) {
     console.error('[customer-request-email] admin list failed:', err instanceof Error ? err.message : 'unknown error')
@@ -43,7 +43,7 @@ export async function emailRequestApproved(agent: { email: string | null }, inpu
   await send(agent.email, {
     subject: `Approved: ${name}`,
     preheader: `${name} is now your customer.`,
-    tone: 'success', statusLabel: 'Approved',
+    tone: 'success', audience: 'agent', statusLabel: '',
     heading: 'Customer approved',
     intro: `${name} is now your customer. You can record their savings.`,
     rows: [['Customer', name], ['Customer ID', input.customerCode], ['Fee taken from your wallet', formatNaira(input.fee, { minor: false })]],
@@ -56,11 +56,13 @@ export async function emailRequestDenied(agent: { email: string | null }, input:
   await send(agent.email, {
     subject: `Denied: ${name}`,
     preheader: 'See what to fix, then send it again.',
-    tone: 'danger', statusLabel: 'Denied',
+    tone: 'danger', audience: 'agent', statusLabel: '',
     heading: 'Customer request denied',
     intro: `The request for ${name} wasn’t approved. Nothing was taken from your wallet.`,
-    rows: [['Customer', name], ['Reason', input.reason], ['What to work on', input.fix]],
-    note: 'Open Customer requests in the app, fix it and send it again.',
+    reason: { label: 'Reason', text: input.reason },
+    nextStep: 'Open Customer requests in the app, fix it and send it again.',
+    action: emailAction('Open Vochus Easy Save', '/login'),
+    rows: [['Customer', name], ['What to work on', input.fix]],
   })
 }
 

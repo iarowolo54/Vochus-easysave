@@ -4,7 +4,7 @@
 import { randomInt, randomUUID, timingSafeEqual } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { sendMail } from '@/lib/mail'
-import { emailLogo } from '@/lib/email-brand'
+import { codeEmailMessage } from '@/lib/email-template'
 import { enrolRateLimiter } from '@/lib/rate-limit'
 
 const SEND_MIN_INTERVAL_MS = 60 * 1000
@@ -39,22 +39,14 @@ export async function sendEmailCode(email: string): Promise<CodeResult> {
   // The code is already stored, so a transient SMTP error doesn't fail the request; the user can resend.
   sendMail({
     to: email,
-    subject: 'Vochus Easy Save — Email Verification Code',
-    html: `
-      <div style="font-family:sans-serif;max-width:420px;margin:0 auto;padding:28px 20px;background:#f3f6f3">
-        <div style="background:#fff;border-radius:16px;padding:28px;border:1px solid #d8e8dd">
-          <div style="text-align:center;margin-bottom:20px">
-            ${emailLogo()}
-            <div style="font-size:18px;font-weight:900;margin-top:10px;color:#111">Vochus Easy Save</div>
-          </div>
-          <p style="font-size:14px;color:#444;margin:0 0 16px">Your email verification code is:</p>
-          <div style="background:#e6f4ec;border-radius:12px;padding:18px;text-align:center;letter-spacing:8px;font-size:32px;font-weight:900;color:#1a6b3a;margin-bottom:16px;font-family:monospace">
-            ${code}
-          </div>
-          <p style="font-size:12.5px;color:#888;margin:0">This code expires in <strong>10 minutes</strong>. Do not share it with anyone.</p>
-        </div>
-      </div>
-    `,
+    ...codeEmailMessage({
+      subject: 'Vochus Easy Save — Email Verification Code',
+      preheader: 'Enter this code to confirm your email address.',
+      heading: 'Confirm your email',
+      intro: 'Your email verification code is:',
+      code,
+      caption: 'This code expires in 10 minutes. Do not share it with anyone.',
+    }),
   }).catch(() => {})
   return { ok: true }
 }

@@ -1,3 +1,5 @@
+import { emailAction } from '@/lib/email-brand'
+import { emailMessage } from '@/lib/email-template'
 import { NextRequest, NextResponse } from 'next/server'
 import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
@@ -37,21 +39,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       const allApproved = docs.length > 0 && docs.every(d => d.docApprovalStatus === 'approved')
       sendMail({
         to: document.agent.email,
-        subject: allApproved ? 'Your Vochus Easy Save account is ready' : 'Document Approved',
-        html: `
-          <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
-            <h2 style="color:#1a5c35">${allApproved ? 'All documents approved 🎉' : 'Document Approved'}</h2>
-            <p>Hello ${document.agent.name},</p>
-            <div style="background:#f0f8f5;border-left:4px solid #1a5c35;padding:16px;margin:16px 0">
-              <p style="margin:0;color:#666"><strong>Document Type:</strong> ${docType}</p>
-              <p style="margin:8px 0 0;color:#1a5c35"><strong>Status:</strong> Approved</p>
-            </div>
-            <p>${allApproved
-              ? 'All your submitted documents have been approved — your account is now fully active. You can sign in and start working.'
-              : 'This document has been approved. We’ll let you know as your remaining documents are reviewed.'}</p>
-            <p style="color:#888;font-size:12px;margin-top:24px">Vochus Easy Save Team</p>
-          </div>
-        `,
+        ...emailMessage({
+          subject: allApproved ? 'Your Vochus Easy Save account is ready' : 'Document Approved',
+          preheader: allApproved ? 'All your documents are approved. You can sign in and start working.' : 'One of your documents has been approved.',
+          tone: 'success',
+          statusLabel: '',
+          audience: 'agent',
+          routine: true,
+          heading: allApproved ? `Your account is ready, ${document.agent.name}` : 'Document approved',
+          intro: allApproved
+            ? 'All your submitted documents have been approved, so your account is now fully active. You can sign in and start working.'
+            : 'We’ll let you know as your remaining documents are reviewed.',
+          action: allApproved ? emailAction('Sign in', '/login') : undefined,
+          rows: [['Document', docType]],
+        }),
       }).catch(() => {})
     }
   } else if (action === 'reject') {
@@ -66,20 +67,19 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (document.agent.email) {
       sendMail({
         to: document.agent.email,
-        subject: 'Document Review – Resubmission Required',
-        html: `
-          <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
-            <h2 style="color:#d32f2f">Document Rejected</h2>
-            <p>Hello ${document.agent.name},</p>
-            <p>Your submitted document has been reviewed and requires resubmission:</p>
-            <div style="background:#fff3e0;border-left:4px solid #f57c00;padding:16px;margin:16px 0">
-              <p style="margin:0;color:#666"><strong>Document Type:</strong> ${docType}</p>
-              <p style="margin:8px 0 0;color:#d32f2f"><strong>Feedback:</strong> ${reason}</p>
-            </div>
-            <p>Please review the feedback and resubmit an updated document through your dashboard. Once resubmitted, our team will review it again.</p>
-            <p style="color:#888;font-size:12px;margin-top:24px">Vochus Easy Save Team</p>
-          </div>
-        `,
+        ...emailMessage({
+          subject: 'Document Review – Resubmission Required',
+          preheader: 'We need a new copy of one of your documents.',
+          tone: 'warning',
+          statusLabel: '',
+          audience: 'agent',
+          heading: 'Please send this document again',
+          intro: `Hello ${document.agent.name}, we reviewed your document and need a new copy.`,
+          reason: { label: 'What to change', text: reason },
+          nextStep: 'Upload an updated copy from your dashboard, and our team will review it again.',
+          action: emailAction('Open Vochus Easy Save', '/login'),
+          rows: [['Document', docType]],
+        }),
       }).catch(() => {})
     }
   }

@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
 import { sendMail } from '@/lib/mail'
-import { emailLogo } from '@/lib/email-brand'
+import { codeEmailMessage } from '@/lib/email-template'
 import { sendSMS } from '@/lib/kudisms'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { checkLoginThrottle, clearLoginThrottle, recordLoginFailure, reserveAccountAttempt, endSessionsIfLocked } from '@/lib/login-attempt'
@@ -10,22 +10,15 @@ import { deliverInBackground, issueResetCode, readBody, text } from '@/lib/passw
 import { clientIp } from '@/lib/rate-limit'
 import { maskTarget, recoveryChannel } from '@/lib/unlock-otp'
 
-function codeEmailHtml(code: string) {
-  return `
-        <div style="font-family:sans-serif;max-width:420px;margin:0 auto;padding:28px 20px;background:#f3f6f3">
-          <div style="background:#fff;border-radius:16px;padding:28px;border:1px solid #d8e8dd">
-            <div style="text-align:center;margin-bottom:20px">
-              ${emailLogo()}
-              <div style="font-size:18px;font-weight:900;margin-top:10px;color:#111">Confirm password change</div>
-            </div>
-            <p style="font-size:14px;color:#444;margin:0 0 16px">Your confirmation code is:</p>
-            <div style="background:#e6f4ec;border-radius:12px;padding:18px;text-align:center;letter-spacing:8px;font-size:32px;font-weight:900;color:#1a6b3a;margin-bottom:16px;font-family:monospace">
-              ${code}
-            </div>
-            <p style="font-size:12.5px;color:#888;margin:0">This code expires in <strong>10 minutes</strong>. If you did not ask to change your password, do not share this code.</p>
-          </div>
-        </div>
-      `
+function confirmEmail(code: string) {
+  return codeEmailMessage({
+    subject: 'Vochus Easy Save — Confirm password change',
+    preheader: 'Use this code to confirm your new password.',
+    heading: 'Confirm password change',
+    intro: 'Your confirmation code is:',
+    code,
+    caption: 'This code expires in 10 minutes. If you did not ask to change your password, do not share this code.',
+  })
 }
 
 // Step 1 of changing a password: check the current password, then send a code to the
@@ -69,7 +62,7 @@ export async function POST(req: NextRequest) {
   const { channel, target } = recoveryChannel(customer)
   deliverInBackground(issued.id, async () => {
     if (channel === 'email') {
-      await sendMail({ to: target, subject: 'Vochus Easy Save — Confirm password change', html: codeEmailHtml(issued.code) })
+      await sendMail({ to: target, ...confirmEmail(issued.code) })
       return true
     }
     // sms: account recovery code, only when there is no confirmed email

@@ -1,3 +1,5 @@
+import { emailAction } from '@/lib/email-brand'
+import { emailMessage } from '@/lib/email-template'
 import { NextRequest, NextResponse } from 'next/server'
 import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
@@ -38,24 +40,20 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   })
 
   if (agent.email) {
-    const loginUrl = `${process.env.NEXTAUTH_URL ?? 'https://easysave.vochusglobalservices.co.uk'}/login`
     sendMail({
       to: agent.email,
-      subject: 'Your Vochus Easy Save Agent account is now active!',
-      html: `
-        <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
-          <h2 style="color:#1a5c35">Account Activated 🎉</h2>
-          <p>Hi ${agent.name},</p>
-          <p>Your Vochus Easy Save agent account has been reviewed and activated. You can now log in to the agent portal.</p>
-          <div style="background:#f4f9f6;border-radius:8px;padding:16px 20px;margin:16px 0">
-            <p style="margin:4px 0;font-size:13px"><strong>Agent ID:</strong> ${agent.agentId}</p>
-            <p style="margin:4px 0;font-size:13px"><strong>Login:</strong> Use your registered phone number and password</p>
-          </div>
-          <a href="${loginUrl}" style="display:inline-block;margin:8px 0 16px;padding:12px 28px;background:#1a5c35;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;font-size:14px">Log In to Agent Portal →</a>
-          <p style="color:#888;font-size:12px">Or copy this link: <a href="${loginUrl}" style="color:#1a5c35">${loginUrl}</a></p>
-          <p style="color:#888;font-size:12px">Welcome to the Vochus Easy Save team!</p>
-        </div>
-      `,
+      ...emailMessage({
+        subject: 'Your Vochus Easy Save Agent account is now active!',
+        preheader: 'You can now sign in to the agent portal.',
+        tone: 'success',
+        statusLabel: '',
+        audience: 'agent',
+        heading: `Your account is active, ${agent.name}`,
+        intro: 'Your Vochus Easy Save agent account has been reviewed and activated. You can now sign in to the agent portal.',
+        action: emailAction('Sign in', '/login'),
+        rows: [['Agent ID', agent.agentId], ['Sign in with', 'Your registered phone number and password']],
+        note: 'Welcome to the Vochus Easy Save team!',
+      }),
     }).catch(() => {})
   }
 

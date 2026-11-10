@@ -1,7 +1,8 @@
 import type { PrismaClient } from '@prisma/client'
 import { sendMail } from '@/lib/mail'
 import { formatNaira } from '@/lib/format'
-import { escapeHtml } from '@/lib/escape-html'
+import { renderEmail } from '@/lib/email-template'
+import { emailAction } from '@/lib/email-brand'
 
 type Client = Pick<PrismaClient, 'superAdmin'>
 
@@ -21,14 +22,19 @@ export async function notifySuperAdminsRedemptionPending(
       where: { email: { not: '' } },
       select: { email: true },
     })
-    const html =
-      `<p>A customer redemption is awaiting admin approval.</p>` +
-      `<p>Customer: <strong>${escapeHtml(input.customerName)}</strong><br/>` +
-      `Amount: <strong>${escapeHtml(formatNaira(input.amountNaira))}</strong><br/>` +
-      (input.planGoal ? `Plan: ${escapeHtml(input.planGoal)}<br/>` : '') +
-      `Reference: <code>${escapeHtml(input.ref)}</code></p>` +
-      (input.warning ? `<p><strong>${escapeHtml(input.warning)}</strong></p>` : '') +
-      `<p>Open the admin dashboard to review and approve it.</p>`
+    const html = renderEmail({
+      subject: 'Redemption awaiting approval',
+      preheader: `${input.customerName} asked to redeem ${formatNaira(input.amountNaira)}.`,
+      tone: 'warning',
+      statusLabel: '',
+      audience: 'staff',
+      heading: 'A redemption needs your approval',
+      amount: formatNaira(input.amountNaira),
+      amountLabel: 'Amount',
+      reason: input.warning ? { label: 'Check first', text: input.warning } : undefined,
+      action: emailAction('Review redemption', '/superadmin/redemptions'),
+      rows: [['Customer', input.customerName], ['Plan', input.planGoal], ['Reference', input.ref]],
+    })
     for (const a of admins) {
       if (!a.email) continue
       try {
@@ -47,7 +53,17 @@ export async function notifySuperAdminsPayoutReview(client: Client, input: { ref
   try {
     if (process.env.NODE_ENV !== 'production') return
     const admins = await client.superAdmin.findMany({ where: { email: { not: '' } }, select: { email: true } })
-    const html = `<p><strong>A payout needs manual review.</strong></p><p>${escapeHtml(input.message)}</p><p>Reference: <code>${escapeHtml(input.ref)}</code></p>`
+    const html = renderEmail({
+      subject: 'Payout needs manual review',
+      preheader: 'A payout needs someone to look at it.',
+      tone: 'warning',
+      statusLabel: '',
+      audience: 'staff',
+      heading: 'A payout needs manual review',
+      reason: { label: 'What happened', text: input.message },
+      action: emailAction('Review payout', '/superadmin/redemptions'),
+      rows: [['Reference', input.ref]],
+    })
     for (const a of admins) {
       if (!a.email) continue
       try {

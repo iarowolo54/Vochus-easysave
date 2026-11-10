@@ -2,6 +2,7 @@
 // their own purpose, so they get the same keyed hash, resetId binding and limits as password resets.
 //
 // The channel is a verified email if there is one, otherwise SMS.
+import { codeEmailMessage } from './email-template'
 import { sendMail } from './mail'
 import { sendSMS } from './kudisms'
 import { deliverInBackground, issueResetCode } from './password-reset'
@@ -49,8 +50,14 @@ async function deliver(
     try {
       await sendMail({
         to: target,
-        subject: 'Your Vochus Easy Save account unlock code',
-        html: `<p>Hi ${firstName},</p><p>Your account was locked after too many failed login attempts. Use this code to unlock it:</p><p><strong style="font-size:24px;letter-spacing:4px">${code}</strong></p><p>Valid for 10 minutes. If this wasn't you, change your password after unlocking. Never share this code.</p>`,
+        ...codeEmailMessage({
+          subject: 'Your Vochus Easy Save account unlock code',
+          preheader: 'Use this code to unlock your account.',
+          heading: `Hi ${firstName}, unlock your account`,
+          intro: 'Your account was locked after too many failed login attempts. Use this code to unlock it:',
+          code,
+          caption: "Valid for 10 minutes. If this wasn't you, change your password after unlocking. Never share this code.",
+        }),
       })
       return true
     } catch {

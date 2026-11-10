@@ -16,16 +16,15 @@ export function loginAlertEmail(name: string, at: Date, via: string): { subject:
   const subject = 'New sign-in to your Vochus Easy Save account'
   const html = renderEmail({
     subject,
-    preheader: `You signed in on ${loginTimeLabel(at)}.`,
+    preheader: `Signed in on ${loginTimeLabel(at)}.`,
     tone: 'warning',
-    statusLabel: 'Sign-in alert',
-    heading: `Hello ${name}, you signed in`,
-    intro: 'You have signed in to your Vochus Easy Save account.',
+    statusLabel: '',
+    heading: `Hello ${name.trim().split(/\s+/)[0]}, there's a new sign-in`,
     rows: [
       ['Date and time', loginTimeLabel(at)],
       ['Signed in with', via],
     ],
-    note: 'If you did not sign in, your account may be compromised. Contact your agent or Vochus Easy Save support right away and change your password.',
+    note: "If this wasn't you, change your password right away and write to support@vochuseasysave.com.",
   })
   return { subject, html }
 }

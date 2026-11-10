@@ -1,3 +1,4 @@
+import { codeEmailMessage } from '@/lib/email-template'
 import { randomInt, randomUUID } from 'node:crypto'
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
@@ -73,8 +74,14 @@ export async function POST(req: NextRequest) {
   if (customer?.email && customer.emailVerifiedAt) {
     sendMail({
       to: customer.email,
-      subject: 'Your Vochus Easy Save verification code',
-      html: `<p>Hi ${customer.firstName},</p><p>Your verification code is: <strong style="font-size:24px;letter-spacing:4px">${code}</strong></p><p>It expires in 10 minutes. If you didn't request this, you can ignore this email.</p>`,
+      ...codeEmailMessage({
+        subject: 'Your Vochus Easy Save verification code',
+        preheader: 'Use this code to check your phone number.',
+        heading: `Hi ${customer.firstName}, here is your code`,
+        intro: 'Your verification code is:',
+        code,
+        caption: "It expires in 10 minutes. If you didn't request this, you can ignore this email.",
+      }),
     }).catch(() => {})
   }
 

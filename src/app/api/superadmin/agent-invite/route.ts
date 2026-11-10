@@ -4,6 +4,20 @@ import { prisma } from '@/lib/prisma'
 import { randomBytes } from 'crypto'
 import { sendMail } from '@/lib/mail'
 import { logAudit } from '@/lib/audit'
+import { emailMessage } from '@/lib/email-template'
+
+const inviteEmail = (link: string) => emailMessage({
+  subject: 'You\'ve been invited to join Vochus Easy Save as an Agent',
+  preheader: 'Finish your registration to start as an agent.',
+  tone: 'success',
+  statusLabel: '',
+  audience: 'agent',
+  heading: 'Join Vochus Easy Save as an agent',
+  intro: 'You have been invited to become an agent on Vochus Easy Save. Use the button below to complete your registration.',
+  action: { label: 'Complete registration', url: link },
+  rows: [],
+  note: 'This link expires in 7 days. If you did not expect this invitation, please ignore this email.',
+})
 
 export async function POST(req: NextRequest) {
   const guard = await requirePermission('agents', 'manage')
@@ -23,17 +37,7 @@ export async function POST(req: NextRequest) {
     const link = `${process.env.NEXTAUTH_URL}/agent/onboard/${existingInvite.token}`
     sendMail({
       to: email,
-      subject: 'You\'ve been invited to join Vochus Easy Save as an Agent',
-      html: `
-        <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
-          <h2 style="color:#1a5c35">Agent Onboarding Invitation</h2>
-          <p>You have been invited to become an agent on <strong>Vochus Easy Save</strong>. Click the button below to complete your registration.</p>
-          <div style="text-align:center;margin:28px 0">
-            <a href="${link}" style="background:#1a5c35;color:#fff;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:700;font-size:15px">Complete Registration →</a>
-          </div>
-          <p style="color:#888;font-size:12px">This link expires in 7 days. If you did not expect this invitation, please ignore this email.</p>
-        </div>
-      `,
+      ...inviteEmail(link),
     }).catch(() => {})
     logAudit({
       action: 'agent_invite',
@@ -67,17 +71,7 @@ export async function POST(req: NextRequest) {
 
   sendMail({
     to: email,
-    subject: 'You\'ve been invited to join Vochus Easy Save as an Agent',
-    html: `
-      <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
-        <h2 style="color:#1a5c35">Agent Onboarding Invitation</h2>
-        <p>You have been invited to become an agent on <strong>Vochus Easy Save</strong>. Click the button below to complete your registration.</p>
-        <div style="text-align:center;margin:28px 0">
-          <a href="${link}" style="background:#1a5c35;color:#fff;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:700;font-size:15px">Complete Registration →</a>
-        </div>
-        <p style="color:#888;font-size:12px">This link expires in 7 days. If you did not expect this invitation, please ignore this email.</p>
-      </div>
-    `,
+    ...inviteEmail(link),
   }).catch(() => {})
 
   return NextResponse.json({ token, link })

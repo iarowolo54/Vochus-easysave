@@ -1,3 +1,4 @@
+import { codeEmailMessage } from '@/lib/email-template'
 import { NextRequest, NextResponse } from 'next/server'
 import { requireSuperAdmin, adminActor } from '@/lib/admin-guard'
 import { verifyApprovalPin } from '@/lib/approval-pin'
@@ -46,8 +47,16 @@ export async function POST(req: NextRequest) {
     if (channel === 'email') {
       await sendMail({
         to: target,
-        subject: 'Vochus Easy Save — Password Reset Code',
-        html: `<p>An administrator sent you this password reset code:</p><p><strong style="font-size:24px;letter-spacing:4px">${issued.code}</strong></p><p>It expires in 10 minutes. <a href="${link}">Open this link</a> to use it, and enter the code with your new password.</p><p>Never share this code, including with staff.</p>`,
+        ...codeEmailMessage({
+          subject: 'Vochus Easy Save — Password Reset Code',
+          preheader: 'Use this code to choose a new password.',
+          heading: 'Reset your password',
+          intro: 'An administrator sent you this password reset code:',
+          code: issued.code,
+          caption: 'It expires in 10 minutes. Open the link below and enter the code with your new password. Never share this code, including with staff.',
+          action: { label: 'Reset password', url: link },
+          audience: type,
+        }),
       })
       delivered = true
     } else {

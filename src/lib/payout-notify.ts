@@ -2,7 +2,9 @@ import type { PrismaClient } from '@prisma/client'
 import { sendMail } from '@/lib/mail'
 import { sendSMS } from '@/lib/kudisms'
 import { renderEmail, type EmailContent } from '@/lib/email-template'
-import { formatDate, formatNaira, formatTime } from '@/lib/format'
+import { emailAction } from '@/lib/email-brand'
+import { formatNaira } from '@/lib/format'
+import { loginTimeLabel } from '@/lib/login-alert'
 import type { CustomerType } from '@/lib/customer-type'
 
 type Client = Pick<PrismaClient, 'superAdmin'>
@@ -55,7 +57,7 @@ function detailRows(input: { ref: string } & PayoutDetail, extra: [string, strin
     ['Paid by', input.method],
     ['Paid to', bank],
     ['Account name', input.accountName],
-    ['Date', `${formatDate(when)}, ${formatTime(when)}`],
+    ['Date', loginTimeLabel(when)],
     ['Reference', input.ref],
   ]
 }
@@ -93,6 +95,7 @@ export async function notifySuperAdminsAgentWithdrawal(
       subject: 'Agent withdrawal awaiting payout',
       preheader: `${input.agentName} asked to withdraw ${formatNaira(input.amountNaira)}`,
       tone: 'warning',
+      audience: 'staff',
       statusLabel: 'Needs payout',
       heading: 'An agent asked to withdraw',
       intro: 'This withdrawal needs to be paid manually. Open the admin dashboard to review it.',
@@ -127,7 +130,8 @@ export async function notifyAgentPayoutPaid(
       subject: 'Your withdrawal has been paid',
       preheader: `${amt} has been paid out to you`,
       tone: 'success',
-      statusLabel: 'Paid',
+      audience: 'agent',
+      statusLabel: '',
       heading: input.agentName ? `Your withdrawal is paid, ${input.agentName.split(' ')[0]}` : 'Your withdrawal is paid',
       intro: 'Your commission withdrawal has been paid. Here are the details for your records.',
       amount: amt,
@@ -150,13 +154,14 @@ export async function notifyAgentPayoutDeclined(
       subject: 'Your withdrawal was declined',
       preheader: `Your withdrawal of ${amt} was declined and the money is back in your commission balance`,
       tone: 'danger',
-      statusLabel: 'Declined',
+      audience: 'agent',
+      statusLabel: '',
       heading: 'Your withdrawal was declined',
       intro: 'We could not pay this withdrawal. The money is back in your commission balance.',
-      amount: amt,
-      amountLabel: 'Amount returned to your balance',
-      rows: [['Reason', input.reason], ...detailRows({ ref: input.ref, at: input.at })],
-      note: 'You can ask for a new withdrawal once the reason above is sorted out.',
+      reason: { label: 'Reason', text: input.reason },
+      nextStep: 'You can ask for a new withdrawal once the reason above is sorted out.',
+      action: emailAction('Open Vochus Easy Save', '/login'),
+      rows: detailRows({ ref: input.ref, at: input.at }, [['Returned to your balance', amt]]),
     },
   )
 }
@@ -173,6 +178,7 @@ export async function notifyAgentRedemptionToReview(
       subject: 'Customer redemption under review',
       preheader: `${input.customerName} asked to redeem ${amt}`,
       tone: 'warning',
+      audience: 'agent',
       statusLabel: 'Under review',
       heading: 'A customer asked to redeem',
       intro: `${input.customerName} asked to redeem their savings. It is being reviewed and you will hear again when it is decided.`,
@@ -195,7 +201,8 @@ export async function notifyAgentRedemptionPaid(
       subject: 'Customer redemption paid',
       preheader: `${input.customerName} has been paid ${amt}`,
       tone: 'success',
-      statusLabel: 'Paid',
+      audience: 'agent',
+      statusLabel: '',
       heading: 'Your customer has been paid',
       intro: `${input.customerName}'s redemption has been paid and their plan is closed.`,
       amount: amt,
@@ -217,12 +224,12 @@ export async function notifyAgentRedemptionDeclined(
       subject: 'Customer redemption declined',
       preheader: `${input.customerName}'s redemption of ${amt} was declined`,
       tone: 'danger',
-      statusLabel: 'Declined',
+      audience: 'agent',
+      statusLabel: '',
       heading: 'A redemption was declined',
       intro: `${input.customerName}'s redemption was not paid. Their savings stay on the plan.`,
-      amount: amt,
-      amountLabel: 'Amount requested',
-      rows: [['Customer', input.customerName], ['Reason', input.reason], ...detailRows({ ref: input.ref, planGoal: input.planGoal, at: input.at })],
+      reason: { label: 'Reason', text: input.reason },
+      rows: detailRows({ ref: input.ref, planGoal: input.planGoal, at: input.at }, [['Customer', input.customerName], ['Amount requested', amt]]),
     },
   )
 }
@@ -240,7 +247,7 @@ export async function notifyCustomerRedemptionPaid(
       subject: 'Your redemption has been paid',
       preheader: `${amt} has been paid to you`,
       tone: 'success',
-      statusLabel: 'Paid',
+      statusLabel: '',
       heading: input.firstName ? `Your money is on its way, ${input.firstName}` : 'Your redemption is paid',
       intro: 'Your redemption has been paid and your plan is now closed. Here are the details for your records.',
       amount: amt,
@@ -264,13 +271,13 @@ export async function notifyCustomerRedemptionDeclined(
       subject: 'Your redemption was declined',
       preheader: `Your redemption of ${amt} was declined. Your savings are safe.`,
       tone: 'danger',
-      statusLabel: 'Declined',
+      statusLabel: '',
       heading: input.firstName ? `We could not pay this out, ${input.firstName}` : 'Your redemption was declined',
       intro: 'Your redemption was not paid. Your savings are safe and stay on your plan.',
-      amount: amt,
-      amountLabel: 'Amount requested',
-      rows: [['Reason', input.reason], ...detailRows({ ref: input.ref, planGoal: input.planGoal, at: input.at })],
-      note: 'You can ask again once the reason above is sorted out. Your agent can help.',
+      reason: { label: 'Reason', text: input.reason },
+      nextStep: 'You can ask again once the reason above is sorted out. Your agent can help.',
+      action: emailAction('Open Vochus Easy Save', '/customer/login'),
+      rows: detailRows({ ref: input.ref, planGoal: input.planGoal, at: input.at }, [['Amount requested', amt]]),
     },
   )
 }

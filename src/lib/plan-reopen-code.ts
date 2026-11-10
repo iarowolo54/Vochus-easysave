@@ -4,11 +4,11 @@
 // for it — with a confirmed email only if the text can't be sent.
 // It is stored in PasswordResetOtp (hashed, 5 tries, 10 minutes, one use) under a purpose that names the plan, so a
 // code for one plan can't restart another, and using it retires no other kind of code.
+import { codeEmailMessage } from './email-template'
 import { sendMail } from './mail'
 import { sendSMS } from './kudisms'
 import { issueResetCode, redeemResetCode, cancelResetCode, type ResetPurpose } from './password-reset'
 import { maskTarget } from './unlock-otp'
-import { escapeHtml } from './escape-html'
 import { prisma } from './prisma'
 
 export const REOPEN_CODE_INVALID = 'That code didn’t work or has expired. Check it, or ask for a new one.'
@@ -47,8 +47,14 @@ async function deliver(c: Customer, code: string, byAgent: boolean, channels: Co
       try {
         await sendMail({
           to: c.email,
-          subject: kind === 'rollover' ? 'Your Vochus Easy Save code to roll over your plan' : 'Your Vochus Easy Save code to save again',
-          html: `<p>Hi ${escapeHtml(c.firstName)},</p><p>Your code to ${what} is:</p><p><strong style="font-size:24px;letter-spacing:4px">${code}</strong></p><p>Valid for 10 minutes. ${warn}</p>`,
+          ...codeEmailMessage({
+            subject: kind === 'rollover' ? 'Your Vochus Easy Save code to roll over your plan' : 'Your Vochus Easy Save code to save again',
+            preheader: `Use this code to ${what}.`,
+            heading: `Hi ${c.firstName}, here is your code`,
+            intro: `Your code to ${what} is:`,
+            code,
+            caption: `Valid for 10 minutes. ${warn}`,
+          }),
         })
         return 'email'
       } catch { /* try the next channel */ }

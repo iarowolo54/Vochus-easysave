@@ -11,6 +11,7 @@ import { notifications as N, notify, type NotificationEvent } from '@/lib/notifi
 import { hasOpenRedemption } from '@/lib/redemption-balance'
 import { alertEmailFor, agentAlertEmailFor } from '@/lib/email-alerts'
 import { renderEmail } from '@/lib/email-template'
+import { emailAction } from '@/lib/email-brand'
 import { sendMail } from '@/lib/mail'
 import { displayName, formatDate, formatNaira } from '@/lib/format'
 import { isoWeekKey } from '@/lib/weekly-summary'
@@ -112,13 +113,14 @@ export async function runUncollectedReminders(client: PrismaClient, now: Date = 
       subject: `Your ${r.goal} plan has ended. Your money is waiting`,
       preheader: `${formatNaira(r.balance)} is ready to redeem.`,
       tone: 'warning',
-      statusLabel: 'Ready to redeem',
+      statusLabel: '',
       heading: `Hi ${displayName(r.customer.firstName)}, your money is waiting`,
       intro: `Your ${r.goal} plan ended on ${formatDate(r.maturityDate)} and still has money in it.`,
       amount: formatNaira(r.balance),
       amountLabel: 'In your plan',
-      rows: [['Plan', r.goal], ['Ended on', formatDate(r.maturityDate)]],
-      note: r.cadence === 'ajo' ? 'Open the Vochus Easy Save app to redeem it from Home. Your agent can help too.' : 'Open the Vochus Easy Save app to redeem it, or keep saving into the plan again from Home. Your agent can help too.',
+      nextStep: r.cadence === 'ajo' ? 'Open the Vochus Easy Save app to redeem it from Home. Your agent can help too.' : 'Open the Vochus Easy Save app to redeem it, or keep saving into the plan again from Home. Your agent can help too.',
+      action: emailAction('Open Vochus Easy Save', '/customer/login'),
+      rows: [],
     })
     if (await mail(to, `Your ${r.goal} plan has ended. Your money is waiting`, html)) emails++
   }
@@ -138,12 +140,14 @@ export async function runUncollectedReminders(client: PrismaClient, now: Date = 
         subject: 'Customers who haven’t redeemed their money',
         preheader: `${mine.length} customer${mine.length === 1 ? '' : 's'}, ${formatNaira(total)} waiting.`,
         tone: 'warning',
-        statusLabel: 'Weekly list',
+        audience: 'agent',
+        statusLabel: '',
         heading: `Hi ${displayName(a.name)}, these customers haven’t redeemed yet`,
         intro: 'Their plans have ended but the money is still in them. A quick call can help them redeem or start saving again.',
         amount: formatNaira(total),
         amountLabel: `Waiting, ${mine.length} customer${mine.length === 1 ? '' : 's'}`,
-        rows: shown.map(p => [displayName(p.customerName), `${formatNaira(p.balance)} · ${p.goal} · ended ${formatDate(p.maturityDate)}`]),
+        list: shown.map(p => ({ primary: displayName(p.customerName), secondary: `${p.goal} · ended ${formatDate(p.maturityDate)}`, value: formatNaira(p.balance) })),
+        rows: [],
         note: more > 0 ? `And ${more} more. See them all under Redemptions in the app.` : 'See them under Redemptions in the app.',
       })
       if (await mail(to, 'Customers who haven’t redeemed their money', html)) emails++

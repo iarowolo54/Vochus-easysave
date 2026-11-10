@@ -1,3 +1,5 @@
+import { emailAction } from '@/lib/email-brand'
+import { emailMessage } from '@/lib/email-template'
 import type { PrismaClient } from '@prisma/client'
 import { pauseMandate } from '@/lib/auto-debit'
 import { sendMail } from '@/lib/mail'
@@ -32,8 +34,17 @@ async function notifyPaused(client: Client, mandateId: string): Promise<void> {
       if (process.env.NODE_ENV !== 'production') return
       await sendMail({
         to: c.email,
-        subject: 'Your auto-debit is paused',
-        html: `<p>Hi ${escapeHtml(c.firstName)},</p><p>${text}</p>`,
+        ...emailMessage({
+          subject: 'Your auto-debit is paused',
+          preheader: 'Recent card payments did not go through.',
+          tone: 'warning',
+          statusLabel: '',
+          heading: `Hi ${c.firstName}, your auto-debit is paused`,
+          intro: 'Recent card payments did not go through, so we paused it.',
+          nextStep: 'To turn it back on, open your savings plan in the app and set up auto-debit again.',
+          action: emailAction('Open Vochus Easy Save', '/customer/login'),
+          rows: [],
+        }),
       })
     } else if (c.phone) {
       // sms: online customer with no email at all (email otherwise)
@@ -42,10 +53,6 @@ async function notifyPaused(client: Client, mandateId: string): Promise<void> {
   } catch {
     // best-effort: a failed notification must never affect the pause result
   }
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/[&<>"']/g, (ch) => `&#${ch.charCodeAt(0)};`)
 }
 
 /**

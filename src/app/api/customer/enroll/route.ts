@@ -1,3 +1,6 @@
+import { formatNaira } from '@/lib/format'
+import { emailAction } from '@/lib/email-brand'
+import { emailMessage } from '@/lib/email-template'
 import { NextRequest, NextResponse } from 'next/server'
 import bcrypt from 'bcryptjs'
 import { prisma } from '@/lib/prisma'
@@ -247,29 +250,20 @@ export async function POST(req: NextRequest) {
   if (customer.email) {
     sendMail({
       to: customer.email,
-      subject: 'Welcome to Vochus Easy Save!',
-      html: `
-        <div style="font-family:sans-serif;max-width:520px;margin:0 auto;padding:24px">
-          <h2 style="color:#1a5c35">Welcome to Vochus Easy Save! 🎉</h2>
-          <p>Hi ${customer.firstName},</p>
-          <p>Your account has been successfully created. You can now start your savings journey with us!</p>
-          <div style="background:#f0f8f5;border-left:4px solid #1a5c35;padding:16px;margin:20px 0;border-radius:4px">
-            <div style="margin-bottom:12px">
-              <strong>Your Details:</strong>
-            </div>
-            <div style="font-size:14px;color:#333;line-height:1.8">
-              <div><strong>Customer ID:</strong> ${customer.customerId}</div>
-              <div><strong>Agent:</strong> ${agent.name}</div>
-              ${mainFlex ? `<div><strong>Plan:</strong> Flexible, until ${shortDate(mainFlex.maturityDate)}</div>` : `<div><strong>Daily Savings Target:</strong> ₦${customer.savingsPlans[0]?.dailyAmount?.toLocaleString() || 'N/A'}</div>`}
-            </div>
-          </div>
-          <div style="text-align:center;margin:28px 0">
-            <a href="${process.env.NEXTAUTH_URL ?? 'https://easysave.vochusglobalservices.co.uk'}/customer/login" style="background:#1a5c35;color:#fff;padding:14px 32px;border-radius:8px;text-decoration:none;font-weight:700;font-size:15px">Go to Dashboard →</a>
-          </div>
-          <p style="color:#888;font-size:12px;margin-top:24px">If you have any questions, please reach out to your agent or contact our support team.</p>
-          <p style="color:#888;font-size:12px">Best regards,<br><strong>Vochus Easy Save Team</strong></p>
-        </div>
-      `,
+      ...emailMessage({
+        subject: 'Welcome to Vochus Easy Save!',
+        preheader: 'Your savings account is ready.',
+        tone: 'success',
+        statusLabel: '',
+        heading: `Welcome to Vochus Easy Save, ${customer.firstName}`,
+        intro: 'Your account has been created. You can now start saving.',
+        action: emailAction('Open Vochus Easy Save', '/customer/login'),
+        rows: [
+          ['Customer ID', customer.customerId],
+          ['Agent', agent.name],
+          mainFlex ? ['Plan', `Flexible, until ${shortDate(mainFlex.maturityDate)}`] : ['Saving', `${formatNaira(rawAmt)} ${mainCadence}`],
+        ],
+      }),
     }).catch(() => {})
   }
 
