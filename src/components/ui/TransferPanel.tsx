@@ -43,6 +43,9 @@ export default function TransferPanel({ details, statusUrl, cancelUrl, reportUrl
   const [checking, setChecking] = useState(false)
   const [cancelling, setCancelling] = useState(false)
   const [cancelFailed, setCancelFailed] = useState(false)
+  // Money sent after Cancel is held for staff, so Cancel asks first.
+  const [confirmingCancel, setConfirmingCancel] = useState(false)
+  const keepWaitingRef = useRef<HTMLButtonElement>(null)
   // 'ask' = "did you include the kobo?" after tapping "I've sent it"; 'left-out' = they say they didn't.
   const [sentCheck, setSentCheck] = useState<'idle' | 'ask' | 'left-out'>('idle')
   const alive = useRef(true)
@@ -79,6 +82,11 @@ export default function TransferPanel({ details, statusUrl, cancelUrl, reportUrl
   useEffect(() => {
     if (sentCheck !== 'idle') askRef.current?.scrollIntoView({ block: 'center', behavior: 'smooth' })
   }, [sentCheck])
+
+  // Lands on the safe choice, and focusing it brings the warning into view on a phone.
+  useEffect(() => {
+    if (confirmingCancel) keepWaitingRef.current?.focus()
+  }, [confirmingCancel])
 
   useEffect(() => {
     if (status !== 'pending') return
@@ -259,9 +267,18 @@ export default function TransferPanel({ details, statusUrl, cancelUrl, reportUrl
         </div>
       )}
       {cancelFailed && <p className="ui-note ui-note--center" role="alert">We couldn’t cancel just now. Check your connection and try again.</p>}
-      <button type="button" className="ui-btn ui-btn--secondary ui-btn--block ui-gap-top" onClick={cancel} disabled={cancelling} aria-busy={cancelling}>
-        {cancelling ? 'Cancelling…' : 'Cancel'}
-      </button>
+      {confirmingCancel ? (
+        <div className="tp-callout tp-callout--pre" role="group" aria-label="Cancel this transfer?">
+          <p className="tp-callout-title">Have you sent the money, or are you about to?</p>
+          <p className="tp-callout-text">If so, don’t cancel. We’ll add it to {destination} when it arrives. Only cancel if you won’t be sending it.</p>
+          <button ref={keepWaitingRef} type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => setConfirmingCancel(false)} disabled={cancelling}>Keep waiting</button>
+          <button type="button" className="ui-btn ui-btn--secondary ui-btn--block ui-gap-top" onClick={cancel} disabled={cancelling} aria-busy={cancelling}>
+            {cancelling ? 'Cancelling…' : 'Cancel this transfer'}
+          </button>
+        </div>
+      ) : (
+        <button type="button" className="ui-btn ui-btn--secondary ui-btn--block ui-gap-top" onClick={() => setConfirmingCancel(true)}>Cancel</button>
+      )}
     </>
   )
 }
