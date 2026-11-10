@@ -32,6 +32,8 @@ export type EmailContent = {
   action?: { label: string; url: string }
   /** Two-line rows: who or what on the left, the figure on the right. */
   list?: { primary: string; secondary?: string; value: string }[]
+  /** A short bulleted list after the details, such as tips for next time. */
+  tips?: { title: string; items: string[] }
   /** Nothing to verify, like a weekly summary: the footer just offers help. */
   routine?: boolean
   /** Sets the footer's help line. */
@@ -184,7 +186,7 @@ export function renderEmail(c: EmailContent): string {
             const b = i ? `border-top:1px solid ${LINE};` : ''
             return `<tr><td class="line" style="${b}padding:14px 16px 14px 0;vertical-align:top">` +
               `<div class="ink" style="font-family:${FONT};font-size:15px;line-height:22px;font-weight:600;color:${INK}">${e(item.primary)}</div>` +
-              (item.secondary ? `<div class="muted" style="font-family:${FONT};font-size:14px;line-height:20px;color:${MUTED}">${e(item.secondary)}</div>` : '') +
+              (item.secondary ? `<div class="muted" style="font-family:${FONT};font-size:14px;line-height:20px;color:${MUTED};word-break:break-word;white-space:pre-line">${e(item.secondary)}</div>` : '') +
               `</td><td class="ink line" align="right" style="${b}padding:14px 0;vertical-align:top;font-family:${FONT};font-size:15px;line-height:22px;font-weight:600;color:${INK};white-space:nowrap">${e(item.value)}</td></tr>`
           }).join(''),
         ),
@@ -215,6 +217,19 @@ export function renderEmail(c: EmailContent): string {
     ? section(`<div class="body" style="font-family:${FONT};font-size:14px;line-height:22px;color:${BODY}">${e(c.note)}</div>`, 22)
     : ''
 
+  const tips = c.tips?.items.length
+    ? section(
+        `<div class="ink" style="font-family:${FONT};font-size:16px;line-height:24px;font-weight:600;color:${INK}">${e(c.tips.title)}</div>` +
+          table(
+            c.tips.items.map((item) =>
+              `<tr><td class="muted" style="padding:8px 10px 0 0;vertical-align:top;width:10px;font-family:${FONT};font-size:15px;line-height:24px;color:${MUTED}">&bull;</td>` +
+              `<td class="body" style="padding-top:8px;vertical-align:top;font-family:${FONT};font-size:15px;line-height:24px;color:${BODY}">${e(item)}</td></tr>`,
+            ).join(''),
+          ),
+        26,
+      )
+    : ''
+
   return (
     `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">` +
     `<meta name="color-scheme" content="light dark"><meta name="supported-color-schemes" content="light dark">` +
@@ -231,7 +246,7 @@ export function renderEmail(c: EmailContent): string {
           status + `<h1 class="h1 ink" style="margin:0;font-family:${FONT};font-size:30px;line-height:37px;font-weight:700;letter-spacing:-0.3px;color:${INK}">${e(c.heading)}</h1>` + intro,
           36,
         ) +
-        plainAmount + banner + code + reason + nextStep + button + list + details + note,
+        plainAmount + banner + code + reason + nextStep + button + list + details + tips + note,
     ) +
     `</td></tr>` +
     `<tr><td class="muted foot" align="center" style="padding:22px 24px 0;font-family:${FONT};font-size:13px;line-height:20px;color:${FOOT}">${footerHelp(c)}Vochus Easy Save &middot; Zipwaves Technologies Limited</td></tr>` +

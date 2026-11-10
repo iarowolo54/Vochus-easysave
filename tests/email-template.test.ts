@@ -46,7 +46,7 @@ test('a note that gives the support address is not repeated in the footer', () =
 
 test('the new blocks escape what they are given', () => {
   const bad = '<script>x</script>'
-  const html = renderEmail({ ...base, intro: bad, reason: { label: bad, text: bad }, nextStep: bad, code: { value: bad, caption: bad }, action: { label: bad, url: `"${bad}` }, list: [{ primary: bad, secondary: bad, value: bad }] })
+  const html = renderEmail({ ...base, intro: bad, reason: { label: bad, text: bad }, nextStep: bad, code: { value: bad, caption: bad }, action: { label: bad, url: `"${bad}` }, list: [{ primary: bad, secondary: bad, value: bad }], tips: { title: bad, items: [bad] } })
   assert.ok(!html.includes('<script>'))
 })
 
