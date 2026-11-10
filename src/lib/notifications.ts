@@ -22,6 +22,7 @@ export type NotificationKind =
   | 'plan_uncollected' | 'uncollected_this_week'
   | 'ajo_joined' | 'ajo_started' | 'ajo_paid' | 'ajo_paid_agent' | 'ajo_round_out' | 'ajo_due' | 'ajo_late' | 'ajo_replaced'
   | 'new_phone'
+  | 'customer_request_approved' | 'customer_request_denied' | 'customer_request_needs_funds'
 
 export interface NotificationEvent {
   recipient: Recipient
@@ -44,6 +45,30 @@ const agent = (id: string): Recipient => ({ type: 'agent', id })
 type CollectionFacts = { id: string; customerId: string; agentId: string; customerName: string; amount: number }
 
 export const notifications = {
+  /** The super admin approved a cash saver the agent submitted. */
+  customerRequestApproved(f: { id: string; agentId: string; customerName: string; customerCode: string }): NotificationEvent[] {
+    return [{
+      recipient: agent(f.agentId), kind: 'customer_request_approved', title: `${name(f.customerName)} was approved`,
+      body: `Customer ID ${f.customerCode}. You can record their savings now.`, href: '/dashboard/customers/requests', dedupeKey: `customer-request-approved:${f.id}`,
+    }]
+  },
+
+  /** Denied. The reason stays on the request; a request can be denied again after a resend, hence the time in the key. */
+  customerRequestDenied(f: { id: string; agentId: string; customerName: string; decidedAt: Date }): NotificationEvent[] {
+    return [{
+      recipient: agent(f.agentId), kind: 'customer_request_denied', title: `${name(f.customerName)} was denied`,
+      body: 'See what to work on, then send it again.', href: '/dashboard/customers/requests', dedupeKey: `customer-request-denied:${f.id}:${f.decidedAt.getTime()}`,
+    }]
+  },
+
+  /** Approval stopped because the wallet can't cover the fee. Nothing is recorded to rebuild this from, so the sweep can't refill it. */
+  customerRequestNeedsFunds(f: { id: string; agentId: string; customerName: string; fee: number; dayKey: string }): NotificationEvent[] {
+    return [{
+      recipient: agent(f.agentId), kind: 'customer_request_needs_funds', title: `Top up to get ${name(f.customerName)} approved`,
+      body: `Your wallet needs ${naira(f.fee)} for the registration fee.`, href: '/dashboard/wallet', dedupeKey: `customer-request-funds:${f.id}:${f.dayKey}`,
+    }]
+  },
+
   /** Money reached a plan. The agent also hears about it when one of their online customers paid by bank transfer. */
   savingsReceived(f: { ref: string; customerId: string; agentId: string; customerName: string; planGoal: string; amount: number; fee?: number; onlineTransfer: boolean }): NotificationEvent[] {
     const fee = f.fee && f.fee > 0 ? f.fee : 0

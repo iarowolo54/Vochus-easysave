@@ -150,6 +150,16 @@ export default function CustomersPage() {
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<Customer | null>(null)
   const [photoFor, setPhotoFor] = useState<Customer | null>(null)
+  const [requestCounts, setRequestCounts] = useState<{ total: number; waiting: number; denied: number } | null>(null)
+
+  useEffect(() => {
+    fetch('/api/customers/requests')
+      .then(r => (r.ok ? r.json() : null))
+      .then((d: { requests: { status: string }[] } | null) => {
+        if (d) setRequestCounts({ total: d.requests.length, waiting: d.requests.filter(x => x.status === 'Pending').length, denied: d.requests.filter(x => x.status === 'Denied').length })
+      })
+      .catch(() => {})
+  }, [])
   const [sheetOpen, setSheetOpen] = useState(false)
   const [custTxns, setCustTxns] = useState<Txn[]>([])
   const [txnsLoading, setTxnsLoading] = useState(false)
@@ -345,6 +355,18 @@ export default function CustomersPage() {
           <Link href="/dashboard/enrol" className="ui-btn ui-btn--primary"><Icons.add size={18} aria-hidden="true" /> Enrol customer</Link>
         </div>
       </section>
+
+      {requestCounts && requestCounts.total > 0 && (
+        <Link href="/dashboard/customers/requests" className="ui-card ag-creq-link">
+          <span>
+            <span className="ui-row-title ui-block">Customer requests</span>
+            <span className="ui-row-sub ui-block">
+              {[requestCounts.waiting > 0 && `${requestCounts.waiting} waiting`, requestCounts.denied > 0 && `${requestCounts.denied} to fix`].filter(Boolean).join(' · ') || 'All decided'}
+            </span>
+          </span>
+          <Icons.next size={18} aria-hidden="true" />
+        </Link>
+      )}
 
       {inviteError && (
         <div className="ui-banner ui-banner--danger" role="alert"><Icons.error size={18} aria-hidden="true" /><div>{inviteError}</div></div>

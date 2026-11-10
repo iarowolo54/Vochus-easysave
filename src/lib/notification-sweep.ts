@@ -21,6 +21,7 @@ export interface SweepRows {
   collections: { id: string; ref: string; status: string; netPayout: number; requestedAt: Date; agentApprovedAt: Date | null; decidedAt: Date | null; decidedBy: string | null; savingsPlan: { customer: Cust } }[]
   withdrawals: { id: string; agentId: string; amount: number; status: string; adminNote: string | null; decidedAt: Date | null }[]
   topUps: { ref: string; agentId: string; amount: number; createdAt: Date }[]
+  customerRequests?: { id: string; agentId: string; status: string; firstName: string; lastName: string; customerCode: string | null; decidedAt: Date | null }[]
 }
 
 const nameOf = (c: Cust) => `${c.firstName} ${c.lastName}`
@@ -76,6 +77,13 @@ export function backfillEvents(rows: SweepRows, opts: { since: Date; agentCodes?
   for (const t of rows.topUps) {
     if (inWindow(t.createdAt)) out.push(...at(N.walletFunded({ agentId: t.agentId, amount: t.amount, ref: t.ref }), t.createdAt))
   }
+
+  for (const r of rows.customerRequests ?? []) {
+    if (!inWindow(r.decidedAt)) continue
+    const facts = { id: r.id, agentId: r.agentId, customerName: `${r.firstName} ${r.lastName}` }
+    if (r.status === 'Approved' && r.customerCode) out.push(...at(N.customerRequestApproved({ ...facts, customerCode: r.customerCode }), r.decidedAt))
+    if (r.status === 'Denied') out.push(...at(N.customerRequestDenied({ ...facts, decidedAt: r.decidedAt }), r.decidedAt))
+  }
   return out
 }
 
@@ -115,7 +123,7 @@ async function writeMissing(client: PrismaClient, events: NotificationEvent[]): 
 export async function runNotificationSweep(client: PrismaClient, now: Date = new Date()): Promise<{ backfilled: number; scheduled: number }> {
   const since = new Date(now.getTime() - BACKFILL_HOURS * 3_600_000)
   const cust = { select: { id: true, agentId: true, firstName: true, lastName: true } } as const
-  const [savings, collections, withdrawals, topUps, agents] = await Promise.all([
+  const [savings, collections, withdrawals, topUps, agents, customerRequests] = await Promise.all([
     client.transaction.findMany({
       where: { type: 'saving', status: 'Done', createdAt: { gte: since }, planId: { not: null } },
       select: { ref: true, amount: true, feeTaken: true, method: true, note: true, createdAt: true, plan: { select: { goal: true, source: true, customer: cust } } },
@@ -127,10 +135,11 @@ export async function runNotificationSweep(client: PrismaClient, now: Date = new
     client.agentWithdrawal.findMany({ where: { decidedAt: { gte: since } }, select: { id: true, agentId: true, amount: true, status: true, adminNote: true, decidedAt: true } }),
     client.transaction.findMany({ where: { type: 'wallet_funding', status: 'Done', createdAt: { gte: since } }, select: { ref: true, agentId: true, amount: true, createdAt: true } }),
     client.agent.findMany({ select: { id: true, agentId: true } }),
+    client.customerRequest.findMany({ where: { decidedAt: { gte: since } }, select: { id: true, agentId: true, status: true, firstName: true, lastName: true, customerCode: true, decidedAt: true } }),
   ])
   const rows: SweepRows = {
     savings: savings.flatMap(s => (s.plan ? [{ ...s, plan: s.plan }] : [])),
-    collections, withdrawals, topUps,
+    collections, withdrawals, topUps, customerRequests,
   }
   let backfilled = await writeMissing(client, backfillEvents(rows, { since, agentCodes: new Map(agents.map(a => [a.id, a.agentId])) }))
 

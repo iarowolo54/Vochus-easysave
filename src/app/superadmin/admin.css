@@ -1641,3 +1641,13 @@
   .admin-root .um-log li { flex-direction: column; gap: 4px; }
   .admin-root .um-log-meta { text-align: left; }
 }
+
+/* Customer requests: the photo beside everything the super admin checks */
+.admin-root .cr-review { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); gap: 20px; align-items: start; }
+.admin-root .cr-photo img { display: block; width: 100%; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 12px; background: var(--bg2, #f2f3f5); }
+.admin-root .cr-facts { display: grid; gap: 14px; min-width: 0; }
+.admin-root .cr-facts .dlg-ledger dd { overflow-wrap: anywhere; white-space: normal; }
+@media (max-width: 640px) {
+  .admin-root .cr-review { grid-template-columns: minmax(0, 1fr); }
+  .admin-root .cr-photo { max-width: 240px; margin: 0 auto; width: 100%; }
+}

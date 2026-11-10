@@ -15,6 +15,7 @@ interface Stats {
   activeLoans: number
   activeLoansPortfolio: number
   pendingLoans: number
+  pendingCustomerRequests?: number
   pendingRedemptions: number
   deposits?: Record<'day' | 'week' | 'month', PeriodTotals> & { series: SeriesPoint[] }
 }
@@ -195,6 +196,7 @@ export default function SuperAdminDashboard() {
   const showAgents = !denied.agents && has('agents')
 
   const attention = [
+    has('customer-requests') && (stats.pendingCustomerRequests ?? 0) > 0 && { href: '/superadmin/customer-requests', icon: 'customers' as const, text: `${stats.pendingCustomerRequests} customer request${stats.pendingCustomerRequests === 1 ? '' : 's'} waiting for a decision` },
     has('loans') && stats.pendingLoans > 0 && { href: '/superadmin/loan-requests', icon: 'loan' as const, text: `${stats.pendingLoans} loan request${stats.pendingLoans === 1 ? '' : 's'} waiting for a decision` },
     has('customers') && stats.pendingRedemptions > 0 && { href: '/superadmin/early-redemption', icon: 'redeem' as const, text: `${stats.pendingRedemptions} redemption${stats.pendingRedemptions === 1 ? '' : 's'} waiting to be processed` },
   ].filter(Boolean) as { href: string; icon: IconName; text: string }[]

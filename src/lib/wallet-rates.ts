@@ -62,3 +62,8 @@ export async function planHasCashDeposit(prisma: any, planId: string): Promise<b
   })
   return !!anyCash
 }
+
+/** One-off fee for registering a cash saver; taken from the agent's wallet when the super admin approves. */
+export const REGISTRATION_FEE = 500
+/** The part of the registration fee that pays for the savings card; the rest is revenue. */
+export const REGISTRATION_CARD_COST = 300

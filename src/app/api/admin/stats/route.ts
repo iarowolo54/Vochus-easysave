@@ -43,6 +43,7 @@ export async function GET() {
     activeLoansPortfolio,
     pendingLoans,
     pendingRedemptions,
+    pendingCustomerRequests: await prisma.customerRequest.count({ where: { status: 'Pending' } }),
     ...(canSeeDeposits && { deposits: summariseDeposits(depositRows) }),
   })
 }

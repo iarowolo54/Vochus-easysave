@@ -48,6 +48,7 @@ model Agent {
   notificationsSeenAt DateTime?
   createdAt           DateTime         @default(now())
   customers           Customer[]
+  customerRequests    CustomerRequest[]
   transactions        Transaction[]
   loans               Loan[]
   subAgents           SubAgent[]
@@ -120,6 +121,48 @@ model Customer {
   redeemedGiftCards   GiftCard[]            @relation("RedeemedBy")
   agentReward         AgentReward?
   ajoMemberships      AjoMember[]
+}
+
+/// A cash saver an agent wants to register. It only becomes a Customer when the super admin approves it.
+model CustomerRequest {
+  id              String    @id @default(cuid())
+  agentId         String
+  agent           Agent     @relation(fields: [agentId], references: [id])
+  status          String    @default("Pending") // Pending | Approved | Denied
+  firstName       String
+  lastName        String
+  phone           String
+  email           String?
+  dob             DateTime?
+  address         String
+  language        String    @default("English")
+  gender          String
+  state           String
+  lga             String
+  bvn             String?
+  nokName         String    @default("")
+  nokRelation     String    @default("")
+  nokPhone        String    @default("")
+  /// Base64 data URL; never select it into a list. Cleared on approval, when it moves to the Customer.
+  photoUrl        String?
+  /// JSON array of RequestPlan (src/lib/customer-request.ts).
+  plans           String
+  nfcCard         String?
+  registrationFee Float
+  /// Set only while Pending, so two waiting requests can't hold the same phone or email, even in a race.
+  pendingPhone    String?   @unique
+  pendingEmail    String?   @unique
+  denyReason      String?
+  denyFix         String?
+  decidedAt       DateTime?
+  decidedBy       String?
+  decidedById     String?
+  customerCode    String?   @unique
+  submittedAt     DateTime  @default(now())
+  createdAt       DateTime  @default(now())
+
+  @@index([status, submittedAt])
+  @@index([agentId, status])
 }
 
 model SavingsPlan {

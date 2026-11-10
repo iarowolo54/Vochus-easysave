@@ -25,6 +25,7 @@ export const SCREENS = [
   { key: 'commission', label: 'Commission', group: 'Agents', actions: VM, manageNote: 'Set commission rates' },
   { key: 'rewards', label: 'Rewards', group: 'Agents', actions: VM, manageNote: 'Create, edit and delete rewards' },
   { key: 'customers', label: 'Customers', group: 'Customers', actions: VM, manageNote: 'Change customer status' },
+  { key: 'customer-requests', label: 'Customer requests', group: 'Customers', actions: VM, manageNote: 'Approve or deny new cash savers; approving takes the registration fee from the agent’s wallet' },
   { key: 'ajo', label: 'Ajo groups', group: 'Customers', actions: VM, handlesMoney: true, manageNote: 'Replace a member' },
   { key: 'savings', label: 'Savings monitor', group: 'Customers', actions: VM, manageNote: 'Savings interest and interest rates' },
   { key: 'redemptions', label: 'Redemptions', group: 'Customers', actions: VM, handlesMoney: true, manageNote: 'Approve, decline and finalize redemptions' },

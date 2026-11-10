@@ -16,7 +16,7 @@ import { useToast } from './admin-ui'
 
 // `screen` gates an item for staff on that screen's View (cosmetic; the API guards enforce). `staffAccess` is the
 // Staff & access entry: the owner and any department lead. No screen = always shown.
-type NavItem = { label: string; icon: IconName; href: string; badge?: 'pendingLoans'; screen?: ScreenKey; staffAccess?: boolean }
+type NavItem = { label: string; icon: IconName; href: string; badge?: 'pendingLoans' | 'pendingCustomerRequests'; screen?: ScreenKey; staffAccess?: boolean }
 
 const navGroups: { label: string; items: NavItem[] }[] = [
   {
@@ -40,6 +40,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
     label: 'Customers',
     items: [
       { label: 'All customers', screen: 'customers', icon: 'plan', href: '/superadmin/customers' },
+      { label: 'Customer requests', screen: 'customer-requests', icon: 'customers', href: '/superadmin/customer-requests', badge: 'pendingCustomerRequests' },
       { label: 'Savings monitor', screen: 'savings', icon: 'monitor', href: '/superadmin/savings-monitor' },
       { label: 'Ajo groups', screen: 'ajo', icon: 'staff', href: '/superadmin/ajo' },
       { label: 'Redemptions', screen: 'redemptions', icon: 'redeem', href: '/superadmin/early-redemption' },
@@ -107,6 +108,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
   const pathname = usePathname()
   const router = useRouter()
   const [pendingLoans, setPendingLoans] = useState(0)
+  const [pendingCustomerRequests, setPendingCustomerRequests] = useState(0)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -125,7 +127,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
     if (status !== 'authenticated') return
     fetch('/api/admin/stats')
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) setPendingLoans(d.pendingLoans ?? 0) })
+      .then(d => { if (d) { setPendingLoans(d.pendingLoans ?? 0); setPendingCustomerRequests(d.pendingCustomerRequests ?? 0) } })
       .catch(() => {})
   }, [status, pathname])
 
@@ -201,7 +203,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
               {group.label && <div className="a-nav-grp">{group.label}</div>}
               {group.items.map(item => {
                 const Icon = Icons[item.icon]
-                const badge = item.badge === 'pendingLoans' ? pendingLoans : 0
+                const badge = item.badge === 'pendingLoans' ? pendingLoans : item.badge === 'pendingCustomerRequests' ? pendingCustomerRequests : 0
                 const active = current === item.href
                 return (
                   <Link

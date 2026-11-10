@@ -24,6 +24,7 @@ const WRITES: { what: string; re: RegExp }[] = [
   { what: 'ajo member joins', re: /\bajoMember\.create\(/ },
   { what: 'ajo contribution', re: /\bajoContribution\.create\(/ },
   { what: 'ajo payout', re: /\bajoPayout\.create\(/ },
+  { what: 'customer request', re: /\bcustomerRequest\.(update|updateMany|create|upsert)\(/ },
   { what: 'collection request (helper)', re: /(?<!function )\bcreateRedemptionWithUniqueCode\(/ },
 ]
 

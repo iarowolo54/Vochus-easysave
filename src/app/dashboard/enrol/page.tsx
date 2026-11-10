@@ -4,7 +4,7 @@ import { feeSentence } from '@/lib/savings-fee'
 import { usePlanFees } from '@/lib/use-plan-fees'
 import { useFlexibleTerms } from '@/lib/use-flexible-terms'
 import { earliestEnd } from '@/lib/flexible-savings'
-import { useState, useRef, useEffect, useCallback, type ReactNode } from 'react'
+import { useState, useRef, useEffect, useCallback, type ChangeEvent, type ReactNode } from 'react'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
@@ -17,6 +17,7 @@ import DatePicker from '@/components/ui/DatePicker'
 import EndDateField, { endDateDays } from '@/components/ui/EndDateField'
 import { FieldError, FormError } from '@/components/ui/FormErrors'
 import { Icons } from '@/components/ui/icons'
+import { REGISTRATION_FEE } from '@/lib/wallet-rates'
 
 type Cadence = 'daily' | 'weekly' | 'monthly' | 'flexible'
 type FixedCadence = Exclude<Cadence, 'flexible'>
@@ -34,7 +35,7 @@ interface FormData {
   dailyAmount: string; periodDays: string; goal: string; startDate: string; notes: string; cadence: Cadence; endDate: string
   plans: PlanDraft[]
   agreed: boolean
-  nfcCard: string; registrationFee: string; feeMethod: string
+  nfcCard: string
 }
 
 const empty: FormData = {
@@ -44,10 +45,10 @@ const empty: FormData = {
   dailyAmount: '', periodDays: '', goal: '', startDate: '', notes: '', cadence: 'daily', endDate: '',
   plans: [],
   agreed: false,
-  nfcCard: '', registrationFee: '500', feeMethod: 'cash',
+  nfcCard: '',
 }
 
-const STEPS = ['Personal details', 'Verify phone', 'Photo', 'Savings plan', 'Card and fee', 'Review']
+const STEPS = ['Personal details', 'Photo', 'Savings plan', 'Card and fee', 'Review']
 const GOALS = ['School Fees', 'Business Capital', 'House Rent', 'Medical Expenses', 'Wedding / Event', 'Other']
 const PERIODS: Record<FixedCadence, [string, string][]> = {
   daily: [['31', '31 days'], ['62', '62 days'], ['93', '93 days'], ['186', '186 days'], ['365', '365 days']],
@@ -80,6 +81,15 @@ function maturity(p: Pick<PlanDraft, 'startDate' | 'periodDays' | 'cadence' | 'e
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })
 }
 
+/** The longest side of an uploaded photo; a phone's full-size picture would bloat the record for no gain. */
+const MAX_PHOTO_SIDE = 1000
+
+/** What the agent typed for a plan, from the daily equivalent the request stores. */
+function enteredAmount(daily: number, cadence: Cadence) {
+  const factor = cadence === 'weekly' ? 7 : cadence === 'monthly' ? 30 : 1
+  return cadence === 'flexible' ? '' : String(Math.round(daily * factor * 100) / 100)
+}
+
 export default function EnrolPage() {
   const fees = usePlanFees()
   const terms = useFlexibleTerms()
@@ -92,7 +102,11 @@ export default function EnrolPage() {
   const [customEnd, setCustomEnd] = useState('')
   const [loading, setLoading] = useState(false)
   const submittingRef = useRef(false)
-  const [created, setCreated] = useState<{ customerId: string; name: string } | null>(null)
+  const [sent, setSent] = useState<{ name: string } | null>(null)
+  /** Fixing a denied request: its id and what the office said. */
+  const [fixing, setFixing] = useState<{ id: string; reason: string; fix: string } | null>(null)
+  const [fixLoad, setFixLoad] = useState<'idle' | 'loading' | 'error'>('idle')
+  const fileRef = useRef<HTMLInputElement>(null)
   const [error, setError] = useState('')
   const [showMissing, setShowMissing] = useState(false)
   const [photoDataUrl, setPhotoDataUrl] = useState<string | null>(null)
@@ -172,37 +186,33 @@ export default function EnrolPage() {
 
   useEffect(() => () => { qrStreamRef.current?.getTracks().forEach(t => t.stop()) }, [])
 
-  // Phone verification state
-  const [otpSent, setOtpSent] = useState(false)
-  const [otpCode, setOtpCode] = useState('')
-  const [phoneVerified, setPhoneVerified] = useState(false)
-  const [otpLoading, setOtpLoading] = useState(false)
-  const [otpError, setOtpError] = useState('')
-  const [otpCooldown, setOtpCooldown] = useState(0)
-
+  // Fixing a denied request: fill the form with what was sent. Read here, not with useSearchParams, so the page needs no Suspense.
   useEffect(() => {
-    if (otpCooldown <= 0) return
-    const t = setTimeout(() => setOtpCooldown(c => c - 1), 1000)
-    return () => clearTimeout(t)
-  }, [otpCooldown])
-
-  useEffect(() => {
-    if (step !== 2 || otpSent || otpLoading || phoneVerified) return
-    setOtpLoading(true)
-    fetch('/api/otp/send', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone: form.phone.replace(/\s/g, '') }),
-    })
-      .then(r => r.json())
-      .then(data => {
-        if (data.ok) { setOtpSent(true); setOtpCooldown(60) }
-        else setOtpError(data.error ?? 'The code couldn’t be sent. Try again.')
+    const id = new URLSearchParams(window.location.search).get('request')
+    if (!id) return
+    setFixLoad('loading')
+    fetch(`/api/customers/requests/${encodeURIComponent(id)}`)
+      .then(r => { if (!r.ok) throw new Error(); return r.json() })
+      .then(r => {
+        if (r.status !== 'Denied') throw new Error()
+        const todayIso = isoDate(today())
+        setForm(f => ({
+          ...f,
+          firstName: r.firstName, lastName: r.lastName, gender: r.gender, phone: r.phone, email: r.email ?? '',
+          dob: r.dob ? isoDate(new Date(r.dob)) : '', address: r.address, state: r.state, lga: r.lga, language: r.language, bvn: r.bvn ?? '',
+          nokName: r.nokName, nokRelation: r.nokRelation || 'Spouse', nokPhone: r.nokPhone, nfcCard: r.nfcCard ?? '',
+          plans: (r.plans as { dailyAmount: number; periodDays: number; goal: string; startDate: string; notes: string | null; cadence: Cadence; endDate: string | null }[]).map(p => ({
+            dailyAmount: enteredAmount(p.dailyAmount, p.cadence),
+            periodDays: p.cadence === 'flexible' ? '' : String(p.periodDays),
+            goal: p.goal, startDate: p.startDate < todayIso ? todayIso : p.startDate, notes: p.notes ?? '', cadence: p.cadence, endDate: p.endDate ?? '',
+          })),
+        }))
+        setPhotoDataUrl(r.photoUrl ?? null)
+        setFixing({ id: r.id, reason: r.denyReason ?? '', fix: r.denyFix ?? '' })
+        setFixLoad('idle')
       })
-      .catch(() => setOtpError('No connection. Check your internet and resend the code.'))
-      .finally(() => setOtpLoading(false))
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [step])
+      .catch(() => setFixLoad('error'))
+  }, [])
 
   useEffect(() => {
     if (cameraActive && videoRef.current && streamRef.current) {
@@ -227,11 +237,10 @@ export default function EnrolPage() {
       streamRef.current = stream
       setCameraActive(true)
     } catch (e) {
-      // Only a photo taken now is accepted, so explain how to let the camera in rather than offering an upload.
       const denied = (e as { name?: string })?.name === 'NotAllowedError'
       setCameraError(denied
-        ? 'Camera access is blocked. Allow the camera for this site in your browser or phone settings, then try again.'
-        : 'We couldn’t open the camera. Close other apps using it, then try again.')
+        ? 'Camera access is blocked. Upload a photo instead, or allow the camera in your phone settings.'
+        : 'We couldn’t open the camera. Upload a photo instead, or close other apps using it.')
     }
   }
 
@@ -251,49 +260,28 @@ export default function EnrolPage() {
     startCamera()
   }
 
-  function onPhoneChange(val: string) {
-    set('phone', digitsOnly(val).slice(0, 11))
-    if (phoneVerified) { setPhoneVerified(false); setOtpSent(false); setOtpCode(''); setOtpError('') }
-  }
-
-  async function sendOTP() {
-    setOtpError('')
-    setOtpLoading(true)
+  /** Shrinks the picked picture to a sensible size and turns it into the same kind of image the camera gives. */
+  async function onPickFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0]
+    e.target.value = ''
+    if (!file) return
+    setCameraError('')
+    if (!file.type.startsWith('image/')) { setCameraError('Choose a photo.'); return }
+    const url = URL.createObjectURL(file)
     try {
-      const res = await fetch('/api/otp/send', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: form.phone.replace(/\s/g, '') }),
-      })
-      const data = await res.json()
-      if (!res.ok) { setOtpError(data.error ?? 'The code couldn’t be sent. Try again.'); return }
-      setOtpSent(true)
-      setOtpCooldown(60)
+      const img = new Image()
+      await new Promise<void>((resolve, reject) => { img.onload = () => resolve(); img.onerror = () => reject(new Error('decode')); img.src = url })
+      const scale = Math.min(1, MAX_PHOTO_SIDE / Math.max(img.naturalWidth, img.naturalHeight))
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.round(img.naturalWidth * scale)
+      canvas.height = Math.round(img.naturalHeight * scale)
+      canvas.getContext('2d')!.drawImage(img, 0, 0, canvas.width, canvas.height)
+      stopCamera()
+      setPhotoDataUrl(canvas.toDataURL('image/jpeg', 0.85))
     } catch {
-      setOtpError('No connection. Check your internet and try again.')
+      setCameraError('That photo couldn’t be opened. Try another one.')
     } finally {
-      setOtpLoading(false)
-    }
-  }
-
-  async function verifyOTP() {
-    setOtpError('')
-    setOtpLoading(true)
-    try {
-      const res = await fetch('/api/otp/verify', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ phone: form.phone.replace(/\s/g, ''), code: otpCode }),
-      })
-      const data = await res.json()
-      if (!res.ok) { setOtpError(data.error ?? 'That code didn’t work. Check it and try again.'); return }
-      setPhoneVerified(true)
-      setOtpSent(false)
-      go(3)
-    } catch {
-      setOtpError('No connection. Check your internet and try again.')
-    } finally {
-      setOtpLoading(false)
+      URL.revokeObjectURL(url)
     }
   }
 
@@ -340,37 +328,30 @@ export default function EnrolPage() {
     setLoading(true)
     setError('')
     try {
-      const first = form.plans[0]
-      const res = await fetch('/api/customers', {
-        method: 'POST',
+      const res = await fetch(fixing ? `/api/customers/requests/${encodeURIComponent(fixing.id)}` : '/api/customers/requests', {
+        method: fixing ? 'PUT' : 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          ...form,
+          firstName: form.firstName, lastName: form.lastName, gender: form.gender, phone: form.phone, email: form.email, dob: form.dob,
+          address: form.address, state: form.state, lga: form.lga, language: form.language, bvn: form.bvn,
+          nokName: form.nokName, nokRelation: form.nokRelation, nokPhone: form.nokPhone, nfcCard: form.nfcCard,
           photoUrl: photoDataUrl,
           plans: form.plans.map(p => ({ ...p, dailyAmount: String(dailyEquiv(p.dailyAmount, p.cadence)) })),
-          endDate: first?.endDate ?? form.endDate,
-          // legacy single-plan fields — populated from first plan for API back-compat
-          dailyAmount: String(dailyEquiv((first?.dailyAmount ?? form.dailyAmount) || '0', first?.cadence ?? form.cadence)),
-          periodDays: first?.periodDays ?? form.periodDays,
-          goal: first?.goal ?? form.goal,
-          startDate: first?.startDate ?? form.startDate,
-          notes: first?.notes ?? form.notes,
-          cadence: first?.cadence ?? form.cadence,
         }),
       })
-      let data: { error?: string; customer?: { customerId: string } } | null = null
+      let data: { error?: string; id?: string } | null = null
       try { data = await res.json() } catch { data = null }
-      if (!res.ok || !data?.customer) {
-        setError(data?.error || 'The account couldn’t be created. Please try again.')
+      if (!res.ok || !data?.id) {
+        setError(data?.error || 'The request couldn’t be sent. Please try again.')
         submittingRef.current = false
         setLoading(false)
         return
       }
-      setCreated({ customerId: data.customer.customerId, name: displayName(`${form.firstName} ${form.lastName}`) })
+      setSent({ name: displayName(`${form.firstName} ${form.lastName}`) })
       setLoading(false)
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch {
-      setError('We lost the connection. Check Customers before trying again, so the customer isn’t enrolled twice.')
+      setError('We lost the connection. Check your customer requests before trying again.')
       submittingRef.current = false
       setLoading(false)
     }
@@ -383,7 +364,21 @@ export default function EnrolPage() {
 
   // ── Blocking states ──
 
-  if (sessionStatus === 'authenticated' && walletBalance <= 0 && !created) {
+  if (fixLoad === 'loading') {
+    return <div className="ag-page"><section className="ui-card ag-flow-block"><span className="ui-spinner" role="status" aria-label="Loading the request" /></section></div>
+  }
+  if (fixLoad === 'error') {
+    return (
+      <div className="ag-page">
+        <section className="ui-card ag-flow-block">
+          <EmptyState icon="error" title="This request can’t be opened" text="It may already have been sent again."
+            action={<Link href="/dashboard/customers/requests" className="ui-btn ui-btn--primary">See your requests</Link>} />
+        </section>
+      </div>
+    )
+  }
+
+  if (sessionStatus === 'authenticated' && walletBalance <= 0 && !sent) {
     return (
       <div className="ag-page">
         <section className="ui-card ag-flow-block">
@@ -400,25 +395,22 @@ export default function EnrolPage() {
     )
   }
 
-  if (created) {
+  if (sent) {
     return (
       <div className="ag-page">
         <section className="ui-card ag-done ag-flow-done" aria-live="polite">
           {photoDataUrl
             ? <img src={photoDataUrl} alt="" className="ag-flow-done-photo" />
             : <span className="ag-topup-icon" aria-hidden="true"><Icons.check size={22} /></span>}
-          <span className="ui-status ui-status--success ui-status--lg"><Icons.check size={16} aria-hidden="true" /> Customer enrolled</span>
-          <p className="ag-flow-done-name">{created.name}</p>
-          <p className="ui-row-sub">Customer ID <strong className="ag-mono">{created.customerId}</strong></p>
-          <p className="ui-row-sub">A welcome SMS is on its way to {form.phone}.</p>
+          <span className="ui-status ui-status--success ui-status--lg"><Icons.check size={16} aria-hidden="true" /> Sent for approval</span>
+          <p className="ag-flow-done-name">{sent.name}</p>
+          <p className="ui-row-sub">You’ll be told when it’s approved or denied.</p>
           <div className="ag-done-actions">
-            <Link href={`/dashboard/savings?cid=${encodeURIComponent(created.customerId)}`} className="ui-btn ui-btn--primary ui-btn--block">
-              <Icons.plan size={18} aria-hidden="true" /> Record their first saving
-            </Link>
-            <Link href="/dashboard/customers" className="ui-btn ui-btn--secondary ui-btn--block">View customers</Link>
+            <Link href="/dashboard/customers/requests" className="ui-btn ui-btn--primary ui-btn--block">See your requests</Link>
             <button type="button" className="ui-btn ui-btn--plain ui-btn--block" onClick={() => {
-              setForm(empty); setPhotoDataUrl(null); setPhoneVerified(false); setOtpSent(false); setOtpCode('')
-              setShowMissing(false); setCreated(null); submittingRef.current = false; setStep(1)
+              window.history.replaceState(null, '', '/dashboard/enrol')
+              setForm(empty); setPhotoDataUrl(null); setFixing(null)
+              setShowMissing(false); setSent(null); submittingRef.current = false; setStep(1)
             }}>Enrol another customer</button>
           </div>
         </section>
@@ -430,24 +422,22 @@ export default function EnrolPage() {
 
   const question: Record<number, string> = {
     1: 'Who are you enrolling?',
-    2: 'Enter the code we sent',
-    3: 'Take their photo',
-    4: form.plans.length > 0 ? 'Add another plan, or continue' : 'Set up their savings plan',
-    5: 'Card and registration fee',
-    6: 'Check before you create the account',
+    2: 'Add their passport photograph',
+    3: form.plans.length > 0 ? 'Add another plan, or continue' : 'Set up their savings plan',
+    4: 'Card and registration fee',
+    5: 'Check before you send',
   }
   const lead: Record<number, ReactNode> = {
     1: 'Use their legal name and the phone number they use every day.',
-    2: <>A 6-digit code went to <strong>{form.phone}</strong>. Ask the customer to read it out.</>,
-    3: 'A clear photo of their face. It’s how you and the customer recognise the account.',
-    4: 'How much they save, how often, and for how long.',
-    5: 'Link their savings card now or later, and choose how the fee is paid.',
-    6: 'Make sure everything is right. You can edit any part.',
+    2: 'A clear photo of their face. The office checks it before approving.',
+    3: 'How much they save, how often, and for how long.',
+    4: 'Link their savings card now or later.',
+    5: 'Make sure everything is right. You can edit any part.',
   }
   const dirty = !!(form.firstName || form.lastName || form.phone || photoDataUrl || form.plans.length)
 
   function back() {
-    if (step === 3) stopCamera()
+    if (step === 2) stopCamera()
     go(step - 1)
   }
 
@@ -477,6 +467,16 @@ export default function EnrolPage() {
 
             <FormError message={error} />
 
+            {fixing && step === 1 && (
+              <div className="ui-banner ui-banner--danger" role="status">
+                <Icons.error size={18} aria-hidden="true" />
+                <div>
+                  <p><strong>Why it was denied:</strong> {fixing.reason}</p>
+                  <p><strong>What to work on:</strong> {fixing.fix}</p>
+                </div>
+              </div>
+            )}
+
             {/* 1 — Personal details */}
             {step === 1 && (
               <>
@@ -499,10 +499,10 @@ export default function EnrolPage() {
                   </div>
                   {missing('gender') && <FieldError id="gd-error" message="Choose their gender" />}
                 </div>
-                <Field id="ph" label="Phone number" required hint="We’ll text a code to this number next."
+                <Field id="ph" label="Phone number" required
                   error={missing('phone') ? 'Enter their phone number' : phoneShort ? 'Phone numbers have 11 digits' : ''}>
                   <input id="ph" className="ag-tf-input ag-tf-num" type="tel" inputMode="numeric" maxLength={11} placeholder="080 0000 0000"
-                    value={form.phone} aria-invalid={missing('phone') || phoneShort || undefined} onKeyDown={blockNonDigit} onChange={e => onPhoneChange(e.target.value)} />
+                    value={form.phone} aria-invalid={missing('phone') || phoneShort || undefined} onKeyDown={blockNonDigit} onChange={e => set('phone', digitsOnly(e.target.value).slice(0, 11))} />
                 </Field>
                 <Field id="addr" label="Home address" required error={missing('address') ? 'Enter their address' : ''}>
                   <input id="addr" className="ag-tf-input" placeholder="Street, area, city" value={form.address}
@@ -570,60 +570,13 @@ export default function EnrolPage() {
                     return
                   }
                   setShowMissing(false)
-                  if (!phoneVerified) { setOtpSent(false); setOtpCode(''); setOtpError('') }
                   go(2)
                 }}>Continue</button>} />
               </>
             )}
 
-            {/* 2 — Verify phone */}
+            {/* 2 — Photo */}
             {step === 2 && (
-              <>
-                {phoneVerified ? (
-                  <div className="ag-verified">
-                    <span className="ag-verified-icon" aria-hidden="true"><Icons.check size={22} /></span>
-                    <div>
-                      <p className="ui-row-title">{form.phone} is verified</p>
-                      <p className="ui-row-sub">Carry on to the photo.</p>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <label className="ag-otp-boxes">
-                      <span className="ag-sr">Verification code</span>
-                      <input className="ag-otp-real" inputMode="numeric" autoComplete="one-time-code" maxLength={6} autoFocus
-                        value={otpCode} aria-invalid={!!otpError || undefined} aria-describedby={otpError ? 'otp-error' : undefined}
-                        onChange={e => { setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6)); setOtpError('') }}
-                        onKeyDown={e => { if (e.key === 'Enter' && otpCode.length === 6) verifyOTP() }} />
-                      {Array.from({ length: 6 }, (_, i) => (
-                        <span key={i} aria-hidden="true" className={`ag-otp-box${otpCode[i] ? ' is-filled' : ''}${i === otpCode.length ? ' is-next' : ''}${otpError ? ' is-error' : ''}`}>
-                          {otpCode[i] ?? ''}
-                        </span>
-                      ))}
-                    </label>
-                    <FieldError id="otp-error" message={otpError} />
-                    <div className="ag-otp-meta">
-                      {otpLoading && !otpSent
-                        ? <span className="ui-row-sub">Sending the code…</span>
-                        : <button type="button" className="ui-link" disabled={otpLoading || otpCooldown > 0} onClick={sendOTP}>
-                            {otpCooldown > 0 ? `Resend code in 0:${String(otpCooldown).padStart(2, '0')}` : 'Resend code'}
-                          </button>}
-                      <button type="button" className="ui-link ui-link--muted" onClick={() => go(1)}>Change number</button>
-                    </div>
-                    <p className="ag-fineprint">Codes expire after 10 minutes. If it doesn’t arrive, check the line isn’t on DND.</p>
-                  </>
-                )}
-
-                <FlowActions primary={phoneVerified
-                  ? <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={() => go(3)}>Continue</button>
-                  : <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" disabled={otpLoading || otpCode.length !== 6} onClick={verifyOTP}>
-                      {otpLoading && otpSent ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Checking…</> : 'Verify number'}
-                    </button>} />
-              </>
-            )}
-
-            {/* 3 — Photo */}
-            {step === 3 && (
               <>
                 <div className={`ag-oval${cameraActive ? ' is-live' : ''}${photoDataUrl ? ' has-photo' : ''}`}>
                   <video ref={videoRef} autoPlay playsInline muted style={{ display: cameraActive && !photoDataUrl ? 'block' : 'none' }} />
@@ -637,27 +590,33 @@ export default function EnrolPage() {
                 <canvas ref={canvasRef} hidden />
                 {cameraError && <p className="ui-field-error ag-center" role="alert"><Icons.error size={16} aria-hidden="true" /> {cameraError}</p>}
 
+                <input ref={fileRef} type="file" accept="image/*" hidden onChange={onPickFile} />
                 <div className="ag-cam-actions">
                   {photoDataUrl ? (
-                    <button type="button" className="ui-btn ui-btn--secondary" onClick={retake}><Icons.retry size={18} aria-hidden="true" /> Retake</button>
+                    <>
+                      <button type="button" className="ui-btn ui-btn--secondary" onClick={retake}><Icons.retry size={18} aria-hidden="true" /> Retake</button>
+                      <button type="button" className="ui-btn ui-btn--plain" onClick={() => fileRef.current?.click()}>Upload another</button>
+                    </>
                   ) : cameraActive ? (
                     <>
                       <button type="button" className="ag-shutter" onClick={capturePhoto} aria-label="Take photo"><span /></button>
                       <button type="button" className="ui-btn ui-btn--plain" onClick={stopCamera}>Cancel</button>
                     </>
-                  ) : null}
+                  ) : (
+                    <button type="button" className="ui-btn ui-btn--secondary" onClick={() => fileRef.current?.click()}>Upload a photo</button>
+                  )}
                 </div>
 
                 <FlowActions primary={photoDataUrl
-                  ? <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={() => { stopCamera(); go(4) }}>Continue</button>
+                  ? <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={() => { stopCamera(); go(3) }}>Continue</button>
                   : cameraActive
                     ? <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={capturePhoto}>Take photo</button>
                     : <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={startCamera}><Icons.image size={18} aria-hidden="true" /> {cameraError ? 'Try again' : 'Open camera'}</button>} />
               </>
             )}
 
-            {/* 4 — Savings plan */}
-            {step === 4 && (
+            {/* 3 — Savings plan */}
+            {step === 3 && (
               <>
                 {form.plans.length > 0 && (
                   <ul className="ag-added" aria-label="Plans added">
@@ -773,13 +732,13 @@ export default function EnrolPage() {
                   if (draftHasAny && !draftValid) { setError(isFlex ? 'Finish this plan (goal and end date), or clear it to continue.' : 'Finish this plan (goal, amount and length), or clear it to continue.'); return }
                   if (!draftValid && form.plans.length === 0) { setError('Add at least one savings plan.'); return }
                   if (draftValid) addDraftPlan()
-                  go(5)
+                  go(4)
                 }}>Continue</button>} />
               </>
             )}
 
-            {/* 5 — Card and fee */}
-            {step === 5 && (
+            {/* 4 — Card and fee */}
+            {step === 4 && (
               <>
                 <h3 className="ag-sub">Savings card <span>Optional</span></h3>
                 <div className="ag-card-row">
@@ -794,22 +753,9 @@ export default function EnrolPage() {
                 <h3 className="ag-sub">Registration fee</h3>
                 <div className="ag-fee">
                   <span>One-off fee</span>
-                  <strong>{formatNaira(parseFloat(form.registrationFee || '0'), { minor: false })}</strong>
+                  <strong>{formatNaira(REGISTRATION_FEE, { minor: false })}</strong>
                 </div>
-                <div className="ag-radio-group" role="radiogroup" aria-label="How the fee is paid">
-                  {[
-                    { v: 'cash', t: 'Customer pays in cash', s: 'You collect it now' },
-                    { v: 'wallet', t: 'Take it from my wallet', s: `Wallet balance ${formatNaira(walletBalance)}` },
-                  ].map(o => (
-                    <button key={o.v} type="button" role="radio" aria-checked={form.feeMethod === o.v} className="ag-radio" onClick={() => set('feeMethod', o.v)}>
-                      <span className="ag-payee-main">
-                        <span className="ui-row-title ui-block">{o.t}</span>
-                        <span className="ui-row-sub ui-block">{o.s}</span>
-                      </span>
-                      <span className="ui-radio" aria-hidden="true" />
-                    </button>
-                  ))}
-                </div>
+                <p className="ag-fineprint">Taken from your wallet when the request is approved. Your balance is {formatNaira(walletBalance)}.</p>
 
                 {qrScanActive && (
                   <div className="ag-qr" role="dialog" aria-modal="true" aria-label="Scan card QR code">
@@ -823,20 +769,20 @@ export default function EnrolPage() {
                   </div>
                 )}
 
-                <FlowActions primary={<button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={() => go(6)}>
+                <FlowActions primary={<button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={() => go(5)}>
                   {form.nfcCard ? 'Continue' : 'Continue without a card'}
                 </button>} />
               </>
             )}
 
-            {/* 6 — Review */}
-            {step === 6 && (
+            {/* 5 — Review */}
+            {step === 5 && (
               <>
                 <div className="ag-rv-person">
                   {photoDataUrl ? <img src={photoDataUrl} alt="" /> : <span className="ui-avatar" aria-hidden="true">{form.firstName[0]}{form.lastName[0]}</span>}
                   <div>
                     <p className="ag-rv-name">{fullName}</p>
-                    <p className="ui-row-sub ag-rv-phone">{form.phone} {phoneVerified && <span className="ui-status ui-status--success ui-status--sm"><Icons.check size={12} aria-hidden="true" /> Verified</span>}</p>
+                    <p className="ui-row-sub ag-rv-phone">{form.phone}</p>
                   </div>
                 </div>
 
@@ -847,7 +793,7 @@ export default function EnrolPage() {
                   {form.nokName && <Row k="Next of kin" v={`${form.nokName} (${form.nokRelation})`} />}
                 </ReviewSection>
 
-                <ReviewSection title={form.plans.length > 1 ? `Savings plans (${form.plans.length})` : 'Savings plan'} onEdit={() => go(4)}>
+                <ReviewSection title={form.plans.length > 1 ? `Savings plans (${form.plans.length})` : 'Savings plan'} onEdit={() => go(3)}>
                   {form.plans.map((p, i) => (
                     <div key={i} className="ag-rv-plan">
                       <div>
@@ -859,9 +805,9 @@ export default function EnrolPage() {
                   ))}
                 </ReviewSection>
 
-                <ReviewSection title="Card and fee" onEdit={() => go(5)}>
+                <ReviewSection title="Card and fee" onEdit={() => go(4)}>
                   <Row k="Card" v={form.nfcCard || 'Link later'} />
-                  <Row k="Registration fee" v={`${formatNaira(parseFloat(form.registrationFee || '0'), { minor: false })}, ${form.feeMethod === 'wallet' ? 'from your wallet' : 'cash'}`} />
+                  <Row k="Registration fee" v={`${formatNaira(REGISTRATION_FEE, { minor: false })}, from your wallet when approved`} />
                 </ReviewSection>
 
                 <button type="button" role="checkbox" aria-checked={form.agreed} className={`ag-agree${form.agreed ? ' is-on' : ''}`} onClick={() => { set('agreed', !form.agreed); setError('') }}>
@@ -870,7 +816,7 @@ export default function EnrolPage() {
                 </button>
 
                 <FlowActions primary={<button type="button" className="ui-btn ui-btn--primary ag-flow-cta" disabled={loading || !form.agreed} onClick={submit}>
-                  {loading ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Creating account…</> : 'Create account'}
+                  {loading ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Sending…</> : 'Submit for approval'}
                 </button>} />
               </>
             )}
