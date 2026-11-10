@@ -361,6 +361,15 @@ export default function CustomerDashboard() {
           />
         </div>}
 
+        <button type="button" className="ui-card ui-card-link ag-ajo-home" onClick={() => router.push('/customer/ajo')}>
+          <span className="ui-row-icon" aria-hidden="true"><Icons.team size={22} /></span>
+          <span className="ui-row-main">
+            <span className="ui-row-title">Group Ajo</span>
+            <span className="ui-row-sub">Join or see your groups</span>
+          </span>
+          <span className="ag-ajo-home-go" aria-hidden="true"><Icons.next size={20} /></span>
+        </button>
+
         {plan && finished && <PlanSummary plan={plan} hideAmounts={hideBalance} />}
         {/* Online savers see interest and plan details first; cash savers check their week first. */}
         {plan && !finished && (earnsInterest(plan) ? (
@@ -389,13 +398,6 @@ export default function CustomerDashboard() {
           </button>
         )}
 
-        <button type="button" className="ui-card ui-card-link" onClick={() => router.push('/customer/ajo')}>
-          <span className="ui-row-main">
-            <span className="ui-row-title">Group Ajo</span>
-            <span className="ui-row-sub">Join with a code, or see your groups</span>
-          </span>
-          <Icons.next size={20} aria-hidden="true" />
-        </button>
 
         <div className="ui-section-head">
           <h2>Recent savings</h2>
