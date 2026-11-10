@@ -72,6 +72,7 @@ model AgentDocument {
   docApprovalStatus  String    @default("pending")
   docApprovedAt      DateTime?
   docRejectionReason String?
+  uploadedBy         String? // who supplied this file; empty on files from before this was recorded
 
   @@unique([agentId, docType])
 }
@@ -88,6 +89,7 @@ model AgentDocumentVersion {
   uploadedAt        DateTime
   replacedAt        DateTime @default(now())
   replacedBy        String
+  uploadedBy        String?
 
   @@index([agentId, docType])
 }

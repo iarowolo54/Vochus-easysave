@@ -5,8 +5,8 @@ export const MAX_UNREVIEWED_EARLIER_FILES = 5
 
 /**
  * Puts a file in place for an agent's document. What it overwrites is kept as an earlier file, in the same transaction,
- * unless it's the identical file. With capUnreviewed (an agent's own upload) only that agent's never-reviewed files count
- * towards the limit and only those can be dropped, so re-uploading can't remove anything staff approved, rejected or replaced.
+ * unless it's the identical file. With capUnreviewed (an agent's own upload) the limit covers only files that same agent both
+ * supplied and replaced and nobody reviewed, so re-uploading can't remove anything staff supplied, approved, rejected or replaced.
  */
 export async function saveAgentDocument(input: {
   agentId: string
@@ -27,12 +27,12 @@ export async function saveAgentDocument(input: {
         data: {
           agentId, docType, replacedBy,
           fileName: existing.fileName, fileData: existing.fileData,
-          docApprovalStatus: existing.docApprovalStatus, uploadedAt: existing.uploadedAt,
+          docApprovalStatus: existing.docApprovalStatus, uploadedAt: existing.uploadedAt, uploadedBy: existing.uploadedBy,
         },
       })
       if (capUnreviewed) {
         const beyondLimit = await tx.agentDocumentVersion.findMany({
-          where: { agentId, docType, docApprovalStatus: 'pending', replacedBy },
+          where: { agentId, docType, docApprovalStatus: 'pending', replacedBy, uploadedBy: replacedBy },
           orderBy: { replacedAt: 'desc' },
           skip: MAX_UNREVIEWED_EARLIER_FILES,
           select: { id: true, fileName: true },
@@ -45,7 +45,7 @@ export async function saveAgentDocument(input: {
     }
     const docApprovalStatus = statusFor(existing?.docApprovalStatus)
     const uploadedAt = new Date()
-    const stored = { fileName, fileData, uploadedAt, docApprovalStatus, docRejectionReason: null }
+    const stored = { fileName, fileData, uploadedAt, docApprovalStatus, docRejectionReason: null, uploadedBy: replacedBy }
     await tx.agentDocument.upsert({
       where: key,
       update: { ...stored, docApprovedAt: docApprovalStatus === 'approved' ? existing?.docApprovedAt : null },
