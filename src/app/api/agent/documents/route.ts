@@ -72,7 +72,7 @@ export async function POST(req: Request) {
     action: 'agent_document_uploaded',
     entity: 'AgentDocument',
     entityId: agent.id,
-    details: `${agent.agentId} uploaded ${docType}: ${upload.fileName}`
+    details: saved.unchanged ? `${agent.agentId} re-sent the identical ${docType} file; nothing changed` : `${agent.agentId} uploaded ${docType}: ${upload.fileName}`
       + (saved.previousFileName ? `, replacing ${saved.previousFileName}` : '')
       + (saved.droppedFiles.length ? `. Oldest unreviewed files dropped: ${saved.droppedFiles.join(', ')}` : ''),
     actorType: 'agent',

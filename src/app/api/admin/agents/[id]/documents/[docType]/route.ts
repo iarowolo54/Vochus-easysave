@@ -58,13 +58,15 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
     agentId: agent.id, docType, fileName: upload.fileName, fileData: upload.fileData,
     replacedBy: guard.actor.name, statusFor: statusAfterStaffUpload,
   })
-  const { previousFileName, docApprovalStatus, uploadedAt } = saved
+  const { previousFileName, docApprovalStatus, uploadedAt, docRejectionReason } = saved
 
   logAudit({
     action: previousFileName ? 'agent_document_replaced' : 'agent_document_added',
     entity: 'AgentDocument',
     entityId: agent.id,
-    details: previousFileName
+    details: saved.unchanged
+      ? `${agentDocLabel(docType)} for ${agent.name} (${agent.agentId}): the identical file was sent; nothing changed`
+      : previousFileName
       ? `${agentDocLabel(docType)} replaced for ${agent.name} (${agent.agentId}): ${previousFileName} became ${upload.fileName}`
       : `${agentDocLabel(docType)} added for ${agent.name} (${agent.agentId}): ${upload.fileName}`,
     actorType: guard.actor.type,
@@ -73,6 +75,6 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
   })
 
   return NextResponse.json({
-    document: { docType, fileName: upload.fileName, uploadedAt, docApprovalStatus, docRejectionReason: null },
+    document: { docType, fileName: saved.fileName, uploadedAt, docApprovalStatus, docRejectionReason },
   })
 }

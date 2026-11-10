@@ -4,8 +4,8 @@ import { prisma } from '@/lib/prisma'
 export const MAX_UNREVIEWED_EARLIER_FILES = 5
 
 /**
- * Puts a file in place for an agent's document. What it overwrites is kept as an earlier file, in the same transaction,
- * unless it's the identical file. With capUnreviewed (an agent's own upload) the limit covers only files that same agent both
+ * Puts a file in place for an agent's document. What it overwrites is kept as an earlier file, in the same transaction.
+ * The identical file changes nothing at all, so re-sending a copy can't relabel who supplied it or reset its review. With capUnreviewed (an agent's own upload) the limit covers only files that same agent both
  * supplied and replaced and nobody reviewed, so re-uploading can't remove anything staff supplied, approved, rejected or replaced.
  */
 export async function saveAgentDocument(input: {
@@ -21,8 +21,11 @@ export async function saveAgentDocument(input: {
   const key = { agentId_docType: { agentId, docType } }
   return prisma.$transaction(async tx => {
     const existing = await tx.agentDocument.findUnique({ where: key })
+    if (existing?.fileData === fileData) {
+      return { unchanged: true, fileName: existing.fileName, previousFileName: existing.fileName, docApprovalStatus: existing.docApprovalStatus, uploadedAt: existing.uploadedAt, docRejectionReason: existing.docRejectionReason, droppedFiles: [] as string[] }
+    }
     let droppedFiles: string[] = []
-    if (existing && existing.fileData !== fileData) {
+    if (existing) {
       await tx.agentDocumentVersion.create({
         data: {
           agentId, docType, replacedBy,
@@ -51,6 +54,6 @@ export async function saveAgentDocument(input: {
       update: { ...stored, docApprovedAt: docApprovalStatus === 'approved' ? existing?.docApprovedAt : null },
       create: { ...stored, agentId, docType },
     })
-    return { previousFileName: existing?.fileName ?? null, docApprovalStatus, uploadedAt, droppedFiles }
+    return { unchanged: false, fileName, previousFileName: existing?.fileName ?? null, docApprovalStatus, uploadedAt, docRejectionReason: null, droppedFiles }
   })
 }
