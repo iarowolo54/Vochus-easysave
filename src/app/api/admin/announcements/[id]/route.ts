@@ -3,6 +3,7 @@ import { adminActor, requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { parseAnnouncement } from '@/lib/announcements'
+import { attachPictures, PicturesMissingError, picturesMissingResponse } from '@/lib/announcement-images'
 
 type Ctx = { params: Promise<{ id: string }> }
 
@@ -25,8 +26,18 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
 
   const parsed = parseAnnouncement(body)
   if (!parsed.ok) return NextResponse.json({ error: 'Check the highlighted fields.', errors: parsed.errors }, { status: 400 })
-  // People who already closed it won't see the edited version: an edit fixes a message, it doesn't resend it.
-  const a = await prisma.announcement.update({ where: { id }, data: parsed.value })
+  const { imageIds, ...fields } = parsed.value
+  let a
+  try {
+    a = await prisma.$transaction(async tx => {
+      const row = await tx.announcement.update({ where: { id }, data: fields })
+      await attachPictures(tx, id, imageIds)
+      return row
+    })
+  } catch (e) {
+    if (e instanceof PicturesMissingError) return picturesMissingResponse()
+    throw e
+  }
   await logAudit({ action: 'announcement_edited', entity: 'Announcement', entityId: id, details: `Pop-up message "${existing.title}" edited`, actorType: 'admin', ...actor })
   return NextResponse.json({ announcement: a })
 }

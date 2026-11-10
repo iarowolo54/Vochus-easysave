@@ -3,6 +3,7 @@ import { adminActor, requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { AUDIENCE_LABEL, parseAnnouncement } from '@/lib/announcements'
+import { attachPictures, PicturesMissingError, picturesMissingResponse } from '@/lib/announcement-images'
 
 export async function GET() {
   const guard = await requirePermission('messages', 'view')
@@ -10,9 +11,9 @@ export async function GET() {
   const rows = await prisma.announcement.findMany({
     orderBy: { createdAt: 'desc' },
     take: 100,
-    select: { id: true, title: true, body: true, audience: true, startsAt: true, endsAt: true, isActive: true, createdBy: true, createdAt: true, _count: { select: { dismissals: true } } },
+    select: { id: true, title: true, body: true, audience: true, startsAt: true, endsAt: true, isActive: true, createdBy: true, createdAt: true, images: { orderBy: { position: 'asc' }, select: { id: true } }, _count: { select: { dismissals: true } } },
   })
-  return NextResponse.json({ announcements: rows.map(({ _count, ...r }) => ({ ...r, seenBy: _count.dismissals })) })
+  return NextResponse.json({ announcements: rows.map(({ _count, images, ...r }) => ({ ...r, imageIds: images.map(i => i.id), seenBy: _count.dismissals })) })
 }
 
 export async function POST(req: NextRequest) {
@@ -22,10 +23,21 @@ export async function POST(req: NextRequest) {
   if (!parsed.ok) return NextResponse.json({ error: 'Check the highlighted fields.', errors: parsed.errors }, { status: 400 })
 
   const actor = adminActor(guard.session)
-  const a = await prisma.announcement.create({ data: { ...parsed.value, createdBy: actor.actorName } })
+  const { imageIds, ...fields } = parsed.value
+  let a
+  try {
+    a = await prisma.$transaction(async tx => {
+      const row = await tx.announcement.create({ data: { ...fields, createdBy: actor.actorName } })
+      await attachPictures(tx, row.id, imageIds)
+      return row
+    })
+  } catch (e) {
+    if (e instanceof PicturesMissingError) return picturesMissingResponse()
+    throw e
+  }
   await logAudit({
     action: 'announcement_created', entity: 'Announcement', entityId: a.id,
-    details: `Pop-up message "${a.title}" for ${AUDIENCE_LABEL[parsed.value.audience].toLowerCase()}, ${a.startsAt.toISOString().slice(0, 10)} to ${a.endsAt.toISOString().slice(0, 10)}`,
+    details: `Pop-up message "${a.title}" for ${AUDIENCE_LABEL[parsed.value.audience].toLowerCase()}, ${a.startsAt.toISOString().slice(0, 10)} to ${a.endsAt.toISOString().slice(0, 10)}, ${imageIds.length} picture(s)`,
     actorType: 'admin', ...actor,
   })
   return NextResponse.json({ announcement: a })

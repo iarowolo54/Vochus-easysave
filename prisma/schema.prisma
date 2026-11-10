@@ -811,8 +811,8 @@ model CommissionLedger {
   @@index([party, createdAt])
 }
 
-// A pop-up message super admin shows to agents and/or customers when they open the app. Each person sees it once,
-// until they tap OK (a dismissal row). Title and plain text only.
+// A pop-up message super admin shows to agents and/or customers every time they sign in or open the app, until its
+// end date. A dismissal row only counts who has closed it; it doesn't stop it showing.
 model Announcement {
   id         String                  @id @default(cuid())
   title      String
@@ -824,8 +824,23 @@ model Announcement {
   createdBy  String?
   createdAt  DateTime                @default(now())
   dismissals AnnouncementDismissal[]
+  images     AnnouncementImage[]
 
   @@index([isActive, endsAt])
+}
+
+// A picture on a pop-up message, stored as raw bytes and served by link so opening the app never loads them twice.
+// announcementId is empty between uploading a picture and saving the message.
+model AnnouncementImage {
+  id             String        @id @default(cuid())
+  announcementId String?
+  announcement   Announcement? @relation(fields: [announcementId], references: [id], onDelete: Cascade)
+  position       Int           @default(0)
+  mime           String
+  data           Bytes
+  createdAt      DateTime      @default(now())
+
+  @@index([announcementId, position])
 }
 
 model AnnouncementDismissal {

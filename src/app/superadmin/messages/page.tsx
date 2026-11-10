@@ -1,20 +1,20 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Icons } from '@/components/ui/icons'
-import { AUDIENCES, AUDIENCE_LABEL, BODY_MAX, TITLE_MAX, type Audience } from '@/lib/announcements'
+import { AUDIENCES, AUDIENCE_LABEL, BODY_MAX, IMAGES_MAX, IMAGE_BYTES_MAX, TITLE_MAX, type Audience } from '@/lib/announcements'
 import { ConfirmModal, Empty, Field, LoadError, Modal, PageHeader, RowMenu, TableSkeleton, shortDate, useToast } from '../_components/admin-ui'
 
 interface Message {
   id: string; title: string; body: string; audience: Audience; startsAt: string; endsAt: string
-  isActive: boolean; createdBy: string | null; createdAt: string; seenBy: number
+  isActive: boolean; createdBy: string | null; createdAt: string; seenBy: number; imageIds: string[]
 }
-type Form = { title: string; body: string; audience: Audience | ''; startDate: string; endDate: string }
+type Form = { title: string; body: string; audience: Audience | ''; startDate: string; endDate: string; imageIds: string[] }
 type Errors = Partial<Record<keyof Form, string>>
 
 /** A stored instant as its Lagos calendar day (UTC+1, no daylight saving), for the date inputs. */
 const lagosDay = (iso: string | Date) => new Date(new Date(iso).getTime() + 3_600_000).toISOString().slice(0, 10)
-const EMPTY: Form = { title: '', body: '', audience: '', startDate: '', endDate: '' }
+const EMPTY: Form = { title: '', body: '', audience: '', startDate: '', endDate: '', imageIds: [] }
 
 function statusOf(m: Message, now: number): { label: string; cls: string } {
   if (!m.isActive) return { label: 'Off', cls: 'bdg-grey' }
@@ -42,6 +42,8 @@ export default function MessagesPage() {
   const [errors, setErrors] = useState<Errors>({})
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
+  const [uploading, setUploading] = useState(0)
+  const filePicker = useRef<HTMLInputElement>(null)
 
   const [action, setAction] = useState<{ kind: 'toggle' | 'delete'; item: Message } | null>(null)
   const [actionBusy, setActionBusy] = useState(false)
@@ -67,10 +69,50 @@ export default function MessagesPage() {
   }
   function openEdit(m: Message) {
     setEditing(m)
-    setForm({ title: m.title, body: m.body, audience: m.audience, startDate: lagosDay(m.startsAt), endDate: lagosDay(m.endsAt) })
+    setForm({ title: m.title, body: m.body, audience: m.audience, startDate: lagosDay(m.startsAt), endDate: lagosDay(m.endsAt), imageIds: m.imageIds })
     setErrors({}); setErr(''); setShowForm(true)
   }
   const setField = <K extends keyof Form>(k: K, v: Form[K]) => { setForm(f => ({ ...f, [k]: v })); setErrors(e => ({ ...e, [k]: undefined })) }
+
+  /** Each picture uploads on its own, so one bad file doesn't lose the others. */
+  async function addPictures(list: FileList | null) {
+    const files = Array.from(list ?? [])
+    if (filePicker.current) filePicker.current.value = ''
+    if (!files.length) return
+    const room = IMAGES_MAX - form.imageIds.length
+    const picked = files.slice(0, Math.max(room, 0))
+    let problem = files.length > room ? `A message can have up to ${IMAGES_MAX} pictures.` : ''
+    setUploading(picked.length)
+    for (const file of picked) {
+      try {
+        if (file.size > IMAGE_BYTES_MAX) {
+          problem = `${file.name} is over ${IMAGE_BYTES_MAX / (1024 * 1024)} MB.`
+        } else {
+          const body = new FormData()
+          body.append('file', file)
+          const res = await fetch('/api/admin/announcements/images', { method: 'POST', body })
+          if (res.ok) {
+            const { id } = await res.json() as { id: string }
+            setForm(f => ({ ...f, imageIds: [...f.imageIds, id] }))
+          } else {
+            problem = (await errorOf(res, `${file.name} wasn’t added. Try again.`)).message
+          }
+        }
+      } catch {
+        problem = 'No connection. Check your internet and try again.'
+      }
+      setUploading(n => n - 1)
+    }
+    setErrors(e => ({ ...e, imageIds: problem || undefined, body: undefined }))
+  }
+  function movePicture(from: number, to: number) {
+    setForm(f => {
+      const next = [...f.imageIds]
+      const [id] = next.splice(from, 1)
+      next.splice(to, 0, id)
+      return { ...f, imageIds: next }
+    })
+  }
 
   async function save() {
     setSaving(true); setErr('')
@@ -118,7 +160,7 @@ export default function MessagesPage() {
     <>
       <PageHeader
         title="Pop-up messages"
-        sub="Shown when agents or customers open the app, once each, until they tap OK."
+        sub="Shown every time agents or customers sign in or open the app, until the end date."
         actions={newButton || undefined}
       />
 
@@ -142,7 +184,8 @@ export default function MessagesPage() {
                         <tr key={m.id}>
                           <td className="td-name">
                             {m.title}
-                            <div className="am-muted am-msg-preview">{m.body}</div>
+                            {m.body && <div className="am-muted am-msg-preview">{m.body}</div>}
+                            {m.imageIds.length > 0 && <div className="am-muted am-msg-preview">{m.imageIds.length === 1 ? '1 picture' : `${m.imageIds.length} pictures`}</div>}
                           </td>
                           <td data-label="Who sees it">{AUDIENCE_LABEL[m.audience] ?? m.audience}</td>
                           <td className="am-muted am-nowrap" data-label="Runs">{shortDate(m.startsAt)} to {shortDate(m.endsAt)}</td>
@@ -171,11 +214,11 @@ export default function MessagesPage() {
 
       {showForm && (
         <Modal error={err || undefined} icon="bell" title={editing ? 'Edit message' : 'New message'}
-          sub={editing ? 'People who already closed it won’t see it again.' : 'Each person sees it once, when they next open the app.'}
+          sub="Shows every time they sign in or open the app."
           onClose={() => setShowForm(false)} busy={saving}
           footer={<>
             <button type="button" className="btn btn-outline" onClick={() => setShowForm(false)} disabled={saving}>Cancel</button>
-            <button type="button" className="btn btn-green" onClick={save} disabled={saving}>{saving ? 'Saving…' : editing ? 'Save changes' : 'Create message'}</button>
+            <button type="button" className="btn btn-green" onClick={save} disabled={saving || uploading > 0}>{saving ? 'Saving…' : editing ? 'Save changes' : 'Create message'}</button>
           </>}>
           <form onSubmit={e => { e.preventDefault(); save() }} noValidate>
             <Field id="msg-title" label="Title" hint={`${form.title.length}/${TITLE_MAX}`} error={errors.title}>
@@ -185,6 +228,30 @@ export default function MessagesPage() {
             <Field id="msg-body" label="Message" hint={`${form.body.length}/${BODY_MAX}`} error={errors.body}>
               <textarea id="msg-body" className="a-input" rows={5} value={form.body} maxLength={BODY_MAX} aria-invalid={!!errors.body}
                 onChange={e => setField('body', e.target.value)} />
+            </Field>
+            <Field id="msg-pics" label="Pictures" hint={`${form.imageIds.length}/${IMAGES_MAX}. JPG, PNG or WebP, up to ${IMAGE_BYTES_MAX / (1024 * 1024)} MB each. Two or more show as a slider.`} error={errors.imageIds}>
+              <div>
+                <input ref={filePicker} id="msg-pics" className="sr-only" type="file" accept="image/jpeg,image/png,image/webp" multiple tabIndex={-1} onChange={e => addPictures(e.target.files)} />
+                {(form.imageIds.length > 0 || uploading > 0) && (
+                  <div className="am-pics">
+                    {form.imageIds.map((id, i) => (
+                      <div className="am-pic" key={id}>
+                        {/* eslint-disable-next-line @next/next/no-img-element -- signed-in link */}
+                        <img src={`/api/admin/announcements/images/${id}`} alt={`Picture ${i + 1}`} />
+                        <div className="am-pic-row">
+                          <button type="button" onClick={() => movePicture(i, i - 1)} disabled={i === 0} aria-label={`Move picture ${i + 1} earlier`}><Icons.back size={18} aria-hidden="true" /></button>
+                          <button type="button" onClick={() => setForm(f => ({ ...f, imageIds: f.imageIds.filter(x => x !== id) }))} aria-label={`Remove picture ${i + 1}`}><Icons.close size={16} aria-hidden="true" /></button>
+                          <button type="button" onClick={() => movePicture(i, i + 1)} disabled={i === form.imageIds.length - 1} aria-label={`Move picture ${i + 1} later`}><Icons.next size={18} aria-hidden="true" /></button>
+                        </div>
+                      </div>
+                    ))}
+                    {Array.from({ length: uploading }, (_, i) => <div className="am-pic" key={i}><div className="am-pic-busy" role="status">Adding…</div></div>)}
+                  </div>
+                )}
+                <button type="button" className="btn btn-sm btn-outline" onClick={() => filePicker.current?.click()} disabled={uploading > 0 || form.imageIds.length >= IMAGES_MAX}>
+                  <Icons.image size={16} aria-hidden="true" /> Add pictures
+                </button>
+              </div>
             </Field>
             <Field id="msg-aud" label="Who sees it" error={errors.audience}>
               <select id="msg-aud" className="a-input" value={form.audience} aria-invalid={!!errors.audience} onChange={e => setField('audience', e.target.value as Audience)}>
@@ -208,8 +275,8 @@ export default function MessagesPage() {
         <ConfirmModal icon="bell"
           title={action.item.isActive ? `Switch off “${action.item.title}”?` : `Switch on “${action.item.title}”?`}
           body={action.item.isActive
-            ? <>It stops showing straight away. People who haven’t seen it yet won’t.</>
-            : <>It shows to {AUDIENCE_LABEL[action.item.audience].toLowerCase()} who haven’t closed it yet, from {shortDate(action.item.startsAt)} to {shortDate(action.item.endsAt)}.</>}
+            ? <>It stops showing straight away.</>
+            : <>It shows to {AUDIENCE_LABEL[action.item.audience].toLowerCase()} every time they sign in or open the app, from {shortDate(action.item.startsAt)} to {shortDate(action.item.endsAt)}.</>}
           confirmLabel={action.item.isActive ? 'Switch off' : 'Switch on'} danger={action.item.isActive}
           busy={actionBusy} error={actionError} onConfirm={runAction} onClose={() => setAction(null)}
         />
