@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
+import { asCustomerType, planReopenBlock } from '@/lib/customer-type'
 import { limitByIp } from '@/lib/password-reset'
 import { logAudit } from '@/lib/audit'
 import { confirmReopenCode, REOPEN_CODE_INVALID } from '@/lib/plan-reopen-code'
@@ -17,6 +18,9 @@ export async function POST(req: NextRequest) {
   if (limited) return limited
   const session = await getCustomerSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Offline (agent-registered) customers have their plans restarted by their agent.
+  const reopenBlocked = planReopenBlock(asCustomerType((await prisma.customer.findUnique({ where: { id: session.id }, select: { type: true } }))?.type))
+  if (reopenBlocked) return NextResponse.json({ error: reopenBlocked }, { status: 403 })
 
   const body: unknown = await req.json().catch(() => null)
   const { planId, resetId, code } = (body && typeof body === 'object' ? body : {}) as { planId?: unknown; resetId?: unknown; code?: unknown }

@@ -26,6 +26,10 @@ export function planCreationBlock(by: 'customer' | 'agent', t: CustomerType): st
   return null
 }
 
+/** Why a customer can't restart (save again / roll over) an ended plan from the app, or null when they can. Offline: the agent does it. */
+export function planReopenBlock(t: CustomerType): string | null {
+  return t === 'offline' ? 'Your agent restarts your plans. Please ask them to do it for you.' : null
+}
 
 /** ISO string of the latest deposit createdAt, or null when there are none. */
 export function lastPaidAtOf(deposits: { createdAt: Date }[]): string | null {

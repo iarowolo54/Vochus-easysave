@@ -337,7 +337,7 @@ export default function CustomerDashboard() {
 
         {pending && <CollectionTracker status={pending.status} onView={() => router.push(redeemHref)} />}
 
-        {plan && finished && !isAjoPlan(plan) && (
+        {plan && finished && !isAjoPlan(plan) && !offline && (
           <div className="ui-actions">
             <ActionButton icon="history" label="Roll over" onClick={() => rollOver(plan)} />
           </div>
@@ -439,8 +439,8 @@ export default function CustomerDashboard() {
                   icon="plan"
                   title={p.goal}
                   sub={`${isFlexible(p.cadence) ? 'Flexible' : `${formatNaira(p.dailyAmount)} a ${p.cadence === 'weekly' ? 'week' : p.cadence === 'monthly' ? 'month' : 'day'}`} · redeemed`}
-                  value="Save again"
-                  onClick={() => saveAgain(p.id, p.goal)}
+                  value={offline ? undefined : 'Save again'}
+                  onClick={offline ? undefined : () => saveAgain(p.id, p.goal)}
                 />
               ))}
             </section>

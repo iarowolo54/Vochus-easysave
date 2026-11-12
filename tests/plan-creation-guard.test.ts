@@ -26,3 +26,9 @@ test('nothing guesses the customer type from plans any more', () => {
   const guessing = files('src').filter(f => /\bcustomerType\(/.test(readFileSync(f, 'utf8').replace(/\/\/.*$/gm, '')))
   assert.deepEqual(guessing, [])
 })
+
+test('the customer app refuses to restart plans for offline customers (code and confirm)', () => {
+  for (const f of ['src/app/api/customer/plan/reopen/route.ts', 'src/app/api/customer/plan/reopen/code/route.ts']) {
+    assert.match(readFileSync(f, 'utf8'), /planReopenBlock\(/, f)
+  }
+})

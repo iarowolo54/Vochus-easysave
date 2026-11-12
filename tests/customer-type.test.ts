@@ -32,3 +32,10 @@ test('planCreationBlock: refuses across the line, allows on the right side', () 
   assert.equal(planCreationBlock('customer', 'online'), null)
   assert.equal(planCreationBlock('agent', 'offline'), null)
 })
+
+import { planReopenBlock } from '../src/lib/customer-type'
+
+test('planReopenBlock: offline customers can’t restart an ended plan from the app', () => {
+  assert.equal(planReopenBlock('offline'), 'Your agent restarts your plans. Please ask them to do it for you.')
+  assert.equal(planReopenBlock('online'), null)
+})
