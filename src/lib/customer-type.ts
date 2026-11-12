@@ -1,5 +1,5 @@
-// Shared, DB-free definition of customer type and last-paid time so the agent
-// and admin customer lists cannot drift.
+// Shared, DB-free rules for the stored customer type (who registered them) and last-paid time, so the agent
+// and admin screens cannot drift.
 
 export type CustomerType = 'online' | 'offline'
 
@@ -26,10 +26,6 @@ export function planCreationBlock(by: 'customer' | 'agent', t: CustomerType): st
   return null
 }
 
-/** 'online' if any plan was self-created by the customer, else 'offline'. */
-export function customerType(plans: { source: string }[]): CustomerType {
-  return plans.some((p) => p.source === 'self') ? 'online' : 'offline'
-}
 
 /** ISO string of the latest deposit createdAt, or null when there are none. */
 export function lastPaidAtOf(deposits: { createdAt: Date }[]): string | null {

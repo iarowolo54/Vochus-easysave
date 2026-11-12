@@ -1,16 +1,6 @@
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { customerType, lastPaidAtOf } from '../src/lib/customer-type'
-
-test('customerType: any self plan is online', () => {
-  assert.equal(customerType([{ source: 'self' }]), 'online')
-  assert.equal(customerType([{ source: 'agent' }, { source: 'self' }]), 'online')
-})
-
-test('customerType: otherwise offline', () => {
-  assert.equal(customerType([{ source: 'agent' }]), 'offline')
-  assert.equal(customerType([]), 'offline')
-})
+import { lastPaidAtOf } from '../src/lib/customer-type'
 
 test('lastPaidAtOf: null when empty, max ISO otherwise', () => {
   assert.equal(lastPaidAtOf([]), null)

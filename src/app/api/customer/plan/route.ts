@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { asCustomerType, planCreationBlock } from '@/lib/customer-type'
 import { BAD_CADENCE, flexiblePlanData, getFlexibleSettings, isFlexible, parseCadence, shortDate, type FlexiblePlanData } from '@/lib/flexible-savings'
 import { resolvePlanStartDate, maturityFrom } from '@/lib/saving-plan'
 
@@ -11,6 +12,9 @@ export async function POST(req: NextRequest) {
 
   const customer = await prisma.customer.findUnique({ where: { id: session.id } })
   if (!customer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  // Offline (agent-registered) customers have their plans opened by their agent.
+  const blocked = planCreationBlock('customer', asCustomerType(customer.type))
+  if (blocked) return NextResponse.json({ error: blocked }, { status: 403 })
 
   const { dailyAmount, periodDays, goal, cadence, startDate, endDate } = await req.json()
   const cad = parseCadence(cadence)

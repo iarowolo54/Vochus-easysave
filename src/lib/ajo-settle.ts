@@ -9,7 +9,7 @@ import type { PaymentIntent, Prisma, PrismaClient } from '@prisma/client'
 import { AJO_PLAN_CADENCE, openRound, roundLabel, type AjoCadence } from '@/lib/ajo'
 import { consumePaymentIntent, INTENT_PENDING, INTENT_REVIEW, recordManualCredit, type ManualActor } from '@/lib/payment-intent'
 import { sendToReview, type SettleResult } from '@/lib/customer-settle'
-import { customerType } from '@/lib/customer-type'
+import { asCustomerType, planSourceFor, type CustomerType } from '@/lib/customer-type'
 import { logAudit } from '@/lib/audit'
 import { money } from '@/lib/wallet-guard'
 import { notifications, notify } from '@/lib/notifications'
@@ -22,13 +22,13 @@ export class AjoAlreadyPaidError extends Error {}
 export const ajoRef = (kind: 'CON' | 'OUT') => `VCHS-AJO-${kind}-${Date.now()}-${randomBytes(5).toString('base64url').toUpperCase()}`
 
 /** An ended plan holding Ajo money for one person, who collects it through the normal collection flow. */
-export function createAjoPlan(tx: Tx, f: { customerId: string; online: boolean; goal: string; amount: number; notes: string }) {
+export function createAjoPlan(tx: Tx, f: { customerId: string; type: CustomerType; goal: string; amount: number; notes: string }) {
   const now = new Date()
   return tx.savingsPlan.create({
     data: {
       customerId: f.customerId, cadence: AJO_PLAN_CADENCE,
       // Keeps the person's online/cash standing, which decides how the collection is paid.
-      source: f.online ? 'self' : 'agent',
+      source: planSourceFor(f.type),
       goal: f.goal, dailyAmount: 0, periodDays: 0, startDate: now, maturityDate: now, balance: f.amount, status: 'Active', notes: f.notes,
     },
   })
@@ -43,7 +43,7 @@ export async function completeRoundIfFunded(tx: Tx, groupId: string, round: numb
     select: {
       id: true, name: true, cadence: true, size: true, startDate: true, status: true,
       agentId: true,
-      members: { select: { id: true, slot: true, customerId: true, owedToCustomerId: true, owedAmount: true, customer: { select: { firstName: true, lastName: true, savingsPlans: { select: { source: true } } } } } },
+      members: { select: { id: true, slot: true, customerId: true, owedToCustomerId: true, owedAmount: true, customer: { select: { firstName: true, lastName: true, type: true } } } },
     },
   })
   if (!g || g.status !== 'Running') return null
@@ -60,10 +60,10 @@ export async function completeRoundIfFunded(tx: Tx, groupId: string, round: numb
   const amount = money(total - owed)
   const now = new Date()
   const label = roundLabel(g.startDate, g.cadence as AjoCadence, round)
-  const plan = await createAjoPlan(tx, { customerId: holder.customerId, online: customerType(holder.customer.savingsPlans) === 'online', goal: `Ajo · ${g.name}, ${label}`, amount, notes: `ajo:${g.id}:${round}` })
+  const plan = await createAjoPlan(tx, { customerId: holder.customerId, type: asCustomerType(holder.customer.type), goal: `Ajo · ${g.name}, ${label}`, amount, notes: `ajo:${g.id}:${round}` })
   if (owed > 0) {
-    const before = await tx.customer.findUniqueOrThrow({ where: { id: holder.owedToCustomerId! }, select: { savingsPlans: { select: { source: true } } } })
-    const back = await createAjoPlan(tx, { customerId: holder.owedToCustomerId!, online: customerType(before.savingsPlans) === 'online', goal: `Ajo refund · ${g.name}, ${label}`, amount: owed, notes: `ajo-owed:${g.id}:${round}` })
+    const before = await tx.customer.findUniqueOrThrow({ where: { id: holder.owedToCustomerId! }, select: { type: true } })
+    const back = await createAjoPlan(tx, { customerId: holder.owedToCustomerId!, type: asCustomerType(before.type), goal: `Ajo refund · ${g.name}, ${label}`, amount: owed, notes: `ajo-owed:${g.id}:${round}` })
     await notify(tx, notifications.planEnded({ planId: back.id, customerId: back.customerId, goal: back.goal, ajo: true }))
   }
   // Unique (groupId, round): if another contribution completed this round at the same moment, this throws and the

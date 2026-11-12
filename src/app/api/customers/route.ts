@@ -5,7 +5,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
-import { customerType } from '@/lib/customer-type'
+import { asCustomerType } from '@/lib/customer-type'
 import { money } from '@/lib/wallet-guard'
 
 export async function GET(req: NextRequest) {
@@ -43,8 +43,7 @@ export async function GET(req: NextRequest) {
     agentId: agent.id,
     ...(matchedIds ? { id: { in: matchedIds } } : {}),
     ...(status ? { status } : {}),
-    ...(typeFilter === 'online' ? { savingsPlans: { some: { source: 'self' } } } : {}),
-    ...(typeFilter === 'offline' ? { savingsPlans: { none: { source: 'self' } } } : {}),
+    ...(typeFilter === 'online' || typeFilter === 'offline' ? { type: typeFilter } : {}),
   }
   // Plan-length filter lives in the where (before paging) so pages and total are right.
   // It is a second savingsPlans condition, so combine with AND rather than overwrite the type clause.
@@ -123,7 +122,7 @@ export async function GET(req: NextRequest) {
       phone: c.phone,
       email: c.email,
       address: c.address,
-      type: customerType(c.savingsPlans),
+      type: asCustomerType(c.type),
       lastPaidAt: lastPaid.get(c.id)?.toISOString() ?? null,
       status: c.status,
       createdAt: c.createdAt,
@@ -156,7 +155,7 @@ export async function GET(req: NextRequest) {
   if (typeFilter === 'offline') {
     // Whole offline set for this agent, ignoring search/page/limit/status/plan.
     const offline = await prisma.customer.findMany({
-      where: { agentId: agent.id, savingsPlans: { none: { source: 'self' } } },
+      where: { agentId: agent.id, type: 'offline' },
       select: { id: true, savingsPlans: { where: { status: 'Active' }, select: { dailyAmount: true, cadence: true } } },
     })
     const savers = offline.filter(c => c.savingsPlans.length > 0)

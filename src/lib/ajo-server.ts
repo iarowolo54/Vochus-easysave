@@ -4,7 +4,7 @@ import type { Prisma, PrismaClient } from '@prisma/client'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { customerType } from '@/lib/customer-type'
+import { asCustomerType } from '@/lib/customer-type'
 import { displayName } from '@/lib/format'
 import { ajoFeeOn, arrangedOrder, openRound, potOf, roundDueDay, roundLabel, type AjoCadence } from '@/lib/ajo'
 import { getAjoFee } from '@/lib/ajo-fee'
@@ -54,7 +54,7 @@ export async function addMember(client: PrismaClient, groupId: string, customerI
 
 const memberSelect = {
   id: true, slot: true, joinedAt: true, customerId: true,
-  customer: { select: { customerId: true, firstName: true, lastName: true, phone: true, savingsPlans: { select: { source: true } } } },
+  customer: { select: { customerId: true, firstName: true, lastName: true, phone: true, type: true } },
 } satisfies Prisma.AjoMemberSelect
 
 /** Everything a group screen needs: members, each round's label, due day, holder, who has paid, and its payout. */
@@ -82,7 +82,7 @@ export async function loadGroup(client: PrismaClient | Prisma.TransactionClient,
     customerCode: m.customer.customerId,
     name: displayName(`${m.customer.firstName} ${m.customer.lastName}`),
     phone: m.customer.phone,
-    type: customerType(m.customer.savingsPlans),
+    type: asCustomerType(m.customer.type),
   }))
   const rounds = Array.from({ length: g.size }, (_, i) => {
     const round = i + 1

@@ -5,7 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { notifySuperAdminsRedemptionPending } from '@/lib/redemption-notify'
 import { getPayoutMode } from '@/lib/payout-mode'
-import { customerType } from '@/lib/customer-type'
+import { asCustomerType } from '@/lib/customer-type'
 import { notifications, notify } from '@/lib/notifications'
 import { notifyCustomerRedemptionDeclined } from '@/lib/payout-notify'
 
@@ -103,8 +103,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     try {
       if ((await getPayoutMode()).customer === 'manual') {
         const cust = redemption.savingsPlan.customer
-        const plans = await prisma.savingsPlan.findMany({ where: { customerId: cust.id }, select: { source: true } })
-        await notifyCustomerRedemptionDeclined(cust, customerType(plans), {
+        await notifyCustomerRedemptionDeclined(cust, asCustomerType(cust.type), {
           amountNaira: redemption.netPayout,
           ref: redemption.ref,
           reason: 'declined by your agent',

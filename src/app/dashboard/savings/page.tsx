@@ -33,6 +33,8 @@ interface Customer {
   phone: string; savingsBalance: number; planDays: number | null; planId: string | null
   planStatus: string | null; dailyAmount: number | null; photoUrl?: string | null
   savingsPlans?: SavingsPlan[]
+  /** online = registered themselves and opens their own plans; the server refuses agents too. */
+  type?: 'online' | 'offline'
 }
 /** `dailyAmount` is stored as a per-day equivalent; weekly / monthly plans pay 7 or 30 times that each time. */
 interface SavingsPlan { id: string; goal: string; status: string; startDate?: string | null; maturityDate: string | null; dailyAmount: number; cadence?: string | null; balance: number; periodDays: number; source?: string | null }
@@ -482,6 +484,7 @@ function SavingsContent() {
     </a>
   )
   const redeemed = selected?.planStatus === 'Redeemed'
+  const onlineSel = selected?.type === 'online'
   /** Every plan has ended (or been collected) but the customer isn't on the new-plan form: nothing to save into. */
   const nothingOpen = !!selected && !redeemed && activePlans.length === 0
   const finishedPlans = (selected?.savingsPlans ?? [])
@@ -663,13 +666,19 @@ function SavingsContent() {
                 </section>
               )}
 
-              {redeemed ? (
+              {redeemed && onlineSel ? (
+                <section className="ui-card">
+                  <EmptyState icon="plan" title="No plan open for saving" text="This customer saves on the app. They open their own plans." />
+                </section>
+              ) : redeemed ? (
                 <NewPlanForm plan={newPlan} setPlan={setNewPlan} />
               ) : nothingOpen ? (
                 <section className="ui-card">
                   <EmptyState icon="plan" title="No plan open for saving"
-                    text={finishedPlans.length > 0 ? 'Their plan has ended. Tap Save again above to keep saving into it, or start a new plan.' : 'Start a new plan for them to keep saving.'}
-                    action={<Link href={`/dashboard/add-plan?cid=${encodeURIComponent(selected.customerId)}`} className="ui-btn ui-btn--secondary">Start a new plan</Link>} />
+                    text={onlineSel
+                      ? (finishedPlans.length > 0 ? 'Their plan has ended. Tap Save again above to keep saving into it. They open new plans in the app.' : 'This customer saves on the app. They open their own plans.')
+                      : finishedPlans.length > 0 ? 'Their plan has ended. Tap Save again above to keep saving into it, or start a new plan.' : 'Start a new plan for them to keep saving.'}
+                    action={onlineSel ? undefined : <Link href={`/dashboard/add-plan?cid=${encodeURIComponent(selected.customerId)}`} className="ui-btn ui-btn--secondary">Start a new plan</Link>} />
                 </section>
               ) : (
                 <section className="ui-card" aria-labelledby="saving-title">
@@ -766,7 +775,7 @@ function SavingsContent() {
               )}
 
               <div className="ag-submit">
-                {redeemed ? (
+                {redeemed && onlineSel ? null : redeemed ? (
                   <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={loading} onClick={createPlan}>
                     {loading ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Creating plan…</> : 'Create savings plan'}
                   </button>

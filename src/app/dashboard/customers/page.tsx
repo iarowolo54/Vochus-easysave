@@ -643,7 +643,7 @@ function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, g
         <Icons.plan size={18} aria-hidden="true" /> Record saving
       </button>
       <div className="ag-profile-actions">
-        <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/add-plan')}><Icons.add size={18} aria-hidden="true" /> New plan</button>
+        {c.type !== 'online' && <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/add-plan')}><Icons.add size={18} aria-hidden="true" /> New plan</button>}
         <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/loan-request')}><Icons.loan size={18} aria-hidden="true" /> New loan</button>
         <button type="button" className="ui-btn ui-btn--secondary" onClick={() => go('/dashboard/loan-repay')}><Icons.repay size={18} aria-hidden="true" /> Pay loan</button>
       </div>

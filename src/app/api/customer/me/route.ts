@@ -1,4 +1,5 @@
 import { NextResponse } from 'next/server'
+import { asCustomerType } from '@/lib/customer-type'
 import { getOnlineRedeemFee, isEarlyRedemption, onlineFeeOn } from '@/lib/online-redeem-fee'
 import { ajoPlanFees } from '@/lib/ajo-fee'
 import { getCustomerSession } from '@/lib/customer-auth'
@@ -136,6 +137,8 @@ export async function GET() {
   return NextResponse.json({
     id: customer.id,
     customerId: customer.customerId,
+    // online = registered themselves and opens their own plans; offline = their agent opens plans for them.
+    type: asCustomerType(customer.type),
     name: `${customer.firstName} ${customer.lastName}`,
     phone: customer.phone,
     email: customer.email,

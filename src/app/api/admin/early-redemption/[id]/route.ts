@@ -8,7 +8,7 @@ import { redemptionCompletionOps, ConflictError } from '@/lib/redemption-complet
 import { BALANCE_CHANGED, balanceUnchanged, CASH_NEEDS_ACTIVE_AGENT, claimPlanForPayout, NO_MONEY_LEFT, reopenPlanAfterNoTransfer, settlePlanAfterPayout, TRANSFER_ACCEPTED } from '@/lib/redemption-balance'
 import { getPayoutMode } from '@/lib/payout-mode'
 import { heldForNameCheck, isBankMethod } from '@/lib/payout-account'
-import { customerType } from '@/lib/customer-type'
+import { asCustomerType } from '@/lib/customer-type'
 import { notifications, notify } from '@/lib/notifications'
 import {
   notifyCustomerRedemptionPaid,
@@ -30,13 +30,12 @@ async function notifyManualOutcome(
   agentId: string,
 ): Promise<void> {
   try {
-    const [customer, agent, plans] = await Promise.all([
-      prisma.customer.findUnique({ where: { id: customerId }, select: { firstName: true, lastName: true, email: true, phone: true } }),
+    const [customer, agent] = await Promise.all([
+      prisma.customer.findUnique({ where: { id: customerId }, select: { firstName: true, lastName: true, email: true, phone: true, type: true } }),
       prisma.agent.findUnique({ where: { id: agentId }, select: { email: true, phone: true } }),
-      prisma.savingsPlan.findMany({ where: { customerId }, select: { source: true } }),
     ])
     if (!customer) return
-    const type = customerType(plans)
+    const type = asCustomerType(customer.type)
     const customerName = `${customer.firstName} ${customer.lastName}`
     const base = {
       amountNaira: r.netPayout,

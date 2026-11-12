@@ -21,6 +21,8 @@ import { addDays, isoDate, MAX_PLAN_DAYS, parseDateInput, today, type Cadence } 
 interface Customer {
   id: string; customerId: string; firstName: string; lastName: string; phone: string; photoUrl?: string | null
   savingsBalance: number; savingsPlans: { id: string; status: string }[]
+  /** online = registered themselves and opens their own plans; the server refuses agents too. */
+  type?: 'online' | 'offline'
 }
 
 const GOALS = ['School Fees', 'Business Capital', 'House Rent', 'Medical Expenses', 'Wedding / Event', 'Other']
@@ -133,6 +135,14 @@ function AddPlanContent() {
     )
   }
   if (!customer) return <div className="ag-page ag-card-page"><ListSkeleton count={4} /></div>
+  if (customer.type === 'online') {
+    return (
+      <div className="ag-page ag-card-page">
+        <section className="ui-card"><EmptyState icon="plan" title="They open their own plans" text="This customer saves on the app. They open their own plans."
+          action={<Link href="/dashboard/customers" className="ui-btn ui-btn--primary">Go to customers</Link>} /></section>
+      </div>
+    )
+  }
 
   const activeCount = customer.savingsPlans.filter(p => p.status === 'Active').length
 

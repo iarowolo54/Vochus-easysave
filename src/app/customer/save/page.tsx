@@ -67,6 +67,7 @@ type Plan = {
   source?: string | null; coveredKeys?: string[]; coveredRefs?: string[]
 }
 type Me = {
+  type?: 'online' | 'offline'
   plan: Plan | null
   plans: Plan[]
   transactions: { planId: string | null; ref?: string; createdAt: string }[]
@@ -90,6 +91,8 @@ function SavePageInner() {
   const forceNew = params.get('new') === '1'
 
   const { data, loading, failed, reload } = useCustomerMe<Me>()
+  // Offline (agent-registered) customers have their plans opened by their agent; the server refuses them too.
+  const offline = data?.type === 'offline'
   const [plans, setPlans] = useState<Plan[]>([])
   const [selectedPlanId, setSelectedPlanId] = useState<string | null>(paramPlanId)
   const [mode, setMode] = useState<'pay' | 'new'>(forceNew ? 'new' : 'pay')
@@ -267,11 +270,11 @@ function SavePageInner() {
           <EmptyState
             icon="plan"
             title="Your plan has ended"
-            text="It can’t take more savings. Redeem it, save into it again from Home, or start a new plan."
+            text={offline ? 'It can’t take more savings. Redeem it, or ask your agent to open a new plan.' : 'It can’t take more savings. Redeem it, save into it again from Home, or start a new plan.'}
             action={
               <div className="ui-stack">
                 <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => router.push('/customer/dashboard')}>Go to Home</button>
-                <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => { setMode('new'); setError('') }}>Start a new plan</button>
+                {!offline && <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={() => { setMode('new'); setError('') }}>Start a new plan</button>}
               </div>
             }
           />
@@ -384,13 +387,24 @@ function SavePageInner() {
             </div>
             )}
 
-            <button type="button" className="ui-btn ui-btn--secondary ui-btn--block ui-gap-top" onClick={() => { setMode('new'); setError('') }}>
-              <Icons.add size={18} aria-hidden="true" /> Start a new plan
-            </button>
+            {!offline && (
+              <button type="button" className="ui-btn ui-btn--secondary ui-btn--block ui-gap-top" onClick={() => { setMode('new'); setError('') }}>
+                <Icons.add size={18} aria-hidden="true" /> Start a new plan
+              </button>
+            )}
           </>
         )}
 
-        {mode === 'new' && (
+        {mode === 'new' && offline && (
+          <EmptyState
+            icon="plan"
+            title="Your agent opens your plans"
+            text="Please ask your agent to open a new plan for you."
+            action={<button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={() => router.push('/customer/dashboard')}>Go to Home</button>}
+          />
+        )}
+
+        {mode === 'new' && !offline && (
           <form onSubmit={createPlan} noValidate className="ui-gap-top">
             <div className="ui-field">
               <p className="ui-label" id="cadence-label">How often will you save?</p>

@@ -42,6 +42,7 @@ type Tx = {
   planId: string | null; recordedBy: string; confirmedByStaff?: boolean
 }
 type CustomerData = {
+  type?: 'online' | 'offline'
   customerId: string; name: string; phone: string; email: string | null; emailVerified?: boolean; photoUrl: string | null
   agent: { name: string; agentId: string; phone: string }
   plan: Plan | null
@@ -93,6 +94,8 @@ function PlanDetails({ plan }: { plan: Plan }) {
 export default function CustomerDashboard() {
   const router = useRouter()
   const { data, loading, failed, reload } = useCustomerMe<CustomerData>()
+  // Offline (agent-registered) customers have their plans opened by their agent; the server refuses them too.
+  const offline = data?.type === 'offline'
   const [activePlanIdx, setActivePlanIdx] = useState(0)
   const [hideBalance, setHide] = useState(false)
   const [pickerOpen, setPickerOpen] = useState(false)
@@ -288,7 +291,7 @@ export default function CustomerDashboard() {
               plan={plan}
               hideAmounts={hideBalance}
               onCollect={() => router.push(redeemHref)}
-              onNewPlan={() => router.push('/customer/save?new=1')}
+              onNewPlan={offline ? undefined : () => router.push('/customer/save?new=1')}
               note={<InterestNudge plan={plan} hideAmounts={hideBalance} />}
             />
           </section>
@@ -353,12 +356,12 @@ export default function CustomerDashboard() {
             <ActionButton icon="history" label={BULK_SAVINGS_LABEL} onClick={() => router.push(`/customer/catchup?planId=${encodeURIComponent(plan.id)}`)} />
           )}
           <ActionButton icon="withdraw" label="Redeem" onClick={() => router.push(redeemHref)} />
-          <ActionButton
+          {!offline && <ActionButton
             icon="plan"
             label="New plan"
             disabled={!!pending}
             onClick={() => router.push('/customer/save?new=1')}
-          />
+          />}
         </div>}
 
         <button type="button" className="ui-card ui-card-link ag-ajo-home" onClick={() => router.push('/customer/ajo')}>
@@ -488,7 +491,7 @@ export default function CustomerDashboard() {
               <span className="ui-option-check" aria-hidden="true">{i === activePlanIdx && <Icons.check size={20} />}</span>
             </button>
           ))}
-          {!pending && (
+          {!pending && !offline && (
             <button type="button" className="ui-option" onClick={() => router.push('/customer/save?new=1')}>
               <span className="ui-row-icon ui-row-icon--action" aria-hidden="true"><Icons.add size={20} /></span>
               <span className="ui-row-main"><span className="ui-row-title">Start a new plan</span></span>

@@ -10,7 +10,8 @@ type Props = {
   plan: Plan
   hideAmounts: boolean
   onCollect: () => void
-  onNewPlan: () => void
+  /** Left out for offline customers, whose agent opens their plans. */
+  onNewPlan?: () => void
   /** Optional line under the summary sentence (e.g. interest earned). */
   note?: ReactNode
 }
@@ -78,9 +79,11 @@ export default function PlanEnded({ plan, hideAmounts, onCollect, onNewPlan, not
         <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={onCollect}>
           {hideAmounts ? 'Redeem my savings' : `Redeem ${formatNaira(plan.balance)}`}
         </button>
-        <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={onNewPlan}>
-          <Icons.add size={18} aria-hidden="true" /> Start a new plan
-        </button>
+        {onNewPlan && (
+          <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={onNewPlan}>
+            <Icons.add size={18} aria-hidden="true" /> Start a new plan
+          </button>
+        )}
       </div>
     </>
   )

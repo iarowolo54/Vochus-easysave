@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
-import { customerType } from '@/lib/customer-type'
+import { asCustomerType } from '@/lib/customer-type'
 import { rankMatches } from '@/lib/fuzzy'
 
 export async function GET(req: NextRequest) {
@@ -23,7 +23,7 @@ export async function GET(req: NextRequest) {
     where: ranked ? { id: { in: ranked } } : undefined,
     include: {
       agent: { select: { name: true, agentId: true } },
-      savingsPlans: { select: { balance: true, status: true, source: true } },
+      savingsPlans: { select: { balance: true, status: true } },
     },
     orderBy: { createdAt: 'desc' },
   })
@@ -65,7 +65,7 @@ export async function GET(req: NextRequest) {
       gender: c.gender,
       state: c.state,
       lga: c.lga,
-      type: customerType(c.savingsPlans),
+      type: asCustomerType(c.type),
       lastPaidAt: lastPaid.get(c.id)?.toISOString() ?? null,
     })),
   })

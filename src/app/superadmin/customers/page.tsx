@@ -413,7 +413,6 @@ export default function CustomersPage() {
                   <DlRow label="Saves">{isFlexible(p.cadence) ? `Flexible, any amount, for ${p.periodDays} days` : <>{naira(p.dailyAmount)} {p.cadence === 'daily' ? 'a day' : `per ${p.cadence.replace(/ly$/, '')}`} for {p.periodDays} days</>}</DlRow>
                   <DlRow label="Balance"><span className="cm-strong">{naira(p.balance)}</span></DlRow>
                   {p.interestAccrued > 0 && <DlRow label="Interest earned">{naira(p.interestAccrued)}</DlRow>}
-                  <DlRow label="Type">{p.source === 'self' ? 'Online' : 'Cash saver'}</DlRow>
                   <DlRow label="Runs">{shortDate(p.startDate)} to {shortDate(p.maturityDate)}</DlRow>
                 </dl>
                 {full.transactionsHidden ? null : p.transactions.length === 0 ? <p className="cm-sub2">No transactions on this plan yet.</p> : <TxnList txns={p.transactions} />}

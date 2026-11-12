@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { genTxnRef } from '@/lib/ref'
 import { logAudit } from '@/lib/audit'
+import { asCustomerType, planCreationBlock } from '@/lib/customer-type'
 import { BAD_CADENCE, flexiblePlanData, getFlexibleSettings, isFlexible, parseCadence, shortDate, type FlexiblePlanData } from '@/lib/flexible-savings'
 
 export async function POST(req: NextRequest) {
@@ -29,6 +30,9 @@ export async function POST(req: NextRequest) {
 
   const customer = await prisma.customer.findFirst({ where: { id: customerId, agentId: agent.id } })
   if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
+  // Online (self-registered) customers open their own plans in the app.
+  const blocked = planCreationBlock('agent', asCustomerType(customer.type))
+  if (blocked) return NextResponse.json({ error: blocked }, { status: 403 })
 
   const start = startDate ? new Date(startDate) : new Date()
   const maturity = new Date(start)
