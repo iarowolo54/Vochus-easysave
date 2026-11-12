@@ -59,7 +59,7 @@ export async function GET() {
   ])
   const sumOf = (source: string) => platformRows.find(r => r.source === source)?._sum.amount ?? 0
   const earlier = legacyPlatformShare(olderCollections, new Set(coveredRows.map(r => r.sourceRef)))
-  const savingsFees = money(['daily_first', 'periodic_fee', 'settle_up', 'redemption_fee'].reduce((t, k) => t + sumOf(k), 0) + earlier)
+  const savingsFees = money(['daily_first', 'periodic_fee', 'settle_up', 'redemption_fee', 'fee_refund'].reduce((t, k) => t + sumOf(k), 0) + earlier)
   const loanShare = money(sumOf('loan'))
   const systemCommission = { savingsFees, loanShare, total: money(savingsFees + loanShare) }
 

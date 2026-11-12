@@ -9,7 +9,7 @@ import { flexibleDeduction, getFlexibleSettings, isFlexible } from '@/lib/flexib
 export const GO_LIVE_KEY = 'commissionGoLive'
 
 export type LedgerClient = Prisma.TransactionClient
-export type LedgerSource = 'daily_first' | 'periodic_fee' | 'settle_up' | 'loan' | 'repayment' | 'redemption_fee'
+export type LedgerSource = 'daily_first' | 'periodic_fee' | 'settle_up' | 'loan' | 'repayment' | 'redemption_fee' | 'fee_refund'
 
 export interface LedgerEntry {
   party: 'agent' | 'platform'
@@ -46,6 +46,19 @@ export async function recordCommission(tx: LedgerClient, e: LedgerEntry): Promis
 }
 
 /** Adds to the platform's Revenue wallet. */
+/**
+ * Writes one NEGATIVE ledger row: a share given back (a refunded fee). Keyed like any row, so the same reversal can't be
+ * written twice. Returns false for a zero amount or a row that already exists.
+ */
+export async function recordReversal(tx: LedgerClient, e: LedgerEntry & { createdAt?: Date }): Promise<boolean> {
+  const amount = money(e.amount)
+  if (amount <= 0) return false
+  const key = { source_sourceRef_party: { source: e.source, sourceRef: e.sourceRef, party: e.party } }
+  if (await tx.commissionLedger.findUnique({ where: key })) return false
+  await tx.commissionLedger.create({ data: { ...e, amount: -amount } })
+  return true
+}
+
 async function creditRevenue(tx: LedgerClient, amount: number): Promise<void> {
   await tx.platformWallet.upsert({ where: { type: 'Revenue' }, update: { balance: { increment: amount } }, create: { type: 'Revenue', balance: amount } })
 }

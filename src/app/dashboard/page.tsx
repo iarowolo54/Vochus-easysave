@@ -30,6 +30,7 @@ const TXN: Record<string, { label: string; icon: IconName; sign: '+' | '−' | '
   enrolment:      { label: 'New customer',    icon: 'enrol',    sign: '' },
   registration:   { label: 'Registration fee', icon: 'enrol',   sign: '' },
   wallet_funding: { label: 'Wallet top-up',   icon: 'wallet',   sign: '+' },
+  fee_refund:     { label: 'Fee refund',      icon: 'deposit',  sign: '+' },
 }
 
 function txn(type: string) {

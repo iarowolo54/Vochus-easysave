@@ -29,6 +29,7 @@ export function txMeta(type = 'saving'): { label: string; direction: Direction; 
     case 'repayment':    return { label: 'Loan repayment',  direction: 'out',  planLabel: 'Plan' }
     case 'enrolment':    return { label: 'Enrolment',       direction: 'none', planLabel: 'Plan' }
     case 'registration': return { label: 'Registration',    direction: 'none', planLabel: 'Plan' }
+    case 'fee_refund':   return { label: 'Fee refund',      direction: 'in',   planLabel: 'Paid into' }
     default:             return { label: type.replace(/_/g, ' ').replace(/^\w/, c => c.toUpperCase()), direction: 'none', planLabel: 'Plan' }
   }
 }

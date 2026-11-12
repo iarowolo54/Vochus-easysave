@@ -36,6 +36,7 @@ const TYPES: Record<string, { label: string; icon: IconName; sign: '+' | '−' |
   registration: { label: 'Registration fee', icon: 'enrol', sign: '' },
   loan: { label: 'Loan request', icon: 'loan', sign: '' },
   wallet_funding: { label: 'Wallet top-up', icon: 'wallet', sign: '+' },
+  fee_refund: { label: 'Fee refund', icon: 'deposit', sign: '+' },
 }
 const meta = (t: string) => TYPES[t] ?? { label: t.charAt(0).toUpperCase() + t.slice(1), icon: 'history' as IconName, sign: '' as const }
 

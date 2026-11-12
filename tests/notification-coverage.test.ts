@@ -20,6 +20,7 @@ const WRITES: { what: string; re: RegExp }[] = [
   { what: 'withdrawal write', re: /\bagentWithdrawal\.(update|updateMany|create|upsert)\(/ },
   { what: 'plan credit', re: /(?<!function )\b(creditPlanBalance|creditOpenPlan)\(/ },
   { what: 'wallet funding', re: /type:\s*'wallet_funding'/ },
+  { what: 'fee refund', re: /type:\s*'fee_refund'/ },
   { what: 'new device session', re: /\bdeviceSession\.(create|upsert)\(/ },
   { what: 'ajo member joins', re: /\bajoMember\.create\(/ },
   { what: 'ajo contribution', re: /\bajoContribution\.create\(/ },

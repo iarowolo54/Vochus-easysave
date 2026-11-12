@@ -23,6 +23,7 @@ export type NotificationKind =
   | 'ajo_joined' | 'ajo_started' | 'ajo_paid' | 'ajo_paid_agent' | 'ajo_round_out' | 'ajo_due' | 'ajo_late' | 'ajo_replaced'
   | 'new_phone'
   | 'customer_request_approved' | 'customer_request_denied' | 'customer_request_needs_funds'
+  | 'fee_refunded' | 'commission_returned'
 
 export interface NotificationEvent {
   recipient: Recipient
@@ -129,6 +130,20 @@ export const notifications = {
 
   withdrawalPaid(f: { id: string; agentId: string; amount: number }): NotificationEvent[] {
     return [{ recipient: agent(f.agentId), kind: 'withdrawal_paid', title: `Your withdrawal of ${naira(f.amount)} was paid`, href: '/dashboard/withdraw', dedupeKey: `withdrawal-paid:${f.id}` }]
+  },
+
+  /** A platform fee that shouldn't have been charged went back onto the plan; the agent's share of it came back out. */
+  feeRefunded(f: { ref: string; customerId: string; agentId: string | null; customerName: string; planGoal: string; fee: number; agentShare: number }): NotificationEvent[] {
+    const out: NotificationEvent[] = [{
+      recipient: customer(f.customerId), kind: 'fee_refunded', title: `${naira(f.fee)} platform fee refunded to ${f.planGoal}`,
+      body: 'It has been added back to your balance.', href: receiptHref(f.ref), dedupeKey: `fee-refund:${f.ref}`,
+    }]
+    if (f.agentId && f.agentShare > 0) out.push({
+      recipient: agent(f.agentId), kind: 'commission_returned', title: `${naira(f.agentShare)} commission returned: ${name(f.customerName)}’s fee was refunded`,
+      body: 'The fee shouldn’t have applied to this customer, so your share of it came back out of your commission.',
+      href: '/dashboard/commission', dedupeKey: `fee-refund-agent:${f.ref}`,
+    })
+    return out
   },
 
   withdrawalDeclined(f: { id: string; agentId: string; amount: number; reason?: string | null }): NotificationEvent[] {

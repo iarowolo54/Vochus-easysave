@@ -87,3 +87,16 @@ test('scheduled: ending within 7 days, ended, and one daily count per agent', ()
   assert.ok(!keys.some(k => k.startsWith('plans-ending:a2')), 'a2 has none ending this week')
   assert.equal(ev.find(e => e.dedupeKey === 'plans-ending:a1:2026-11-07')?.title, '2 customers’ plans end this week')
 })
+
+test('backfill: a fee refund rebuilds the customer notice and the agent’s returned share', () => {
+  const since = new Date('2026-11-11T00:00:00Z')
+  const ev = backfillEvents({
+    savings: [], collections: [], withdrawals: [], topUps: [],
+    feeRefunds: [{
+      ref: 'FRF-1', agentId: 'a1', amount: 500, note: 'Refund of the fee on TXN-9809. Online customer.', createdAt: new Date('2026-11-12T05:00:00Z'), agentShare: 300,
+      plan: { goal: 'General Savings', customer: { id: 'c1', agentId: 'a1', firstName: 'Lydia', lastName: 'Ojelade' } },
+    }],
+  }, { since })
+  assert.deepEqual(ev.map(e => e.dedupeKey), ['fee-refund:FRF-1', 'fee-refund-agent:FRF-1'])
+  assert.equal(ev[0].at?.toISOString(), '2026-11-12T05:00:00.000Z')
+})

@@ -101,6 +101,8 @@ export interface LedgerRow {
 
 const LEDGER_SOURCE: Record<string, CommissionSource> = {
   daily_first: 'savings', periodic_fee: 'savings', settle_up: 'redemption', loan: 'loan', repayment: 'repayment', redemption_fee: 'redemption',
+  // A refunded savings fee: a negative savings row, so totals net out.
+  fee_refund: 'savings',
 }
 
 /** Agent ledger rows as drawer entries. `customers` maps internal customer id to its display name and id. */

@@ -20,7 +20,7 @@ interface Transaction {
 }
 
 // Filter options — the values sent to the API are unchanged.
-const TYPES = ['', 'saving', 'redemption', 'disbursement', 'repayment', 'enrolment']
+const TYPES = ['', 'saving', 'redemption', 'disbursement', 'repayment', 'enrolment', 'fee_refund']
 const TYPE_LABELS: Record<string, string> = {
   '': 'All types',
   saving: 'Savings',
@@ -28,6 +28,7 @@ const TYPE_LABELS: Record<string, string> = {
   disbursement: 'Loan disbursements',
   repayment: 'Loan repayments',
   enrolment: 'Enrolments',
+  fee_refund: 'Fee refunds',
 }
 // Display names for single rows, including types that appear in "All types" but aren't filterable yet.
 const ROW_LABELS: Record<string, string> = {
@@ -39,6 +40,7 @@ const ROW_LABELS: Record<string, string> = {
   registration: 'Registration',
   wallet_funding: 'Wallet funding',
   commission_payout: 'Commission payout',
+  fee_refund: 'Fee refund',
 }
 const TYPE_BADGE: Record<string, string> = {
   saving: 'bdg-g',
