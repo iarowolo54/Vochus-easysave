@@ -23,21 +23,6 @@ async function main() {
     })
   }
 
-  const hash = await bcrypt.hash('collo123', 10)
-
-  const agent = await prisma.agent.upsert({
-    where: { agentId: 'AGT-00142' },
-    update: {},
-    create: {
-      agentId: 'AGT-00142',
-      phone: '08012345678',
-      name: 'Adebayo Okafor',
-      location: 'Lagos, NG',
-      password: hash,
-      walletBalance: 184500,
-    },
-  })
-
   // Platform commission settings
   await prisma.platformSetting.upsert({
     where: { key: 'commissionRates' },
@@ -63,6 +48,40 @@ async function main() {
     })
   }
 
+  await prisma.rewardPromo.upsert({
+    where: { id: 'promo-default' },
+    update: { isActive: true },
+    create: {
+      id: 'promo-default',
+      isActive: true,
+      startDate: new Date('2026-09-04'),
+      endDate: new Date('2026-12-31'),
+      onlineRewardAmount: 200,
+      offlineRewardAmount: 500,
+    },
+  })
+
+  if (process.env.SEED_DEMO_DATA !== '1') {
+    console.log('Seed baseline complete (wallets + admins + settings). No agents are created here; set SEED_DEMO_DATA=1 locally for a demo agent and customers.')
+    return
+  }
+
+  // Demo agent (local demo data only — never created by a production seed)
+  const hash = await bcrypt.hash('collo123', 10)
+
+  const agent = await prisma.agent.upsert({
+    where: { agentId: 'AGT-00142' },
+    update: {},
+    create: {
+      agentId: 'AGT-00142',
+      phone: '08012345678',
+      name: 'Adebayo Okafor',
+      location: 'Lagos, NG',
+      password: hash,
+      walletBalance: 184500,
+    },
+  })
+
   // Sub-agents
   await prisma.subAgent.upsert({
     where: { phone: '08098765431' },
@@ -87,23 +106,6 @@ async function main() {
     },
   })
 
-  await prisma.rewardPromo.upsert({
-    where: { id: 'promo-default' },
-    update: { isActive: true },
-    create: {
-      id: 'promo-default',
-      isActive: true,
-      startDate: new Date('2026-09-04'),
-      endDate: new Date('2026-12-31'),
-      onlineRewardAmount: 200,
-      offlineRewardAmount: 500,
-    },
-  })
-
-  if (process.env.SEED_DEMO_DATA !== '1') {
-    console.log('Seed baseline complete (wallets + admins + agent). Skipping demo customers — set SEED_DEMO_DATA=1 to include them.')
-    return
-  }
 
   // Customers
   const now = new Date('2026-05-17T10:00:00Z')
