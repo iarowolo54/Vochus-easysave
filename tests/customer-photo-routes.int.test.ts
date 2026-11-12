@@ -22,13 +22,18 @@ const P1 = 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ=='
 let agentDbId = ''
 const customerIds: string[] = []
 
+// Tests start with no photo clock running; whatever was set before is put back afterwards.
+let savedDeadline: string | null = null
 before(async () => {
+  savedDeadline = (await prisma.platformSetting.findUnique({ where: { key: 'photoDeadline' } }))?.value ?? null
+  await prisma.platformSetting.deleteMany({ where: { key: 'photoDeadline' } })
   const a = await prisma.agent.create({ data: { agentId: `PR-${rid}`, phone: `0797${rid}`, name: 'Agent R', location: 'x', password: 'x' } })
   agentDbId = a.id
   stub.getServerSession = async () => ({ user: { agentId: a.agentId } })
 })
 after(async () => {
   await prisma.platformSetting.deleteMany({ where: { key: 'photoDeadline' } })
+  if (savedDeadline) await prisma.platformSetting.create({ data: { key: 'photoDeadline', value: savedDeadline } })
   await prisma.customerPhotoRequest.deleteMany({ where: { customerId: { in: customerIds } } })
   await prisma.customer.deleteMany({ where: { id: { in: customerIds } } })
   await prisma.agent.deleteMany({ where: { id: agentDbId } })

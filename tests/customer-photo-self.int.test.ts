@@ -24,12 +24,18 @@ let agentDbId = ''
 const ids: string[] = []
 let POST: (req: unknown) => Promise<Response>
 
+// Tests start with no photo clock running; whatever was set before is put back afterwards.
+let savedDeadline: string | null = null
 before(async () => {
+  savedDeadline = (await prisma.platformSetting.findUnique({ where: { key: 'photoDeadline' } }))?.value ?? null
+  await prisma.platformSetting.deleteMany({ where: { key: 'photoDeadline' } })
   const a = await prisma.agent.create({ data: { agentId: `PS-${rid}`, phone: `0798${rid}`, name: 'Agent S', location: 'x', password: 'x' } })
   agentDbId = a.id
   POST = (await import('../src/app/api/customer/photo/route')).POST as never
 })
 after(async () => {
+  await prisma.platformSetting.deleteMany({ where: { key: 'photoDeadline' } })
+  if (savedDeadline) await prisma.platformSetting.create({ data: { key: 'photoDeadline', value: savedDeadline } })
   await prisma.customer.deleteMany({ where: { id: { in: ids } } })
   await prisma.agent.deleteMany({ where: { id: agentDbId } })
 })
