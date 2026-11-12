@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { AGENT_CASH_BLOCK, asCustomerType } from '@/lib/customer-type'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
@@ -35,6 +36,8 @@ export async function POST(req: NextRequest) {
 
   const customer = await prisma.customer.findFirst({ where: { id: customerId, agentId: agent.id } })
   if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
+  // Online savers pay by bank transfer only: no cash through an agent.
+  if (asCustomerType(customer.type) === 'online') return NextResponse.json({ error: AGENT_CASH_BLOCK }, { status: 400 })
   {
     const blocked = await photoSaveBlock(prisma, customer.id, 'agent')
     if (blocked) return photoBlockedResponse(blocked)
@@ -50,6 +53,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'This customer has more than one active plan — choose which plan to save into' }, { status: 400 })
   }
   const plan = selected.plan
+  if (plan.source === 'self') return NextResponse.json({ error: AGENT_CASH_BLOCK }, { status: 400 })
 
   const dates = await prisma.savingsPlan.findUnique({ where: { id: plan.id }, select: { startDate: true, maturityDate: true, cadence: true, goal: true, dailyAmount: true, periodDays: true } })
   if (!dates || planHasEnded(dates)) return NextResponse.json({ error: PLAN_ENDED }, { status: 409 })

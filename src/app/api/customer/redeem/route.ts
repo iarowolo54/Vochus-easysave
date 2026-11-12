@@ -19,6 +19,7 @@ import { reserveRedemptionAttempt } from '@/lib/redemption-attempts'
 import { getPayoutMode } from '@/lib/payout-mode'
 import { notifications } from '@/lib/notifications'
 import { notifyAgentRedemptionToReview } from '@/lib/payout-notify'
+import { asCustomerType } from '@/lib/customer-type'
 
 export async function GET(req: NextRequest) {
   const session = await getCustomerSession()
@@ -76,6 +77,10 @@ export async function POST(req: NextRequest) {
   const now = new Date()
   const isEarly = now < plan.maturityDate
   const payoutMethod = accountNumber ? 'BankTransfer' : 'Cash'
+  // Online savers have no agent handing them cash: they redeem to a bank account only.
+  if (payoutMethod === 'Cash' && asCustomerType(customer.type) === 'online') {
+    return NextResponse.json({ error: 'Enter the bank account you want your money sent to.' }, { status: 400 })
+  }
   if (payoutMethod === 'Cash') {
     const agent = await prisma.agent.findUnique({ where: { id: customer.agentId }, select: { status: true } })
     if (agent?.status !== 'Active') {

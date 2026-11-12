@@ -67,6 +67,8 @@ export default function CustomerRedeemPage() {
   const [sentBy, setSentBy] = useState<string[]>([])
   const [reason, setReason] = useState('')
   const [useBankTransfer, setUseBankTransfer] = useState(false)
+  // Online savers redeem to a bank account only; cash from an agent is for offline (cash) savers.
+  const [isOnline, setIsOnline] = useState(false)
   const [bankCode, setBankCode] = useState('')
   const [accountNumber, setAccountNumber] = useState('')
   const [accountName, setAccountName] = useState('')
@@ -85,7 +87,7 @@ export default function CustomerRedeemPage() {
     planIdRef.current = wantedPlan
     fetch('/api/customer/me')
       .then(r => { if (r.status === 401) { router.push('/customer/login'); return null } return r.json() })
-      .then(d => { if (d) setPlan(wantedPlan ? d.plans?.find((p: { id: string }) => p.id === wantedPlan) ?? d.plan : d.plan) })
+      .then(d => { if (d?.type === 'online') { setIsOnline(true); setUseBankTransfer(true) } if (d) setPlan(wantedPlan ? d.plans?.find((p: { id: string }) => p.id === wantedPlan) ?? d.plan : d.plan) })
       .catch(() => {})
 
     fetch(`/api/customer/redeem${wantedPlan ? `?planId=${encodeURIComponent(wantedPlan)}` : ''}`)
@@ -98,7 +100,7 @@ export default function CustomerRedeemPage() {
   async function submitRequest() {
     setError('')
     if (!reason) { setError('Choose why you’re redeeming.'); return }
-    if (useBankTransfer && (!bankCode || accountNumber.length !== 10 || !cleanAccountName(accountName))) { setError('Choose your bank, enter your 10-digit account number and the account name, or choose cash from your agent.'); return }
+    if (useBankTransfer && (!bankCode || accountNumber.length !== 10 || !cleanAccountName(accountName))) { setError(isOnline ? 'Choose your bank, enter your 10-digit account number and the account name.' : 'Choose your bank, enter your 10-digit account number and the account name, or choose cash from your agent.'); return }
     setSubmitting(true)
     try {
       const res = await fetch('/api/customer/redeem', {
@@ -282,6 +284,9 @@ export default function CustomerRedeemPage() {
                 ))}
               </div>
 
+              {isOnline ? (
+                <p className="ag-label">Your bank account</p>
+              ) : (<>
               <p className="ag-label">How do you want it?</p>
               <div className="ag-radio-group">
                 {[
@@ -301,6 +306,7 @@ export default function CustomerRedeemPage() {
                   )
                 })}
               </div>
+              </>)}
 
               {useBankTransfer && (
                 <div className="ag-bank-fields">

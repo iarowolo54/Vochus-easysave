@@ -665,7 +665,7 @@ function SavingsContent() {
                 <button type="button" className="ui-link" onClick={changeCustomer}>Change</button>
               </section>
 
-              {finishedPlans.length > 0 && (
+              {!onlineSel && finishedPlans.length > 0 && (
                 <section className="ui-card ui-card--list" aria-label="Finished plans">
                   {finishedPlans.map(p => (
                     <div key={p.id} className="ui-row">
@@ -684,9 +684,9 @@ function SavingsContent() {
                 </section>
               )}
 
-              {redeemed && onlineSel ? (
+              {onlineSel ? (
                 <section className="ui-card">
-                  <EmptyState icon="plan" title="No plan open for saving" text="This customer saves on the app. They open their own plans." />
+                  <EmptyState icon="plan" title="Saves on the app" text="This customer pays in and redeems by bank transfer in their app. Don’t take cash from them." />
                 </section>
               ) : redeemed ? (
                 <NewPlanForm plan={newPlan} setPlan={setNewPlan} />
@@ -793,7 +793,7 @@ function SavingsContent() {
               )}
 
               <div className="ag-submit">
-                {redeemed && onlineSel ? null : redeemed ? (
+                {onlineSel ? null : redeemed ? (
                   <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={loading} onClick={createPlan}>
                     {loading ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Creating plan…</> : 'Create savings plan'}
                   </button>
