@@ -9,6 +9,13 @@ type Fail = { ok: false; status: 400 | 404 | 409; error: string }
 type Admin = { id?: string; name: string; type: string }
 
 const DECIDED = 'This photo has already been checked.'
+const CHANGED = 'The agent sent a newer photo. Open it again to check that one.'
+
+/** The submittedAt the admin's screen showed, so a decision only ever applies to the photo they actually saw. */
+function seenAt(v: unknown): Date | null {
+  const d = typeof v === 'string' || v instanceof Date ? new Date(v) : null
+  return d && !isNaN(d.getTime()) ? d : null
+}
 
 export async function submitAgentPhoto(
   client: PrismaClient,
@@ -51,17 +58,22 @@ async function load(client: PrismaClient, id: string) {
   })
 }
 
-export async function approvePhotoRequest(client: PrismaClient, i: { id: string; admin: Admin }): Promise<{ ok: true } | Fail> {
+export async function approvePhotoRequest(client: PrismaClient, i: { id: string; admin: Admin; seenSubmittedAt: unknown }): Promise<{ ok: true } | Fail> {
+  const seen = seenAt(i.seenSubmittedAt)
+  if (!seen) return { ok: false, status: 400, error: 'Open the photo before approving it.' }
   const r = await load(client, i.id)
   if (!r) return { ok: false, status: 404, error: 'Photo not found.' }
-  if (r.status !== 'Pending' || !r.photoUrl) return { ok: false, status: 409, error: DECIDED }
-  const photoUrl = r.photoUrl
+  if (r.status !== 'Pending') return { ok: false, status: 409, error: DECIDED }
   const customerName = `${r.customer.firstName} ${r.customer.lastName}`
   const now = new Date()
   const done = await client.$transaction(async tx => {
+    // The photo is taken from the very version the admin saw: a newer submission changes submittedAt and fails this.
+    const row = await tx.customerPhotoRequest.findFirst({ where: { id: r.id, status: 'Pending', submittedAt: seen }, select: { photoUrl: true } })
+    if (!row?.photoUrl) return false
+    const photoUrl = row.photoUrl
     // notify: customerPhotoApproved
     const claimed = await tx.customerPhotoRequest.updateMany({
-      where: { id: r.id, status: 'Pending' },
+      where: { id: r.id, status: 'Pending', submittedAt: seen },
       data: { status: 'Approved', decidedAt: now, decidedBy: i.admin.name, decidedById: i.admin.id ?? null, pendingCustomerId: null, photoUrl: null, rejectReason: null },
     })
     if (claimed.count !== 1) return false
@@ -72,10 +84,14 @@ export async function approvePhotoRequest(client: PrismaClient, i: { id: string;
     })
     return true
   })
-  return done ? { ok: true } : { ok: false, status: 409, error: DECIDED }
+  if (done) return { ok: true }
+  const now2 = await client.customerPhotoRequest.findUnique({ where: { id: r.id }, select: { status: true } })
+  return { ok: false, status: 409, error: now2?.status === 'Pending' ? CHANGED : DECIDED }
 }
 
-export async function rejectPhotoRequest(client: PrismaClient, i: { id: string; admin: Admin; reason: string }): Promise<{ ok: true } | Fail> {
+export async function rejectPhotoRequest(client: PrismaClient, i: { id: string; admin: Admin; reason: string; seenSubmittedAt: unknown }): Promise<{ ok: true } | Fail> {
+  const seen = seenAt(i.seenSubmittedAt)
+  if (!seen) return { ok: false, status: 400, error: 'Open the photo before rejecting it.' }
   const reason = i.reason.trim()
   if (reason.length < 3 || reason.length > 300) return { ok: false, status: 400, error: 'Say what’s wrong with the photo (3 to 300 characters).' }
   const r = await load(client, i.id)
@@ -86,7 +102,7 @@ export async function rejectPhotoRequest(client: PrismaClient, i: { id: string; 
   const done = await client.$transaction(async tx => {
     // notify: customerPhotoRejected
     const claimed = await tx.customerPhotoRequest.updateMany({
-      where: { id: r.id, status: 'Pending' },
+      where: { id: r.id, status: 'Pending', submittedAt: seen },
       data: { status: 'Rejected', decidedAt: now, decidedBy: i.admin.name, decidedById: i.admin.id ?? null, pendingCustomerId: null, photoUrl: null, rejectReason: reason },
     })
     if (claimed.count !== 1) return false
@@ -96,7 +112,9 @@ export async function rejectPhotoRequest(client: PrismaClient, i: { id: string; 
     })
     return true
   })
-  return done ? { ok: true } : { ok: false, status: 409, error: DECIDED }
+  if (done) return { ok: true }
+  const now2 = await client.customerPhotoRequest.findUnique({ where: { id: r.id }, select: { status: true } })
+  return { ok: false, status: 409, error: now2?.status === 'Pending' ? CHANGED : DECIDED }
 }
 
 /** The newest photo request per customer (status and reject reason only, never the photo), for list screens. */

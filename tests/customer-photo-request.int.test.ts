@@ -13,6 +13,8 @@ let agentA = { id: '', name: 'Agent A', agentId: `PA-${rid}` }
 let agentB = { id: '', name: 'Agent B', agentId: `PB-${rid}` }
 const customerIds: string[] = []
 
+const seen = async (id: string) => (await prisma.customerPhotoRequest.findUniqueOrThrow({ where: { id } })).submittedAt.toISOString()
+
 async function mkCustomer(n: number, agentDbId: string) {
   const c = await prisma.customer.create({
     data: { customerId: `PHT-${rid}-${n}`, agentId: agentDbId, firstName: 'Ada', lastName: `Obi${n}`, phone: `0803${rid.replace(/\D/g, '1').slice(0, 3)}${String(1000 + n)}`, address: '1 Market Rd', nokName: 'N', nokRelation: 'R', nokPhone: '08000000000' },
@@ -59,7 +61,7 @@ test('approve moves the photo onto the customer, clears it from the request and 
   const c = await mkCustomer(3, agentA.id)
   const s = await submitAgentPhoto(prisma, { customerDbId: c.id, agent: agentA, photoUrl: P1 })
   assert.ok(s.ok)
-  const r = await approvePhotoRequest(prisma, { id: s.requestId, admin })
+  const r = await approvePhotoRequest(prisma, { id: s.requestId, admin, seenSubmittedAt: await seen(s.requestId) })
   assert.ok(r.ok)
   assert.equal((await prisma.customer.findUniqueOrThrow({ where: { id: c.id } })).photoUrl, P1)
   const req = await prisma.customerPhotoRequest.findUniqueOrThrow({ where: { id: s.requestId } })
@@ -73,10 +75,10 @@ test('approve twice: the second is 409; reject after approve is 409', async () =
   const c = await mkCustomer(4, agentA.id)
   const s = await submitAgentPhoto(prisma, { customerDbId: c.id, agent: agentA, photoUrl: P1 })
   assert.ok(s.ok)
-  assert.ok((await approvePhotoRequest(prisma, { id: s.requestId, admin })).ok)
-  const again = await approvePhotoRequest(prisma, { id: s.requestId, admin })
+  assert.ok((await approvePhotoRequest(prisma, { id: s.requestId, admin, seenSubmittedAt: await seen(s.requestId) })).ok)
+  const again = await approvePhotoRequest(prisma, { id: s.requestId, admin, seenSubmittedAt: await seen(s.requestId) })
   assert.equal(again.ok ? null : again.status, 409)
-  const rej = await rejectPhotoRequest(prisma, { id: s.requestId, admin, reason: 'Face is blurred' })
+  const rej = await rejectPhotoRequest(prisma, { id: s.requestId, admin, seenSubmittedAt: await seen(s.requestId), reason: 'Face is blurred' })
   assert.equal(rej.ok ? null : rej.status, 409)
 })
 
@@ -84,9 +86,9 @@ test('reject needs a reason; the customer keeps no photo; the agent can submit a
   const c = await mkCustomer(5, agentA.id)
   const s = await submitAgentPhoto(prisma, { customerDbId: c.id, agent: agentA, photoUrl: P1 })
   assert.ok(s.ok)
-  const noReason = await rejectPhotoRequest(prisma, { id: s.requestId, admin, reason: ' ' })
+  const noReason = await rejectPhotoRequest(prisma, { id: s.requestId, admin, seenSubmittedAt: await seen(s.requestId), reason: ' ' })
   assert.equal(noReason.ok ? null : noReason.status, 400)
-  assert.ok((await rejectPhotoRequest(prisma, { id: s.requestId, admin, reason: 'Face is blurred' })).ok)
+  assert.ok((await rejectPhotoRequest(prisma, { id: s.requestId, admin, seenSubmittedAt: await seen(s.requestId), reason: 'Face is blurred' })).ok)
   const req = await prisma.customerPhotoRequest.findUniqueOrThrow({ where: { id: s.requestId } })
   assert.equal(req.status, 'Rejected')
   assert.equal(req.rejectReason, 'Face is blurred')
@@ -94,4 +96,21 @@ test('reject needs a reason; the customer keeps no photo; the agent can submit a
   assert.equal(await prisma.notification.count({ where: { recipientId: agentA.id, kind: 'customer_photo_rejected' } }), 1)
   const again = await submitAgentPhoto(prisma, { customerDbId: c.id, agent: agentA, photoUrl: P2 })
   assert.ok(again.ok)
+})
+
+test('a photo replaced after the admin opened it cannot be approved or rejected unseen (409)', async () => {
+  const c = await mkCustomer(6, agentA.id)
+  const s1 = await submitAgentPhoto(prisma, { customerDbId: c.id, agent: agentA, photoUrl: P1 })
+  assert.ok(s1.ok)
+  const sawAt = await seen(s1.requestId)
+  await new Promise(r => setTimeout(r, 5))
+  const s2 = await submitAgentPhoto(prisma, { customerDbId: c.id, agent: agentA, photoUrl: P2 })
+  assert.ok(s2.ok)
+  const stale = await approvePhotoRequest(prisma, { id: s1.requestId, admin, seenSubmittedAt: sawAt })
+  assert.equal(stale.ok ? null : stale.status, 409)
+  const staleReject = await rejectPhotoRequest(prisma, { id: s1.requestId, admin, seenSubmittedAt: sawAt, reason: 'Face is blurred' })
+  assert.equal(staleReject.ok ? null : staleReject.status, 409)
+  assert.equal((await prisma.customer.findUniqueOrThrow({ where: { id: c.id } })).photoUrl, null)
+  assert.ok((await approvePhotoRequest(prisma, { id: s2.requestId, admin, seenSubmittedAt: await seen(s2.requestId) })).ok)
+  assert.equal((await prisma.customer.findUniqueOrThrow({ where: { id: c.id } })).photoUrl, P2)
 })

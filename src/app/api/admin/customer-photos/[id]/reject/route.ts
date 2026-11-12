@@ -7,9 +7,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const guard = await requirePermission('customer-requests', 'manage')
   if (!guard.ok) return guard.response
   const { id } = await params
-  const body = (await req.json().catch(() => null)) as { reason?: unknown } | null
+  const body = (await req.json().catch(() => null)) as { reason?: unknown; seenSubmittedAt?: unknown } | null
   const reason = typeof body?.reason === 'string' ? body.reason : ''
-  const r = await rejectPhotoRequest(prisma, { id, admin: guard.actor, reason })
+  const r = await rejectPhotoRequest(prisma, { id, admin: guard.actor, reason, seenSubmittedAt: body?.seenSubmittedAt })
   if (!r.ok) return NextResponse.json({ error: r.error }, { status: r.status })
   return NextResponse.json({ ok: true })
 }
