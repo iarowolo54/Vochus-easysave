@@ -85,3 +85,14 @@ test('/me reports the photo status, deadline and whether they can take their own
   assert.equal(me.photo.canTakeOwn, false)
   assert.equal(me.photo.agentName, 'Agent S')
 })
+
+test('GET /api/customer/photo gives the same photo state as /me, on its own', async () => {
+  const { GET } = await import('../src/app/api/customer/photo/route')
+  const me = await import('../src/app/api/customer/me/route')
+  await as('offline', null, 7)
+  const slim = await (await GET()).json()
+  const full = await (await me.GET()).json()
+  assert.deepEqual(slim, { photo: full.photo })
+  jar = {}
+  assert.equal((await GET()).status, 401)
+})

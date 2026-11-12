@@ -87,7 +87,7 @@ export default function PhotoReminderPopup({ skip = [] }: { skip?: string[] }) {
     try { closed = sessionStorage.getItem(DISMISSED) === '1' } catch { /* storage blocked: show it */ }
     if (closed) return
     let alive = true
-    fetch('/api/customer/me', { cache: 'no-store' })
+    fetch('/api/customer/photo', { cache: 'no-store' })
       .then(r => (r.ok ? r.json() : null))
       .then((d: { photo?: CustomerPhoto } | null) => {
         if (!alive || !d?.photo || !customerPhotoCopy(d.photo)) return
@@ -142,13 +142,13 @@ export function photoPaused(photo: CustomerPhoto | null | undefined): boolean {
   return !!photo && photo.status !== 'ok' && photo.phase === 'paused'
 }
 
-/** For pages that don't load /api/customer/me themselves (Ajo): the photo state, refreshed when a photo is added. */
+/** For pages that don't load /api/customer/me themselves (Ajo): the photo state, from the light /api/customer/photo, refreshed when a photo is added. */
 export function useMyPhoto(): { photo: CustomerPhoto | null; reload: () => void } {
   const [photo, setPhoto] = useState<CustomerPhoto | null>(null)
   const [tick, setTick] = useState(0)
   useEffect(() => {
     let alive = true
-    fetch('/api/customer/me', { cache: 'no-store' })
+    fetch('/api/customer/photo', { cache: 'no-store' })
       .then(r => (r.ok ? r.json() : null))
       .then((d: { photo?: CustomerPhoto } | null) => { if (alive && d?.photo) setPhoto(d.photo) })
       .catch(() => {})

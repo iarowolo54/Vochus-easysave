@@ -3,6 +3,17 @@ import { getCustomerSession } from '@/lib/customer-auth'
 import { prisma } from '@/lib/prisma'
 import { validatePhoto } from '@/lib/photo'
 import { asCustomerType } from '@/lib/customer-type'
+import { customerPhotoInfo } from '@/lib/customer-photo-request'
+
+/** Just the photo-deadline state, for the reminder pop-up and the Ajo screen: much lighter than /api/customer/me. */
+export async function GET() {
+  const session = await getCustomerSession()
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Only the photo's presence is used; customerPhotoInfo never returns it.
+  const c = await prisma.customer.findUnique({ where: { id: session.id }, select: { id: true, type: true, photoUrl: true, agent: { select: { name: true } } } })
+  if (!c) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  return NextResponse.json({ photo: await customerPhotoInfo(prisma, c) }, { headers: { 'Cache-Control': 'no-store' } })
+}
 
 /**
  * An online customer adds their own photo, taken live in the app (photo deadline). It goes straight on, with no review.

@@ -4,6 +4,8 @@
 import type { PrismaClient } from '@prisma/client'
 import { validatePhoto } from '@/lib/photo'
 import { notifications, notify } from '@/lib/notifications'
+import { asCustomerType } from '@/lib/customer-type'
+import { getPhotoDeadline, lastSaveDay, photoPhase, photoStatusOf } from '@/lib/photo-deadline'
 
 type Fail = { ok: false; status: 400 | 404 | 409; error: string }
 type Admin = { id?: string; name: string; type: string }
@@ -126,4 +128,19 @@ export async function latestPhotoRequests(client: PrismaClient, customerIds: str
   })
   for (const r of rows) if (!out.has(r.customerId)) out.set(r.customerId, { status: r.status, rejectReason: r.rejectReason })
   return out
+}
+
+/** The photo-deadline state the customer app reads (never the photo itself): /api/customer/me and /api/customer/photo. */
+export async function customerPhotoInfo(client: PrismaClient, c: { id: string; type: string; photoUrl: string | null; agent: { name: string } }) {
+  const hasPhoto = !!c.photoUrl
+  const [deadline, latest] = await Promise.all([getPhotoDeadline(client), hasPhoto ? null : latestPhotoRequests(client, [c.id])])
+  const { status, rejectReason } = photoStatusOf(hasPhoto, latest?.get(c.id) ?? null)
+  return {
+    status, rejectReason,
+    deadline: deadline?.toISOString() ?? null,
+    lastDay: deadline ? lastSaveDay(deadline) : null,
+    phase: photoPhase(deadline, new Date()),
+    canTakeOwn: asCustomerType(c.type) === 'online' && !hasPhoto,
+    agentName: c.agent.name,
+  }
 }
