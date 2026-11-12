@@ -23,6 +23,7 @@ export interface SweepRows {
   withdrawals: { id: string; agentId: string; amount: number; status: string; adminNote: string | null; decidedAt: Date | null }[]
   topUps: { ref: string; agentId: string; amount: number; createdAt: Date }[]
   customerRequests?: { id: string; agentId: string; status: string; firstName: string; lastName: string; customerCode: string | null; decidedAt: Date | null }[]
+  customerPhotos?: { id: string; agentId: string; status: string; decidedAt: Date | null; customer: { firstName: string; lastName: string } }[]
   /** Fee refunds, with the agent's returned share found from the ledger by the refunded deposit's ref. */
   feeRefunds?: { ref: string; agentId: string; amount: number; note: string | null; createdAt: Date; agentShare: number; plan: { goal: string; customer: Cust } }[]
 }
@@ -88,6 +89,13 @@ export function backfillEvents(rows: SweepRows, opts: { since: Date; agentCodes?
     if (r.status === 'Denied') out.push(...at(N.customerRequestDenied({ ...facts, decidedAt: r.decidedAt }), r.decidedAt))
   }
 
+  for (const r of rows.customerPhotos ?? []) {
+    if (!inWindow(r.decidedAt)) continue
+    const facts = { id: r.id, agentId: r.agentId, customerName: `${r.customer.firstName} ${r.customer.lastName}` }
+    if (r.status === 'Approved') out.push(...at(N.customerPhotoApproved(facts), r.decidedAt))
+    if (r.status === 'Rejected') out.push(...at(N.customerPhotoRejected({ ...facts, decidedAt: r.decidedAt }), r.decidedAt))
+  }
+
   for (const r of rows.feeRefunds ?? []) {
     if (!inWindow(r.createdAt)) continue
     const c = r.plan.customer
@@ -132,7 +140,7 @@ async function writeMissing(client: PrismaClient, events: NotificationEvent[]): 
 export async function runNotificationSweep(client: PrismaClient, now: Date = new Date()): Promise<{ backfilled: number; scheduled: number }> {
   const since = new Date(now.getTime() - BACKFILL_HOURS * 3_600_000)
   const cust = { select: { id: true, agentId: true, firstName: true, lastName: true } } as const
-  const [savings, collections, withdrawals, topUps, agents, customerRequests, refunds, refundShares] = await Promise.all([
+  const [savings, collections, withdrawals, topUps, agents, customerRequests, refunds, refundShares, customerPhotos] = await Promise.all([
     client.transaction.findMany({
       where: { type: 'saving', status: 'Done', createdAt: { gte: since }, planId: { not: null } },
       select: { ref: true, amount: true, feeTaken: true, method: true, note: true, createdAt: true, plan: { select: { goal: true, source: true, customer: cust } } },
@@ -150,12 +158,13 @@ export async function runNotificationSweep(client: PrismaClient, now: Date = new
       select: { ref: true, agentId: true, amount: true, note: true, createdAt: true, plan: { select: { goal: true, customer: cust } } },
     }),
     client.commissionLedger.findMany({ where: { source: 'fee_refund', party: 'agent', createdAt: { gte: since } }, select: { sourceRef: true, amount: true } }),
+    client.customerPhotoRequest.findMany({ where: { decidedAt: { gte: since } }, select: { id: true, agentId: true, status: true, decidedAt: true, customer: { select: { firstName: true, lastName: true } } } }),
   ])
   const shareOf = new Map(refundShares.map(r => [r.sourceRef, -r.amount]))
   const feeRefunds = refunds.flatMap(r => (r.plan ? [{ ...r, plan: r.plan, agentShare: shareOf.get(depositRefOf(r.note) ?? '') ?? 0 }] : []))
   const rows: SweepRows = {
     savings: savings.flatMap(s => (s.plan ? [{ ...s, plan: s.plan }] : [])),
-    collections, withdrawals, topUps, customerRequests, feeRefunds,
+    collections, withdrawals, topUps, customerRequests, feeRefunds, customerPhotos,
   }
   let backfilled = await writeMissing(client, backfillEvents(rows, { since, agentCodes: new Map(agents.map(a => [a.id, a.agentId])) }))
 

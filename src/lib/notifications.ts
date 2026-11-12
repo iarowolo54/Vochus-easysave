@@ -23,6 +23,7 @@ export type NotificationKind =
   | 'ajo_joined' | 'ajo_started' | 'ajo_paid' | 'ajo_paid_agent' | 'ajo_round_out' | 'ajo_due' | 'ajo_late' | 'ajo_replaced'
   | 'new_phone'
   | 'customer_request_approved' | 'customer_request_denied' | 'customer_request_needs_funds'
+  | 'customer_photo_approved' | 'customer_photo_rejected'
   | 'fee_refunded' | 'commission_returned'
 
 export interface NotificationEvent {
@@ -59,6 +60,22 @@ export const notifications = {
     return [{
       recipient: agent(f.agentId), kind: 'customer_request_denied', title: `${name(f.customerName)} was denied`,
       body: 'See what to work on, then send it again.', href: '/dashboard/customers/requests', dedupeKey: `customer-request-denied:${f.id}:${f.decidedAt.getTime()}`,
+    }]
+  },
+
+  /** The super admin approved a customer photo the agent took. Saving for them works again (photo deadline). */
+  customerPhotoApproved(f: { id: string; agentId: string; customerName: string }): NotificationEvent[] {
+    return [{
+      recipient: agent(f.agentId), kind: 'customer_photo_approved', title: `${name(f.customerName)}’s photo was approved`,
+      body: 'Saving for them works again.', href: '/dashboard/customers', dedupeKey: `customer-photo-approved:${f.id}`,
+    }]
+  },
+
+  /** Rejected. The reason stays on the request and shows on the customer, never in the notification. */
+  customerPhotoRejected(f: { id: string; agentId: string; customerName: string; decidedAt: Date }): NotificationEvent[] {
+    return [{
+      recipient: agent(f.agentId), kind: 'customer_photo_rejected', title: `${name(f.customerName)}’s photo was rejected`,
+      body: 'See why, then take a new photo.', href: '/dashboard/customers', dedupeKey: `customer-photo-rejected:${f.id}:${f.decidedAt.getTime()}`,
     }]
   },
 

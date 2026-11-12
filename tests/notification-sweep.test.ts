@@ -100,3 +100,16 @@ test('backfill: a fee refund rebuilds the customer notice and the agent’s retu
   assert.deepEqual(ev.map(e => e.dedupeKey), ['fee-refund:FRF-1', 'fee-refund-agent:FRF-1'])
   assert.equal(ev[0].at?.toISOString(), '2026-11-12T05:00:00.000Z')
 })
+
+test('customer photos: decided rows give approved or rejected to the agent, with the live keys', () => {
+  const decidedAt = new Date(Date.now() - 3600e3)
+  const events = backfillEvents({
+    savings: [], collections: [], withdrawals: [], topUps: [],
+    customerPhotos: [
+      { id: 'p1', agentId: 'a1', status: 'Approved', decidedAt, customer: { firstName: 'Ada', lastName: 'Obi' } },
+      { id: 'p2', agentId: 'a1', status: 'Rejected', decidedAt, customer: { firstName: 'Bola', lastName: 'Ade' } },
+      { id: 'p3', agentId: 'a1', status: 'Pending', decidedAt: null, customer: { firstName: 'C', lastName: 'D' } },
+    ],
+  }, { since: new Date(Date.now() - 48 * 3600e3) })
+  assert.deepEqual(events.map(e => e.dedupeKey), ['customer-photo-approved:p1', `customer-photo-rejected:p2:${decidedAt.getTime()}`])
+})
