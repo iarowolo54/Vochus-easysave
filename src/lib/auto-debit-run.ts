@@ -6,6 +6,7 @@ import { PaystackReferenceNotFound, chargeAuthorization, verifyTransaction } fro
 import { creditAutoDebitAttempt, flagAttemptForReview } from '@/lib/auto-debit-credit'
 import { recordAutoDebitFailure } from '@/lib/auto-debit-failure'
 import { logAudit } from '@/lib/audit'
+import { photoSaveBlock } from '@/lib/photo-deadline'
 import { hasOpenRedemption, heldKeys, loadCycleState } from '@/lib/bulk-savings'
 import { isCycleCovered, isCycleInPlan, isSlotFunded } from '@/lib/pay-ahead'
 
@@ -44,6 +45,13 @@ export async function runDueAutoDebits(
 
       const creditAmount = cycleCreditAmount(plan, now)
       if (creditAmount <= 0) {
+        await advance()
+        skipped++
+        continue
+      }
+
+      // No photo after the photo deadline: this cycle isn't charged. Not a failure, so the mandate stays as it is.
+      if (await photoSaveBlock(client, plan.customerId, 'customer', now)) {
         await advance()
         skipped++
         continue

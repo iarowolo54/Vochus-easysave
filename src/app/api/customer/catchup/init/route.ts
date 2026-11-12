@@ -7,6 +7,7 @@ import { createPaymentIntent } from '@/lib/payment-intent'
 import { checkBulkSelection } from '@/lib/bulk-savings'
 import { CARD_NOT_IN_USE, getFundingMode } from '@/lib/funding-mode'
 import { PAYSTACK_ENABLED, paystackOff } from '@/lib/paystack-off'
+import { photoBlockedResponse, photoSaveBlock } from '@/lib/photo-deadline'
 
 // Bulk Savings: a customer pays for missed, today's or upcoming days on their own
 // self-service plan. The server validates the selected day-keys against the
@@ -23,6 +24,10 @@ export async function POST(req: NextRequest) {
 
   const customer = await prisma.customer.findUnique({ where: { id: session.id } })
   if (!customer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  {
+    const blocked = await photoSaveBlock(prisma, customer.id, 'customer')
+    if (blocked) return photoBlockedResponse(blocked)
+  }
 
   const body = await req.json().catch(() => ({})) as { planId?: unknown; keys?: unknown }
   const planId = typeof body.planId === 'string' ? body.planId : null

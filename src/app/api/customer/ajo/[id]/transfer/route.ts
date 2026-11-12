@@ -7,6 +7,7 @@ import { openRound } from '@/lib/ajo'
 import { createTransferIntent } from '@/lib/transfer-intent'
 import { getFundingMode, TRANSFER_NOT_IN_USE } from '@/lib/funding-mode'
 import { AJO_PAY_LIMIT, ajoCodeRateLimiter } from '@/lib/rate-limit'
+import { photoBlockedResponse, photoSaveBlock } from '@/lib/photo-deadline'
 
 /** Start paying the open round by bank transfer. The amount is the group's contribution plus our kobo marker. */
 export async function POST(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -23,6 +24,10 @@ export async function POST(_req: NextRequest, { params }: { params: Promise<{ id
     select: { id: true, group: { select: { id: true, name: true, status: true, size: true, contribution: true, payouts: { select: { round: true } } } } },
   })
   if (!member) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  {
+    const blocked = await photoSaveBlock(prisma, session.id, 'customer')
+    if (blocked) return photoBlockedResponse(blocked)
+  }
   const g = member.group
   if (g.status !== 'Running') return NextResponse.json({ error: g.status === 'Forming' ? 'This group hasn’t started yet.' : 'This group has finished.' }, { status: 409 })
   const round = openRound(g.size, g.payouts.map(p => p.round))

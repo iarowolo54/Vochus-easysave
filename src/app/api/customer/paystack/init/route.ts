@@ -11,6 +11,7 @@ import { PAYSTACK_ENABLED, paystackOff } from '@/lib/paystack-off'
 import { CARD_NOT_IN_USE, getFundingMode } from '@/lib/funding-mode'
 import { getFlexibleSettings, isFlexible } from '@/lib/flexible-savings'
 import { periodPaidError } from '@/lib/bulk-savings'
+import { photoBlockedResponse, photoSaveBlock } from '@/lib/photo-deadline'
 
 export async function POST(req: NextRequest) {
   // Paystack is closed (see src/lib/paystack-off.ts): nothing may start a card payment.
@@ -22,6 +23,10 @@ export async function POST(req: NextRequest) {
 
   const customer = await prisma.customer.findUnique({ where: { id: session.id } })
   if (!customer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  {
+    const blocked = await photoSaveBlock(prisma, customer.id, 'customer')
+    if (blocked) return photoBlockedResponse(blocked)
+  }
 
   const plan = await prisma.savingsPlan.findFirst({
     where: { customerId: customer.id, status: 'Active', maturityDate: { gt: new Date() } },

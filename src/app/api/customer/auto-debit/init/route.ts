@@ -8,6 +8,7 @@ import { initCardAuthorization } from '@/lib/paystack'
 import { hasOpenRedemption } from '@/lib/redemption-balance'
 import { CARD_NOT_IN_USE, getFundingMode } from '@/lib/funding-mode'
 import { PAYSTACK_ENABLED, paystackOff } from '@/lib/paystack-off'
+import { photoBlockedResponse, photoSaveBlock } from '@/lib/photo-deadline'
 
 // First charge that authorizes the card for future auto-debits (applied to the plan on success).
 const FIRST_CHARGE_NAIRA = 50
@@ -32,6 +33,10 @@ export async function POST(req: NextRequest) {
 
   const customer = await prisma.customer.findUnique({ where: { id: session.id } })
   if (!customer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  {
+    const blocked = await photoSaveBlock(prisma, customer.id, 'customer')
+    if (blocked) return photoBlockedResponse(blocked)
+  }
 
   // Owner in the where: another customer's plan is indistinguishable from a missing one.
   const plan = await prisma.savingsPlan.findFirst({

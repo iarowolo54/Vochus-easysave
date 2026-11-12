@@ -14,6 +14,7 @@ import { creditOpenPlan, hasOpenRedemption, PLAN_CLOSED, PlanClosedError, SAVING
 import { depositFeeOps } from '@/lib/commission-ledger'
 import { notifications, notify } from '@/lib/notifications'
 import { getFlexibleSettings, isFlexible } from '@/lib/flexible-savings'
+import { photoBlockedResponse, photoSaveBlock } from '@/lib/photo-deadline'
 
 class AlreadySavedError extends Error {}
 
@@ -34,6 +35,10 @@ export async function POST(req: NextRequest) {
 
   const customer = await prisma.customer.findFirst({ where: { id: customerId, agentId: agent.id } })
   if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
+  {
+    const blocked = await photoSaveBlock(prisma, customer.id, 'agent')
+    if (blocked) return photoBlockedResponse(blocked)
+  }
 
   // Save into the explicitly chosen plan. With no planId it only works when the
   // customer has exactly one Active plan — otherwise the caller must say which,

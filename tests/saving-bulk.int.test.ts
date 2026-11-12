@@ -277,3 +277,21 @@ test('ONLINE: a charge starting between the check and the credit refuses it, wit
   assert.equal(await wallet(), 100000)
   assert.equal(await prisma.transaction.count({ where: { planId: plan.id } }), 0)
 })
+
+test('after the photo deadline a customer with no photo is paused (403 PHOTO_REQUIRED); adding the photo unblocks the very next call', async () => {
+  const { c, plan } = await mkCustomerPlan(90, 'agent')
+  await prisma.platformSetting.upsert({ where: { key: 'photoDeadline' }, update: { value: new Date(Date.now() - 3600e3).toISOString() }, create: { key: 'photoDeadline', value: new Date(Date.now() - 3600e3).toISOString() } })
+  try {
+    const blocked = await call({ customerId: c.id, dates: [ds(-1)], method: 'Cash', planId: plan.id })
+    assert.equal(blocked.status, 403)
+    const body = await blocked.json()
+    assert.equal(body.code, 'PHOTO_REQUIRED')
+    assert.equal(await prisma.transaction.count({ where: { planId: plan.id } }), 0, 'nothing written while paused')
+
+    await prisma.customer.update({ where: { id: c.id }, data: { photoUrl: 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==' } })
+    const ok = await call({ customerId: c.id, dates: [ds(-1)], method: 'Cash', planId: plan.id })
+    assert.equal(ok.status, 200)
+  } finally {
+    await prisma.platformSetting.deleteMany({ where: { key: 'photoDeadline' } })
+  }
+})

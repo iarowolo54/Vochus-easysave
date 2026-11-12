@@ -15,6 +15,7 @@ import { creditOpenPlan, hasOpenRedemption, PLAN_CLOSED, PlanClosedError, SAVING
 import { chargingKeys, checkBulkSelection, liveSlots } from '@/lib/bulk-savings'
 import { isEligiblePlan, perSlotAmount } from '@/lib/catchup'
 import { depositFeeOps } from '@/lib/commission-ledger'
+import { photoBlockedResponse, photoSaveBlock } from '@/lib/photo-deadline'
 
 class DaysTakenError extends Error {}
 class AlreadySavedError extends Error {}
@@ -73,6 +74,10 @@ export async function POST(req: NextRequest) {
 
   const customer = await prisma.customer.findFirst({ where: { id: customerId, agentId: agent.id } })
   if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
+  {
+    const blocked = await photoSaveBlock(prisma, customer.id, 'agent')
+    if (blocked) return photoBlockedResponse(blocked)
+  }
 
   // Explicit plan selection — see transactions/saving for the rationale.
   const selected = await selectActivePlan(prisma, customer.id, planId)

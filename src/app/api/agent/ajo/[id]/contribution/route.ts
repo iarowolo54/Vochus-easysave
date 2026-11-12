@@ -6,6 +6,7 @@ import { sessionAgent } from '@/lib/ajo-server'
 import { AjoAlreadyPaidError, AjoRoundClosedError, ajoRef, recordContribution, type PayoutDone } from '@/lib/ajo-settle'
 import { debitAgentBalance } from '@/lib/wallet-debit'
 import { InsufficientFundsError, insufficientResponse, money } from '@/lib/wallet-guard'
+import { photoBlockedResponse, photoSaveBlock } from '@/lib/photo-deadline'
 
 const ALREADY = 'They’ve already paid this round.'
 
@@ -26,8 +27,12 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   const body: unknown = await req.json().catch(() => null)
   const memberId = body && typeof body === 'object' ? (body as { memberId?: unknown }).memberId : undefined
   if (typeof memberId !== 'string') return NextResponse.json({ error: 'Choose a member.' }, { status: 400 })
-  const member = await prisma.ajoMember.findFirst({ where: { id: memberId, groupId: g.id }, select: { id: true, customer: { select: { firstName: true, lastName: true, customerId: true } } } })
+  const member = await prisma.ajoMember.findFirst({ where: { id: memberId, groupId: g.id }, select: { id: true, customerId: true, customer: { select: { firstName: true, lastName: true, customerId: true } } } })
   if (!member) return NextResponse.json({ error: 'Member not found' }, { status: 404 })
+  {
+    const blocked = await photoSaveBlock(prisma, member.customerId, 'agent')
+    if (blocked) return photoBlockedResponse(blocked)
+  }
 
   const amount = money(g.contribution)
   const ref = ajoRef('CON')

@@ -11,6 +11,7 @@ import { checkBulkSelection, periodPaidError } from '@/lib/bulk-savings'
 import { getFundingMode, TRANSFER_NOT_IN_USE } from '@/lib/funding-mode'
 import { money } from '@/lib/wallet-guard'
 import { maxSinglePayment, overCapMessage } from '@/lib/payment-cap'
+import { photoBlockedResponse, photoSaveBlock } from '@/lib/photo-deadline'
 
 export async function POST(req: NextRequest) {
   const session = await getCustomerSession()
@@ -33,6 +34,10 @@ export async function POST(req: NextRequest) {
 
   const customer = await prisma.customer.findUnique({ where: { id: session.id } })
   if (!customer) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  {
+    const blocked = await photoSaveBlock(prisma, customer.id, 'customer')
+    if (blocked) return photoBlockedResponse(blocked)
+  }
 
   const plan = await prisma.savingsPlan.findFirst({
     // A named plan is looked up as is (so an ended one gets the clear 'matured' message); with no planId only an open plan is picked.
