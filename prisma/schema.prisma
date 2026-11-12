@@ -49,6 +49,7 @@ model Agent {
   createdAt           DateTime         @default(now())
   customers           Customer[]
   customerRequests    CustomerRequest[]
+  photoRequests       CustomerPhotoRequest[]
   transactions        Transaction[]
   loans               Loan[]
   subAgents           SubAgent[]
@@ -142,6 +143,30 @@ model Customer {
   redeemedGiftCards   GiftCard[]            @relation("RedeemedBy")
   agentReward         AgentReward?
   ajoMemberships      AjoMember[]
+  photoRequests       CustomerPhotoRequest[]
+}
+
+/// A photo an agent took of an existing customer, waiting for the super admin (src/lib/customer-photo-request.ts).
+/// Only an approved one reaches Customer.photoUrl.
+model CustomerPhotoRequest {
+  id                String    @id @default(cuid())
+  customerId        String
+  customer          Customer  @relation(fields: [customerId], references: [id])
+  agentId           String
+  agent             Agent     @relation(fields: [agentId], references: [id])
+  status            String    @default("Pending") // Pending | Approved | Rejected
+  /// Base64 data URL; never select it into a list. Cleared once decided.
+  photoUrl          String?
+  rejectReason      String?
+  /// Set to customerId only while Pending, so a customer can never have two waiting photos.
+  pendingCustomerId String?   @unique
+  submittedAt       DateTime  @default(now())
+  decidedAt         DateTime?
+  decidedBy         String?
+  decidedById       String?
+
+  @@index([status, submittedAt])
+  @@index([customerId, status])
 }
 
 /// A cash saver an agent wants to register. It only becomes a Customer when the super admin approves it.
