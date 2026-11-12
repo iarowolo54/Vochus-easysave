@@ -8,6 +8,8 @@ import { isHandCredit } from '@/lib/hand-receipt'
 import { accruedInterestForPlan, interestProjectionForPlan } from '@/lib/savings-interest-plan'
 import { excludeExpiredPending, IN_FLIGHT_REDEMPTION_STATUSES } from '@/lib/redemption-statuses'
 import { coveringRefsByPlan } from '@/lib/bulk-savings'
+import { getPhotoDeadline, lastSaveDay, photoPhase, photoStatusOf } from '@/lib/photo-deadline'
+import { latestPhotoRequests } from '@/lib/customer-photo-request'
 
 // A redemption is "pending" for the customer home until it is actually paid: everything in flight
 // except Approved (handoff #30 — mid-payout AwaitingOTP/Finalizing must keep the tracker up and
@@ -148,6 +150,7 @@ export async function GET() {
     state: customer.state,
     lga: customer.lga,
     photoUrl: customer.photoUrl,
+    photo: await photoInfo(customer),
     agent: customer.agent,
     plan,
     plans,
@@ -158,3 +161,19 @@ export async function GET() {
     pendingRedemptions,
   })
 }
+
+/** The photo-deadline state the app's reminder, banner and Save screens read (never the photo itself). */
+async function photoInfo(c: { id: string; type: string; photoUrl: string | null; agent: { name: string } }) {
+  const hasPhoto = !!c.photoUrl
+  const [deadline, latest] = await Promise.all([getPhotoDeadline(prisma), hasPhoto ? null : latestPhotoRequests(prisma, [c.id])])
+  const { status, rejectReason } = photoStatusOf(hasPhoto, latest?.get(c.id) ?? null)
+  return {
+    status, rejectReason,
+    deadline: deadline?.toISOString() ?? null,
+    lastDay: deadline ? lastSaveDay(deadline) : null,
+    phase: photoPhase(deadline, new Date()),
+    canTakeOwn: asCustomerType(c.type) === 'online' && !hasPhoto,
+    agentName: c.agent.name,
+  }
+}
+
