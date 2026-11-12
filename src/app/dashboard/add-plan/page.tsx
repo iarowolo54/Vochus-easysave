@@ -138,7 +138,7 @@ function AddPlanContent() {
   if (customer.type === 'online') {
     return (
       <div className="ag-page ag-card-page">
-        <section className="ui-card"><EmptyState icon="plan" title="They open their own plans" text="This customer saves on the app. They open their own plans."
+        <section className="ui-card"><EmptyState icon="plan" title="They open their own plans" text="This customer saves on the app."
           action={<Link href="/dashboard/customers" className="ui-btn ui-btn--primary">Go to customers</Link>} /></section>
       </div>
     )
