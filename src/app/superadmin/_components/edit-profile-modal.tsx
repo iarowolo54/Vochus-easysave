@@ -58,7 +58,7 @@ export function EditProfileModal({ who, id, name, onClose, onSaved }: {
     const diff = diffProfile(fields, original, form, { dobAs: 'text' })
     if (!diff.ok) { setError(diff.error); return }
     if (diff.changes.length === 0) { setError('Nothing has changed yet.'); return }
-    setChanges(diff.changes); setSendKeys(Object.keys(diff.data)); setNeedsPin(diff.signInChanged)
+    setChanges(diff.changes); setSendKeys(Object.keys(diff.data)); setNeedsPin(diff.needsPin)
     setPin(''); setError(''); setStep('review')
   }
 
@@ -153,7 +153,7 @@ export function EditProfileModal({ who, id, name, onClose, onSaved }: {
               ))}
             </Ledger>
             {needsPin && <>
-              <DialogNote warn>The phone number and email decide where sign-in and reset codes go, so this needs your approval PIN.</DialogNote>
+              <DialogNote warn>Names, the phone number and the email decide where codes go and whose bank account a payout can go to, so this needs your approval PIN.</DialogNote>
               <Field id="pe-pin" label="Your approval PIN">
                 <input id="pe-pin" className="a-input" type="password" inputMode="numeric" autoComplete="off" maxLength={8} value={pin}
                   onChange={e => { setPin(e.target.value); setError('') }} />

@@ -43,8 +43,12 @@ export const AGENT_PROFILE_FIELDS: readonly ProfileField[] = [
   { key: 'nokPhone', label: 'Next of kin phone', kind: 'phone', required: false, section: 'Next of kin' },
 ]
 
-/** Fields that decide where sign-in and reset codes go, so a change needs the approval PIN. */
-export const SIGN_IN_FIELDS = ['phone', 'email'] as const
+/**
+ * Changes that need the approval PIN: the phone and email decide where sign-in and reset codes go, and the name is what
+ * payouts to a bank account are checked against, so renaming someone could lift a held payout.
+ */
+export const PIN_FIELDS = ['phone', 'email', 'name', 'firstName', 'lastName'] as const
+export const NAME_FIELDS = ['name', 'firstName', 'lastName'] as const
 
 /** A stored value as the form shows it: dates as YYYY-MM-DD, everything else as text. */
 export function formValue(kind: ProfileFieldKind, v: unknown): string {
@@ -69,7 +73,7 @@ function clean(kind: ProfileFieldKind, raw: unknown): string {
 
 export interface ProfileChange { key: string; label: string; from: string; to: string }
 export type ProfileDiff =
-  | { ok: true; data: Record<string, string | Date | null>; changes: ProfileChange[]; signInChanged: boolean }
+  | { ok: true; data: Record<string, string | Date | null>; changes: ProfileChange[]; needsPin: boolean; nameChanged: boolean }
   | { ok: false; error: string }
 
 /**
@@ -124,7 +128,8 @@ export function diffProfile(
     if (after !== before) changes.push({ key: f.key, label: f.label, from: before, to: after })
   }
 
-  return { ok: true, data, changes, signInChanged: changes.some(c => (SIGN_IN_FIELDS as readonly string[]).includes(c.key)) }
+  const has = (keys: readonly string[]) => changes.some(c => keys.includes(c.key))
+  return { ok: true, data, changes, needsPin: has(PIN_FIELDS), nameChanged: has(NAME_FIELDS) }
 }
 
 /** One audit line: "Phone number 08011112222 → 08033334444; Email (none) → a@b.co". */

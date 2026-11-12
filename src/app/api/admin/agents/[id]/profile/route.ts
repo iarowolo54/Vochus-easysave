@@ -36,9 +36,11 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   if (!diff.ok) return NextResponse.json({ error: diff.error }, { status: 400 })
   if (diff.changes.length === 0) return NextResponse.json({ error: 'Nothing has changed.' }, { status: 400 })
 
-  if (diff.signInChanged) {
+  if (diff.needsPin) {
     const pin = await verifyApprovalPin(guard.session, (body as { pin?: unknown }).pin)
     if (!pin.ok) return pin.response
+  }
+  if (diff.changes.some(c => c.key === 'phone' || c.key === 'email')) {
     const conflict = await findIdentityConflict(prisma, {
       phone: typeof diff.data.phone === 'string' ? diff.data.phone : null,
       email: typeof diff.data.email === 'string' ? diff.data.email : null,

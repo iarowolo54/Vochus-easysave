@@ -13,7 +13,8 @@ test('only changed fields are written, and untouched ones are left alone', () =>
   const r = asCustomer({ ...Object.fromEntries(Object.entries(customer).map(([k, v]) => [k, formValue(k === 'dob' ? 'dob' : 'text', v)])), firstName: '  Adaeze ' })
   assert.ok(r.ok)
   assert.deepEqual(r.data, { firstName: 'Adaeze' })
-  assert.equal(r.signInChanged, false)
+  assert.equal(r.needsPin, true)
+  assert.equal(r.nameChanged, true)
 })
 
 test('fields outside the list never reach the database', () => {
@@ -24,10 +25,10 @@ test('fields outside the list never reach the database', () => {
 
 test('phones are normalised and must have 11 digits; a phone or email change needs the PIN', () => {
   const r = asCustomer({ phone: '+234 803 555 9999' })
-  assert.ok(r.ok); assert.equal(r.data.phone, '08035559999'); assert.equal(r.signInChanged, true)
+  assert.ok(r.ok); assert.equal(r.data.phone, '08035559999'); assert.equal(r.needsPin, true); assert.equal(r.nameChanged, false)
   assert.deepEqual(asCustomer({ phone: '0803555' }), { ok: false, error: 'Phone number: phone numbers have 11 digits.' })
   const e = asCustomer({ email: ' Ada@Example.COM ' })
-  assert.ok(e.ok); assert.equal(e.data.email, 'ada@example.com'); assert.equal(e.signInChanged, true)
+  assert.ok(e.ok); assert.equal(e.data.email, 'ada@example.com'); assert.equal(e.needsPin, true)
   assert.equal(asCustomer({ email: 'not-an-email' }).ok, false)
 })
 
@@ -54,7 +55,7 @@ test('dates of birth are checked and stored the way each table keeps them', () =
 
 test('older records missing a required value still save other changes', () => {
   const r = diffProfile(CUSTOMER_PROFILE_FIELDS, { ...customer, state: null, lga: null, gender: null }, { firstName: 'Ada', nokName: 'Kemi A' }, { dobAs: 'date', now })
-  assert.ok(r.ok); assert.deepEqual(r.data, { nokName: 'Kemi A' })
+  assert.ok(r.ok); assert.deepEqual(r.data, { nokName: 'Kemi A' }); assert.equal(r.needsPin, false)
 })
 
 test('the audit line names each change', () => {

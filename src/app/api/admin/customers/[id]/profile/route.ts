@@ -4,6 +4,7 @@ import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { verifyApprovalPin } from '@/lib/approval-pin'
 import { findIdentityConflict } from '@/lib/identity'
+import { AWAITING_ACTION_REDEMPTION_STATUSES, excludeExpiredPending } from '@/lib/redemption-statuses'
 import { CUSTOMER_PROFILE_FIELDS, describeChanges, diffProfile, formValue } from '@/lib/profile-edit'
 
 type Ctx = { params: Promise<{ id: string }> }
@@ -36,9 +37,19 @@ export async function PATCH(req: NextRequest, { params }: Ctx) {
   if (!diff.ok) return NextResponse.json({ error: diff.error }, { status: 400 })
   if (diff.changes.length === 0) return NextResponse.json({ error: 'Nothing has changed.' }, { status: 400 })
 
-  if (diff.signInChanged) {
+  if (diff.nameChanged) {
+    // Payouts to a bank account are checked against the name at approval, so a rename mustn't land mid-redemption.
+    const waiting = await prisma.earlyRedemption.count({
+      where: { savingsPlan: { customerId: id }, status: { in: AWAITING_ACTION_REDEMPTION_STATUSES }, ...excludeExpiredPending() },
+    })
+    if (waiting) return NextResponse.json({ error: 'This customer has a redemption waiting. Approve or decline it before changing their name.' }, { status: 409 })
+  }
+
+  if (diff.needsPin) {
     const pin = await verifyApprovalPin(guard.session, (body as { pin?: unknown }).pin)
     if (!pin.ok) return pin.response
+  }
+  if (diff.changes.some(c => c.key === 'phone' || c.key === 'email')) {
     const conflict = await findIdentityConflict(prisma, {
       phone: typeof diff.data.phone === 'string' ? diff.data.phone : null,
       email: typeof diff.data.email === 'string' ? diff.data.email : null,
