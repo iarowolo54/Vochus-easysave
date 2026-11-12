@@ -13,6 +13,8 @@ import { formatNaira } from '@/lib/format'
 import { describeFailure, postJson } from '@/lib/http'
 import { useFundingMode } from '@/lib/use-funding-mode'
 import { buildSlots, dayDeposits, hasEnded, isWeekly } from '@/lib/savings-card'
+import { PhotoNoticeWithCamera, photoPaused } from '@/components/customer/PhotoReminder'
+import type { CustomerPhoto } from '@/lib/photo-copy'
 
 type Plan = {
   id: string; dailyAmount: number; periodDays: number; cadence?: string; goal: string
@@ -20,7 +22,7 @@ type Plan = {
   coveredKeys?: string[]; coveredRefs?: string[]
 }
 type Tx = { id: string; amount: number; ref: string; createdAt: string; method: string | null; planId: string | null; recordedBy: string }
-type Me = { plan: Plan | null; plans?: Plan[]; transactions: Tx[] }
+type Me = { plan: Plan | null; plans?: Plan[]; transactions: Tx[]; photo?: CustomerPhoto }
 
 function CatchupScreen() {
   const router = useRouter()
@@ -176,6 +178,7 @@ function CatchupScreen() {
     <div className="ui-screen">
       {header}
       <main className="ui-container">
+        {photoPaused(data?.photo) && <PhotoNoticeWithCamera photo={data?.photo} onChanged={reload} />}
         <section className="ui-card">
           <p className="ui-card-status ui-card-status--neutral">
             Pay for missed or upcoming {unit}s. Each {unit} is {formatNaira(perSlot, { minor: false })}.{' '}
@@ -201,9 +204,9 @@ function CatchupScreen() {
           </div>
           {summary && <p className="ui-catchup-note">{summary}</p>}
           {atCap && <p className="ui-catchup-note">You can pay for up to {MAX_CATCHUP_KEYS} {unit}s at a time.</p>}
-          <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={pay} disabled={count === 0 || paying}>
+          {!photoPaused(data?.photo) && <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={pay} disabled={count === 0 || paying}>
             {paying ? 'Getting account details…' : count === 0 ? `Select a ${unit} to pay` : `Pay ${formatNaira(total)} by transfer`}
-          </button>
+          </button>}
           <p className="ui-catchup-note">Next you’ll see the exact amount to send. It has a few extra kobo. Send it exactly, kobo included.</p>
         </div>
       </main>

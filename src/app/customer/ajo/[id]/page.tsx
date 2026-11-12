@@ -10,6 +10,7 @@ import TransferPanel, { type TransferDetails } from '@/components/ui/TransferPan
 import { ListSkeleton } from '@/components/ui/Skeleton'
 import { Icons } from '@/components/ui/icons'
 import { formatDate, formatNaira } from '@/lib/format'
+import { PhotoNoticeWithCamera, photoPaused, useMyPhoto } from '@/components/customer/PhotoReminder'
 
 type Group = {
   id: string; name: string; cadence: string; size: number; contribution: number; pot: number; feePct: number; platformFee: number; startDate: string
@@ -33,6 +34,7 @@ export default function CustomerAjoGroupPage() {
   const [leaveOpen, setLeaveOpen] = useState(false)
   const [leaving, setLeaving] = useState(false)
   const [error, setError] = useState('')
+  const { photo, reload: reloadPhoto } = useMyPhoto()
 
   const load = useCallback(async () => {
     setFailed(false)
@@ -148,7 +150,9 @@ export default function CustomerAjoGroupPage() {
               {error && <p className="ui-field-error" role="alert"><Icons.error size={16} aria-hidden="true" /> {error}</p>}
               {iPaid
                 ? <p className="ui-note ui-note--center"><Icons.check size={16} aria-hidden="true" /> You’ve paid this turn.</p>
-                : <button type="button" className="ui-btn ui-btn--primary ui-btn--block ui-gap-top" onClick={pay} disabled={starting} aria-busy={starting}>{starting ? 'Getting the details…' : `Pay ${naira(g.contribution)}`}</button>}
+                : photoPaused(photo)
+                  ? <div className="ui-gap-top"><PhotoNoticeWithCamera photo={photo} onChanged={reloadPhoto} /></div>
+                  : <button type="button" className="ui-btn ui-btn--primary ui-btn--block ui-gap-top" onClick={pay} disabled={starting} aria-busy={starting}>{starting ? 'Getting the details…' : `Pay ${naira(g.contribution)}`}</button>}
             </section>
           </>
         )}

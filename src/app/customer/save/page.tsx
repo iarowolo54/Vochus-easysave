@@ -24,6 +24,8 @@ import { useFlexibleTerms } from '@/lib/use-flexible-terms'
 import { useFundingMode } from '@/lib/use-funding-mode'
 import { buildSlots, dateKey, dayDeposits, periodAlreadySaved, periodWord } from '@/lib/savings-card'
 import { BULK_SAVINGS_LABEL, isEligiblePlan } from '@/lib/catchup'
+import { PhotoNoticeWithCamera, photoPaused } from '@/components/customer/PhotoReminder'
+import type { CustomerPhoto } from '@/lib/photo-copy'
 
 type Cadence = 'daily' | 'weekly' | 'monthly'
 
@@ -67,6 +69,7 @@ type Plan = {
   source?: string | null; coveredKeys?: string[]; coveredRefs?: string[]
 }
 type Me = {
+  photo?: CustomerPhoto
   type?: 'online' | 'offline'
   plan: Plan | null
   plans: Plan[]
@@ -266,6 +269,7 @@ function SavePageInner() {
       </header>
 
       <main className="ui-container">
+        {photoPaused(data.photo) && <PhotoNoticeWithCamera photo={data.photo} onChanged={reload} />}
         {mode === 'pay' && endedOnly && !selectedPlan && (
           <EmptyState
             icon="plan"
@@ -375,9 +379,9 @@ function SavePageInner() {
 
             <FormError message={error} />
 
-            <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={pay} disabled={paying} aria-busy={paying}>
+            {!photoPaused(data.photo) && <button type="button" className="ui-btn ui-btn--primary ui-btn--block" onClick={pay} disabled={paying} aria-busy={paying}>
               {byCard ? (paying ? 'Opening Paystack…' : 'Pay by card') : (paying ? 'Getting account details…' : 'Get account and exact amount')}
-            </button>
+            </button>}
             {byCard ? (
               <p className="ui-note ui-note--center"><Icons.locked size={14} aria-hidden="true" /> You’ll finish on Paystack’s secure page, then come back here.</p>
             ) : (

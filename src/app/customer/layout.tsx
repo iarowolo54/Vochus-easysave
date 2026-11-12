@@ -2,6 +2,7 @@ import CustomerIdleTimeout from '@/components/CustomerIdleTimeout'
 import SessionKeepAlive from '@/components/SessionKeepAlive'
 import OfflineNotice from '@/components/ui/OfflineNotice'
 import AnnouncementPopup from '@/components/ui/AnnouncementPopup'
+import PhotoReminderPopup from '@/components/customer/PhotoReminder'
 
 export default function CustomerLayout({ children }: { children: React.ReactNode }) {
   return (
@@ -10,6 +11,7 @@ export default function CustomerLayout({ children }: { children: React.ReactNode
       <SessionKeepAlive />
       <OfflineNotice />
       <AnnouncementPopup url="/api/customer/announcement" skip={['/customer/login', '/customer/enroll', '/customer/forgot-password', '/customer/unlock']} />
+      <PhotoReminderPopup skip={['/customer/login', '/customer/enroll', '/customer/forgot-password', '/customer/unlock']} />
       <style>{`
         :root {
           --g: #17783a; --gl: #e7f3ea; --gm: #9fd3ae; --gdk: #125e2d;

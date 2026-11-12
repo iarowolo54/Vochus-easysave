@@ -8,6 +8,8 @@ import DepositReceipt, { depositIcon, depositMethod } from '@/components/custome
 import { DayDetails, SavingsCalendar, WeekStrip, type DaySelection } from '@/components/customer/SavingsCard'
 import TodayStatus from '@/components/customer/TodayStatus'
 import { useCustomerMe } from '@/components/customer/useCustomerMe'
+import { PhotoNoticeWithCamera } from '@/components/customer/PhotoReminder'
+import type { CustomerPhoto } from '@/lib/photo-copy'
 import ActionButton from '@/components/ui/ActionButton'
 import BottomSheet from '@/components/ui/BottomSheet'
 import ReopenCodeSheet from '@/components/ui/ReopenCodeSheet'
@@ -44,6 +46,7 @@ type Tx = {
 type CustomerData = {
   type?: 'online' | 'offline'
   customerId: string; name: string; phone: string; email: string | null; emailVerified?: boolean; photoUrl: string | null
+  photo?: CustomerPhoto
   agent: { name: string; agentId: string; phone: string }
   plan: Plan | null
   plans: Plan[]
@@ -269,6 +272,7 @@ export default function CustomerDashboard() {
       </header>
 
       <main className="ui-container">
+        <PhotoNoticeWithCamera photo={data.photo} onChanged={reload} />
         {data.email && !data.emailVerified && emailAsk && (
           <section className="ui-banner ui-banner--info" aria-label="Email alerts" style={{ flexDirection: 'column' }}>
             <div><strong>Want alerts by email?</strong> Confirm your email and we’ll tell you when someone signs in and when a payment reaches your savings. You can turn it off any time in Settings.</div>
