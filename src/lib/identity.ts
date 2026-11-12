@@ -14,21 +14,22 @@ export type IdentityConflict = 'phone' | 'email' | null
 export async function findIdentityConflict(
   client: PrismaClient,
   input: { phone?: string | null; email?: string | null },
-  opts: { excludeCustomerId?: string } = {},
+  opts: { excludeCustomerId?: string; excludeAgentId?: string } = {},
 ): Promise<IdentityConflict> {
   const phone = input.phone?.trim() ? normalizePhone(input.phone) : ''
   const email = input.email?.trim() ? normalizeEmail(input.email) : ''
   const skipId = opts.excludeCustomerId
+  const skipAgentId = opts.excludeAgentId
 
   if (phone) {
     const [customers, agents, subAgents] = await Promise.all([
       client.customer.findMany({ select: { id: true, phone: true } }),
-      client.agent.findMany({ select: { phone: true } }),
+      client.agent.findMany({ select: { id: true, phone: true } }),
       client.subAgent.findMany({ select: { phone: true } }),
     ])
     const hit =
       customers.some((c) => c.id !== skipId && normalizePhone(c.phone) === phone) ||
-      agents.some((a) => normalizePhone(a.phone) === phone) ||
+      agents.some((a) => a.id !== skipAgentId && normalizePhone(a.phone) === phone) ||
       subAgents.some((s) => normalizePhone(s.phone) === phone)
     if (hit) return 'phone'
   }
@@ -36,14 +37,14 @@ export async function findIdentityConflict(
   if (email) {
     const [customers, agents, admins, staff] = await Promise.all([
       client.customer.findMany({ where: { email: { not: null } }, select: { id: true, email: true } }),
-      client.agent.findMany({ where: { email: { not: null } }, select: { email: true } }),
+      client.agent.findMany({ where: { email: { not: null } }, select: { id: true, email: true } }),
       client.superAdmin.findMany({ select: { email: true } }),
       client.staffUser.findMany({ select: { email: true } }),
     ])
     const matches = (e: string | null) => !!e && normalizeEmail(e) === email
     const hit =
       customers.some((c) => c.id !== skipId && matches(c.email)) ||
-      agents.some((a) => matches(a.email)) ||
+      agents.some((a) => a.id !== skipAgentId && matches(a.email)) ||
       admins.some((s) => matches(s.email)) ||
       staff.some((s) => matches(s.email))
     if (hit) return 'email'

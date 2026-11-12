@@ -7,6 +7,7 @@ import {
   TableSkeleton, dateTime, naira, nairaKobo, shortDate, useDebounced, useToast,
 } from '../_components/admin-ui'
 import { ClearSignInLockModal, SendResetCodeModal } from '../_components/send-reset-code'
+import { EditProfileModal } from '../_components/edit-profile-modal'
 
 interface Customer {
   id: string
@@ -137,6 +138,7 @@ export default function CustomersPage() {
   // Lock / unlock confirmation
   const [lockTarget, setLockTarget] = useState<Customer | null>(null)
   const [sendCodeFor, setSendCodeFor] = useState<Customer | null>(null)
+  const [editFor, setEditFor] = useState<Customer | null>(null)
   const [clearLockFor, setClearLockFor] = useState<Customer | null>(null)
   const [resetDeviceFor, setResetDeviceFor] = useState<Customer | null>(null)
   const [resetBusy, setResetBusy] = useState(false)
@@ -330,6 +332,7 @@ export default function CustomersPage() {
         <Modal icon="customers" size="lg" title={detail.name} sub={detail.customerId} onClose={() => setDetail(null)}
           footer={<>
             <button type="button" className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>
+            <button type="button" className="btn btn-outline" onClick={() => { setEditFor(detail); setDetail(null) }}>Edit details</button>
             <button type="button" className="btn btn-outline" onClick={() => { setSendCodeFor(detail); setDetail(null) }}>Send reset code</button>
             <button type="button" className="btn btn-outline" onClick={() => { setClearLockFor(detail); setDetail(null) }}>Clear sign-in lock</button>
             <button type="button" className="btn btn-outline" onClick={() => { setResetError(''); setResetDeviceFor(detail); setDetail(null) }}>Reset device</button>
@@ -451,6 +454,10 @@ export default function CustomersPage() {
       {clearLockFor && (
         <ClearSignInLockModal id={clearLockFor.id} name={clearLockFor.name} onClose={() => setClearLockFor(null)}
           onDone={msg => { setClearLockFor(null); toast(msg, 'success') }} />
+      )}
+      {editFor && (
+        <EditProfileModal who="customer" id={editFor.id} name={editFor.name} onClose={() => setEditFor(null)}
+          onSaved={msg => { setEditFor(null); toast(msg, 'success'); load() }} />
       )}
       {sendCodeFor && (
         <SendResetCodeModal actorType="customer" id={sendCodeFor.id} name={sendCodeFor.name} onClose={() => setSendCodeFor(null)}

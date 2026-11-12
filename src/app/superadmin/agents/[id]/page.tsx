@@ -8,6 +8,7 @@ import {
   Avatar, ConfirmModal, Empty, LoadError, Pager, Segmented, TableSkeleton, nairaKobo, shortDate, useToast,
 } from '../../_components/admin-ui'
 import { SendResetCodeModal } from '../../_components/send-reset-code'
+import { EditProfileModal } from '../../_components/edit-profile-modal'
 import { AgentDocumentsTab } from '../../_components/agent-documents-tab'
 
 interface Tx {
@@ -103,6 +104,7 @@ export default function AgentDetailPage() {
   const [docCount, setDocCount] = useState<number | null>(null)
   const [confirmReset, setConfirmReset] = useState(false)
   const [sendCode, setSendCode] = useState(false)
+  const [editing, setEditing] = useState(false)
   const [resetting, setResetting] = useState(false)
   const [resetError, setResetError] = useState('')
 
@@ -225,6 +227,9 @@ export default function AgentDetailPage() {
               <Icons.device size={16} aria-hidden="true" /> Reset device
             </button>
           )}
+          <button type="button" className="btn btn-outline btn-sm" onClick={() => setEditing(true)}>
+            <Icons.enrol size={16} aria-hidden="true" /> Edit details
+          </button>
           <button type="button" className="btn btn-outline btn-sm" onClick={() => setSendCode(true)}>
             <Icons.locked size={16} aria-hidden="true" /> Send reset code
           </button>
@@ -480,6 +485,10 @@ export default function AgentDetailPage() {
           busy={resetting} error={resetError}
           onConfirm={resetDevice} onClose={() => setConfirmReset(false)}
         />
+      )}
+      {editing && (
+        <EditProfileModal who="agent" id={agent.id} name={agent.name} onClose={() => setEditing(false)}
+          onSaved={msg => { setEditing(false); toast(msg, 'success'); load() }} />
       )}
       {sendCode && (
         <SendResetCodeModal actorType="agent" id={agent.id} name={agent.name} onClose={() => setSendCode(false)}
