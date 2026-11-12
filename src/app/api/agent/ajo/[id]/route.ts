@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 import { loadGroup, sessionAgent } from '@/lib/ajo-server'
+import { photoBlockedIds } from '@/lib/photo-deadline'
 
 type Ctx = { params: Promise<{ id: string }> }
 
@@ -11,7 +12,10 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   const { id } = await params
   const group = await loadGroup(prisma, { id, agentId: agent.id })
   if (!group) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  return NextResponse.json({ group }, { headers: { 'Cache-Control': 'no-store' } })
+  // Members nobody can take a payment from until their photo is approved (photo deadline), so a stalled turn shows why.
+  const blocked = await photoBlockedIds(prisma, group.members.map(m => m.customerDbId))
+  const withFlags = { ...group, members: group.members.map(m => ({ ...m, photoBlocked: blocked.has(m.customerDbId) })) }
+  return NextResponse.json({ group: withFlags }, { headers: { 'Cache-Control': 'no-store' } })
 }
 
 /** Cancel a group that hasn't started. Once it is running, money has moved and it can't be cancelled here. */

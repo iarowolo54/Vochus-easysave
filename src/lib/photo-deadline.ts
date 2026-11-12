@@ -69,3 +69,10 @@ export async function photoSaveBlock(client: PrismaClient, customerId: string, w
 export function photoBlockedResponse(message: string): NextResponse {
   return NextResponse.json({ error: message, code: PHOTO_REQUIRED }, { status: 403 })
 }
+
+/** Of these customers, the ones saving is paused for right now (no photo after the deadline). Empty before it. */
+export async function photoBlockedIds(client: PrismaClient, customerIds: string[], now: Date = new Date()): Promise<Set<string>> {
+  if (!customerIds.length || photoPhase(await getPhotoDeadline(client), now) !== 'paused') return new Set()
+  const rows = await client.customer.findMany({ where: { id: { in: customerIds }, OR: [{ photoUrl: null }, { photoUrl: '' }] }, select: { id: true } })
+  return new Set(rows.map(r => r.id))
+}

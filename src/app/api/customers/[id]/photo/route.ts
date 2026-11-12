@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { logAudit } from '@/lib/audit'
-import { validatePhoto } from '@/lib/photo'
+import { submitAgentPhoto } from '@/lib/customer-photo-request'
 
 async function sessionAgent() {
   const session = await getServerSession(authOptions)
@@ -29,36 +28,17 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
   })
 }
 
-// The agent takes a new photo of one of their own customers (a missing photo, or one where the face isn't clear).
+// The agent takes a photo of one of their own customers (a missing photo, or one where the face isn't clear). It goes
+// to the super admin to check; only an approved photo reaches the customer (src/lib/customer-photo-request.ts).
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const agent = await sessionAgent()
   if (!agent) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (agent.status !== 'Active') return NextResponse.json({ error: 'Your account is not active' }, { status: 403 })
 
   const { id } = await params
-  const customer = await prisma.customer.findFirst({
-    where: { id, agentId: agent.id },
-    select: { id: true, firstName: true, lastName: true, customerId: true, photoUrl: true },
-  })
-  if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
-
   const body: unknown = await req.json().catch(() => null)
   const photoUrl = body && typeof body === 'object' ? (body as { photoUrl?: unknown }).photoUrl : undefined
-  if (typeof photoUrl !== 'string' || !photoUrl) return NextResponse.json({ error: 'Take a photo first.' }, { status: 400 })
-  const check = validatePhoto(photoUrl)
-  if (!check.ok) return NextResponse.json({ error: check.error }, { status: 400 })
-
-  await prisma.customer.update({ where: { id: customer.id }, data: { photoUrl } })
-
-  logAudit({
-    action: 'customer_photo_retaken',
-    entity: 'Customer',
-    entityId: customer.id,
-    details: `Agent ${agent.name} (${agent.agentId}) ${customer.photoUrl ? 'replaced' : 'added'} the photo for ${customer.firstName} ${customer.lastName} (${customer.customerId})`,
-    actorType: 'agent',
-    actorId: agent.id,
-    actorName: agent.name,
-  })
-
-  return NextResponse.json({ ok: true, photoUrl: `/api/customers/${customer.id}/photo?v=${Date.now()}` })
+  const r = await submitAgentPhoto(prisma, { customerDbId: id, agent, photoUrl })
+  if (!r.ok) return NextResponse.json({ error: r.error }, { status: r.status })
+  return NextResponse.json({ ok: true, status: 'pending' })
 }

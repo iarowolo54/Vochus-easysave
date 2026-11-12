@@ -7,6 +7,8 @@ import type { Prisma } from '@prisma/client'
 import { prisma } from '@/lib/prisma'
 import { asCustomerType } from '@/lib/customer-type'
 import { money } from '@/lib/wallet-guard'
+import { latestPhotoRequests } from '@/lib/customer-photo-request'
+import { photoStatusOf } from '@/lib/photo-deadline'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -107,6 +109,7 @@ export async function GET(req: NextRequest) {
       : [],
   )
 
+  const photoReqs = await latestPhotoRequests(prisma, customers.map(c => c.id))
   const result = customers.map(c => {
     const activePlans = c.savingsPlans.filter(p => p.status === 'Active')
     const savingsBalance = activePlans.reduce((s, p) => s + p.balance, 0)
@@ -146,6 +149,7 @@ export async function GET(req: NextRequest) {
       lga: c.lga,
       // A link, not the base64 photo: a page of customers would otherwise carry several MB.
       photoUrl: c.photoUrl ? `/api/customers/${c.id}/photo` : null,
+      ...(({ status, rejectReason }) => ({ photoStatus: status, photoRejectReason: rejectReason }))(photoStatusOf(!!c.photoUrl, photoReqs.get(c.id) ?? null)),
       // Whether the account is locked to a phone; the device id itself is never sent.
       deviceBound: c.boundDeviceId != null,
     }

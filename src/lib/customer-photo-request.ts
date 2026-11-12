@@ -98,3 +98,14 @@ export async function rejectPhotoRequest(client: PrismaClient, i: { id: string; 
   })
   return done ? { ok: true } : { ok: false, status: 409, error: DECIDED }
 }
+
+/** The newest photo request per customer (status and reject reason only, never the photo), for list screens. */
+export async function latestPhotoRequests(client: PrismaClient, customerIds: string[]): Promise<Map<string, { status: string; rejectReason: string | null }>> {
+  const out = new Map<string, { status: string; rejectReason: string | null }>()
+  if (!customerIds.length) return out
+  const rows = await client.customerPhotoRequest.findMany({
+    where: { customerId: { in: customerIds } }, orderBy: { submittedAt: 'desc' }, select: { customerId: true, status: true, rejectReason: true },
+  })
+  for (const r of rows) if (!out.has(r.customerId)) out.set(r.customerId, { status: r.status, rejectReason: r.rejectReason })
+  return out
+}
