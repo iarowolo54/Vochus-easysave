@@ -7,6 +7,10 @@ import Module from 'node:module'
 import { prisma } from '../src/lib/prisma'
 import { watKey } from '../src/lib/savings-card'
 
+// Auto-debit charges in these tests must never reach Paystack: a test key makes chargeAuthorization answer
+// 'success' locally (src/lib/paystack.ts isTestMode), whatever key the machine's environment holds.
+process.env.PAYSTACK_SECRET_KEY = 'sk_test_saving_bulk'
+
 const stub = { getServerSession: async (..._a: unknown[]): Promise<unknown> => null }
 const M = Module as unknown as { _load: (req: string, ...rest: unknown[]) => unknown }
 const realLoad = M._load
@@ -203,7 +207,8 @@ test('ONLINE monthly is refused', async () => {
 test('ONLINE: a past-maturity plan and a non-string date are refused', async () => {
   const a = await online()
   await prisma.savingsPlan.update({ where: { id: a.plan.id }, data: { maturityDate: new Date(Date.now() - 1000) } })
-  assert.equal((await call({ customerId: a.c.id, dates: [wat(-1)], method: 'Cash', planId: a.plan.id })).status, 400)
+  // An ended plan is 409 PLAN_ENDED since 167f54c (ended plans can't be saved into).
+  assert.equal((await call({ customerId: a.c.id, dates: [wat(-1)], method: 'Cash', planId: a.plan.id })).status, 409)
   const b = await online()
   assert.equal((await call({ customerId: b.c.id, dates: [12345], method: 'Cash', planId: b.plan.id })).status, 400)
 })
