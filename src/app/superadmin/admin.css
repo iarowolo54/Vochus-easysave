@@ -1659,3 +1659,8 @@
   .admin-root .cr-review { grid-template-columns: minmax(0, 1fr); }
   .admin-root .cr-photo { max-width: 240px; margin: 0 auto; width: 100%; }
 }
+
+/* Customer photo review: the new photo beside the current one, stacked on phones. */
+.cp-compare { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 16px; margin-bottom: 16px; }
+.cp-compare figure { margin: 0; display: grid; gap: 6px; justify-items: center; }
+.cp-compare img { width: 100%; max-width: 240px; aspect-ratio: 3 / 4; object-fit: cover; border-radius: 12px; }

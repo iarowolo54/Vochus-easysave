@@ -127,7 +127,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
     if (status !== 'authenticated') return
     fetch('/api/admin/stats')
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) { setPendingLoans(d.pendingLoans ?? 0); setPendingCustomerRequests(d.pendingCustomerRequests ?? 0) } })
+      .then(d => { if (d) { setPendingLoans(d.pendingLoans ?? 0); setPendingCustomerRequests((d.pendingCustomerRequests ?? 0) + (d.pendingCustomerPhotos ?? 0)) } })
       .catch(() => {})
   }, [status, pathname])
 

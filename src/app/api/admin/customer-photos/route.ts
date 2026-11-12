@@ -17,5 +17,6 @@ export async function GET() {
   })
   // 'Pending' sorts after 'Approved' alphabetically, so put waiting ones first here.
   const ordered = [...rows.filter(r => r.status === 'Pending'), ...rows.filter(r => r.status !== 'Pending')]
-  return NextResponse.json({ photos: ordered }, { headers: { 'Cache-Control': 'no-store' } })
+  const canManage = (await requirePermission('customer-requests', 'manage')).ok
+  return NextResponse.json({ photos: ordered, canManage }, { headers: { 'Cache-Control': 'no-store' } })
 }
