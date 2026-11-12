@@ -99,7 +99,42 @@
 - [ ] **Step 6:** UI check at 360px (`ui-check-recipe`). Check an offline customer's Save screen with an ended plan, and the agent add-plan picker.
 - [ ] **Step 7:** Commit: `feat: block plans across the online/offline line; every reader uses the stored type`.
 
-### Task 4: Release check
+### Task 4: Fee refund records
+
+**Files:**
+- Create: `src/lib/fee-refund.ts`
+- Modify:
+  - `src/lib/commission-ledger.ts`: `LedgerSource` gains `'fee_refund'`. Add `recordReversal(tx, e: LedgerEntry)`, which writes a negative amount; `recordCommission` still refuses amounts ≤ 0.
+  - `src/lib/commission-history.ts`: `LEDGER_SOURCE.fee_refund = 'refund'`. `CommissionSource` gains `'refund'`.
+  - `src/app/superadmin/_components/commission-history-drawer.tsx`: label `refund: 'Refunds'`.
+- Modify: `src/lib/notifications.ts`. Add kinds `'fee_refunded' | 'commission_returned'` and `feeRefunded(f: { ref: string; customerId: string; agentId: string | null; customerName: string; planGoal: string; fee: number; agentShare: number })`, with dedupe keys `fee-refund:${ref}` and `fee-refund-agent:${ref}`. Copy:
+  - customer: `${naira(fee)} platform fee refunded to ${planGoal}`
+  - agent: `${naira(agentShare)} commission returned: ${name(customerName)}'s fee was refunded`
+  - Add the matching rebuild to `src/lib/notification-sweep.ts`, from `Transaction` rows with `type: 'fee_refund'`.
+- Modify: `tests/notification-coverage.test.ts`. Add the site pattern `/type:\s*'fee_refund'/`.
+- Modify, adding a `fee_refund` label "Fee refund" (money in, sign `+`): `src/components/customer/DepositReceipt.tsx`, `src/app/dashboard/transactions/page.tsx` (TYPES), `src/app/superadmin/transactions/page.tsx` (TYPES), and the customer transactions page if it maps types.
+- Test: `tests/fee-refund.test.ts`, covering the pure split. `refundSplit(ledgerRows)` returns `{ fee, agentShare, platformShare }` from a deposit's original ledger rows. Agent-less deposits give `agentShare = 0`. It refuses with `ALREADY_REFUNDED` when the deposit already has a `fee_refund` ledger row.
+
+**Interfaces:**
+- Produces: `refundCashFee(tx, { depositTxnId: string; reason: string; actorName: string }): Promise<{ ref: string; fee: number; agentShare: number; platformShare: number }>`. It throws `NOT_REFUNDABLE` (no fee or already refunded) or `AGENT_BALANCE_LOW`.
+- Produces: `writeRefundRecords(tx, facts, { moveMoney: boolean })`, the record-writing half that both `refundCashFee` (`moveMoney: true`) and the repair script (`false`) use.
+
+- [ ] **Step 1:** Write the failing tests for `refundSplit` and the notification copy (`notifications.feeRefunded` output). Run them and expect FAIL.
+- [ ] **Step 2:** Implement the ledger reversal, the catalogue entry, the sweep, `refundSplit`, `writeRefundRecords` and `refundCashFee`. Notify inside the same transaction, with `// notify: feeRefunded` above the write.
+- [ ] **Step 3:** Add the screen labels.
+- [ ] **Step 4:** Run `npx tsx --test tests/fee-refund.test.ts tests/notification-coverage.test.ts tests/customer-type.test.ts`. Expect PASS.
+- [ ] **Step 5:** Commit: `feat: fee refunds are visible records (customer history, agent notice, ledger reversal)`.
+
+### Task 5: Repair the 4 past refunds (script, run by hand)
+
+**Files:**
+- Create: `scripts/repair-fee-refunds-2026-11-12.ts`. It reads the 4 `cash_fee_refunded` audit entries for the deposit ids, ledger ids and amounts. In one transaction it restores each deposit's `feeTaken` and the 8 ledger rows (original ids, dated at their deposit), then calls `writeRefundRecords(..., { moveMoney: false })`. It prints the balances before and after, which must be identical, and refuses to run twice (a `fee_refund` ledger row already exists for the deposit).
+- Dry run: on a `.backup` copy on the server. Then the developer runs it against production.
+
+- [ ] **Step 1:** Write the script. Dry-run it against a local copy made from the latest prod backup. Expect 4 refund transactions, 8 restored rows, 8 reversal rows, 8 notifications, and unchanged balances.
+- [ ] **Step 2:** Commit: `chore: one-off repair turning the 4 hand fee refunds into proper records`.
+
+### Task 6: Release check
 
 - [ ] **Step 1:** Run `/verify`, then review the changes (`code-reviewer` + `security-auditor`, since this touches money paths and authorization).
 - [ ] **Step 2:** Deploy needs the owner's approval. Record the pre-deploy count of customers with a `self` plan (24 on 2026-11-11). After deploy, run read-only `SELECT type, COUNT(*) FROM Customer GROUP BY type` on prod. Expect online = that count and nothing else changed.
