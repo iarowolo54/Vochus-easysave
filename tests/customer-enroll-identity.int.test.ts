@@ -26,7 +26,7 @@ function validBody(overrides: Record<string, unknown> = {}) {
     phone: newPhone, email: newEmail,
     address: '12 Allen Avenue, Ikeja',
     nokName: 'Chidi Obi', nokRelation: 'Brother', nokPhone: '08090001122',
-    password: 'secret1', gender: 'Female', state: 'Lagos', lga: 'Ikeja',
+    password: 'secret1', gender: 'Female', state: 'Lagos', lga: 'Ikeja', dob: '1990-05-01', photoUrl: 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==',
     dailyAmount: 500, periodDays: 90, goal: 'Rent',
     ...overrides,
   }

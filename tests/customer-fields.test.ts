@@ -32,3 +32,19 @@ test('LGA is REQUIRED and must belong to the chosen state', () => {
   // A non-existent state has no LGAs, so any LGA fails.
   assert.equal(validateLga('Atlantis', 'Ikeja').ok, false)
 })
+
+test('date of birth is REQUIRED, real, not in the future, and at most 120 years ago', async () => {
+  const { validateDob, ageOn } = await import('../src/lib/customer-fields')
+  const now = new Date(2026, 10, 12) // 12 Nov 2026
+  const ok = validateDob('1990-05-01', now)
+  assert.ok(ok.ok)
+  if (ok.ok) assert.equal(ok.value.getTime(), new Date(1990, 4, 1).getTime())
+  assert.ok(validateDob('2026-11-12', now).ok) // today is allowed
+  for (const bad of [undefined, null, '', '1990-5-1', '01/05/1990', 19900501]) assert.equal(validateDob(bad, now).ok, false)
+  assert.equal(validateDob('1990-02-31', now).ok, false) // no such day
+  assert.equal(validateDob('2026-11-13', now).ok, false) // tomorrow
+  assert.ok(validateDob('1905-11-13', now).ok)            // 120, turning 121 tomorrow
+  assert.equal(validateDob('1905-11-12', now).ok, false)  // 121 today
+  assert.equal(ageOn(new Date(1990, 10, 12), now), 36)    // birthday today
+  assert.equal(ageOn(new Date(1990, 10, 13), now), 35)    // birthday tomorrow
+})

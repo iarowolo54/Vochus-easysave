@@ -17,7 +17,7 @@ let agentId = ''
 
 const phone = () => `080${String(10000000 + ++seq + Math.floor(Math.random() * 80000000)).slice(0, 8)}`
 const body = (over: Record<string, unknown> = {}) => ({
-  firstName: 'Ada', lastName: 'Obi', phone: phone(), address: '1 Market Rd', gender: 'Female', state: 'Lagos', lga: 'Ikeja', photoUrl: PHOTO,
+  firstName: 'Ada', lastName: 'Obi', phone: phone(), address: '1 Market Rd', gender: 'Female', state: 'Lagos', lga: 'Ikeja', dob: '1990-05-01', photoUrl: PHOTO,
   plans: [{ dailyAmount: '500', periodDays: 31, goal: 'Rent', cadence: 'daily', startDate: '2026-11-10' }], ...over,
 })
 
@@ -37,6 +37,7 @@ before(async () => {
 test('a submission needs a photo and takes its fee from the server, not the browser', () => {
   const noPhoto = parseRequestBody(body({ photoUrl: '' }), flex, NOW)
   assert.equal(noPhoto.ok, false)
+  assert.equal(parseRequestBody(body({ dob: '' }), flex, NOW).ok, false) // date of birth required
   const p = parseRequestBody(body({ registrationFee: '1', status: 'Approved', agentId: 'someone-else' }), flex, NOW)
   assert.ok(p.ok)
   assert.equal(p.value.registrationFee, REGISTRATION_FEE)

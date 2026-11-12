@@ -9,7 +9,8 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useSession } from 'next-auth/react'
 import { blockMinus, blockNonDigit, digitsOnly, nonNegativeString } from '@/lib/numeric'
-import { displayName, formatNaira } from '@/lib/format'
+import { displayName, formatDate, formatNaira } from '@/lib/format'
+import { ageOn } from '@/lib/customer-fields'
 import { addDays, isoDate, MAX_PLAN_DAYS, parseDateInput, today } from '@/lib/plan-dates'
 import EmptyState from '@/components/ui/EmptyState'
 import { NG_STATES, lgasOf } from '@/lib/ng-lgas'
@@ -358,7 +359,7 @@ export default function EnrolPage() {
   }
 
   const fullName = displayName(`${form.firstName} ${form.lastName}`.trim())
-  const req1 = { firstName: form.firstName, lastName: form.lastName, gender: form.gender, phone: form.phone, address: form.address, state: form.state, lga: form.lga }
+  const req1 = { firstName: form.firstName, lastName: form.lastName, gender: form.gender, dob: form.dob, phone: form.phone, address: form.address, state: form.state, lga: form.lga }
   const missing = (k: keyof typeof req1) => showMissing && !req1[k]
   const phoneShort = showMissing && form.phone.length > 0 && form.phone.length < 11
 
@@ -499,6 +500,12 @@ export default function EnrolPage() {
                   </div>
                   {missing('gender') && <FieldError id="gd-error" message="Choose their gender" />}
                 </div>
+                <div className="ag-tf-wrap">
+                  <label className="ag-label" htmlFor="dob">Date of birth <span className="ag-req" aria-hidden="true">*</span></label>
+                  <DatePicker id="dob" ariaLabel="Date of birth" sheetTitle="Pick their date of birth" allowEmpty placeholder="Choose a date" yearPicker
+                    emptyViewIso={`${new Date().getFullYear() - 30}-01-01`} maxIso={isoDate(today())} value={form.dob} onChange={iso => set('dob', iso)} />
+                  {missing('dob') && <FieldError id="dob-error" message="Choose their date of birth" />}
+                </div>
                 <Field id="ph" label="Phone number" required
                   error={missing('phone') ? 'Enter their phone number' : phoneShort ? 'Phone numbers have 11 digits' : ''}>
                   <input id="ph" className="ag-tf-input ag-tf-num" type="tel" inputMode="numeric" maxLength={11} placeholder="080 0000 0000"
@@ -546,25 +553,18 @@ export default function EnrolPage() {
                   </Field>
                 </div>
 
-                <details className="ag-more" open={!!(form.dob || form.email || form.bvn)}>
+                <details className="ag-more" open={!!(form.email || form.bvn)}>
                   <summary>More details <span>Optional</span><Icons.expand size={18} aria-hidden="true" /></summary>
-                  <div className="ag-grid-2">
-                    <div className="ui-field">
-                      <label className="ui-label" htmlFor="dob">Date of birth</label>
-                      <DatePicker id="dob" ariaLabel="Date of birth" sheetTitle="Pick their date of birth" allowEmpty yearPicker
-                        emptyViewIso={`${new Date().getFullYear() - 30}-01-01`} maxIso={isoDate(today())} value={form.dob} onChange={iso => set('dob', iso)} />
-                    </div>
-                    <Field id="em" label="Email">
-                      <input id="em" className="ag-tf-input" type="email" inputMode="email" value={form.email} onChange={e => set('email', e.target.value)} />
-                    </Field>
-                  </div>
+                  <Field id="em" label="Email">
+                    <input id="em" className="ag-tf-input" type="email" inputMode="email" value={form.email} onChange={e => set('email', e.target.value)} />
+                  </Field>
                   <Field id="bvn" label="BVN">
                     <input id="bvn" className="ag-tf-input ag-tf-num" inputMode="numeric" maxLength={11} value={form.bvn} onChange={e => set('bvn', e.target.value)} />
                   </Field>
                 </details>
 
                 <FlowActions primary={<button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={() => {
-                  if (!form.firstName || !form.lastName || !form.gender || !form.phone || form.phone.length < 11 || !form.address || !form.state || !form.lga) {
+                  if (!form.firstName || !form.lastName || !form.gender || !form.dob || !form.phone || form.phone.length < 11 || !form.address || !form.state || !form.lga) {
                     setShowMissing(true)
                     setError('Some details are missing. Check the fields marked in red.')
                     return
@@ -788,6 +788,7 @@ export default function EnrolPage() {
 
                 <ReviewSection title="Personal details" onEdit={() => go(1)}>
                   <Row k="Gender" v={form.gender} />
+                  {form.dob && <Row k="Date of birth" v={`${formatDate(form.dob)} · ${ageOn(parseDateInput(form.dob) ?? today())} years old`} />}
                   <Row k="Address" v={`${form.address}, ${form.lga}, ${form.state}`} />
                   <Row k="Language" v={form.language} />
                   {form.nokName && <Row k="Next of kin" v={`${form.nokName} (${form.nokRelation})`} />}

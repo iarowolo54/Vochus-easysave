@@ -1,7 +1,7 @@
 // Agent registration of cash savers: a submission is a request, and only the super admin's approval makes it a customer.
 // Everything that decides a request lives here so the agent and admin routes can't drift apart.
 import type { PrismaClient } from '@prisma/client'
-import { validateGender, validateLga, validateState } from '@/lib/customer-fields'
+import { validateDob, validateGender, validateLga, validateState } from '@/lib/customer-fields'
 import { BAD_CADENCE, flexiblePlanData, isFlexible, parseCadence, type FlexibleSettings, type PlanCadence } from '@/lib/flexible-savings'
 import { getFlexibleSettings } from '@/lib/flexible-savings'
 import { findIdentityConflict } from '@/lib/identity'
@@ -138,9 +138,9 @@ export function parseRequestBody(body: unknown, flex: FlexibleSettings, now: Dat
   const photo = validatePhoto(b.photoUrl)
   if (!photo.ok) return { ok: false, error: photo.error }
 
-  const dobRaw = text(b.dob, 10)
-  const dob = dobRaw ? parseDateInput(dobRaw) : null
-  if (dobRaw && !dob) return { ok: false, error: 'The date of birth is not a real date.' }
+  const dobCheck = validateDob(text(b.dob, 10), now)
+  if (!dobCheck.ok) return { ok: false, error: dobCheck.error }
+  const dob = dobCheck.value
 
   if (!Array.isArray(b.plans) || b.plans.length === 0) return { ok: false, error: 'Add at least one savings plan.' }
   if (b.plans.length > MAX_PLANS) return { ok: false, error: `A customer can start with at most ${MAX_PLANS} plans.` }

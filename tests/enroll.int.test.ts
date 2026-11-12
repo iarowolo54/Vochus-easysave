@@ -35,7 +35,7 @@ function validBody(overrides: Record<string, unknown> = {}) {
     address: '12 Allen Avenue, Ikeja',
     nokName: 'Chidi Obi', nokRelation: 'Brother', nokPhone: '08090001122',
     password: 'secret1',
-    gender: 'Female', state: 'Lagos', lga: 'Ikeja',
+    gender: 'Female', state: 'Lagos', lga: 'Ikeja', dob: '1990-05-01', photoUrl: 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==',
     dailyAmount: 500, periodDays: 90, goal: 'Rent',
     ...overrides,
   }
@@ -80,6 +80,9 @@ test('rejects a bad phone, short address, matching NOK phone, short password', a
   assert.equal((await POST(req(validBody({ state: undefined })))).status, 400) // state required
   assert.equal((await POST(req(validBody({ lga: undefined })))).status, 400) // lga required
   assert.equal((await POST(req(validBody({ lga: 'Kano Municipal' })))).status, 400) // lga not in Lagos
+  assert.equal((await POST(req(validBody({ photoUrl: undefined })))).status, 400) // photo required
+  assert.equal((await POST(req(validBody({ dob: undefined })))).status, 400) // date of birth required
+  assert.equal((await POST(req(validBody({ dob: '2999-01-01' })))).status, 400) // not in the future
 })
 
 test('creates the customer with a verified email and consumes the OTP', async () => {

@@ -1346,7 +1346,7 @@ test('suspended agent: a customer can\'t ask for cash, and an active agent\'s cu
 test('suspended agent: old links stop enrolling, with the page told up front', async () => {
   const email = `rg-enrol-${RUN}@test.local`
   const url = (q: string) => ({ url: `http://x/api/customer/enroll/invite?${q}`, headers: new Headers({ 'x-forwarded-for': `10.9.${seq.n++}.1` }) }) as never
-  const body = { aid: agentCode, firstName: 'Ada', lastName: 'Obi', phone: `0809${String(Date.now()).slice(-7)}`, email, address: '12 Allen Avenue, Ikeja', nokName: 'N', nokRelation: 'R', nokPhone: '08090001122', password: 'secret1', gender: 'Female', state: 'Lagos', lga: 'Ikeja', dailyAmount: 500, periodDays: 90, goal: 'Rent' }
+  const body = { aid: agentCode, firstName: 'Ada', lastName: 'Obi', phone: `0809${String(Date.now()).slice(-7)}`, email, address: '12 Allen Avenue, Ikeja', nokName: 'N', nokRelation: 'R', nokPhone: '08090001122', password: 'secret1', gender: 'Female', state: 'Lagos', lga: 'Ikeja', dob: '1990-05-01', photoUrl: 'data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ==', dailyAmount: 500, periodDays: 90, goal: 'Rent' }
   const post = () => enrollRoute.POST({ json: async () => body, headers: new Headers({ 'x-forwarded-for': `10.8.${seq.n++}.1` }) } as never)
   await whileSuspended(async () => {
     assert.equal((await inviteRoute.GET(url(`aid=${agentCode}`))).status, 410)

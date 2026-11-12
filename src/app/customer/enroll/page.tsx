@@ -214,6 +214,8 @@ function EnrollContent() {
     setResume(null)
     // The password and photo weren't kept, so pick up at the first of those still needed.
     const at = SCREENS.indexOf(d.screen)
+    // A draft saved before date of birth was required may lack one: ask for it first.
+    if (!d.dob && at > SCREENS.indexOf('home')) { go('home'); return }
     go(at > SCREENS.indexOf('password') ? 'password' : d.screen)
   }
 
@@ -303,7 +305,7 @@ function EnrollContent() {
     addr: !address.trim() ? 'Enter your home address' : address.trim().length < 8 ? 'Add more detail, like the street and area' : '',
     st: state ? '' : 'Choose your state',
     lga: !state ? 'Choose your state first' : lga ? '' : 'Choose your local government',
-    dob: dob && new Date(dob) > new Date() ? 'Your date of birth can’t be in the future' : '',
+    dob: !dob ? 'Choose your date of birth' : new Date(dob) > new Date() ? 'Your date of birth can’t be in the future' : '',
     gd: gender ? '' : 'Choose your gender',
     bvn: bvn && bvn.length < 11 ? `A BVN has 11 digits. This has ${bvn.length}.` : '',
     nok: nokName.trim() ? '' : 'Enter their name',
@@ -750,9 +752,9 @@ function EnrollContent() {
               </Field>
             </div>
             <div className="ui-field">
-              <label className="ui-label" htmlFor="dob">Date of birth (optional)</label>
-              <DatePicker id="dob" ariaLabel="Date of birth" sheetTitle="Pick your date of birth" allowEmpty yearPicker
-                emptyViewIso={`${new Date().getFullYear() - 30}-01-01`} maxIso={isoDate(today())} value={dob} onChange={setDob} />
+              <label className="ui-label" htmlFor="dob">Date of birth</label>
+              <DatePicker id="dob" ariaLabel="Date of birth" sheetTitle="Pick your date of birth" allowEmpty placeholder="Choose a date" yearPicker
+                emptyViewIso={`${new Date().getFullYear() - 30}-01-01`} maxIso={isoDate(today())} value={dob} onChange={iso => { setDob(iso); setTouched(t => ({ ...t, dob: true })) }} />
               {err('dob') && <FieldError id="dob-error" message={err('dob')} />}
             </div>
             <p className="cu-label" id="gd-label">Gender</p>

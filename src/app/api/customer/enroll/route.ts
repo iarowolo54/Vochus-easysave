@@ -15,7 +15,7 @@ import { resolvePlanStartDate, maturityFrom } from '@/lib/saving-plan'
 import { BAD_CADENCE, flexiblePlanData, getFlexibleSettings, isFlexible, parseCadence, shortDate, type FlexiblePlanData } from '@/lib/flexible-savings'
 import { validatePhoto } from '@/lib/photo'
 import { enrolRateLimiter, clientIp } from '@/lib/rate-limit'
-import { validateGender, validateState, validateLga } from '@/lib/customer-fields'
+import { validateDob, validateGender, validateState, validateLga } from '@/lib/customer-fields'
 
 function genId(prefix: string, pad = 5) {
   return `${prefix}-${String(Math.floor(Math.random() * (10 ** pad - 10 ** (pad - 1)) + 10 ** (pad - 1)))}`
@@ -54,8 +54,13 @@ export async function POST(req: NextRequest) {
   if (String(password).length < 6) {
     return NextResponse.json({ error: 'Password must be at least 6 characters' }, { status: 400 })
   }
+  // A photo of the customer is required (owner, Nov 2026); validatePhoto alone lets an empty one through.
+  if (typeof photoUrl !== 'string' || !photoUrl) return NextResponse.json({ error: 'Take a photo of your face to continue.' }, { status: 400 })
   const photoCheck = validatePhoto(photoUrl)
   if (!photoCheck.ok) return NextResponse.json({ error: photoCheck.error }, { status: 400 })
+
+  const dobCheck = validateDob(dob)
+  if (!dobCheck.ok) return NextResponse.json({ error: dobCheck.error }, { status: 400 })
 
   // Gender, state and LGA are required; the LGA must belong to the state (#18).
   const genderCheck = validateGender(gender)
@@ -161,7 +166,7 @@ export async function POST(req: NextRequest) {
       phone: normalizePhone(String(phone)),
       email: email ? normalizeEmail(String(email)) : null,
       emailVerifiedAt: new Date(), // the email-OTP check above is required to get here
-      dob: dob ? new Date(dob) : null,
+      dob: dobCheck.value,
       address,
       gender: genderCheck.value,
       state: stateCheck.value,
@@ -170,7 +175,7 @@ export async function POST(req: NextRequest) {
       nokName,
       nokRelation,
       nokPhone,
-      photoUrl: photoUrl || null,
+      photoUrl,
       password: hashed,
       inviteToken: null,
       savingsPlans: {
