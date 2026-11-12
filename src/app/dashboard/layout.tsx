@@ -2,6 +2,7 @@
 
 import { phoneSettingsMode, shouldAutoEnrollFingerprint, type PhoneFlags } from '@/lib/phone-settings'
 import AnnouncementPopup from '@/components/ui/AnnouncementPopup'
+import PhotoReminderPopup from '@/components/agent/PhotoReminderPopup'
 import { useSession, signOut } from 'next-auth/react'
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
@@ -286,6 +287,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         </div>
 
         <AnnouncementPopup url="/api/agent/announcement" />
+        <PhotoReminderPopup />
         <BottomNav items={AGENT_NAV} onMore={() => setSidebarOpen(true)} badges={{ more: chatUnread }} />
       </div>
     </div>

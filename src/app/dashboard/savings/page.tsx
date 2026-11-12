@@ -27,11 +27,14 @@ import { SendReceiptButton, SendReceiptNotices } from '@/components/ui/SendRecei
 import ListRow from '@/components/ui/ListRow'
 import Toast from '@/components/ui/Toast'
 import { Icons } from '@/components/ui/icons'
+import RetakePhotoSheet from '@/components/agent/RetakePhotoSheet'
 
 interface Customer {
   id: string; customerId: string; firstName: string; lastName: string
   phone: string; savingsBalance: number; planDays: number | null; planId: string | null
   planStatus: string | null; dailyAmount: number | null; photoUrl?: string | null
+  /** Photo deadline: after it, saving for anyone without an approved photo is paused. */
+  photoStatus?: 'ok' | 'missing' | 'pending' | 'rejected'
   savingsPlans?: SavingsPlan[]
   /** online = registered themselves and opens their own plans; the server refuses agents too. */
   type?: 'online' | 'offline'
@@ -301,6 +304,15 @@ function SavingsContent() {
     }
   }
 
+  // Photo deadline: whether saving is paused yet, and anyone the server has refused for it during this visit.
+  const [photoPhaseNow, setPhotoPhaseNow] = useState<string>('none')
+  const [photoRefused, setPhotoRefused] = useState<Set<string>>(new Set())
+  const [photoFor, setPhotoFor] = useState<Customer | null>(null)
+  useEffect(() => {
+    fetch('/api/agent/photo-reminder', { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).then((d: { phase?: string } | null) => { if (d?.phase) setPhotoPhaseNow(d.phase) }).catch(() => {})
+  }, [])
+  const selPaused = !!selected && (photoRefused.has(selected.id) || (photoPhaseNow === 'paused' && !!selected.photoStatus && selected.photoStatus !== 'ok'))
+
   function choose(c: Customer) {
     setSelected(c); setResults([]); setQuery(`${c.firstName} ${c.lastName}`); setError('')
   }
@@ -412,7 +424,7 @@ function SavingsContent() {
       : { customerId: selected.id, amount, method, planId: plan?.id, ...(recordDate ? { date: recordDate } : {}) }
 
     let res: Response
-    let data: { error?: string; total?: number; transaction?: { id?: string; ref?: string }; transactions?: { id?: string; ref?: string }[] }
+    let data: { error?: string; code?: string; total?: number; transaction?: { id?: string; ref?: string }; transactions?: { id?: string; ref?: string }[] }
     try {
       res = await fetch(endpoint, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
       data = await res.json()
@@ -421,6 +433,7 @@ function SavingsContent() {
       setError('We lost the connection. Check Today’s savings before recording again, so the customer isn’t charged twice.')
       setLoading(false); setRefreshKey(k => k + 1); return
     }
+    if (res.status === 403 && data.code === 'PHOTO_REQUIRED' && selected) { const id = selected.id; setPhotoRefused(s => new Set(s).add(id)); setLoading(false); return }
     if (!res.ok) { setError(data.error ?? 'The saving could not be recorded. Please try again.'); setLoading(false); return }
     setLoading(false)
     update()
@@ -518,6 +531,11 @@ function SavingsContent() {
   return (
     <div className="ag-page">
       {toast && <Toast message={toast} onDone={() => setToast('')} />}
+      <RetakePhotoSheet
+        customer={photoFor && { id: photoFor.id, name: `${photoFor.firstName} ${photoFor.lastName}`, hasPhoto: !!photoFor.photoUrl }}
+        onClose={() => setPhotoFor(null)}
+        onSubmitted={() => { const id = photoFor?.id; setSelected(c => (c && c.id === id ? { ...c, photoStatus: 'pending' } : c)) }}
+      />
       {reopenFor && selected && (
         <ReopenCodeSheet
           open
@@ -779,7 +797,16 @@ function SavingsContent() {
                   <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={loading} onClick={createPlan}>
                     {loading ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Creating plan…</> : 'Create savings plan'}
                   </button>
-                ) : nothingOpen ? null : (
+                ) : nothingOpen ? null : selPaused && selected ? (
+                  <div className="photo-remind photo-remind--red" role="alert">
+                    <Icons.camera size={20} aria-hidden="true" />
+                    <div className="photo-remind-body">
+                      <p className="photo-remind-title">Saving is paused until {selected.firstName}’s photo is added.</p>
+                      <p className="photo-remind-text">{selected.photoStatus === 'pending' ? 'Their photo is being checked. Saving starts again once it’s approved.' : 'Take their photo. Saving starts again once the office approves it.'}</p>
+                      {selected.photoStatus !== 'pending' && <button type="button" className="ui-btn ui-btn--primary ui-btn--sm photo-remind-btn" onClick={() => setPhotoFor(selected)}>Take photo</button>}
+                    </div>
+                  </div>
+                ) : (
                   <button
                     type="button"
                     className="ui-btn ui-btn--primary ui-btn--block"

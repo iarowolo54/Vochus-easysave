@@ -9,8 +9,11 @@ import { ListSkeleton } from '@/components/ui/Skeleton'
 import { Icons } from '@/components/ui/icons'
 import { moveTo } from '@/lib/ajo'
 import { displayName, formatDate, formatNaira } from '@/lib/format'
+import RetakePhotoSheet from '@/components/agent/RetakePhotoSheet'
 
-type Member = { id: string; slot: number | null; customerDbId: string; customerCode: string; name: string; phone: string; type: string }
+type Member = { id: string; slot: number | null; customerDbId: string; customerCode: string; name: string; phone: string; type: string
+  /** No approved photo after the photo deadline: nobody can take a payment from them until there is one. */
+  photoBlocked?: boolean }
 type Round = { round: number; label: string; dueDay: string; holderId: string | null; paid: { memberId: string; method: string; at: string }[]; payout: { memberId: string; amount: number; at: string } | null }
 type Group = {
   id: string; code: string; name: string; cadence: string; size: number; contribution: number; pot: number; feePct: number; platformFee: number; startDate: string
@@ -41,6 +44,7 @@ export default function AjoGroupPage() {
   const [copied, setCopied] = useState(false)
   const [sheet, setSheet] = useState<null | 'add' | 'arrange' | 'start' | 'cancel'>(null)
   const [cashFor, setCashFor] = useState<Member | null>(null)
+  const [photoFor, setPhotoFor] = useState<Member | null>(null)
   const [removing, setRemoving] = useState<Member | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -149,9 +153,11 @@ export default function AjoGroupPage() {
                 {g.members.map(m => {
                   const p = paidIds.has(m.id)
                   return (
-                    <ListRow key={m.id} icon="customers" title={m.name} sub={m.type === 'online' ? 'Online' : 'Cash'}
+                    <ListRow key={m.id} icon="customers" title={m.name} sub={m.photoBlocked && !p ? 'Can’t pay: no photo' : m.type === 'online' ? 'Online' : 'Cash'}
                       value={p
                         ? <span className="ui-status ui-status--sm ui-status--success">Paid</span>
+                        : m.photoBlocked
+                        ? <button type="button" className="ui-btn ui-btn--secondary ui-btn--sm" onClick={() => setPhotoFor(m)}>Take photo</button>
                         : <button type="button" className="ui-btn ui-btn--secondary ui-btn--sm" onClick={() => { setError(''); setCashFor(m) }}>Record cash</button>} />
                   )
                 })}
@@ -201,6 +207,8 @@ export default function AjoGroupPage() {
         {error && <p className="ui-field-error" role="alert"><Icons.error size={16} aria-hidden="true" /> {error}</p>}
         <button type="button" className="ui-btn ui-btn--primary ui-btn--block" disabled={busy} aria-busy={busy} onClick={() => removing && act(`/api/agent/ajo/${g.id}/members?memberId=${encodeURIComponent(removing.id)}`, 'DELETE')}>{busy ? 'Removing…' : 'Remove'}</button>
       </BottomSheet>
+
+      <RetakePhotoSheet customer={photoFor && { id: photoFor.customerDbId, name: photoFor.name, hasPhoto: false }} onClose={() => setPhotoFor(null)} onSubmitted={() => {}} />
 
       <BottomSheet open={!!cashFor} onClose={closeAll} title="Record cash">
         {cashFor && current && (

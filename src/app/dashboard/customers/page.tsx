@@ -46,6 +46,9 @@ interface Customer {
   createdAt: string
   savingsPlans: Plan[]
   photoUrl?: string | null
+  /** Photo deadline: missing, waiting for the office, or sent back with a reason. */
+  photoStatus?: 'ok' | 'missing' | 'pending' | 'rejected'
+  photoRejectReason?: string | null
   /** Offline = agent-created cash saver; online = self-registered. Missing until the API sends it. */
   type?: CustomerType
   lastPaidAt?: string | null
@@ -313,12 +316,13 @@ export default function CustomersPage() {
     }
   }
 
-  function photoSaved(photoUrl: string) {
+  // The photo now waits for the office; the customer's own photo doesn't change until it's approved.
+  function photoSubmitted() {
     const c = photoFor
-    if (!c) return
-    setCustomers(prev => prev.map(x => x.id === c.id ? { ...x, photoUrl } : x))
-    setSelected(prev => (prev && prev.id === c.id ? { ...prev, photoUrl } : prev))
-    setPhotoFor(null)
+    if (!c || c.photoStatus === 'ok') return
+    const mark = (x: Customer) => (x.id === c.id ? { ...x, photoStatus: 'pending' as const, photoRejectReason: null } : x)
+    setCustomers(prev => prev.map(mark))
+    setSelected(prev => (prev ? mark(prev) : prev))
   }
 
   function go(path: string) {
@@ -486,7 +490,7 @@ export default function CustomersPage() {
                   >
                     <Avatar c={c} />
                     <span className="ag-crow-main">
-                      <span className="ag-crow-name">{fullName(c)} <StatusBadge status={c.status} />{c.activeLoan && <span className="ag-crow-tag ag-crow-tag--loan">Loan</span>}</span>
+                      <span className="ag-crow-name">{fullName(c)} <StatusBadge status={c.status} />{c.activeLoan && <span className="ag-crow-tag ag-crow-tag--loan">Loan</span>}<PhotoTag c={c} /></span>
                       {rowCash ? (
                         <span className="ag-crow-sub">
                           <span className={isOverdue(c.lastPaidAt) ? 'ag-late' : daysSince(c.lastPaidAt) === 0 ? 'ag-paid' : undefined}>{lastPaidText(c.lastPaidAt)}</span>
@@ -546,7 +550,7 @@ export default function CustomersPage() {
       <RetakePhotoSheet
         customer={photoFor && { id: photoFor.id, name: fullName(photoFor), hasPhoto: !!photoFor.photoUrl }}
         onClose={() => setPhotoFor(null)}
-        onSaved={photoSaved}
+        onSubmitted={photoSubmitted}
       />
 
       <BottomSheet open={!!resetFor} onClose={() => { if (!resetBusy) setResetFor(null) }} title="Reset their phone?">
@@ -612,6 +616,21 @@ function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, g
           <a className="ui-link ag-profile-phone" href={`tel:${c.phone}`}><Icons.phone size={16} aria-hidden="true" /> {c.phone}</a>
         </div>
       </div>
+
+      {c.photoStatus && c.photoStatus !== 'ok' && (
+        <div className={`photo-remind photo-remind--${c.photoStatus === 'pending' ? 'yellow' : 'red'}`} role="status">
+          <Icons.camera size={20} aria-hidden="true" />
+          <div className="photo-remind-body">
+            <p className="photo-remind-title">{c.photoStatus === 'pending' ? 'Photo being checked' : c.photoStatus === 'rejected' ? 'Photo rejected' : 'No photo'}</p>
+            <p className="photo-remind-text">
+              {c.photoStatus === 'pending' ? 'Saving for them works again once the office approves it.'
+                : c.photoStatus === 'rejected' ? `${c.photoRejectReason ?? 'The office needs a new photo.'} Take a new one.`
+                : 'Take their photo, or saving for them will pause after the deadline.'}
+            </p>
+            {c.photoStatus !== 'pending' && <button type="button" className="ui-btn ui-btn--primary ui-btn--sm photo-remind-btn" onClick={onRetakePhoto}>Take photo</button>}
+          </div>
+        </div>
+      )}
 
       {habit && habit.saved + habit.missed > 0 && isDaily(mainPlan(c).plan) && (
         <div className={`ag-habit-card ag-habit-card--${habitTone(habit.pct)}`}>
@@ -734,4 +753,11 @@ function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, g
       })}
     </div>
   )
+}
+
+/** The small photo-deadline mark on a customer row. */
+function PhotoTag({ c }: { c: Customer }) {
+  if (!c.photoStatus || c.photoStatus === 'ok') return null
+  const text = c.photoStatus === 'pending' ? 'Photo being checked' : c.photoStatus === 'rejected' ? 'Photo rejected' : 'No photo'
+  return <span className={`photo-tag photo-tag--${c.photoStatus}`}>{text}</span>
 }
