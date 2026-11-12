@@ -2743,7 +2743,7 @@ button.ui-cal-day:disabled:active { transform: none; }
 .photo-remind--yellow > svg { color: #8a5a00; }
 .photo-remind--red { background: #fde3e0; border-color: var(--ui-danger); }
 .photo-remind--red > svg { color: var(--ui-danger); }
-.photo-remind-sheet { display: grid; padding: 14px 16px; border-radius: 14px; border: 2px solid; }
+.photo-remind-sheet { display: grid; padding: 14px 16px; border-radius: 14px; border-width: 2px; border-style: solid; }
 .photo-remind-sheet .ui-btn--plain { background: rgba(255,255,255,.7); }
 .photo-tag { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: var(--ui-fs-xs); font-weight: 600; line-height: 1.6; overflow-wrap: anywhere; }
 .photo-tag--missing { background: #fde3e0; color: var(--ui-danger); }

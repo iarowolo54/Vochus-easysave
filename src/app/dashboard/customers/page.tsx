@@ -49,6 +49,8 @@ interface Customer {
   /** Photo deadline: missing, waiting for the office, or sent back with a reason. */
   photoStatus?: 'ok' | 'missing' | 'pending' | 'rejected'
   photoRejectReason?: string | null
+  /** True once the deadline has passed without an approved photo. */
+  photoPaused?: boolean
   /** Offline = agent-created cash saver; online = self-registered. Missing until the API sends it. */
   type?: CustomerType
   lastPaidAt?: string | null
@@ -623,9 +625,9 @@ function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, g
           <div className="photo-remind-body">
             <p className="photo-remind-title">{c.photoStatus === 'pending' ? 'Photo being checked' : c.photoStatus === 'rejected' ? 'Photo rejected' : 'No photo'}</p>
             <p className="photo-remind-text">
-              {c.photoStatus === 'pending' ? 'Saving for them works again once the office approves it.'
+              {c.photoStatus === 'pending' ? (c.photoPaused ? 'Saving for them works again once the office approves it.' : 'The office is checking it.')
                 : c.photoStatus === 'rejected' ? `${c.photoRejectReason ?? 'The office needs a new photo.'} Take a new one.`
-                : 'Take their photo, or saving for them will pause after the deadline.'}
+                : c.photoPaused ? 'Saving for them is paused. Take their photo; it starts again once the office approves it.' : 'Take their photo, or saving for them will pause after the deadline.'}
             </p>
             {c.photoStatus !== 'pending' && <button type="button" className="ui-btn ui-btn--primary ui-btn--sm photo-remind-btn" onClick={onRetakePhoto}>Take photo</button>}
           </div>
