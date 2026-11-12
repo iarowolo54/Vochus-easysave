@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import BottomSheet from '@/components/ui/BottomSheet'
 import PictureSlider from '@/components/ui/PictureSlider'
+import { takePopupSlot } from '@/lib/popup-slot'
 
 type Announcement = { id: string; title: string; body: string; imageIds: string[] }
 
@@ -17,18 +18,27 @@ export default function AnnouncementPopup({ url, skip = [] }: { url: string; ski
   const content = useRef<HTMLDivElement>(null)
   const skipped = skip.some(p => pathname?.startsWith(p))
   const item = queue[0] ?? null
+  // Our turn in the one-pop-up-at-a-time queue, held until the last message is closed.
+  const release = useRef<(() => void) | null>(null)
 
   useEffect(() => {
     if (skipped) return
     let alive = true
     fetch(url, { cache: 'no-store' })
       .then(r => (r.ok ? r.json() : null))
-      .then((d: { announcements?: Announcement[] } | null) => { if (alive && d?.announcements) setQueue(d.announcements) })
+      .then((d: { announcements?: Announcement[] } | null) => {
+        const list = d?.announcements
+        if (!alive || !list?.length) return
+        takePopupSlot().then(r => { if (!alive) { r(); return } release.current = r; setQueue(list) })
+      })
       .catch(() => {})
     return () => { alive = false }
     // Once per app open or sign-in: not again on every page change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [url, skipped])
+
+  useEffect(() => { if (queue.length === 0 && release.current) { release.current(); release.current = null } }, [queue.length])
+  useEffect(() => () => { release.current?.() }, [])
 
   // Each message starts at its top, even when the one before was long enough to scroll.
   useEffect(() => { content.current?.closest('dialog')?.scrollTo({ top: 0 }) }, [item?.id])

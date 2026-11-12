@@ -1,7 +1,8 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import BottomSheet from '@/components/ui/BottomSheet'
+import { takePopupSlot } from '@/lib/popup-slot'
 import CameraCapture from '@/components/ui/CameraCapture'
 import { Icons } from '@/components/ui/icons'
 import { customerPhotoCopy, type CustomerPhoto } from '@/lib/photo-copy'
@@ -76,6 +77,9 @@ export default function PhotoReminderPopup({ skip = [] }: { skip?: string[] }) {
   const [photo, setPhoto] = useState<CustomerPhoto | null>(null)
   const [open, setOpen] = useState(false)
   const [camera, setCamera] = useState(false)
+  // Our turn in the one-pop-up-at-a-time queue, held through the camera sheet and given back on close.
+  const release = useRef<(() => void) | null>(null)
+  useEffect(() => () => { release.current?.() }, [])
 
   useEffect(() => {
     if (skipped) return
@@ -87,7 +91,7 @@ export default function PhotoReminderPopup({ skip = [] }: { skip?: string[] }) {
       .then(r => (r.ok ? r.json() : null))
       .then((d: { photo?: CustomerPhoto } | null) => {
         if (!alive || !d?.photo || !customerPhotoCopy(d.photo)) return
-        setPhoto(d.photo); setOpen(true)
+        setPhoto(d.photo); takePopupSlot().then(r => { if (!alive) { r(); return } release.current = r; setOpen(true) })
       })
       .catch(() => {})
     return () => { alive = false }
@@ -97,6 +101,7 @@ export default function PhotoReminderPopup({ skip = [] }: { skip?: string[] }) {
 
   function close() {
     setOpen(false)
+    release.current?.(); release.current = null
     try { sessionStorage.setItem(DISMISSED, '1') } catch { /* it just shows again next page load */ }
   }
 

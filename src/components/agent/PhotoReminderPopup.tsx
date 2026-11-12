@@ -1,6 +1,7 @@
 'use client'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import BottomSheet from '@/components/ui/BottomSheet'
+import { takePopupSlot } from '@/lib/popup-slot'
 import RetakePhotoSheet from '@/components/agent/RetakePhotoSheet'
 import { agentReminderCopy } from '@/lib/photo-copy'
 import type { PhotoPhase, PhotoStatus } from '@/lib/photo-deadline'
@@ -18,6 +19,8 @@ const statusText = (r: Row) => (r.photoStatus === 'pending' ? 'Photo being check
 export default function PhotoReminderPopup() {
   const [data, setData] = useState<Reminder | null>(null)
   const [open, setOpen] = useState(false)
+  const release = useRef<(() => void) | null>(null)
+  useEffect(() => () => { release.current?.() }, [])
   const [photoFor, setPhotoFor] = useState<Row | null>(null)
 
   useEffect(() => {
@@ -29,7 +32,7 @@ export default function PhotoReminderPopup() {
       .then(r => (r.ok ? r.json() : null))
       .then((d: Reminder | null) => {
         if (!alive || !d || !agentReminderCopy({ phase: d.phase, lastDay: d.lastDay, count: d.customers.length })) return
-        setData(d); setOpen(true)
+        setData(d); takePopupSlot().then(r => { if (!alive) { r(); return } release.current = r; setOpen(true) })
       })
       .catch(() => {})
     return () => { alive = false }
@@ -37,6 +40,7 @@ export default function PhotoReminderPopup() {
 
   function close() {
     setOpen(false)
+    release.current?.(); release.current = null
     try { sessionStorage.setItem(DISMISSED, '1') } catch { /* shows again next page load */ }
   }
 
