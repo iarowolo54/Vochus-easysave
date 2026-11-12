@@ -240,7 +240,7 @@ export async function approveCustomerRequest(client: PrismaClient, input: { id: 
 
       const customer = await tx.customer.create({
         data: {
-          customerId: customerCode, agentId: r.agentId,
+          customerId: customerCode, agentId: r.agentId, type: 'offline', // registered by an agent
           firstName: r.firstName, lastName: r.lastName, phone: r.phone, email: r.email, dob: r.dob, address: r.address,
           language: r.language, gender: r.gender, state: r.state, lga: r.lga, bvn: r.bvn,
           nokName: r.nokName, nokRelation: r.nokRelation, nokPhone: r.nokPhone, photoUrl: r.photoUrl,

@@ -161,6 +161,7 @@ export async function POST(req: NextRequest) {
     data: {
       customerId,
       agentId: agentDbId,
+      type: 'online', // registered themselves
       firstName,
       lastName,
       phone: normalizePhone(String(phone)),

@@ -130,6 +130,8 @@ model Customer {
   notificationsSeenAt DateTime?
   boundDeviceId       String?
   createdAt           DateTime              @default(now())
+  /// online = registered themselves (customer/enroll); offline = registered by an agent (approved CustomerRequest). Set once at creation.
+  type                String                @default("offline")
   savingsPlans        SavingsPlan[]
   transactions        Transaction[]
   loans               Loan[]
