@@ -454,6 +454,8 @@
 .admin-root .a-search { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 14px; border: 1px solid var(--border2); border-radius: 999px; background: var(--surface); color: var(--text2); }
 .admin-root .a-search:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-lt); }
 .admin-root .a-search input { flex: 1; min-width: 0; border: none; outline: none; background: none; font: inherit; font-size: 15px; color: var(--text); }
+/* The box has its own clear button; hide the browser's, or a search shows two × side by side. */
+.admin-root .a-search input::-webkit-search-cancel-button { -webkit-appearance: none; appearance: none; display: none; }
 
 /* MODALS */
 
