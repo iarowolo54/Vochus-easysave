@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
-import { loadMessages, parseMessageInput, sendSupportMessage, threadParty } from '@/lib/support-chat'
+import { idsWithPhoto, loadMessages, parseMessageInput, sendSupportMessage, supportPhotoPath, threadParty } from '@/lib/support-chat'
 
 export const maxDuration = 30
 export const dynamic = 'force-dynamic'
@@ -33,16 +33,18 @@ export async function GET(_req: NextRequest, { params }: Ctx) {
   await prisma.supportMessage.updateMany({ where: { threadId: id, sender: { not: 'admin' }, readByAdmin: false }, data: { readByAdmin: true } })
 
   const c = thread.customer
+  const who = threadParty(thread)
+  const photoUrl = who && (await idsWithPhoto(prisma, [who])).has(who.id) ? supportPhotoPath(who.type, who.id) : null
   return NextResponse.json({
     thread: {
       id: thread.id,
       status: thread.status,
       party: thread.agent
-        ? { type: 'agent', id: thread.agent.id, code: thread.agent.agentId, name: thread.agent.name, phone: thread.agent.phone, status: thread.agent.status }
+        ? { type: 'agent', id: thread.agent.id, code: thread.agent.agentId, name: thread.agent.name, phone: thread.agent.phone, status: thread.agent.status, photoUrl }
         : c
           ? {
               type: 'customer', id: c.id, code: c.customerId, name: `${c.firstName} ${c.lastName}`, phone: c.phone, status: c.status,
-              customerType: c.type, agentName: c.agent?.name ?? null, agentCode: c.agent?.agentId ?? null,
+              customerType: c.type, agentName: c.agent?.name ?? null, agentCode: c.agent?.agentId ?? null, photoUrl,
             }
           : null,
     },

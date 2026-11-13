@@ -89,3 +89,12 @@ test('a party message reopens a closed thread and moves it to the top', async ()
   const byCode = await listThreads(prisma, { q: `SUP-${rid}`, type: 'agent', page: 1, pageSize: 10 })
   assert.equal(byCode.total, 1, 'search by agent ID, filtered to agents')
 })
+
+test('the inbox links a photo only for someone who has one, and never carries the image itself', async () => {
+  const before = await listThreads(prisma, { q: `Obi${rid}`, page: 1, pageSize: 10 })
+  assert.equal(before.threads[0].party?.photoUrl, null)
+  await prisma.customer.update({ where: { id: custDbId }, data: { photoUrl: 'data:image/png;base64,AAAA' } })
+  const after = await listThreads(prisma, { q: `Obi${rid}`, page: 1, pageSize: 10 })
+  assert.equal(after.threads[0].party?.photoUrl, `/api/admin/support/photo?customer=${custDbId}`)
+  assert.equal(JSON.stringify(after).includes('base64'), false)
+})

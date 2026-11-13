@@ -159,11 +159,25 @@ export async function adminUnreadThreads(client: Client): Promise<number> {
   return client.supportThread.count({ where: { messages: { some: { sender: { not: 'admin' }, readByAdmin: false } } } })
 }
 
+/** Where the office app loads a person's photo from (src/app/api/admin/support/photo). */
+export const supportPhotoPath = (type: PartyType, id: string) => `/api/admin/support/photo?${type}=${encodeURIComponent(id)}`
+
+/** Which of these people have a photo, without reading the photos (they are large base64 strings). */
+export async function idsWithPhoto(client: Client, people: { type: PartyType; id: string }[]): Promise<Set<string>> {
+  const agentIds = people.filter((p) => p.type === 'agent').map((p) => p.id)
+  const customerIds = people.filter((p) => p.type === 'customer').map((p) => p.id)
+  const [a, c] = await Promise.all([
+    agentIds.length ? client.agent.findMany({ where: { id: { in: agentIds }, photoUrl: { not: null } }, select: { id: true } }) : [],
+    customerIds.length ? client.customer.findMany({ where: { id: { in: customerIds }, photoUrl: { not: null } }, select: { id: true } }) : [],
+  ])
+  return new Set([...a, ...c].map((r) => r.id))
+}
+
 export type ThreadFilter = { type?: PartyType | null; status?: 'Open' | 'Closed' | null; unread?: boolean; q?: string; page: number; pageSize: number }
 
 export type ThreadListItem = {
   id: string; status: string; lastMessageAt: Date; unread: number; preview: string | null; lastFromOffice: boolean
-  party: { type: PartyType; id: string; code: string; name: string; status: string } | null
+  party: { type: PartyType; id: string; code: string; name: string; status: string; photoUrl: string | null } | null
 }
 
 /** The office inbox: newest conversation first. Names and codes only, never a photo or a picture. */
@@ -211,6 +225,11 @@ export async function listThreads(client: Client, f: ThreadFilter): Promise<{ th
       select: { threadId: true, sender: true, message: true, imageUrl: true, createdAt: true },
     }),
   ])
+  const withPhoto = await idsWithPhoto(client, rows.flatMap((r): Party[] => {
+    const p = threadParty(r)
+    return p ? [p] : []
+  }))
+  const photo = (type: PartyType, id: string) => (withPhoto.has(id) ? supportPhotoPath(type, id) : null)
   const unread = new Map(unreadGroups.map((g) => [g.threadId, g._count._all]))
   const last = new Map<string, (typeof lastRows)[number]>()
   for (const m of lastRows) {
@@ -223,9 +242,9 @@ export async function listThreads(client: Client, f: ThreadFilter): Promise<{ th
     threads: rows.map((r) => {
       const l = last.get(r.id)
       const party: ThreadListItem['party'] = r.agent && r.agentId
-        ? { type: 'agent', id: r.agentId, code: r.agent.agentId, name: r.agent.name, status: r.agent.status }
+        ? { type: 'agent', id: r.agentId, code: r.agent.agentId, name: r.agent.name, status: r.agent.status, photoUrl: photo('agent', r.agentId) }
         : r.customer && r.customerId
-          ? { type: 'customer', id: r.customerId, code: r.customer.customerId, name: `${r.customer.firstName} ${r.customer.lastName}`, status: r.customer.status }
+          ? { type: 'customer', id: r.customerId, code: r.customer.customerId, name: `${r.customer.firstName} ${r.customer.lastName}`, status: r.customer.status, photoUrl: photo('customer', r.customerId) }
           : null
       return {
         id: r.id, status: r.status, lastMessageAt: r.lastMessageAt, unread: unread.get(r.id) ?? 0,

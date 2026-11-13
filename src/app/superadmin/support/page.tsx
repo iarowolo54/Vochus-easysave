@@ -12,11 +12,11 @@ import {
 } from '../_components/admin-ui'
 
 type PartyType = 'agent' | 'customer'
-type ListParty = { type: PartyType; id: string; code: string; name: string; status: string }
+type ListParty = { type: PartyType; id: string; code: string; name: string; status: string; photoUrl?: string | null }
 type ThreadRow = { id: string; status: string; lastMessageAt: string; unread: number; preview: string | null; lastFromOffice: boolean; party: ListParty | null }
 type Party = ListParty & { phone?: string; customerType?: string; agentName?: string | null; agentCode?: string | null }
 type Msg = { id: string; sender: string; senderName: string | null; message: string; imageUrl: string | null; readByParty: boolean; createdAt: string }
-type Person = { type: PartyType; id: string; code: string; name: string; status: string; threadId: string | null }
+type Person = { type: PartyType; id: string; code: string; name: string; status: string; threadId: string | null; photoUrl?: string | null }
 /** The right-hand pane: an existing conversation, or a first message to someone with none yet. */
 type Selected = { kind: 'thread'; id: string } | { kind: 'draft'; person: Person } | null
 
@@ -167,7 +167,7 @@ function SupportInner() {
                     <button type="button" className={`sc-row${selectedId === t.id ? ' is-active' : ''}${t.unread ? ' is-unread' : ''}`}
                       aria-current={selectedId === t.id ? 'true' : undefined}
                       onClick={() => setSelected({ kind: 'thread', id: t.id })}>
-                      <Avatar name={name} tone={t.party?.type === 'agent' ? 'blue' : 'green'} />
+                      <Avatar name={name} photoUrl={t.party?.photoUrl} tone={t.party?.type === 'agent' ? 'blue' : 'green'} />
                       <span className="sc-row-main">
                         <span className="sc-row-top">
                           <span className="sc-row-name">{name}</span>
@@ -373,7 +373,7 @@ function ThreadPane({ threadId, onBack, onChanged, toast }: {
     <div className="sc-thread">
       <header className="sc-thread-hd">
         <button type="button" className="sc-icon-btn sc-back" onClick={onBack} aria-label="Back to chats"><Icons.back size={20} aria-hidden="true" /></button>
-        <Avatar name={name} tone={party?.type === 'agent' ? 'blue' : 'green'} />
+        <Avatar name={name} photoUrl={party?.photoUrl} tone={party?.type === 'agent' ? 'blue' : 'green'} />
         <div className="sc-thread-who">
           <h2>{messages === null ? <span className="skel sc-skel-line" /> : name}</h2>
           {party && (
@@ -434,7 +434,7 @@ function DraftPane({ person, onBack, onStarted }: { person: Person; onBack: () =
     <div className="sc-thread">
       <header className="sc-thread-hd">
         <button type="button" className="sc-icon-btn sc-back" onClick={onBack} aria-label="Back to chats"><Icons.back size={20} aria-hidden="true" /></button>
-        <Avatar name={person.name} tone={person.type === 'agent' ? 'blue' : 'green'} />
+        <Avatar name={person.name} photoUrl={person.photoUrl} tone={person.type === 'agent' ? 'blue' : 'green'} />
         <div className="sc-thread-who">
           <h2>{person.name}</h2>
           <p>{typeLabel(person.type)} · {person.code}{person.status !== 'Active' && <> · <span className="bdg bdg-a">{person.status}</span></>}</p>
@@ -479,7 +479,7 @@ function NewMessageModal({ onClose, onPick }: { onClose: () => void; onPick: (p:
             {people.map(p => (
               <li key={`${p.type}:${p.id}`}>
                 <button type="button" className="sc-row" onClick={() => onPick(p)}>
-                  <Avatar name={p.name} tone={p.type === 'agent' ? 'blue' : 'green'} />
+                  <Avatar name={p.name} photoUrl={p.photoUrl} tone={p.type === 'agent' ? 'blue' : 'green'} />
                   <span className="sc-row-main">
                     <span className="sc-row-name">{p.name}</span>
                     <span className="sc-row-sub">
