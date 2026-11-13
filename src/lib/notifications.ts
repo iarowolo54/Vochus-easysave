@@ -25,6 +25,7 @@ export type NotificationKind =
   | 'customer_request_approved' | 'customer_request_denied' | 'customer_request_needs_funds'
   | 'customer_photo_approved' | 'customer_photo_rejected'
   | 'fee_refunded' | 'commission_returned'
+  | 'support_reply'
 
 export interface NotificationEvent {
   recipient: Recipient
@@ -246,6 +247,14 @@ export const notifications = {
     if (f.count <= 0) return []
     const title = f.count === 1 ? '1 customer’s plan ends this week' : `${f.count} customers’ plans end this week`
     return [{ recipient: agent(f.agentId), kind: 'plans_ending_this_week', title, href: '/dashboard/redeem', dedupeKey: `plans-ending:${f.agentId}:${f.dayKey}` }]
+  },
+
+  /** Vochus Support wrote to the agent or customer. One per burst (src/lib/support-chat.ts). Never the message text. */
+  supportReply(f: { messageId: string; recipient: Recipient }): NotificationEvent[] {
+    return [{
+      recipient: f.recipient, kind: 'support_reply', title: 'New message from Vochus Support', body: 'Open the chat to read it.',
+      href: f.recipient.type === 'agent' ? '/dashboard/support' : '/customer/chat?with=vochus', dedupeKey: `support-reply:${f.messageId}`,
+    }]
   },
 
   newPhone(f: { type: RecipientType; id: string; deviceSessionId: string; model?: string | null }): NotificationEvent[] {

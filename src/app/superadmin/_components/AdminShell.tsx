@@ -10,13 +10,14 @@ import SessionKeepAlive from '@/components/SessionKeepAlive'
 import { Icons, type IconName } from '@/components/ui/icons'
 import { SCREENS, type ScreenKey } from '@/lib/permissions'
 import { useMyAccess, hasMoneyManage, canViewScreen } from './useMyAccess'
+import { SUPPORT_UNREAD_EVENT } from '@/lib/support-limits'
 import NoAccess from './NoAccess'
 import { ChangePasswordModal, SetPinModal } from './SelfService'
 import { useToast } from './admin-ui'
 
 // `screen` gates an item for staff on that screen's View (cosmetic; the API guards enforce). `staffAccess` is the
 // Staff & access entry: the owner and any department lead. No screen = always shown.
-type NavItem = { label: string; icon: IconName; href: string; badge?: 'pendingLoans' | 'pendingCustomerRequests'; screen?: ScreenKey; staffAccess?: boolean }
+type NavItem = { label: string; icon: IconName; href: string; badge?: 'pendingLoans' | 'pendingCustomerRequests' | 'supportUnread'; screen?: ScreenKey; staffAccess?: boolean }
 
 const navGroups: { label: string; items: NavItem[] }[] = [
   {
@@ -70,7 +71,6 @@ const navGroups: { label: string; items: NavItem[] }[] = [
     items: [
       { label: 'Card management', screen: 'cards', icon: 'card', href: '/superadmin/cards' },
       { label: 'Generate cards', screen: 'cards', icon: 'qr', href: '/superadmin/cards/generate' },
-      { label: 'Gift card design', screen: 'cards', icon: 'design', href: '/superadmin/cards/gift-editor' },
     ],
   },
   {
@@ -80,6 +80,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
       { label: 'Devices', screen: 'devices', icon: 'device', href: '/superadmin/devices' },
       { label: 'Audit log', screen: 'audit', icon: 'audit', href: '/superadmin/audit' },
       { label: 'Pop-up messages', screen: 'messages', icon: 'bell', href: '/superadmin/messages' },
+      { label: 'Support chat', screen: 'support', icon: 'chat', href: '/superadmin/support', badge: 'supportUnread' },
       { label: 'Reports', screen: 'reports', icon: 'reports', href: '/superadmin/reports' },
     ],
   },
@@ -109,6 +110,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
   const router = useRouter()
   const [pendingLoans, setPendingLoans] = useState(0)
   const [pendingCustomerRequests, setPendingCustomerRequests] = useState(0)
+  const [supportUnread, setSupportUnread] = useState(0)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -130,6 +132,20 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
       .then(d => { if (d) { setPendingLoans(d.pendingLoans ?? 0); setPendingCustomerRequests((d.pendingCustomerRequests ?? 0) + (d.pendingCustomerPhotos ?? 0)) } })
       .catch(() => {})
   }, [status, pathname])
+
+  // Chats waiting for a reply. Polling doesn't keep the session alive (only /api/session/ping does).
+  const canSeeSupport = me.status === 'ready' && canViewScreen(me.access, 'support')
+  useEffect(() => {
+    if (status !== 'authenticated' || !canSeeSupport) return
+    const load = () => fetch('/api/admin/support/unread', { cache: 'no-store' })
+      .then(r => r.ok ? r.json() : null)
+      .then(d => { if (d && typeof d.count === 'number') setSupportUnread(d.count) })
+      .catch(() => {})
+    load()
+    const iv = setInterval(() => { if (document.visibilityState === 'visible') load() }, 30_000)
+    window.addEventListener(SUPPORT_UNREAD_EVENT, load)
+    return () => { clearInterval(iv); window.removeEventListener(SUPPORT_UNREAD_EVENT, load) }
+  }, [status, canSeeSupport, pathname])
 
   useEffect(() => { setSidebarOpen(false); setMenuOpen(false) }, [pathname])
 
@@ -203,7 +219,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
               {group.label && <div className="a-nav-grp">{group.label}</div>}
               {group.items.map(item => {
                 const Icon = Icons[item.icon]
-                const badge = item.badge === 'pendingLoans' ? pendingLoans : item.badge === 'pendingCustomerRequests' ? pendingCustomerRequests : 0
+                const badge = item.badge === 'pendingLoans' ? pendingLoans : item.badge === 'pendingCustomerRequests' ? pendingCustomerRequests : item.badge === 'supportUnread' ? supportUnread : 0
                 const active = current === item.href
                 return (
                   <Link

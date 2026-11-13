@@ -9,6 +9,7 @@ import { Bone } from '@/components/ui/Skeleton'
 import { Icons } from '@/components/ui/icons'
 import { displayName, formatTime } from '@/lib/format'
 import { describeFailure, postJson } from '@/lib/http'
+import SupportChatScreen from '@/components/SupportChatScreen'
 
 type Msg = {
   id: string; sender: string; senderName: string | null; message: string; imageUrl?: string | null; createdAt: string; read: boolean
@@ -28,6 +29,53 @@ function dayLabel(iso: string) {
   if (d.toDateString() === today.toDateString()) return 'Today'
   if (d.toDateString() === yesterday.toDateString()) return 'Yesterday'
   return d.toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' })
+}
+
+/** Switch between the chat with the customer's agent and the private chat with Vochus Support, each with its unread count. */
+function ChatTabs({ active }: { active: 'agent' | 'vochus' }) {
+  const router = useRouter()
+  const [unread, setUnread] = useState<{ agent: number; support: number }>({ agent: 0, support: 0 })
+  useEffect(() => {
+    let stopped = false
+    const load = () => fetch('/api/customer/chat/unread', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then((d: { agent?: unknown; support?: unknown } | null) => {
+        if (stopped || !d) return
+        setUnread({ agent: typeof d.agent === 'number' ? d.agent : 0, support: typeof d.support === 'number' ? d.support : 0 })
+      })
+      .catch(() => {})
+    load()
+    const iv = setInterval(() => { if (document.visibilityState === 'visible') load() }, 15_000)
+    return () => { stopped = true; clearInterval(iv) }
+  }, [active])
+  const tab = (key: 'agent' | 'vochus', label: string, count: number) => (
+    <button type="button" aria-pressed={active === key} onClick={() => { if (active !== key) router.replace(key === 'vochus' ? '/customer/chat?with=vochus' : '/customer/chat') }}>
+      {label}{active !== key && count > 0 && <span className="ui-chat-tab-count" aria-label={`${count} unread`}>{count > 9 ? '9+' : count}</span>}
+    </button>
+  )
+  return (
+    <div className="ui-chat-tabs">
+      <div className="ui-segment" role="group" aria-label="Who to message">
+        {tab('agent', 'Your agent', unread.agent)}
+        {tab('vochus', 'Vochus Support', unread.support)}
+      </div>
+    </div>
+  )
+}
+
+function ChatSwitch() {
+  const router = useRouter()
+  const params = useSearchParams()
+  const onBack = useCallback(() => router.push('/customer/dashboard'), [router])
+  const onUnauthorized = useCallback(() => router.push('/customer/login'), [router])
+  if (params.get('with') === 'vochus') {
+    return (
+      <SupportChatScreen who="customer" endpoint="/api/customer/support" onBack={onBack} onUnauthorized={onUnauthorized}
+        tabs={<ChatTabs active="vochus" />}
+        emptyText="Only Vochus staff can read this chat. Your agent can’t see it." />
+    )
+  }
+  return <ChatInner />
 }
 
 function ChatInner() {
@@ -153,6 +201,7 @@ function ChatInner() {
           </a>
         )}
       </header>
+      <ChatTabs active="agent" />
 
       <div className="ui-chat-list" ref={listRef} onScroll={onScroll} aria-live="polite">
         {messages === null && !loadFailed && (
@@ -252,7 +301,7 @@ function ChatInner() {
 export default function CustomerChatPage() {
   return (
     <Suspense fallback={<div className="ui-screen ui-screen--center"><LogoLoader delayed /></div>}>
-      <ChatInner />
+      <ChatSwitch />
     </Suspense>
   )
 }

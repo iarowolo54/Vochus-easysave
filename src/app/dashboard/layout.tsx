@@ -45,6 +45,7 @@ const navItems: { section: string; items: { label: string; icon: IconName; href:
   ]},
   { section: 'Account', items: [
     { label: 'Customer chat', icon: 'chat', href: '/dashboard/chat' },
+    { label: 'Vochus Support', icon: 'support', href: '/dashboard/support' },
     { label: 'Settings', icon: 'settings', href: '/dashboard/settings' },
     { label: 'Report an issue', icon: 'report', href: '/dashboard/report' },
   ]},
@@ -69,6 +70,7 @@ const pageTitles: Record<string, string> = {
   '/dashboard/withdraw': 'Withdraw commission',
   '/dashboard/subagents': 'Sub-agents',
   '/dashboard/chat': 'Customer chat',
+  '/dashboard/support': 'Vochus Support',
   '/dashboard/settings': 'Settings',
   '/dashboard/notifications': 'Notifications',
   '/dashboard/report': 'Report an issue',
@@ -83,6 +85,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const router = useRouter()
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [chatUnread, setChatUnread] = useState(0)
+  const [supportUnread, setSupportUnread] = useState(0)
   const [canOpenAppSettings, setCanOpenAppSettings] = useState(false)
   const [ended, setEnded] = useState(false)
   const leaving = useRef(false)
@@ -130,6 +133,11 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         const data = await res.json()
         const total = (data.customers ?? []).reduce((s: number, c: any) => s + (c.unread ?? 0), 0)
         setChatUnread(total)
+        const sup = await fetch('/api/agent/support/unread', { cache: 'no-store' })
+        if (sup.ok) {
+          const d = await sup.json() as { count?: unknown }
+          setSupportUnread(typeof d.count === 'number' && d.count > 0 ? Math.floor(d.count) : 0)
+        }
       } catch {}
     }
     pollChat()
@@ -242,7 +250,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <p className="ag-nav-section">{group.section}</p>
               {group.items.map(item => {
                 const Icon = Icons[item.icon]
-                const badge = item.href === '/dashboard/chat' && chatUnread > 0 ? chatUnread : 0
+                const badge = item.href === '/dashboard/chat' && chatUnread > 0 ? chatUnread : item.href === '/dashboard/support' && supportUnread > 0 ? supportUnread : 0
                 return (
                   <Link
                     key={item.href}
@@ -288,7 +296,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
 
         <AnnouncementPopup url="/api/agent/announcement" />
         <PhotoReminderPopup />
-        <BottomNav items={AGENT_NAV} onMore={() => setSidebarOpen(true)} badges={{ more: chatUnread }} />
+        <BottomNav items={AGENT_NAV} onMore={() => setSidebarOpen(true)} badges={{ more: chatUnread + supportUnread }} />
       </div>
     </div>
   )

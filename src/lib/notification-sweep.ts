@@ -10,6 +10,7 @@ import { logAudit } from '@/lib/audit'
 import { runUncollectedReminders } from '@/lib/uncollected-reminders'
 import { ajoSweepEvents } from '@/lib/ajo-notices'
 import { depositRefOf } from '@/lib/fee-refund'
+import { supportSweepEvents } from '@/lib/support-chat'
 
 /** Bulk Savings stamps each day's transaction with this + the batch's first ref, so the batch is one notification. */
 export const BULK_NOTE_PREFIX = 'Bulk Savings batch '
@@ -181,6 +182,12 @@ export async function runNotificationSweep(client: PrismaClient, now: Date = new
     scheduled += await writeMissing(client, ajo.scheduled)
   } catch (err) {
     console.error('[notification-sweep] ajo notices failed', err instanceof Error ? err.message : 'unknown')
+  }
+  // Support chat: office replies notify once per burst; rebuild the last 48 h the same way.
+  try {
+    backfilled += await writeMissing(client, await supportSweepEvents(client, since))
+  } catch (err) {
+    console.error('[notification-sweep] support replies failed', err instanceof Error ? err.message : 'unknown')
   }
   // Its own failure must not stop the safety-net audit below.
   try {

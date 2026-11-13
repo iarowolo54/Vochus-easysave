@@ -61,6 +61,7 @@ model Agent {
   customerInvites     CustomerInvite[]
   agentRewards        AgentReward[]
   ajoGroups           AjoGroup[]
+  supportThread       SupportThread?
 }
 
 model AgentDocument {
@@ -144,6 +145,7 @@ model Customer {
   agentReward         AgentReward?
   ajoMemberships      AjoMember[]
   photoRequests       CustomerPhotoRequest[]
+  supportThread       SupportThread?
 }
 
 /// A photo an agent took of an existing customer, waiting for the super admin (src/lib/customer-photo-request.ts).
@@ -1015,4 +1017,40 @@ model AjoPayout {
   createdAt     DateTime @default(now())
 
   @@unique([groupId, round])
+}
+
+// Private chat between Vochus Support (super admin / staff) and ONE agent or ONE customer. Separate from
+// CustomerChatMessage on purpose: the customer's agent can read that thread, and must never read this one.
+// Exactly one of agentId / customerId is set (enforced in src/lib/support-chat.ts). Messages are append-only.
+model SupportThread {
+  id            String           @id @default(cuid())
+  agentId       String?          @unique
+  agent         Agent?           @relation(fields: [agentId], references: [id])
+  customerId    String?          @unique
+  customer      Customer?        @relation(fields: [customerId], references: [id])
+  status        String           @default("Open") // 'Open' | 'Closed'
+  lastMessageAt DateTime         @default(now())
+  createdAt     DateTime         @default(now())
+  messages      SupportMessage[]
+
+  @@index([status, lastMessageAt])
+  @@index([lastMessageAt])
+}
+
+model SupportMessage {
+  id          String        @id @default(cuid())
+  threadId    String
+  thread      SupportThread @relation(fields: [threadId], references: [id])
+  sender      String // 'admin' | 'agent' | 'customer'
+  senderId    String?
+  senderName  String? // the real staff name for admin messages; the agent/customer only ever sees "Vochus Support"
+  message     String
+  imageUrl    String?
+  readByParty Boolean       @default(false)
+  readByAdmin Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+
+  @@index([threadId, createdAt])
+  @@index([threadId, sender, readByAdmin])
+  @@index([threadId, sender, readByParty])
 }

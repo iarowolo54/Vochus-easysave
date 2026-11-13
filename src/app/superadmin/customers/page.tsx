@@ -1,4 +1,6 @@
 'use client'
+
+import Link from 'next/link'
 import { isFlexible } from '@/lib/flexible-savings'
 
 import { useState, useEffect, useCallback, type ReactNode } from 'react'
@@ -332,6 +334,7 @@ export default function CustomersPage() {
         <Modal icon="customers" size="lg" title={detail.name} sub={detail.customerId} onClose={() => setDetail(null)}
           footer={<>
             <button type="button" className="btn btn-outline" onClick={() => setDetail(null)}>Close</button>
+            <Link className="btn btn-outline" href={`/superadmin/support?customer=${encodeURIComponent(detail.id)}`}>Message</Link>
             <button type="button" className="btn btn-outline" onClick={() => { setEditFor(detail); setDetail(null) }}>Edit details</button>
             <button type="button" className="btn btn-outline" onClick={() => { setSendCodeFor(detail); setDetail(null) }}>Send reset code</button>
             <button type="button" className="btn btn-outline" onClick={() => { setClearLockFor(detail); setDetail(null) }}>Clear sign-in lock</button>

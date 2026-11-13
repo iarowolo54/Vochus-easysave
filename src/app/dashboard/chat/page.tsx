@@ -47,6 +47,7 @@ function Avatar({ c, size }: { c: { customerId: string; firstName: string; lastN
 export default function AgentChatPage() {
   const [threads, setThreads] = useState<Thread[] | null>(null)
   const [listFailed, setListFailed] = useState(false)
+  const [supportUnread, setSupportUnread] = useState(0)
   const [query, setQuery] = useState('')
   const [open, setOpen] = useState<Thread | null>(null)
   const [messages, setMessages] = useState<Msg[] | null>(null)
@@ -68,6 +69,10 @@ export default function AgentChatPage() {
       const data = await res.json()
       setThreads(data.customers ?? [])
       setListFailed(false)
+      fetch('/api/agent/support/unread', { cache: 'no-store' })
+        .then(r => (r.ok ? r.json() : null))
+        .then((d: { count?: unknown } | null) => { if (d && typeof d.count === 'number') setSupportUnread(d.count) })
+        .catch(() => {})
     } catch {
       setListFailed(true)
       setThreads(prev => prev ?? [])
@@ -209,6 +214,19 @@ export default function AgentChatPage() {
           </div>
         )}
         <div className="ag-chat-scroll">
+          {/* The agent's own private chat with the office, always first. */}
+          <Link href="/dashboard/support" className={`ag-chat-thread${supportUnread ? ' is-unread' : ''}`}>
+            <span className="ui-avatar ag-av ag-chat-av" aria-hidden="true"><Icons.support size={20} /></span>
+            <span className="ag-chat-thread-main">
+              <span className="ag-chat-thread-top">
+                <span className="ag-chat-thread-name">Vochus Support</span>
+              </span>
+              <span className="ag-chat-thread-bottom">
+                <span className="ag-chat-thread-last">Message the Vochus office</span>
+                {supportUnread > 0 && <span className="ag-chat-unread" aria-label={`${supportUnread} unread`}>{supportUnread}</span>}
+              </span>
+            </span>
+          </Link>
           {threads === null ? (
             <ListSkeleton count={5} />
           ) : listFailed && threads.length === 0 ? (

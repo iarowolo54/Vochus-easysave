@@ -36,11 +36,12 @@ export const SCREENS = [
   { key: 'bank-transfers', label: 'Bank transfers', group: 'Money', actions: VM, handlesMoney: true, manageNote: 'Credit a transfer by hand' },
   { key: 'transactions', label: 'Transactions', group: 'Money', actions: V },
   { key: 'payout-mode', label: 'Payouts & top-ups', group: 'Money', actions: VM, handlesMoney: true, manageNote: 'Switch payouts between Auto and Manual, and top-ups between bank transfer and card' },
-  { key: 'cards', label: 'Cards', group: 'Cards', actions: VM, manageNote: 'Generate cards, gift-card design' },
+  { key: 'cards', label: 'Cards', group: 'Cards', actions: VM, manageNote: 'Generate cards' },
   { key: 'devices', label: 'Devices', group: 'Oversight', actions: VM, manageNote: 'Reset a device' },
   { key: 'audit', label: 'Audit log', group: 'Oversight', actions: V },
   { key: 'messages', label: 'Pop-up messages', group: 'Oversight', actions: VM, manageNote: 'Create, edit, switch off and delete pop-up messages' },
   { key: 'reports', label: 'Reports', group: 'Oversight', actions: VM, manageNote: 'Update the status of a report' },
+  { key: 'support', label: 'Support chat', group: 'Oversight', actions: VM, manageNote: 'Reply to agents and customers, start a chat, close or reopen one' },
 ] as const satisfies readonly ScreenDef[]
 
 export type ScreenKey = (typeof SCREENS)[number]['key']

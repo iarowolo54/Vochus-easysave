@@ -22,6 +22,7 @@ const TONE: Record<string, [Tone, IconName]> = {
   ajo_joined: ['in', 'customers'], ajo_started: ['in', 'calendar'], ajo_paid: ['in', 'deposit'], ajo_paid_agent: ['in', 'deposit'],
   ajo_round_out: ['in', 'cash'], ajo_due: ['attention', 'calendar'], ajo_late: ['attention', 'calendar'], ajo_replaced: ['attention', 'customers'],
   new_phone: ['security', 'device'],
+  support_reply: ['in', 'chat'],
 }
 
 export default function NotificationList({ feedUrl }: { feedUrl: string }) {

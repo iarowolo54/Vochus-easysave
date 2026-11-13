@@ -227,6 +227,9 @@ export default function AgentDetailPage() {
               <Icons.device size={16} aria-hidden="true" /> Reset device
             </button>
           )}
+          <Link className="btn btn-outline btn-sm" href={`/superadmin/support?agent=${encodeURIComponent(agent.id)}`}>
+            <Icons.chat size={16} aria-hidden="true" /> Message
+          </Link>
           <button type="button" className="btn btn-outline btn-sm" onClick={() => setEditing(true)}>
             <Icons.enrol size={16} aria-hidden="true" /> Edit details
           </button>

@@ -86,5 +86,5 @@ test('asking is read-only: the count stays until the chat itself is opened', asy
 test('a customer with no messages gets 0, not an error', async () => {
   const c = await mk(3)
   await signIn(c)
-  assert.deepEqual(await unread(), { status: 200, body: { count: 0 } })
+  assert.deepEqual(await unread(), { status: 200, body: { count: 0, agent: 0, support: 0 } })
 })
