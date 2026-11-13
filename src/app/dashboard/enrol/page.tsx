@@ -602,16 +602,19 @@ export default function EnrolPage() {
                       <button type="button" className="ag-shutter" onClick={capturePhoto} aria-label="Take photo"><span /></button>
                       <button type="button" className="ui-btn ui-btn--plain" onClick={stopCamera}>Cancel</button>
                     </>
-                  ) : (
-                    <button type="button" className="ui-btn ui-btn--secondary" onClick={() => fileRef.current?.click()}>Upload a photo</button>
-                  )}
+                  ) : null}
                 </div>
 
                 <FlowActions primary={photoDataUrl
                   ? <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={() => { stopCamera(); go(3) }}>Continue</button>
                   : cameraActive
                     ? <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={capturePhoto}>Take photo</button>
-                    : <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={startCamera}><Icons.image size={18} aria-hidden="true" /> {cameraError ? 'Try again' : 'Open camera'}</button>} />
+                    : (
+                      <div className="ag-flow-pair">
+                        <button type="button" className="ui-btn ui-btn--primary ag-flow-cta" onClick={startCamera}><Icons.camera size={18} aria-hidden="true" /> {cameraError ? 'Try again' : 'Take photo'}</button>
+                        <button type="button" className="ui-btn ui-btn--secondary ag-flow-cta" onClick={() => fileRef.current?.click()}><Icons.image size={18} aria-hidden="true" /> Upload photo</button>
+                      </div>
+                    )} />
               </>
             )}
 
