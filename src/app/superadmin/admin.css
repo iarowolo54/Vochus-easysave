@@ -1418,7 +1418,8 @@
 @media (min-width: 641px) {
   .admin-root .a-modal-ft { flex-wrap: nowrap; }
   .admin-root .a-modal-footnote { flex: 1 1 auto; }
-  .admin-root .a-modal-actions { flex: none; flex-wrap: nowrap; }
+  /* Wrap onto a second row rather than spill past the dialog edge when there are many actions */
+  .admin-root .a-modal-actions { flex: 0 1 auto; min-width: 0; flex-wrap: wrap; }
 }
 .admin-root .dlg-done.is-pending .dlg-done-ic { background: var(--amber-lt); color: var(--amber); box-shadow: 0 0 0 8px #fdf7ea; }
 .admin-root .am-rate-now { font-size: 24px; font-weight: 700; color: var(--green); font-variant-numeric: tabular-nums; white-space: nowrap; }
