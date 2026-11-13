@@ -28,6 +28,7 @@ import ListRow from '@/components/ui/ListRow'
 import Toast from '@/components/ui/Toast'
 import { Icons } from '@/components/ui/icons'
 import RetakePhotoSheet from '@/components/agent/RetakePhotoSheet'
+import PhotoButtons from '@/components/agent/PhotoButtons'
 
 interface Customer {
   id: string; customerId: string; firstName: string; lastName: string
@@ -308,6 +309,7 @@ function SavingsContent() {
   const [photoPhaseNow, setPhotoPhaseNow] = useState<string>('none')
   const [photoRefused, setPhotoRefused] = useState<Set<string>>(new Set())
   const [photoFor, setPhotoFor] = useState<Customer | null>(null)
+  const [photoStart, setPhotoStart] = useState<string | null>(null)
   useEffect(() => {
     fetch('/api/agent/photo-reminder', { cache: 'no-store' }).then(r => (r.ok ? r.json() : null)).then((d: { phase?: string } | null) => { if (d?.phase) setPhotoPhaseNow(d.phase) }).catch(() => {})
   }, [])
@@ -533,7 +535,8 @@ function SavingsContent() {
       {toast && <Toast message={toast} onDone={() => setToast('')} />}
       <RetakePhotoSheet
         customer={photoFor && { id: photoFor.id, name: `${photoFor.firstName} ${photoFor.lastName}`, hasPhoto: !!photoFor.photoUrl }}
-        onClose={() => setPhotoFor(null)}
+        startShot={photoStart}
+        onClose={() => { setPhotoFor(null); setPhotoStart(null) }}
         onSubmitted={() => { const id = photoFor?.id; setSelected(c => (c && c.id === id ? { ...c, photoStatus: 'pending' } : c)) }}
       />
       {reopenFor && selected && (
@@ -803,7 +806,7 @@ function SavingsContent() {
                     <div className="photo-remind-body">
                       <p className="photo-remind-title">Saving is paused until {selected.firstName}’s photo is added.</p>
                       <p className="photo-remind-text">{selected.photoStatus === 'pending' ? 'Their photo is being checked. Saving starts again once it’s approved.' : 'Take their photo. Saving starts again once the office approves it.'}</p>
-                      {selected.photoStatus !== 'pending' && <button type="button" className="ui-btn ui-btn--primary ui-btn--sm photo-remind-btn" onClick={() => setPhotoFor(selected)}>Take photo</button>}
+                      {selected.photoStatus !== 'pending' && <PhotoButtons onTake={() => { setPhotoStart(null); setPhotoFor(selected) }} onUpload={data => { setPhotoStart(data); setPhotoFor(selected) }} />}
                     </div>
                   </div>
                 ) : (

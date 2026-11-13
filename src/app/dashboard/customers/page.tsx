@@ -5,6 +5,7 @@ import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import BottomSheet from '@/components/ui/BottomSheet'
 import RetakePhotoSheet from '@/components/agent/RetakePhotoSheet'
+import PhotoButtons from '@/components/agent/PhotoButtons'
 import EmptyState from '@/components/ui/EmptyState'
 import ListRow from '@/components/ui/ListRow'
 import { ListSkeleton } from '@/components/ui/Skeleton'
@@ -155,6 +156,7 @@ export default function CustomersPage() {
   const [page, setPage] = useState(1)
   const [selected, setSelected] = useState<Customer | null>(null)
   const [photoFor, setPhotoFor] = useState<Customer | null>(null)
+  const [photoStart, setPhotoStart] = useState<string | null>(null)
   const [requestCounts, setRequestCounts] = useState<{ total: number; waiting: number; denied: number } | null>(null)
 
   useEffect(() => {
@@ -343,7 +345,8 @@ export default function CustomersPage() {
       setExpandedPlan={setExpandedPlan}
       go={go}
       onResetDevice={() => { setResetError(''); setResetFor(selected) }}
-      onRetakePhoto={() => setPhotoFor(selected)}
+      onRetakePhoto={() => { setPhotoStart(null); setPhotoFor(selected) }}
+      onUploadPhoto={data => { setPhotoStart(data); setPhotoFor(selected) }}
       habit={habits[selected.customerId]}
     />
   )
@@ -551,7 +554,8 @@ export default function CustomersPage() {
 
       <RetakePhotoSheet
         customer={photoFor && { id: photoFor.id, name: fullName(photoFor), hasPhoto: !!photoFor.photoUrl }}
-        onClose={() => setPhotoFor(null)}
+        startShot={photoStart}
+        onClose={() => { setPhotoFor(null); setPhotoStart(null) }}
         onSubmitted={photoSubmitted}
       />
 
@@ -593,7 +597,7 @@ function HabitDot({ h }: { h: MonthStats }) {
   )
 }
 
-function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, go, onResetDevice, onRetakePhoto, habit }: {
+function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, go, onResetDevice, onRetakePhoto, onUploadPhoto, habit }: {
   c: Customer
   txns: Txn[]
   txnsLoading: boolean
@@ -602,6 +606,7 @@ function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, g
   go: (path: string) => void
   onResetDevice: () => void
   onRetakePhoto: () => void
+  onUploadPhoto: (dataUrl: string) => void
   habit?: MonthStats
 }) {
   const active = c.savingsPlans.filter(p => p.status === 'Active').length
@@ -629,7 +634,7 @@ function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, g
                 : c.photoStatus === 'rejected' ? `${c.photoRejectReason ?? 'The office needs a new photo.'} Take a new one.`
                 : c.photoPaused ? 'Saving for them is paused. Take their photo; it starts again once the office approves it.' : 'Take their photo, or saving for them will pause after the deadline.'}
             </p>
-            {c.photoStatus !== 'pending' && <button type="button" className="ui-btn ui-btn--primary ui-btn--sm photo-remind-btn" onClick={onRetakePhoto}>Take photo</button>}
+            {c.photoStatus !== 'pending' && <PhotoButtons onTake={onRetakePhoto} onUpload={onUploadPhoto} />}
           </div>
         </div>
       )}

@@ -8,8 +8,10 @@ import { Icons } from '@/components/ui/icons'
  * Take or upload a photo of one of the agent's customers (Take photo and Upload photo side by side, as on the Enrol
  * photo step). It goes to the super admin to check; the customer's photo only changes once it's approved.
  */
-export default function RetakePhotoSheet({ customer, onClose, onSubmitted }: {
+export default function RetakePhotoSheet({ customer, onClose, onSubmitted, startShot = null }: {
   customer: { id: string; name: string; hasPhoto: boolean } | null
+  /** A picture already chosen with Upload photo on the card, shown ready to send. */
+  startShot?: string | null
   onClose: () => void
   /** Called once the photo is sent for checking. */
   onSubmitted: () => void
@@ -21,7 +23,7 @@ export default function RetakePhotoSheet({ customer, onClose, onSubmitted }: {
 
   // Keyed on the id: the parent builds a new object each render, which must not wipe a photo just taken.
   const customerId = customer?.id ?? null
-  useEffect(() => { setShot(null); setSaveError(''); setSent(false) }, [customerId])
+  useEffect(() => { setShot(startShot); setSaveError(''); setSent(false) }, [customerId, startShot])
 
   async function save() {
     if (!customer || !shot) return

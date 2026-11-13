@@ -2751,6 +2751,8 @@ button.ui-cal-day:disabled:active { transform: none; }
 .photo-remind-title { margin: 0; font-weight: 700; font-size: var(--ui-fs-md); overflow-wrap: anywhere; }
 .photo-remind-text { margin: 0; line-height: 1.5; overflow-wrap: anywhere; }
 .photo-remind-btn { justify-self: start; margin-top: 6px; min-height: 44px; }
+.photo-remind-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 6px; max-width: 360px; }
+.photo-remind-actions .ui-btn { min-height: 44px; padding-inline: 8px; white-space: nowrap; }
 .photo-remind--green { background: #dff2e5; border-color: var(--ui-brand); }
 .photo-remind--green > svg { color: var(--ui-brand-ink); }
 .photo-remind--yellow { background: #fff4c2; border-color: #d9a300; }
