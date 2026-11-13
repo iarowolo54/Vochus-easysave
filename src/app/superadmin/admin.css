@@ -277,9 +277,9 @@
 .admin-root tbody tr:last-child td { border-bottom: none; }
 .admin-root tbody tr.is-clickable { cursor: pointer; }
 .admin-root tbody tr.is-clickable:hover td { background: var(--surface2); }
-/* Keeps a wide table's last column (status, View) in sight. ::after covers .tbl-wrap's side padding, where scrolled cells would otherwise show; ::before is the divider. */
+/* Keeps a wide table's last column (status, View) in sight. ::after covers .tbl-wrap's side padding, where scrolled cells would otherwise show; ::before is the divider. right: 0, not 24px — sticky offsets are measured inside the wrap's padding, so 24px pushed the column over Status. */
 @media (min-width: 641px) {
-  .admin-root thead th.td-pin-end, .admin-root tbody td.td-pin-end { position: sticky; right: 24px; z-index: 1; background: var(--surface); padding-left: 12px; }
+  .admin-root thead th.td-pin-end, .admin-root tbody td.td-pin-end { position: sticky; right: 0; z-index: 1; background: var(--surface); padding-left: 12px; }
   .admin-root .td-pin-end::after { content: ''; position: absolute; top: 0; bottom: 0; left: 100%; width: 24px; background: var(--surface); }
   .admin-root .td-pin-end::before { content: ''; position: absolute; top: 0; bottom: 0; left: 0; width: 1px; background: var(--border); }
 }
