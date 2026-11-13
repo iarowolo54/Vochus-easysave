@@ -5,8 +5,8 @@ import CameraCapture from '@/components/ui/CameraCapture'
 import { Icons } from '@/components/ui/icons'
 
 /**
- * Take a photo of one of the agent's customers with the camera (never the gallery, as at registration). It goes to
- * the super admin to check; the customer's photo only changes once it's approved.
+ * Take or upload a photo of one of the agent's customers (Take photo and Upload photo side by side, as on the Enrol
+ * photo step). It goes to the super admin to check; the customer's photo only changes once it's approved.
  */
 export default function RetakePhotoSheet({ customer, onClose, onSubmitted }: {
   customer: { id: string; name: string; hasPhoto: boolean } | null
@@ -53,7 +53,7 @@ export default function RetakePhotoSheet({ customer, onClose, onSubmitted }: {
       )}
       {customer && !sent && (
         <>
-          <CameraCapture value={shot} onChange={s => { setShot(s); setSaveError('') }} />
+          <CameraCapture value={shot} onChange={s => { setShot(s); setSaveError('') }} allowUpload />
           {saveError && <p className="ui-field-error ag-center" role="alert"><Icons.error size={16} aria-hidden="true" /> {saveError}</p>}
           {shot && (
             <button type="button" className="ui-btn ui-btn--primary ui-btn--block ui-gap-top" onClick={save} disabled={saving} aria-busy={saving}>

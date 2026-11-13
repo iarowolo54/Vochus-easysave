@@ -1731,6 +1731,9 @@ button.ui-bottom-nav-item { border: 0; background: none; cursor: pointer; font-f
 }
 .ag-flow-cta { width: 100%; min-height: 56px; border-radius: 14px; font-size: var(--ui-fs-md); }
 /* Two equal main buttons side by side (Enrol photo step: Take photo | Upload photo). */
+/* Take photo | Upload photo side by side in the photo sheet (CameraCapture with allowUpload). */
+.ag-cam-actions.ag-cam-pair { display: grid; grid-template-columns: 1fr 1fr; gap: var(--ui-s3); }
+.ag-cam-actions.ag-cam-pair .ui-btn { width: 100%; padding-inline: var(--ui-s2); white-space: nowrap; }
 .ag-flow-pair { display: grid; grid-template-columns: 1fr 1fr; gap: var(--ui-s3); }
 .ag-flow-pair .ag-flow-cta { padding-inline: var(--ui-s2); white-space: nowrap; }
 @media (max-width: 768px) {

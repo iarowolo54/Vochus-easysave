@@ -1,7 +1,9 @@
 // Interim server-side guard for enrolment photos (#8).
 //
-// Retaking a photo on an existing customer is camera-only. A new cash saver's photo may be uploaded, because the
-// super admin looks at it before the account exists (src/lib/customer-request.ts).
+// An agent may take or upload a customer's photo, both at registration and later (a retake or a missing photo),
+// because the super admin looks at every one before it is used (src/lib/customer-request.ts,
+// src/lib/customer-photo-request.ts). Other photo screens (the agent's own onboarding selfie, a customer's own photo)
+// stay camera-only in the app.
 // A live-camera rule CANNOT be verified server-side.
 // That CANNOT be verified server-side — a true live-photo guarantee needs a
 // liveness / selfie-verification provider. This guard only does what the server
