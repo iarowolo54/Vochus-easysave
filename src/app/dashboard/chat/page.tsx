@@ -8,6 +8,8 @@ import EmptyState from '@/components/ui/EmptyState'
 import { ListSkeleton } from '@/components/ui/Skeleton'
 import { Icons } from '@/components/ui/icons'
 import { avatarTint } from '@/lib/avatar'
+import ReceiptBubble from '@/components/ReceiptBubble'
+import { parseReceiptCard } from '@/lib/receipt-card'
 import { displayName, formatDate } from '@/lib/format'
 
 type Thread = {
@@ -17,6 +19,8 @@ type Thread = {
 }
 type Msg = {
   id: string; sender: string; senderName: string | null; message: string; imageUrl?: string | null; createdAt: string
+  /** Set on a receipt sent with "Send to customer": drawn as the receipt picture. */
+  receipt?: string | null
   /** Set on messages this screen is still sending, or failed to send. */
   local?: 'sending' | 'failed'
 }
@@ -295,7 +299,11 @@ export default function AgentChatPage() {
                               <img src={m.imageUrl} alt={mine ? 'Photo you sent' : `Photo from ${first}`} />
                             </a>
                           )}
-                          {m.message && <p className="ag-msg-text">{m.message}</p>}
+                          {(() => {
+                            const card = parseReceiptCard(m.receipt)
+                            if (card) return <ReceiptBubble card={card} text={m.message} textClassName="ag-msg-text" imageClassName="ag-msg-receipt" />
+                            return m.message ? <p className="ag-msg-text">{m.message}</p> : null
+                          })()}
                         </div>
                         <p className="ag-msg-meta">
                           {m.local === 'sending' ? 'Sending…' : m.local === 'failed' ? <><Icons.error size={12} aria-hidden="true" /> Not sent · tap to retry</> : time(m.createdAt)}

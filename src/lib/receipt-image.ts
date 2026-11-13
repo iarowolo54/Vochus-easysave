@@ -2,7 +2,7 @@
 // handed to the native side via the existing VochusSaveReceipt bridge; in a browser it downloads.
 import { formatDate, formatTime } from './format'
 
-type ReceiptData = {
+export type ReceiptData = {
   title: string        // e.g. "Savings deposit"
   amount: string       // already signed and formatted, e.g. "+₦500.00"
   status: string       // "Completed"
@@ -124,6 +124,15 @@ async function drawReceipt(data: ReceiptData): Promise<{ canvas: HTMLCanvasEleme
   ctx.fillText(`${window.location.host} · Generated ${formatDate(now)}, ${formatTime(now)}`, W / 2, H - 34)
 
   return { canvas, dataUrl: canvas.toDataURL('image/png'), filename: `vochus-receipt-${data.reference.slice(0, 24)}.png` }
+}
+
+/** The receipt drawn as a PNG data URL, for showing it inside a chat bubble. Null when the browser can't draw it. */
+export async function receiptImageUrl(data: ReceiptData): Promise<string | null> {
+  try {
+    return (await drawReceipt(data))?.dataUrl ?? null
+  } catch {
+    return null
+  }
 }
 
 type NativeWindow = { __vochusApp?: string; __vochusCanSaveReceipt?: boolean; VochusSaveReceipt?: { postMessage: (s: string) => void } }

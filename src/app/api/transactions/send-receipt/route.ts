@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { buildReceiptMessage, canSendReceipt, customerCanSignIn, earliestFirst, receiptStatus } from '@/lib/receipt-message'
+import { buildReceiptCard, buildReceiptMessage, canSendReceipt, customerCanSignIn, earliestFirst, receiptStatus } from '@/lib/receipt-message'
 import { loadPayoutOutcome } from '@/lib/receipt-payout'
 
 const MAX_IDS = 90
@@ -54,15 +54,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: `This bank payout ${payout === 'failed' ? 'failed' : 'was reversed'}, so the receipt can’t be sent.` }, { status: 409 })
   }
 
-  const message = buildReceiptMessage(
-    txns.map(t => ({ ref: t.ref, type: t.type, amount: t.amount, status: t.status, createdAt: t.createdAt, planGoal: t.plan?.goal ?? null, method: t.method, payout })),
-    { customerName: `${customer.firstName} ${customer.lastName}`, agentName: agent.name },
-  )
+  const receiptTxns = txns.map(t => ({ ref: t.ref, type: t.type, amount: t.amount, status: t.status, createdAt: t.createdAt, planGoal: t.plan?.goal ?? null, method: t.method, payout }))
+  const who = { customerName: `${customer.firstName} ${customer.lastName}`, agentName: agent.name }
+  const message = buildReceiptMessage(receiptTxns, who)
+  // Drawn as the receipt picture in both chats; the text stays for previews.
+  const receipt = JSON.stringify(buildReceiptCard(receiptTxns, who))
 
   // Together, so a receipt the customer can see always has its audit row.
   await prisma.$transaction(async (tx) => {
     const sent = await tx.customerChatMessage.create({
-      data: { customerId, sender: 'agent', senderId: agent.id, senderName: agent.name, message },
+      data: { customerId, sender: 'agent', senderId: agent.id, senderName: agent.name, message, receipt },
       select: { id: true },
     })
     await tx.auditLog.create({

@@ -520,6 +520,9 @@ model CustomerChatMessage {
   senderName String?
   message    String
   imageUrl   String?
+  /// A receipt sent from "Send to customer": JSON built by the server from its own records (src/lib/receipt-card.ts),
+  /// drawn as the receipt picture in both chats. Never taken from a request.
+  receipt    String?
   read       Boolean  @default(false)
   createdAt  DateTime @default(now())
 }

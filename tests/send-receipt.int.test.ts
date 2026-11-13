@@ -134,6 +134,11 @@ test('one id posts a normal receipt as the agent, with no image', async () => {
   assert.equal(m.imageUrl, null)
   assert.match(m.message, /Amount: ₦1,250\.00/)
   assert.match(m.message, new RegExp(`Reference: SR-one-${RUN}$`))
+  // The receipt picture's facts are stored from the same records.
+  const card = JSON.parse(m.receipt ?? 'null') as { title: string; amount: string; reference: string } | null
+  assert.equal(card?.title, 'Savings deposit')
+  assert.equal(card?.amount, '₦1,250.00')
+  assert.equal(card?.reference, `SR-one-${RUN}`)
 })
 
 test('content and customer come from the database, never the request', async () => {
@@ -141,6 +146,7 @@ test('content and customer come from the database, never the request', async () 
   assert.equal(res.status, 200)
   const [m] = await messages(ids.custA)
   assert.doesNotMatch(m.message, /FORGED|999,999/)
+  assert.doesNotMatch(m.receipt ?? '', /FORGED|999,999/)
   assert.equal((await messages(ids.custB)).length, 0)
 })
 

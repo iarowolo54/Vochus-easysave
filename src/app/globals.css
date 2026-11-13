@@ -1099,6 +1099,9 @@ body:has(.ui-auth) { background: var(--ui-canvas) !important; }
 .ui-bubble-text { padding: 10px 14px 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
 .ui-bubble-time { display: block; padding: 2px 14px 8px; text-align: right; font-size: 11px; color: var(--ui-ink-3); }
 .ui-bubble--mine .ui-bubble-time { color: rgba(255,255,255,.75); }
+.ui-bubble-receipt, .ag-msg-receipt { display: block; padding: 0; border: 0; background: none; cursor: pointer; width: 100%; }
+.ui-bubble-receipt img, .ag-msg-receipt img { display: block; width: 100%; max-width: 280px; height: auto; border-radius: 12px; }
+.ui-bubble-receipt { padding: 6px 6px 0; }
 .ui-bubble-img img { display: block; width: 100%; max-width: 260px; }
 .ui-chat-empty { padding-top: var(--ui-s5); }
 .ui-chat-prompts { display: flex; flex-direction: column; align-items: center; gap: var(--ui-s2); }

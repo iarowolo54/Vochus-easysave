@@ -2,6 +2,7 @@
 // No balance on purpose: an older receipt would show a stale figure.
 import { formatNaira, displayName } from '@/lib/format'
 import { money } from '@/lib/wallet-guard'
+import type { ReceiptCard } from '@/lib/receipt-card'
 
 export type ReceiptTxn = {
   ref: string
@@ -127,4 +128,29 @@ export function buildReceiptMessage(txns: ReceiptTxn[], who: { customerName: str
     selfPaid ? '' : `Recorded by: ${oneLine(who.agentName)}`,
     `Reference: ${first.ref}${bulk ? ` +${txns.length - 1} more` : ''}`,
   ].filter(Boolean).join('\n')
+}
+
+/**
+ * The same receipt as buildReceiptMessage, as the facts the chat draws into the receipt picture. Same rules: built only
+ * from server records, free text flattened to one line, no balance.
+ */
+export function buildReceiptCard(txns: ReceiptTxn[], who: { customerName: string; agentName: string }): ReceiptCard {
+  const [first] = earliestFirst(txns)
+  const bulk = txns.length > 1
+  const goal = oneLine(first.planGoal ?? '')
+  const selfPaid = first.type === 'saving' && first.method?.toLowerCase() === 'paystack'
+  const total = bulk ? money(txns.reduce((sum, t) => sum + t.amount, 0)) : first.amount
+  const rows: [string, string][] = [
+    bulk ? ['Paid for', paidFor(txns)] : ['Date', `${lagosDate(first.createdAt)}, ${lagosTime(first.createdAt)}`],
+    ['Customer', displayName(oneLine(who.customerName))],
+  ]
+  if (goal) rows.push(['Plan', goal])
+  if (!selfPaid) rows.push(['Recorded by', oneLine(who.agentName)])
+  return {
+    title: bulk ? 'Bulk Savings' : label(first.type),
+    amount: first.type === 'enrolment' && !bulk ? '—' : formatNaira(total),
+    status: receiptStatus(first),
+    rows,
+    reference: `${first.ref}${bulk ? ` +${txns.length - 1} more` : ''}`,
+  }
 }

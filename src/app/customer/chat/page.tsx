@@ -10,9 +10,13 @@ import { Icons } from '@/components/ui/icons'
 import { displayName, formatTime } from '@/lib/format'
 import { describeFailure, postJson } from '@/lib/http'
 import SupportChatScreen from '@/components/SupportChatScreen'
+import ReceiptBubble from '@/components/ReceiptBubble'
+import { parseReceiptCard } from '@/lib/receipt-card'
 
 type Msg = {
   id: string; sender: string; senderName: string | null; message: string; imageUrl?: string | null; createdAt: string; read: boolean
+  /** Set on a receipt the agent sent: drawn as the receipt picture. */
+  receipt?: string | null
 }
 type Me = { agent: { name: string; agentId: string; phone: string } }
 
@@ -246,7 +250,11 @@ function ChatInner() {
                       <img src={msg.imageUrl} alt={mine ? 'Photo you sent' : `Photo from ${firstName}`} />
                     </a>
                   )}
-                  {msg.message && <p className="ui-bubble-text">{msg.message}</p>}
+                  {(() => {
+                    const card = parseReceiptCard(msg.receipt)
+                    if (card) return <ReceiptBubble card={card} text={msg.message} textClassName="ui-bubble-text" imageClassName="ui-bubble-receipt" />
+                    return msg.message ? <p className="ui-bubble-text">{msg.message}</p> : null
+                  })()}
                   <span className="ui-bubble-time">{formatTime(msg.createdAt)}</span>
                 </div>
               </div>
