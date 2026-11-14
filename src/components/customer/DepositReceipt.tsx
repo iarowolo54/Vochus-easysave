@@ -8,6 +8,8 @@ export type ReceiptTx = {
   id: string; amount: number; ref: string; createdAt: string; method: string | null
   /** Agent name; only known for some transactions. */
   recordedBy?: string
+  /** Set when an agent paid this into an online plan; the receipt says so. */
+  paidByAgent?: string | null
   /** Transaction type from the API; defaults to a savings deposit. */
   type?: string
   /** Raw status from the API ("Done", "Pending", …). Defaults to Done. */
@@ -51,12 +53,13 @@ export function depositIcon(tx: Pick<ReceiptTx, 'method' | 'type'>): IconName {
 }
 
 /** How the money moved, said plainly. Cash names the agent; a bank transfer says whether staff confirmed it. */
-export function depositMethod(tx: Pick<ReceiptTx, 'method' | 'recordedBy' | 'confirmedByStaff'>): string {
+export function depositMethod(tx: Pick<ReceiptTx, 'method' | 'recordedBy' | 'confirmedByStaff' | 'paidByAgent'>): string {
   return methodText(tx)
 }
 
 /** One or two words for list rows; the receipt carries the full wording (who collected it). */
-export function methodShort(method: string | null): string {
+export function methodShort(method: string | null, paidByAgent?: string | null): string {
+  if (paidByAgent) return 'Paid by agent'
   const m = (method ?? 'Cash').toLowerCase()
   return m === 'paystack' ? 'Card' : m === 'cash' ? 'Cash' : (method ?? 'Cash')
 }

@@ -60,7 +60,9 @@ export async function GET(req: NextRequest) {
       ref: t.ref,
       type: t.type,
       amount: t.amount,
-      method: t.method,
+      // An agent's payment into an online customer's plan reads as that, not as a plain cash deposit.
+      method: t.paidByAgentId ? 'Paid by agent' : t.method,
+      paidByAgent: t.paidByAgentId != null,
       status: statuses.get(t.id) ?? t.status,
       note: t.note,
       planId: t.planId,

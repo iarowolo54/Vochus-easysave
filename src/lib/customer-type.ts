@@ -38,6 +38,3 @@ export function lastPaidAtOf(deposits: { createdAt: Date }[]): string | null {
   for (const d of deposits) max = Math.max(max, d.createdAt.getTime())
   return new Date(max).toISOString()
 }
-
-/** Online savers pay in and take money out by bank transfer only, so an agent never records cash for them. */
-export const AGENT_CASH_BLOCK = 'This customer saves on the app. They pay in and redeem by bank transfer only, so agents can’t take cash for them.'

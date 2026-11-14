@@ -12,7 +12,7 @@ export async function GET() {
     where: { customerId: session.id },
     orderBy: { createdAt: 'desc' },
     take: 200,
-    include: { plan: { select: { goal: true, cadence: true } } },
+    include: { plan: { select: { goal: true, cadence: true } }, agent: { select: { name: true } } },
   })
 
   const statuses = await listedStatuses(transactions)
@@ -26,6 +26,8 @@ export async function GET() {
       feeTaken: t.feeTaken,
       method: t.method,
       confirmedByStaff: isHandCredit(t.note),
+      // Set when an agent paid this into the customer's online plan.
+      paidByAgent: t.paidByAgentId ? t.agent.name : null,
       status: statuses.get(t.id) ?? t.status,
       createdAt: t.createdAt,
       planGoal: t.plan?.goal ?? null,

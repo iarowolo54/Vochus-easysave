@@ -19,6 +19,8 @@ type Tx = {
   planGoal?: string | null
   cadence?: string | null
   confirmedByStaff?: boolean
+  /** Set when an agent paid this into the customer's online plan. */
+  paidByAgent?: string | null
 }
 type Me = { transactions: { id: string; recordedBy: string }[] }
 
@@ -130,7 +132,7 @@ export default function TransactionsPage() {
       rows: [
         ['Date', `${formatDate(tx.createdAt)}, ${formatTime(tx.createdAt)}`],
         ...(tx.planGoal ? [[meta.planLabel, tx.planGoal] as [string, string]] : []),
-        ['Method', depositMethod({ method: tx.method, recordedBy: recordedBy.get(tx.id), confirmedByStaff: tx.confirmedByStaff })],
+        ['Method', depositMethod({ method: tx.method, recordedBy: recordedBy.get(tx.id), confirmedByStaff: tx.confirmedByStaff, paidByAgent: tx.paidByAgent })],
         ...(tx.feeTaken ? [['Platform fee', `−${formatNaira(tx.feeTaken)}`] as [string, string]] : []),
       ] as [string, string][],
     }
@@ -225,7 +227,7 @@ export default function TransactionsPage() {
                           title={meta.label}
                           sub={[
                             formatTime(tx.createdAt),
-                            methodShort(tx.method),
+                            methodShort(tx.method, tx.paidByAgent),
                             plansPresent.length > 1 && plan === 'all' ? tx.planGoal : null,
                           ].filter(Boolean).join(' · ')}
                           value={

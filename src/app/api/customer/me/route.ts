@@ -115,7 +115,7 @@ export async function GET() {
           orderBy: { createdAt: 'desc' },
           take: 2000,
           select: {
-            id: true, amount: true, ref: true, createdAt: true, method: true, planId: true, note: true,
+            id: true, amount: true, ref: true, createdAt: true, method: true, planId: true, note: true, paidByAgentId: true,
             agent: { select: { name: true } },
           },
         })
@@ -128,7 +128,7 @@ export async function GET() {
       : Promise.resolve([]),
   ])
 
-  const transactions = planTxs.map(({ agent, note, ...t }) => ({ ...t, recordedBy: agent.name, confirmedByStaff: isHandCredit(note) }))
+  const transactions = planTxs.map(({ agent, note, paidByAgentId, ...t }) => ({ ...t, recordedBy: agent.name, paidByAgent: paidByAgentId ? agent.name : null, confirmedByStaff: isHandCredit(note) }))
   // Kept for the save/redeem/settings pages, which read these older fields.
   const txs = transactions.slice(0, 30)
   const pendingRedemption = plan

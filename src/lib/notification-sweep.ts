@@ -19,7 +19,7 @@ const DAY = 86_400_000
 
 type Cust = { id: string; agentId: string; firstName: string; lastName: string }
 export interface SweepRows {
-  savings: { ref: string; amount: number; feeTaken: number; method: string | null; note: string | null; createdAt: Date; plan: { goal: string; source: string; customer: Cust } }[]
+  savings: { ref: string; amount: number; feeTaken: number; method: string | null; note: string | null; createdAt: Date; plan: { goal: string; source: string; customer: Cust }; paidByAgentId?: string | null; agent?: { name: string } }[]
   collections: { id: string; ref: string; status: string; netPayout: number; requestedAt: Date; agentApprovedAt: Date | null; decidedAt: Date | null; decidedBy: string | null; savingsPlan: { customer: Cust } }[]
   withdrawals: { id: string; agentId: string; amount: number; status: string; adminNote: string | null; decidedAt: Date | null }[]
   topUps: { ref: string; agentId: string; amount: number; createdAt: Date }[]
@@ -46,7 +46,7 @@ export function backfillEvents(rows: SweepRows, opts: { since: Date; agentCodes?
     const c = s.plan.customer
     out.push(...at(N.savingsReceived({
       ref: s.ref, customerId: c.id, agentId: c.agentId, customerName: nameOf(c), planGoal: s.plan.goal, amount: s.amount, fee: s.feeTaken,
-      onlineTransfer: s.plan.source === 'self' && s.method === 'Transfer',
+      onlineTransfer: s.plan.source === 'self' && s.method === 'Transfer', paidByAgent: s.paidByAgentId ? s.agent?.name ?? null : null,
     }), s.createdAt))
   }
   for (const [ref, days] of batches) {
@@ -54,7 +54,7 @@ export function backfillEvents(rows: SweepRows, opts: { since: Date; agentCodes?
     const sum = (f: (d: SweepRows['savings'][number]) => number) => Math.round(days.reduce((t, d) => t + f(d), 0) * 100) / 100
     out.push(...at(N.savingsReceived({
       ref, customerId: c.id, agentId: c.agentId, customerName: nameOf(c), planGoal: days[0].plan.goal,
-      amount: sum(d => d.amount), fee: sum(d => d.feeTaken), onlineTransfer: false,
+      amount: sum(d => d.amount), fee: sum(d => d.feeTaken), onlineTransfer: false, paidByAgent: days[0].paidByAgentId ? days[0].agent?.name ?? null : null,
     }), days[0].createdAt))
   }
 
@@ -144,7 +144,7 @@ export async function runNotificationSweep(client: PrismaClient, now: Date = new
   const [savings, collections, withdrawals, topUps, agents, customerRequests, refunds, refundShares, customerPhotos] = await Promise.all([
     client.transaction.findMany({
       where: { type: 'saving', status: 'Done', createdAt: { gte: since }, planId: { not: null } },
-      select: { ref: true, amount: true, feeTaken: true, method: true, note: true, createdAt: true, plan: { select: { goal: true, source: true, customer: cust } } },
+      select: { ref: true, amount: true, feeTaken: true, method: true, note: true, createdAt: true, paidByAgentId: true, agent: { select: { name: true } }, plan: { select: { goal: true, source: true, customer: cust } } },
     }),
     client.earlyRedemption.findMany({
       where: { OR: [{ requestedAt: { gte: since } }, { agentApprovedAt: { gte: since } }, { decidedAt: { gte: since } }] },

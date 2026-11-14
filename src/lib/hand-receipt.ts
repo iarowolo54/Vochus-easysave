@@ -2,6 +2,8 @@
 // approve their bank transfer by hand. Pure, so the settle path and every receipt screen say the same thing.
 
 /** The note the settle path stores on a deposit staff credited by hand. Receipts read it back to say so. */
+import { paidByLine } from '@/lib/agent-payment'
+
 export const HAND_CREDIT_NOTE = 'Bank transfer credited by hand by staff'
 
 export function isHandCredit(note: string | null | undefined): boolean {
@@ -9,7 +11,9 @@ export function isHandCredit(note: string | null | undefined): boolean {
 }
 
 /** How the money moved, said plainly. A bank transfer never names the agent: they didn't handle it. */
-export function methodText(tx: { method: string | null; recordedBy?: string; confirmedByStaff?: boolean }): string {
+export function methodText(tx: { method: string | null; recordedBy?: string; confirmedByStaff?: boolean; paidByAgent?: string | null }): string {
+  // An agent paid this into an online customer's plan: always said as the agent's payment.
+  if (tx.paidByAgent) return paidByLine(tx.paidByAgent)
   const m = (tx.method ?? 'Cash').toLowerCase()
   if (m === 'paystack') return 'Card or bank transfer'
   if (m === 'cash') return tx.recordedBy ? `Cash, collected by ${tx.recordedBy}` : 'Cash'

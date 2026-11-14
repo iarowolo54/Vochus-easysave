@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { AGENT_CASH_BLOCK, asCustomerType } from '@/lib/customer-type'
+import { AGENT_PAID_ACTION, agentPaidAuditDetails } from '@/lib/agent-payment'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
@@ -36,8 +36,6 @@ export async function POST(req: NextRequest) {
 
   const customer = await prisma.customer.findFirst({ where: { id: customerId, agentId: agent.id } })
   if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
-  // Online savers pay by bank transfer only: no cash through an agent.
-  if (asCustomerType(customer.type) === 'online') return NextResponse.json({ error: AGENT_CASH_BLOCK }, { status: 400 })
   {
     const blocked = await photoSaveBlock(prisma, customer.id, 'agent')
     if (blocked) return photoBlockedResponse(blocked)
@@ -53,7 +51,8 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'This customer has more than one active plan — choose which plan to save into' }, { status: 400 })
   }
   const plan = selected.plan
-  if (plan.source === 'self') return NextResponse.json({ error: AGENT_CASH_BLOCK }, { status: 400 })
+  // An agent may pay into an online customer's plan, but it is always recorded as the agent's payment.
+  const agentPaid = plan.source === 'self'
 
   const dates = await prisma.savingsPlan.findUnique({ where: { id: plan.id }, select: { startDate: true, maturityDate: true, cadence: true, goal: true, dailyAmount: true, periodDays: true } })
   if (!dates || planHasEnded(dates)) return NextResponse.json({ error: PLAN_ENDED }, { status: 409 })
@@ -117,6 +116,7 @@ export async function POST(req: NextRequest) {
           status: 'Done',
           walletAfter,
           feeTaken: fee,
+          ...(agentPaid ? { paidByAgentId: agent.id } : {}),
           ...(createdAt ? { createdAt } : {}),
         },
       })
@@ -124,7 +124,7 @@ export async function POST(req: NextRequest) {
       await creditOpenPlan(tx, plan.id, money(rounded - fee))
       await notify(tx, notifications.savingsReceived({
         ref, customerId: customer.id, agentId: agent.id, customerName: `${customer.firstName} ${customer.lastName}`,
-        planGoal: dates.goal, amount: rounded, fee, onlineTransfer: false,
+        planGoal: dates.goal, amount: rounded, fee, onlineTransfer: false, paidByAgent: agentPaid ? agent.name : null,
       }))
       return created
     })
@@ -135,7 +135,9 @@ export async function POST(req: NextRequest) {
     throw e
   }
 
-  logAudit({ action: 'saving', entity: 'Transaction', entityId: txn.id, details: `₦${rounded} saving for ${customer.firstName} ${customer.lastName} (${ref}) via ${method ?? 'Cash'}`, actorId: agent.id, actorName: agent.name })
+  logAudit(agentPaid
+    ? { action: AGENT_PAID_ACTION, entity: 'Transaction', entityId: txn.id, details: agentPaidAuditDetails({ agentName: agent.name, agentCode: agent.agentId, amount: rounded, customerName: `${customer.firstName} ${customer.lastName}`, planGoal: dates.goal, ref }), actorId: agent.id, actorName: agent.name }
+    : { action: 'saving', entity: 'Transaction', entityId: txn.id, details: `₦${rounded} saving for ${customer.firstName} ${customer.lastName} (${ref}) via ${method ?? 'Cash'}`, actorId: agent.id, actorName: agent.name })
 
   if (priorSavings === 0) {
     creditRegistrationReward(customer).catch(() => {})

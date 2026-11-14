@@ -113,3 +113,12 @@ test('customer photos: decided rows give approved or rejected to the agent, with
   }, { since: new Date(Date.now() - 48 * 3600e3) })
   assert.deepEqual(events.map(e => e.dedupeKey), ['customer-photo-approved:p1', `customer-photo-rejected:p2:${decidedAt.getTime()}`])
 })
+
+test('backfill: an agent-paid deposit into an online plan is rebuilt with who paid it in', () => {
+  const ev = backfillEvents({
+    savings: [{ ref: 'TXN-1', amount: 2000, feeTaken: 0, method: 'Cash', note: null, createdAt: new Date('2026-11-14T08:00:00Z'), paidByAgentId: 'a1', agent: { name: 'Ilori Olawunmi' },
+      plan: { goal: 'General Savings', source: 'self', customer: { id: 'c1', agentId: 'a1', firstName: 'Yetunde', lastName: 'Salau' } } }],
+    collections: [], withdrawals: [], topUps: [],
+  }, { since: new Date('2026-11-13T00:00:00Z') })
+  assert.equal(ev[0].body, 'Paid in by your agent, Ilori Olawunmi.')
+})

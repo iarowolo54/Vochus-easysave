@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { AGENT_CASH_BLOCK, asCustomerType } from '@/lib/customer-type'
+import { AGENT_PAID_ACTION, agentPaidAuditDetails } from '@/lib/agent-payment'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
@@ -75,8 +75,6 @@ export async function POST(req: NextRequest) {
 
   const customer = await prisma.customer.findFirst({ where: { id: customerId, agentId: agent.id } })
   if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
-  // Online savers pay by bank transfer only: no cash through an agent.
-  if (asCustomerType(customer.type) === 'online') return NextResponse.json({ error: AGENT_CASH_BLOCK }, { status: 400 })
   {
     const blocked = await photoSaveBlock(prisma, customer.id, 'agent')
     if (blocked) return photoBlockedResponse(blocked)
@@ -91,7 +89,6 @@ export async function POST(req: NextRequest) {
   }
   const plan = await prisma.savingsPlan.findUnique({ where: { id: selected.plan.id } })
   if (!plan) return NextResponse.json({ error: 'No active savings plan' }, { status: 400 })
-  if (plan.source === 'self') return NextResponse.json({ error: AGENT_CASH_BLOCK }, { status: 400 })
   if (isFlexible(plan.cadence)) return NextResponse.json({ error: 'Flexible plans don’t use set days. Record one deposit of any amount instead.' }, { status: 400 })
   if (planHasEnded(plan)) return NextResponse.json({ error: PLAN_ENDED }, { status: 409 })
   if (await hasOpenRedemption(prisma, plan.id)) return NextResponse.json({ error: SAVING_BLOCKED }, { status: 409 })
@@ -156,6 +153,8 @@ export async function POST(req: NextRequest) {
             feeTaken: fee,
             // One batch, one notification: the nightly safety net reads this to know these days belong together.
             note: `${BULK_NOTE_PREFIX}${batchRef}`,
+            // An agent paying into an online customer's plan is always recorded as the agent's payment.
+            ...(online ? { paidByAgentId: agent.id } : {}),
             // SR-3: online (self) plans ignore client dates; createdAt defaults to now.
             ...(online ? {} : { createdAt: dates[i] }),
           },
@@ -177,7 +176,7 @@ export async function POST(req: NextRequest) {
       // One notification for the whole batch (keyed on its first saving), not one per day.
       await notify(tx, notifications.savingsReceived({
         ref: batchRef, customerId: customer.id, agentId: agent.id, customerName: `${customer.firstName} ${customer.lastName}`,
-        planGoal: plan.goal, amount: totalAmt, fee: feeSum, onlineTransfer: false,
+        planGoal: plan.goal, amount: totalAmt, fee: feeSum, onlineTransfer: false, paidByAgent: online ? agent.name : null,
       }))
       return txns
     })
@@ -192,10 +191,12 @@ export async function POST(req: NextRequest) {
   const firstTxn = results[0] as Awaited<ReturnType<typeof prisma.transaction.create>>
 
   logAudit({
-    action: 'bulk_saving',
+    action: online ? AGENT_PAID_ACTION : 'bulk_saving',
     entity: 'Transaction',
     entityId: firstTxn.id,
-    details: `Bulk ₦${dailyAmt} × ${numDays} days = ₦${totalAmt} for ${customer.firstName} ${customer.lastName} via ${method ?? 'Cash'}`,
+    details: online
+      ? agentPaidAuditDetails({ agentName: agent.name, agentCode: agent.agentId, amount: totalAmt, customerName: `${customer.firstName} ${customer.lastName}`, planGoal: plan.goal, ref: batchRef, days: numDays })
+      : `Bulk ₦${dailyAmt} × ${numDays} days = ₦${totalAmt} for ${customer.firstName} ${customer.lastName} via ${method ?? 'Cash'}`,
     actorId: agent.id,
     actorName: agent.name,
   })

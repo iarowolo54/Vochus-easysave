@@ -267,6 +267,8 @@ model Transaction {
   /// New model: platform fee taken out of this deposit before it reached the plan balance.
   feeTaken    Float        @default(0)
   createdAt   DateTime     @default(now())
+  /// Set when an agent paid this into an ONLINE customer's plan from the agent wallet (offline deposits are the agent's by nature).
+  paidByAgentId String?
 }
 
 model Loan {
