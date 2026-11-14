@@ -77,7 +77,8 @@ export async function settleIntentPayment(client: PrismaClient, input: Input): P
   const wanted = parseCoversKeys(intent.coversKeys)
   const keys = matches ? wanted : []
 
-  const priorSavings = await client.transaction.count({ where: { customerId, type: 'saving' } })
+  // The customer's own first deposit pays their agent's registration reward; savings the agent paid in don't count.
+  const priorSavings = await client.transaction.count({ where: { customerId, type: 'saving', paidByAgentId: null } })
 
   let bought = 0
   try {

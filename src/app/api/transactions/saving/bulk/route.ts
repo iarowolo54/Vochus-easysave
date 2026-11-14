@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { genTxnRef } from '@/lib/ref'
 import { AGENT_PAID_ACTION, agentPaidAuditDetails } from '@/lib/agent-payment'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
@@ -107,10 +108,11 @@ export async function POST(req: NextRequest) {
   const totalAmt = money(dailyAmt * numDays)
 
   const priorSavings = await prisma.transaction.count({ where: { customerId: customer.id, type: 'saving' } })
-  const txnCount = await prisma.transaction.count()
 
   const dates = (rawDates as string[]).map(s => new Date(s + 'T12:00:00'))
-  const batchRef = `TXN-${String(9000 + txnCount + 1)}`
+  // Random, not a running count: a count repeats an existing ref once any transaction is deleted. The batch is its first day.
+  const refs = rawDates.map(() => genTxnRef('TXN'))
+  const batchRef = refs[0]
   // Offline days are stamped with their own date, so each must be a day the plan runs (never past its end).
   if (!online && dates.some(d => !depositDayInPlan(plan, d))) return NextResponse.json({ error: outsidePlanMessage(plan) }, { status: 400 })
 
@@ -135,7 +137,7 @@ export async function POST(req: NextRequest) {
       let feeSum = 0
       for (let i = 0; i < dates.length; i++) {
         const walletAfter = money(agent.walletBalance - dailyAmt * (i + 1))
-        const ref = `TXN-${String(9000 + txnCount + i + 1)}`
+        const ref = refs[i]
         // The platform fee comes out of the earliest days first, one deposit at a time, so a daily plan's first day is taken once.
         const fee = await depositFeeOps(tx, { planId: plan.id, agentId: agent.id, customerId: customer.id, amount: dailyAmt, ref })
         feeSum += fee
@@ -201,7 +203,8 @@ export async function POST(req: NextRequest) {
     actorName: agent.name,
   })
 
-  if (priorSavings === 0) {
+  // An agent paying into an online customer's plan must not unlock the agent's own registration reward.
+  if (priorSavings === 0 && !online) {
     creditRegistrationReward(customer).catch(() => {})
   }
 

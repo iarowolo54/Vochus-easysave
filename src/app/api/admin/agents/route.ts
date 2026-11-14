@@ -97,8 +97,10 @@ export async function POST(req: NextRequest) {
   const conflict = await findIdentityConflict(prisma, { phone, email })
   if (conflict) return identityConflictResponse(conflict)
 
-  const count = await prisma.agent.count()
-  const agentId = `AGT-${String(count + 1).padStart(5, '0')}`
+  // Highest existing number + 1 (as agent onboarding does), never a count: a count reuses a number once any agent is deleted.
+  const maxNum = (await prisma.agent.findMany({ select: { agentId: true } }))
+    .reduce((max, a) => { const n = parseInt(a.agentId.replace('AGT-', ''), 10); return Number.isNaN(n) ? max : Math.max(max, n) }, 0)
+  const agentId = `AGT-${String(maxNum + 1).padStart(5, '0')}`
   const hashed = await bcrypt.hash(password, 10)
   const verifyToken = email ? randomBytes(32).toString('hex') : null
 

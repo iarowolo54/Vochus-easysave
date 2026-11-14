@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { genTxnRef } from '@/lib/ref'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
@@ -27,8 +28,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
   const rates = await getCommissionRates(prisma)
   const { agent: agentComm, platform: platformRevenue } = loanCommissionAmounts(rates, loan.principal, loan.interestAmount)
 
-  const txnCount = await prisma.transaction.count()
-  const ref = `DSB-${String(txnCount + 1).padStart(5, '0')}`
+  const ref = genTxnRef('DSB')
   const walletAfter = agent.walletBalance - loan.principal
 
   try {

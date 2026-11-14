@@ -26,3 +26,14 @@ test('savingsReceived: an agent-paid deposit says who paid it in', () => {
   const [plain] = notifications.savingsReceived({ ref: 'TXN-2', customerId: 'c1', agentId: 'a1', customerName: 'Y S', planGoal: 'G', amount: 500, onlineTransfer: false })
   assert.equal(plain.body, undefined)
 })
+
+import { readFileSync } from 'node:fs'
+
+test('an agent-paid first saving never pays the agent the registration reward; the customer’s own first deposit still does', () => {
+  const single = readFileSync('src/app/api/transactions/saving/route.ts', 'utf8')
+  const bulk = readFileSync('src/app/api/transactions/saving/bulk/route.ts', 'utf8')
+  const settle = readFileSync('src/lib/customer-settle.ts', 'utf8')
+  assert.match(single, /if \(priorSavings === 0 && !agentPaid\)/)
+  assert.match(bulk, /if \(priorSavings === 0 && !online\)/)
+  assert.match(settle, /type: 'saving', paidByAgentId: null/)
+})

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { genTxnRef } from '@/lib/ref'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
@@ -47,8 +48,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       if (amt > outstanding) throw new RepayRefused('Amount exceeds outstanding balance')
       fullyRepaid = money(totalRepaid + amt) >= money(current.totalAmount)
 
-      const txnCount = await tx.transaction.count()
-      ref = `RPY-${String(txnCount + 1).padStart(5, '0')}`
+      ref = genTxnRef('RPY')
 
       await tx.loanRepayment.create({ data: { loanId: current.id, amount: amt, method } })
       await tx.transaction.create({

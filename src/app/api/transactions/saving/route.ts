@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { genTxnRef } from '@/lib/ref'
 import { AGENT_PAID_ACTION, agentPaidAuditDetails } from '@/lib/agent-payment'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
@@ -87,8 +88,8 @@ export async function POST(req: NextRequest) {
     throw e
   }
 
-  const txnCount = await prisma.transaction.count()
-  const ref = `TXN-${String(9000 + txnCount + 1)}`
+  // Random, not a running count: a count repeats an existing ref once any transaction is deleted.
+  const ref = genTxnRef('TXN')
 
   // Weekly and monthly cash plans keep the one-saving-a-day rule until whole-period Bulk Savings goes live.
   const cashPeriod = plan.source !== 'self' && (dates.cadence === 'weekly' || dates.cadence === 'monthly')
@@ -139,7 +140,8 @@ export async function POST(req: NextRequest) {
     ? { action: AGENT_PAID_ACTION, entity: 'Transaction', entityId: txn.id, details: agentPaidAuditDetails({ agentName: agent.name, agentCode: agent.agentId, amount: rounded, customerName: `${customer.firstName} ${customer.lastName}`, planGoal: dates.goal, ref }), actorId: agent.id, actorName: agent.name }
     : { action: 'saving', entity: 'Transaction', entityId: txn.id, details: `₦${rounded} saving for ${customer.firstName} ${customer.lastName} (${ref}) via ${method ?? 'Cash'}`, actorId: agent.id, actorName: agent.name })
 
-  if (priorSavings === 0) {
+  // An agent paying into an online customer's plan must not unlock the agent's own registration reward.
+  if (priorSavings === 0 && !agentPaid) {
     creditRegistrationReward(customer).catch(() => {})
   }
 

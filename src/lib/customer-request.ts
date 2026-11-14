@@ -1,6 +1,7 @@
 // Agent registration of cash savers: a submission is a request, and only the super admin's approval makes it a customer.
 // Everything that decides a request lives here so the agent and admin routes can't drift apart.
 import type { PrismaClient } from '@prisma/client'
+import { genTxnRef } from '@/lib/ref'
 import { validateDob, validateGender, validateLga, validateState } from '@/lib/customer-fields'
 import { BAD_CADENCE, flexiblePlanData, isFlexible, parseCadence, type FlexibleSettings, type PlanCadence } from '@/lib/flexible-savings'
 import { getFlexibleSettings } from '@/lib/flexible-savings'
@@ -254,9 +255,8 @@ export async function approveCustomerRequest(client: PrismaClient, input: { id: 
         firstPlanId ||= plan.id
       }
 
-      const nextRef = async (prefix: string) => `${prefix}-${String(await tx.transaction.count() + 1).padStart(5, '0')}`
-      await tx.transaction.create({ data: { ref: await nextRef('ENR'), agentId: r.agentId, customerId: customer.id, planId: firstPlanId, type: 'enrolment', amount: 0, method: 'Cash', status: 'Done' } })
-      await tx.transaction.create({ data: { ref: await nextRef('REG'), agentId: r.agentId, customerId: customer.id, planId: firstPlanId, type: 'registration', amount: fee, method: 'Wallet', status: 'Done' } })
+      await tx.transaction.create({ data: { ref: genTxnRef('ENR'), agentId: r.agentId, customerId: customer.id, planId: firstPlanId, type: 'enrolment', amount: 0, method: 'Cash', status: 'Done' } })
+      await tx.transaction.create({ data: { ref: genTxnRef('REG'), agentId: r.agentId, customerId: customer.id, planId: firstPlanId, type: 'registration', amount: fee, method: 'Wallet', status: 'Done' } })
 
       const cardCost = money(Math.min(REGISTRATION_CARD_COST, fee))
       const revenue = money(fee - cardCost)

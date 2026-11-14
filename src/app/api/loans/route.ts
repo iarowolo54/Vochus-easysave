@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { genTxnRef } from '@/lib/ref'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
@@ -100,8 +101,7 @@ export async function POST(req: NextRequest) {
   const dueDate = new Date()
   dueDate.setDate(dueDate.getDate() + days)
 
-  const loanCount = await prisma.loan.count()
-  const ref = `LNR-${String(800 + loanCount + 1).padStart(5, '0')}`
+  const ref = genTxnRef('LNR')
 
   const loan = await prisma.loan.create({
     data: {

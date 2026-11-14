@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { genTxnRef } from '@/lib/ref'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
@@ -66,8 +67,8 @@ export async function POST(req: NextRequest) {
   })
   if (pendingExisting > 0) return NextResponse.json({ error: 'You already have a pending withdrawal. Wait for admin decision before requesting another.' }, { status: 400 })
 
-  const count = await prisma.agentWithdrawal.count()
-  const ref = `AWD-${String(count + 1).padStart(5, '0')}`
+  // Random, not a running count: a count repeats an existing ref once any row is deleted.
+  const ref = genTxnRef('AWD')
 
   let record
   try {
