@@ -135,7 +135,7 @@ function EnrollContent() {
   const [emailVerified, setEmailVerified] = useState(false)
   /** When the email was confirmed; the server accepts a confirmation for 30 minutes, so an older one is asked again. */
   const [verifiedAt, setVerifiedAt] = useState(0)
-  /** The email the server says already has an account (checked on Send code; the server still guards it). */
+  /** The email that already has an account, told only once its code is entered (the server still guards it). */
   const [emailTaken, setEmailTaken] = useState<string | null>(null)
   /** The last step was refused because the phone or email already has an account: offer to sign in. */
   const [accountExists, setAccountExists] = useState(false)
@@ -191,21 +191,6 @@ function EnrollContent() {
     finally { setPhoneChecking(false) }
   }
 
-  /** Asks the server whether this email already has an account. Returns false only when it's known to be taken. */
-  async function checkEmail(e: string): Promise<boolean> {
-    if (emailTaken === e) return false
-    setPhoneChecking(true)
-    try {
-      const r = await fetch('/api/customer/email-available', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: e.trim() }),
-      })
-      if (!r.ok) return true // Rate-limited or down: don't block here; the server checks again at the end.
-      const d = await r.json()
-      if (d.available === false) { setEmailTaken(e); return false }
-      return true
-    } catch { return true }
-    finally { setPhoneChecking(false) }
-  }
 
   // ── Draft: a refresh, a closed app or a dropped connection shouldn't lose what was typed ──
   // Kept on this device for a day. The password, BVN and photo are never stored.
@@ -392,7 +377,10 @@ function EnrollContent() {
         body: JSON.stringify({ email, code: otpCode }),
       })
       const d = await res.json()
-      if (d.verified) {
+      if (d.verified && d.taken) {
+        // The address is theirs but already has an account: offer to sign in rather than carry on.
+        setEmailTaken(email); setShowMissing(true); setOtpScreen(false); setOtpCode('')
+      } else if (d.verified) {
         setEmailVerified(true)
         setVerifiedAt(Date.now())
         setOtpScreen(false)
@@ -764,7 +752,6 @@ function EnrollContent() {
                 if (!screenOk()) return
                 if (!(await checkPhone(phone))) { setShowMissing(true); return }
                 if (emailVerified) { advance(); return }
-                if (!(await checkEmail(email))) { setShowMissing(true); return }
                 sendEmailCode()
               }, otpLoading || phoneChecking)}
             </div>

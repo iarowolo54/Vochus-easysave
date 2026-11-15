@@ -3,6 +3,7 @@ import { timingSafeEqual } from 'node:crypto'
 import { prisma } from '@/lib/prisma'
 import { enrolRateLimiter, clientIp } from '@/lib/rate-limit'
 import { normalizeEmail } from '@/lib/email'
+import { findIdentityConflict } from '@/lib/identity'
 
 const MAX_ATTEMPTS = 5
 
@@ -53,5 +54,9 @@ export async function POST(req: NextRequest) {
   }
 
   await prisma.emailOTP.update({ where: { id: otp.id }, data: { verified: true } })
-  return NextResponse.json({ verified: true })
+  // Only now, with the mailbox proven, say whether the address already has an account, so the sign-up page can
+  // offer "Sign in instead" before the rest of the form (and nobody can use this to test other people's emails).
+  // Enrolment still refuses a taken email itself.
+  const taken = (await findIdentityConflict(prisma, { email })) === 'email'
+  return NextResponse.json({ verified: true, ...(taken ? { taken: true } : {}) })
 }

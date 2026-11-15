@@ -82,6 +82,16 @@ test("another agent's link is refused as before", async () => {
   assert.equal(res.headers.get('set-cookie'), null)
 })
 
+test('entering the code for an email that has an account says it is taken; only then', async () => {
+  const { POST: verify } = await import('../src/app/api/customer/email-otp/verify/route')
+  await prisma.emailOTP.create({ data: { email, code: '123456', verified: false, expiresAt: new Date(Date.now() + 10 * 60_000) } })
+  const wrong = await (await verify(req({ email, code: '654321' }) as any)).json()
+  assert.equal(wrong.taken, undefined, 'a wrong code tells nothing')
+  const right = await (await verify(req({ email, code: '123456' }) as any)).json()
+  assert.equal(right.verified, true)
+  assert.equal(right.taken, true)
+})
+
 test('an expired email confirmation says so with a code the page can act on', async () => {
   const res = await POST(req(body({ email: `fresh_${rid}@example.com`, phone: '0805' + String(Math.floor(1000000 + Math.random() * 9000000)) })))
   assert.equal(res.status, 400)

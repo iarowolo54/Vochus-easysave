@@ -15,13 +15,15 @@ import { resolvePlanStartDate, maturityFrom } from '@/lib/saving-plan'
 import { BAD_CADENCE, flexiblePlanData, getFlexibleSettings, isFlexible, parseCadence, shortDate, type FlexiblePlanData } from '@/lib/flexible-savings'
 import { validatePhoto } from '@/lib/photo'
 import { enrolRateLimiter, clientIp } from '@/lib/rate-limit'
-import { isPhoneLocked, recordLoginFailure } from '@/lib/login-attempt'
+import { checkLoginThrottle, recordLoginFailure, clearLoginThrottle } from '@/lib/login-attempt'
+import { sendLoginAlert } from '@/lib/login-alert'
+import { alertEmailFor } from '@/lib/email-alerts'
 import { validateDob, validateGender, validateState, validateLga } from '@/lib/customer-fields'
 
 const RESUME_WINDOW_MS = 24 * 60 * 60 * 1000
 
 /** The account this exact sign-up already created, when the password proves it's theirs; otherwise null. */
-async function resumeFinishedSignUp(input: { email: string; phone: string; password: string; agentDbId: string }) {
+async function resumeFinishedSignUp(input: { email: string; phone: string; password: string; agentDbId: string; ip: string }) {
   const existing = await prisma.customer.findFirst({
     where: {
       email: normalizeEmail(input.email),
@@ -31,20 +33,25 @@ async function resumeFinishedSignUp(input: { email: string; phone: string; passw
     },
     select: {
       id: true, customerId: true, firstName: true, lastName: true, phone: true, password: true, status: true,
-      agentId: true, tokenVersion: true,
+      agentId: true, tokenVersion: true, email: true, emailVerifiedAt: true, emailAlertsOn: true,
       savingsPlans: { take: 1 },
     },
   })
   if (!existing?.password) return null
   if (normalizePhone(existing.phone) !== normalizePhone(input.phone)) return null
   if (existing.status && existing.status.toLowerCase() !== 'active') return null
-  // This is a sign-in, so it obeys the sign-in lock: a locked account isn't opened here, and a wrong password
-  // counts towards the lock exactly as on the sign-in screen (the caller still answers as if no account matched).
-  if (await isPhoneLocked(existing.phone).catch(() => false)) return null
+  // This is a sign-in, so it goes through the sign-in screen's gates: a locked account or a throttled address isn't
+  // opened here, a wrong password counts towards the lock (account and address), and a right one clears it and
+  // sends the usual sign-in alert. The caller still answers a refusal as if no account matched.
+  const ip = input.ip === 'unknown' ? null : input.ip
+  const gate = await checkLoginThrottle({ phone: existing.phone, ip }).catch(() => null)
+  if (!gate || gate.blocked) return null
   if (!(await bcrypt.compare(input.password, existing.password))) {
-    await recordLoginFailure({ phone: existing.phone }).catch(() => console.error('[enroll] could not record a failed resume'))
+    await recordLoginFailure({ phone: existing.phone, ip }).catch(() => console.error('[enroll] could not record a failed resume'))
     return null
   }
+  await clearLoginThrottle({ phone: existing.phone }).catch(() => console.error('[enroll] could not clear the sign-in throttle'))
+  void sendLoginAlert({ email: alertEmailFor(existing), name: `${existing.firstName} ${existing.lastName}` }, 'password')
   return existing
 }
 
@@ -157,7 +164,7 @@ export async function POST(req: NextRequest) {
   // never showed "You're all set"): the same email and phone, under the same agent, within a day, with the
   // password they just chose. Sign them in and answer as the first try did, instead of "already registered".
   // A wrong password falls through to the normal checks below, so this answers nothing an attacker can use.
-  const resumed = await resumeFinishedSignUp({ email: String(email), phone: String(phone), password: String(password), agentDbId })
+  const resumed = await resumeFinishedSignUp({ email: String(email), phone: String(phone), password: String(password), agentDbId, ip: clientIp(req) })
   if (resumed) {
     logAudit({
       action: 'customer_self_enrol_resumed',
