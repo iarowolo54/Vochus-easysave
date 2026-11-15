@@ -115,7 +115,6 @@ export default function CustomerDashboard() {
   const [reopenFor, setReopenFor] = useState<{ id: string; name: string; kind: 'rollover' | 'again'; rollover?: { balance: number; periodDays: number } } | null>(null)
 
   // A collected plan starts again only after the customer types the code sent to them; then the normal save screen takes over.
-  function saveAgain(planId: string, name: string) { setReopenFor({ id: planId, name, kind: 'again' }) }
   // A matured plan that wasn't collected rolls over: the money stays and a new term of the same length starts.
   function rollOver(p: { id: string; goal: string; balance: number; periodDays: number }) {
     setReopenFor({ id: p.id, name: p.goal, kind: 'rollover', rollover: { balance: p.balance, periodDays: p.periodDays } })
@@ -443,8 +442,6 @@ export default function CustomerDashboard() {
                   icon="plan"
                   title={p.goal}
                   sub={`${isFlexible(p.cadence) ? 'Flexible' : `${formatNaira(p.dailyAmount)} a ${p.cadence === 'weekly' ? 'week' : p.cadence === 'monthly' ? 'month' : 'day'}`} · redeemed`}
-                  value={offline ? undefined : 'Save again'}
-                  onClick={offline ? undefined : () => saveAgain(p.id, p.goal)}
                 />
               ))}
             </section>

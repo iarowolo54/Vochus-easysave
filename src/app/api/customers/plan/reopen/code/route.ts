@@ -3,7 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { limitByIp } from '@/lib/password-reset'
-import { checkReopenable, REOPEN_COLLECTING, REOPEN_NOT_FINISHED, REOPEN_NOT_FOUND } from '@/lib/plan-reopen'
+import { checkReopenable, REOPEN_COLLECTING, REOPEN_NOT_FINISHED, REOPEN_NOT_FOUND, REOPEN_REDEEMED } from '@/lib/plan-reopen'
 import { requestReopenCode, REOPEN_CODE_NOT_SENT, REOPEN_CODE_WAIT } from '@/lib/plan-reopen-code'
 
 // Texts the customer a code. The agent types it in after the customer reads it out, which proves they agreed.
@@ -28,6 +28,7 @@ export async function POST(req: NextRequest) {
   const check = await checkReopenable(prisma, { planId, customerId: customer.id })
   if (!check.ok) {
     if (check.reason === 'not_found') return NextResponse.json({ error: REOPEN_NOT_FOUND }, { status: 404 })
+    if (check.reason === 'redeemed') return NextResponse.json({ error: REOPEN_REDEEMED }, { status: 409 })
     if (check.reason === 'collecting') return NextResponse.json({ error: REOPEN_COLLECTING }, { status: 409 })
     return NextResponse.json({ error: REOPEN_NOT_FINISHED }, { status: 409 })
   }

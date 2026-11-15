@@ -227,7 +227,7 @@ function SavingsContent() {
     return () => clearTimeout(t)
   }, [search, selected])
 
-  // Only plans still open for saving (Active and before their end date). Ended ones are offered as Save again above.
+  // Only plans still open for saving (Active and before their end date). Ended ones are offered as Roll over above.
   const activePlans = (selected?.savingsPlans ?? []).filter(p => isOpenForSaving(p))
   const plan = activePlans.find(p => p.id === planId) ?? null
   /** Flexible plan: any amount the agent types, as often as the customer pays; no Bulk Savings, no one-a-day rule. */
@@ -503,8 +503,8 @@ function SavingsContent() {
   /** Every plan has ended (or been collected) but the customer isn't on the new-plan form: nothing to save into. */
   const nothingOpen = !!selected && !redeemed && activePlans.length === 0
   const finishedPlans = (selected?.savingsPlans ?? [])
-    // An Ajo pot is collected, never saved into again.
-    .filter(p => p.cadence !== 'ajo' && (p.status === 'Redeemed' || (p.status === 'Active' && p.maturityDate !== null && new Date(p.maturityDate).getTime() <= Date.now())))
+    // Ended but not yet redeemed: these can be rolled over. A redeemed plan (or a collected Ajo pot) is closed for good.
+    .filter(p => p.cadence !== 'ajo' && p.status === 'Active' && p.maturityDate !== null && new Date(p.maturityDate).getTime() <= Date.now())
     .slice(0, 3)
   const bulkTotal = (onlineCal?.perSlot ?? plan?.dailyAmount ?? 0) * selectedDates.length
   const bulkUnit = onlineCal?.weekly ? 'week' : 'day'
@@ -674,13 +674,11 @@ function SavingsContent() {
                     <div key={p.id} className="ui-row">
                       <span className="ui-row-main">
                         <span className="ui-row-title ui-block">{p.goal}</span>
-                        <span className="ui-row-sub ui-block">{isFlexible(p.cadence) ? 'Flexible' : `${formatNaira(perPayment(p), { minor: false })} a ${planUnit(p)}`} · {p.status === 'Redeemed' ? 'redeemed' : (p.maturityDate ? `ended ${formatDate(p.maturityDate)}` : 'ended')}</span>
+                        <span className="ui-row-sub ui-block">{isFlexible(p.cadence) ? 'Flexible' : `${formatNaira(perPayment(p), { minor: false })} a ${planUnit(p)}`} · {p.maturityDate ? `ended ${formatDate(p.maturityDate)}` : 'ended'}</span>
                       </span>
                       <button type="button" className="ui-btn ui-btn--secondary" disabled={loading}
-                        onClick={() => setReopenFor(p.status === 'Redeemed'
-                          ? { id: p.id, name: p.goal, kind: 'again' }
-                          : { id: p.id, name: p.goal, kind: 'rollover', rollover: { balance: p.balance, periodDays: p.periodDays } })}>
-                        {p.status === 'Redeemed' ? 'Save again' : 'Roll over'}
+                        onClick={() => setReopenFor({ id: p.id, name: p.goal, kind: 'rollover', rollover: { balance: p.balance, periodDays: p.periodDays } })}>
+                        Roll over
                       </button>
                     </div>
                   ))}
@@ -697,8 +695,8 @@ function SavingsContent() {
                 <section className="ui-card">
                   <EmptyState icon="plan" title="No plan open for saving"
                     text={onlineSel
-                      ? (finishedPlans.length > 0 ? 'Their plan has ended. Tap Save again above to keep saving into it. They open new plans in the app.' : 'This customer saves on the app. They open their own plans.')
-                      : finishedPlans.length > 0 ? 'Their plan has ended. Tap Save again above to keep saving into it, or start a new plan.' : 'Start a new plan for them to keep saving.'}
+                      ? (finishedPlans.length > 0 ? 'Their plan has ended. Tap Roll over above to keep saving into it. They open new plans in the app.' : 'This customer saves on the app. They open their own plans.')
+                      : finishedPlans.length > 0 ? 'Their plan has ended. Tap Roll over above to keep saving into it, or start a new plan.' : 'Start a new plan for them to keep saving.'}
                     action={onlineSel ? undefined : <Link href={`/dashboard/add-plan?cid=${encodeURIComponent(selected.customerId)}`} className="ui-btn ui-btn--secondary">Start a new plan</Link>} />
                 </section>
               ) : (

@@ -47,7 +47,7 @@ export async function POST(req: NextRequest) {
   // instead of money silently landing on "the newest plan".
   const selected = await selectActivePlan(prisma, customer.id, planId)
   if ('error' in selected) {
-    if (selected.error === 'none') return NextResponse.json({ error: 'This customer has no plan open for saving. If their plan has ended, use Save again or start a new plan.' }, { status: 400 })
+    if (selected.error === 'none') return NextResponse.json({ error: 'This customer has no plan open for saving. If their plan has ended, roll it over or start a new plan.' }, { status: 400 })
     if (selected.error === 'not_found') return NextResponse.json({ error: 'Plan not found for this customer' }, { status: 404 })
     return NextResponse.json({ error: 'This customer has more than one active plan — choose which plan to save into' }, { status: 400 })
   }

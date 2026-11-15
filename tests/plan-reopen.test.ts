@@ -1,7 +1,7 @@
 // Unit test: reopening a finished plan (fake client, no database).
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { reopenPlan } from '../src/lib/plan-reopen'
+import { checkReopenable, reopenPlan } from '../src/lib/plan-reopen'
 
 const NOW = new Date('2026-11-04T10:00:00Z')
 
@@ -17,15 +17,11 @@ function fake(plan: { status: string; periodDays: number } | null, open = false)
   return { client: client as never, updates }
 }
 
-test('a redeemed plan goes back to Active as the same plan', async () => {
+test('a redeemed plan is never reopened: the customer starts a new plan', async () => {
   const { client, updates } = fake({ status: 'Redeemed', periodDays: 30 })
-  assert.deepEqual(await reopenPlan(client, { planId: 'p1', customerId: 'c1' }, NOW), { ok: true, planId: 'p1' })
-  const d = updates[0].data
-  assert.equal(d.status, 'Active')
-  assert.equal('startDate' in d || 'feeCollected' in d, false)
-  assert.equal((d.cycleStartedAt as Date).getTime(), NOW.getTime())
-  assert.equal((d.maturityDate as Date).getTime() - NOW.getTime(), 30 * 86_400_000)
-  assert.equal(updates[0].where.status, 'Redeemed')
+  assert.deepEqual(await reopenPlan(client, { planId: 'p1', customerId: 'c1' }, NOW), { ok: false, reason: 'redeemed' })
+  assert.deepEqual(await checkReopenable(client, { planId: 'p1', customerId: 'c1' }, NOW), { ok: false, reason: 'redeemed' })
+  assert.equal(updates.length, 0)
 })
 
 test('a matured plan keeps its money, start date and interest', async () => {
@@ -37,7 +33,7 @@ test('a matured plan keeps its money, start date and interest', async () => {
 })
 
 test('refuses while a collection is in progress, and for plans that are not the customer’s', async () => {
-  const busy = fake({ status: 'Redeemed', periodDays: 30 }, true)
+  const busy = fake({ status: 'Active', periodDays: 30 }, true)
   assert.deepEqual(await reopenPlan(busy.client, { planId: 'p1', customerId: 'c1' }, NOW), { ok: false, reason: 'collecting' })
   assert.equal(busy.updates.length, 0)
   const none = fake(null)

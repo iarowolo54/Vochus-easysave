@@ -5,10 +5,11 @@ import { asCustomerType, planReopenBlock } from '@/lib/customer-type'
 import { limitByIp } from '@/lib/password-reset'
 import { logAudit } from '@/lib/audit'
 import { confirmReopenCode, REOPEN_CODE_INVALID } from '@/lib/plan-reopen-code'
-import { checkReopenable, reopenPlan, REOPEN_COLLECTING, REOPEN_NOT_FINISHED, REOPEN_NOT_FOUND } from '@/lib/plan-reopen'
+import { checkReopenable, reopenPlan, REOPEN_COLLECTING, REOPEN_NOT_FINISHED, REOPEN_NOT_FOUND, REOPEN_REDEEMED, type ReopenFailure } from '@/lib/plan-reopen'
 
-function failure(reason: 'not_found' | 'not_finished' | 'collecting') {
+function failure(reason: ReopenFailure) {
   if (reason === 'not_found') return NextResponse.json({ error: REOPEN_NOT_FOUND }, { status: 404 })
+  if (reason === 'redeemed') return NextResponse.json({ error: REOPEN_REDEEMED }, { status: 409 })
   if (reason === 'collecting') return NextResponse.json({ error: REOPEN_COLLECTING }, { status: 409 })
   return NextResponse.json({ error: REOPEN_NOT_FINISHED }, { status: 409 })
 }

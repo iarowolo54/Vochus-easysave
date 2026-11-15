@@ -130,7 +130,7 @@ function SavePageInner() {
   useEffect(() => {
     if (!data) return
     const all = data.plans ?? (data.plan ? [data.plan] : [])
-    // Only plans still open for saving can be paid into; an ended plan is saved into again from Home (Save again).
+    // Only plans still open for saving can be paid into; an ended plan is rolled over from Home; a redeemed one is closed for good.
     const open = all.filter(p => isOpenForSaving(p))
     setPlans(open)
     setSelectedPlanId(id => (id && open.some(p => p.id === id) ? id : open[0]?.id ?? null))

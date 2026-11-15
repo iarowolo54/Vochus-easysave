@@ -272,7 +272,7 @@ function CalendarPage() {
         </div>
       )}
 
-      {/* Only while the plan is still running: an ended plan can't be saved into (Save again on Record saving reopens it). */}
+      {/* Only while the plan is still running: an ended plan can't be saved into (Roll over on Record saving restarts it). */}
       {plan && !flexCal && (endKey === null || endKey > Date.now()) && (
         <Link href={`/dashboard/savings?cid=${encodeURIComponent(selected.customerId)}&bulk=1`}
           className="ui-btn ui-btn--secondary ui-btn--block ag-cal-catchup">
