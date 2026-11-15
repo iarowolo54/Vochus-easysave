@@ -133,6 +133,14 @@ function EnrollContent() {
   const [otpError, setOtpError] = useState('')
   const [otpLoading, setOtpLoading] = useState(false)
   const [emailVerified, setEmailVerified] = useState(false)
+  /** When the email was confirmed; the server accepts a confirmation for 30 minutes, so an older one is asked again. */
+  const [verifiedAt, setVerifiedAt] = useState(0)
+  /** The email the server says already has an account (checked on Send code; the server still guards it). */
+  const [emailTaken, setEmailTaken] = useState<string | null>(null)
+  /** The last step was refused because the phone or email already has an account: offer to sign in. */
+  const [accountExists, setAccountExists] = useState(false)
+  /** A resumed sign-up whose email had to be confirmed again: the screen to carry on from afterwards. */
+  const [resumeTo, setResumeTo] = useState<Screen | null>(null)
 
   const [terms, setTerms] = useState(false)
 
@@ -183,6 +191,22 @@ function EnrollContent() {
     finally { setPhoneChecking(false) }
   }
 
+  /** Asks the server whether this email already has an account. Returns false only when it's known to be taken. */
+  async function checkEmail(e: string): Promise<boolean> {
+    if (emailTaken === e) return false
+    setPhoneChecking(true)
+    try {
+      const r = await fetch('/api/customer/email-available', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: e.trim() }),
+      })
+      if (!r.ok) return true // Rate-limited or down: don't block here; the server checks again at the end.
+      const d = await r.json()
+      if (d.available === false) { setEmailTaken(e); return false }
+      return true
+    } catch { return true }
+    finally { setPhoneChecking(false) }
+  }
+
   // ── Draft: a refresh, a closed app or a dropped connection shouldn't lose what was typed ──
   // Kept on this device for a day. The password, BVN and photo are never stored.
   const [resume, setResume] = useState<Draft | null>(null)
@@ -199,15 +223,17 @@ function EnrollContent() {
     if (!draftReady.current || result || screen === 'intro') return
     const t = setTimeout(() => writeDraft({
       v: 1, savedAt: Date.now(), aid, ref, screen,
-      firstName, lastName, phone, email, verifiedEmail: emailVerified ? email : '', dob, gender, address, state, lga,
+      firstName, lastName, phone, email, verifiedEmail: emailVerified ? email : '', verifiedAt: emailVerified ? verifiedAt : 0, dob, gender, address, state, lga,
       nokName, nokRelation, nokPhone, plans, plan: { daily, period, goal, cadence, start: planStart, ...(flexible ? { flexEnd } : {}) }, startGoal,
     }), 400)
     return () => clearTimeout(t)
-  }, [aid, ref, screen, firstName, lastName, phone, email, emailVerified, dob, gender, address, state, lga, nokName, nokRelation, nokPhone, plans, daily, period, goal, cadence, flexible, flexEnd, startGoal, result])
+  }, [aid, ref, screen, firstName, lastName, phone, email, emailVerified, verifiedAt, dob, gender, address, state, lga, nokName, nokRelation, nokPhone, plans, daily, period, goal, cadence, flexible, flexEnd, startGoal, result])
 
   function continueDraft(d: Draft) {
     setFirstName(d.firstName); setLastName(d.lastName); setPhone(d.phone); setEmail(d.email)
-    setEmailVerified(!!d.verifiedEmail && d.verifiedEmail === d.email)
+    // A confirmation older than the server accepts would only fail at the last step, so ask for a new code instead.
+    const stillConfirmed = !!d.verifiedEmail && d.verifiedEmail === d.email && !!d.verifiedAt && Date.now() - d.verifiedAt < CONFIRM_FRESH_MS
+    setEmailVerified(stillConfirmed); setVerifiedAt(stillConfirmed ? d.verifiedAt ?? 0 : 0)
     setDob(d.dob); setGender(d.gender === 'Female' || d.gender === 'Male' ? d.gender : ''); setAddress(d.address); setState(d.state ?? ''); setLga(d.lga ?? '')
     setNokName(d.nokName); setNokRelation(d.nokRelation); setNokPhone(d.nokPhone)
     setPlans(d.plans); loadPlan(d.plan); setStartGoal(d.startGoal ?? '')
@@ -216,7 +242,10 @@ function EnrollContent() {
     const at = SCREENS.indexOf(d.screen)
     // A draft saved before date of birth was required may lack one: ask for it first.
     if (!d.dob && at > SCREENS.indexOf('home')) { go('home'); return }
-    go(at > SCREENS.indexOf('password') ? 'password' : d.screen)
+    const target: Screen = at > SCREENS.indexOf('password') ? 'password' : d.screen
+    // Confirm the email again first, then carry on where they left off.
+    if (!stillConfirmed && at > SCREENS.indexOf('contact')) { setResumeTo(target); go('contact'); return }
+    go(target)
   }
 
   function startAgain() {
@@ -241,6 +270,7 @@ function EnrollContent() {
   /** Forward from a details or photo screen: back to Review when that's where the edit started. */
   function advance() {
     if (returnToReview) { setReturnToReview(false); go('review'); return }
+    if (resumeTo) { const t = resumeTo; setResumeTo(null); go(t); return }
     go(SCREENS[SCREENS.indexOf(screen) + 1])
   }
 
@@ -301,7 +331,8 @@ function EnrollContent() {
     fn: firstName.trim() ? '' : 'Enter your first name',
     ln: lastName.trim() ? '' : 'Enter your last name',
     ph: phoneError(phone, 'your') || (phoneTaken === phone ? 'This number already has an account.' : ''),
-    em: !email.trim() ? 'Enter your email address' : /^\S+@\S+\.\S+$/.test(email.trim()) ? '' : 'Check your email. It should look like name@example.com',
+    em: !email.trim() ? 'Enter your email address' : !/^\S+@\S+\.\S+$/.test(email.trim()) ? 'Check your email. It should look like name@example.com'
+      : emailTaken === email ? 'This email already has an account.' : '',
     addr: !address.trim() ? 'Enter your home address' : address.trim().length < 8 ? 'Add more detail, like the street and area' : '',
     st: state ? '' : 'Choose your state',
     lga: !state ? 'Choose your state first' : lga ? '' : 'Choose your local government',
@@ -363,6 +394,7 @@ function EnrollContent() {
       const d = await res.json()
       if (d.verified) {
         setEmailVerified(true)
+        setVerifiedAt(Date.now())
         setOtpScreen(false)
         setOtpCode('')
         advance()
@@ -453,7 +485,7 @@ function EnrollContent() {
   async function createAccount() {
     if (!terms) { setError('Tick the box to agree to the terms.'); return }
     if (plans.length === 0) { addPlan(); return }
-    setLoading(true); setError('')
+    setLoading(true); setError(''); setAccountExists(false)
     try {
       const first = plans[0]
       const res = await fetch('/api/customer/enroll', {
@@ -474,7 +506,17 @@ function EnrollContent() {
         }),
       })
       const data = await res.json()
-      if (!res.ok) { setError(data.error ?? 'Your account couldn’t be created. Please try again.'); return }
+      if (!res.ok) {
+        if (data.code === 'email_unconfirmed') {
+          // The confirmation ran out while they were filling in the rest: confirm again, then come back here.
+          setEmailVerified(false); setVerifiedAt(0); setReturnToReview(true); go('contact')
+          setError('Your email confirmation has run out. Send a new code to finish opening your account.')
+          return
+        }
+        setAccountExists(res.status === 409)
+        setError(data.error ?? 'Your account couldn’t be created. Please try again.')
+        return
+      }
       clearDraft()
       setResult(data)
       window.scrollTo({ top: 0 })
@@ -716,11 +758,14 @@ function EnrollContent() {
               <input id="em" className="ag-tf-input" type="email" inputMode="email" autoComplete="email" autoCapitalize="none" placeholder="you@email.com"
                 value={email} {...v('em')} onChange={e => { setEmail(e.target.value); setEmailVerified(false) }} />
             </Field>
+            {emailTaken === email && <p className="cu-note cu-taken"><a className="ui-link" href="/customer/login">Sign in instead</a> or use a different email.</p>}
             <div className="cu-actions">
               {cta(otpLoading || phoneChecking ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> {phoneChecking ? 'Checking…' : 'Sending code…'}</> : emailVerified ? 'Continue' : 'Send code', async () => {
                 if (!screenOk()) return
                 if (!(await checkPhone(phone))) { setShowMissing(true); return }
-                if (emailVerified) advance(); else sendEmailCode()
+                if (emailVerified) { advance(); return }
+                if (!(await checkEmail(email))) { setShowMissing(true); return }
+                sendEmailCode()
               }, otpLoading || phoneChecking)}
             </div>
           </>
@@ -1032,6 +1077,7 @@ function EnrollContent() {
             <div className="cu-actions">
               {cta(loading ? <><span className="ui-spinner ui-spinner--sm" aria-hidden="true" /> Opening your account…</> : 'Open my account', createAccount, !terms || loading)}
             </div>
+            {accountExists && <p className="cu-note cu-taken cu-center"><a className="ui-link" href="/customer/login">Sign in instead</a></p>}
           </>
         )}
       </main>
@@ -1053,10 +1099,14 @@ function EnrollContent() {
 
 const DRAFT_KEY = 'vochus.enrolDraft'
 const DRAFT_TTL = 24 * 60 * 60 * 1000
+/** The server accepts an email confirmation for 30 minutes; treat it as stale a little before that. */
+const CONFIRM_FRESH_MS = 25 * 60 * 1000
 
 type Draft = {
   v: 1; savedAt: number; aid: string; ref: string; screen: Screen
   firstName: string; lastName: string; phone: string; email: string; verifiedEmail: string
+  /** When the email was confirmed (ms); missing in drafts saved before this was kept, which then confirm again. */
+  verifiedAt?: number
   dob: string; gender: string; address: string; state?: string; lga?: string; nokName: string; nokRelation: string; nokPhone: string
   plans: PlanDraft[]; plan: PlanDraft; startGoal?: string
 }

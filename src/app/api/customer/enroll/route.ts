@@ -15,7 +15,38 @@ import { resolvePlanStartDate, maturityFrom } from '@/lib/saving-plan'
 import { BAD_CADENCE, flexiblePlanData, getFlexibleSettings, isFlexible, parseCadence, shortDate, type FlexiblePlanData } from '@/lib/flexible-savings'
 import { validatePhoto } from '@/lib/photo'
 import { enrolRateLimiter, clientIp } from '@/lib/rate-limit'
+import { isPhoneLocked, recordLoginFailure } from '@/lib/login-attempt'
 import { validateDob, validateGender, validateState, validateLga } from '@/lib/customer-fields'
+
+const RESUME_WINDOW_MS = 24 * 60 * 60 * 1000
+
+/** The account this exact sign-up already created, when the password proves it's theirs; otherwise null. */
+async function resumeFinishedSignUp(input: { email: string; phone: string; password: string; agentDbId: string }) {
+  const existing = await prisma.customer.findFirst({
+    where: {
+      email: normalizeEmail(input.email),
+      type: 'online',
+      agentId: input.agentDbId,
+      createdAt: { gte: new Date(Date.now() - RESUME_WINDOW_MS) },
+    },
+    select: {
+      id: true, customerId: true, firstName: true, lastName: true, phone: true, password: true, status: true,
+      agentId: true, tokenVersion: true,
+      savingsPlans: { take: 1 },
+    },
+  })
+  if (!existing?.password) return null
+  if (normalizePhone(existing.phone) !== normalizePhone(input.phone)) return null
+  if (existing.status && existing.status.toLowerCase() !== 'active') return null
+  // This is a sign-in, so it obeys the sign-in lock: a locked account isn't opened here, and a wrong password
+  // counts towards the lock exactly as on the sign-in screen (the caller still answers as if no account matched).
+  if (await isPhoneLocked(existing.phone).catch(() => false)) return null
+  if (!(await bcrypt.compare(input.password, existing.password))) {
+    await recordLoginFailure({ phone: existing.phone }).catch(() => console.error('[enroll] could not record a failed resume'))
+    return null
+  }
+  return existing
+}
 
 function genId(prefix: string, pad = 5) {
   return `${prefix}-${String(Math.floor(Math.random() * (10 ** pad - 10 ** (pad - 1)) + 10 ** (pad - 1)))}`
@@ -122,6 +153,35 @@ export async function POST(req: NextRequest) {
   // An old link must not sign anyone up under an agent who has been suspended.
   if (agent.status !== 'Active') return NextResponse.json({ error: 'This invite link is no longer active. Please contact Vochus for help.' }, { status: 400 })
 
+  // A retry of a sign-up that already went through (the reply was lost on a weak connection, so the phone
+  // never showed "You're all set"): the same email and phone, under the same agent, within a day, with the
+  // password they just chose. Sign them in and answer as the first try did, instead of "already registered".
+  // A wrong password falls through to the normal checks below, so this answers nothing an attacker can use.
+  const resumed = await resumeFinishedSignUp({ email: String(email), phone: String(phone), password: String(password), agentDbId })
+  if (resumed) {
+    logAudit({
+      action: 'customer_self_enrol_resumed',
+      entity: 'Customer',
+      entityId: resumed.id,
+      details: `${resumed.firstName} ${resumed.lastName} (${resumed.customerId}) opened their account again after the first reply didn't reach them`,
+      actorType: 'customer',
+      actorId: resumed.id,
+      actorName: `${resumed.firstName} ${resumed.lastName}`,
+    })
+    const token = await signCustomerToken(
+      { id: resumed.id, customerId: resumed.customerId, name: `${resumed.firstName} ${resumed.lastName}`, agentId: resumed.agentId, tokenVersion: resumed.tokenVersion },
+      { loginAt: Math.floor(Date.now() / 1000) },
+    )
+    const res = NextResponse.json({
+      customerId: resumed.customerId,
+      name: `${resumed.firstName} ${resumed.lastName}`,
+      plan: resumed.savingsPlans[0] ?? null,
+      agentName: agent.name,
+    })
+    res.cookies.set(customerCookieOptions(token))
+    return res
+  }
+
   // Email must have been verified via the email-OTP flow, recently. This is the
   // server-side gate — the browser check alone is not enough. The row is
   // consumed after the customer is created so it can't be replayed.
@@ -132,7 +192,8 @@ export async function POST(req: NextRequest) {
     orderBy: { createdAt: 'desc' },
   })
   if (!verifiedOtp) {
-    return NextResponse.json({ error: 'Confirm your email first' }, { status: 400 })
+    // `code` lets the page send them back to confirm again (a saved sign-up can outlive the confirmation).
+    return NextResponse.json({ error: 'Confirm your email first', code: 'email_unconfirmed' }, { status: 400 })
   }
 
   // One identity, one account: the phone/email must not belong to any account.
