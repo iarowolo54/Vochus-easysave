@@ -200,8 +200,9 @@ export const authOptions: NextAuthOptions = {
           where: { agentId: token.agentId },
           include: { documents: { select: { docType: true, docApprovalStatus: true } } },
         })
-        // A JWT outlives the login check, so a suspended or removed agent is cut off here, on their next request.
-        if (!agent || agent.status !== 'Active') {
+        // A JWT outlives the login check, so a suspended, removed or locked agent is cut off here, on their next
+        // request. A lock is cleared only by an unlock code or an administrator.
+        if (!agent || agent.status !== 'Active' || agent.lockedAt) {
           return { ...session, user: undefined } as unknown as typeof session
         }
         // Revoke tokens issued before the agent's last password change: if the

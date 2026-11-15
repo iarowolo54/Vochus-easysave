@@ -4,11 +4,11 @@ import bcrypt from 'bcryptjs'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
+import { endAgentSessionsIfLocked, reserveAgentAttempt } from '@/lib/login-attempt'
 
-// Mirrors the agent login lockout in auth.ts so this endpoint can't be used to
-// brute-force the current password from a hijacked session.
-const LOCKOUT_MS = 30 * 60 * 1000
-const FAIL_LIMIT = 3
+// Shares the sign-in lock in auth.ts, so this endpoint can't be used to brute-force the current password from a
+// hijacked session.
+const LOCKED_MESSAGE = 'Your account is locked after too many wrong attempts. Unlock it with Forgot password, or ask the office to unlock it.'
 
 // Change the signed-in agent's password with their current one (#11). The only
 // other path was the forgot-password reset flow.
@@ -31,29 +31,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'This account is not active' }, { status: 403 })
   }
 
-  // Clear an expired lockout first (same as login), so the agent isn't stuck.
-  if (agent.lockedAt && Date.now() - new Date(agent.lockedAt).getTime() >= LOCKOUT_MS) {
-    await prisma.agent.update({ where: { id: agent.id }, data: { loginAttempts: 0, lockedAt: null } })
-  }
-
-  // Reserve an attempt ATOMICALLY before running bcrypt: only when not locked and
-  // under the limit. 0 rows updated => locked / over limit => reject. This closes
-  // the TOCTOU where concurrent wrong guesses all read the same loginAttempts.
-  const reserved = await prisma.agent.updateMany({
-    where: { id: agent.id, lockedAt: null, loginAttempts: { lt: FAIL_LIMIT } },
-    data: { loginAttempts: { increment: 1 } },
-  })
-  if (reserved.count === 0) {
-    return NextResponse.json({ error: 'Account temporarily locked after too many attempts. Try again later.' }, { status: 423 })
+  // Count the attempt before checking the password, in one statement that also sets the lock at the limit (same
+  // counter and limit as sign-in). A lock never expires with time: only an unlock code or an administrator clears it.
+  if (!(await reserveAgentAttempt(agent.id))) {
+    return NextResponse.json({ error: LOCKED_MESSAGE, locked: true }, { status: 423 })
   }
 
   const ok = await bcrypt.compare(String(currentPassword), agent.password)
   if (!ok) {
-    // The attempt was already counted; lock if this reached the limit.
-    const fresh = await prisma.agent.findUnique({ where: { id: agent.id }, select: { loginAttempts: true } })
-    if ((fresh?.loginAttempts ?? 0) >= FAIL_LIMIT) {
-      await prisma.agent.update({ where: { id: agent.id }, data: { lockedAt: new Date() } })
-    }
+    // If this wrong password locked the account, end every open session, this one included.
+    await endAgentSessionsIfLocked(agent.id)
+    const fresh = await prisma.agent.findUnique({ where: { id: agent.id }, select: { lockedAt: true } })
+    if (fresh?.lockedAt) return NextResponse.json({ error: LOCKED_MESSAGE, locked: true }, { status: 423 })
     return NextResponse.json({ error: 'Current password is incorrect' }, { status: 400 })
   }
 

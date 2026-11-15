@@ -17,7 +17,8 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 
   const customer = await prisma.customer.update({
     where: { id },
-    data: { status },
+    // Locking also ends every session the customer already has open.
+    data: { status, ...(status === 'Locked' ? { tokenVersion: { increment: 1 } } : {}) },
     select: { id: true, customerId: true, firstName: true, lastName: true, status: true },
   }).catch((e: unknown) => { if (isNotFound(e)) return null; throw e })
   if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
