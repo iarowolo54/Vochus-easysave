@@ -103,7 +103,7 @@ export function isOpenRequestConflict(e: unknown): boolean {
   const err = e as { code?: string; meta?: { target?: unknown } }
   return err?.code === 'P2002' && String(err.meta?.target ?? '').includes('pendingCustomerId')
 }
-const OPEN_CONFLICT = 'This customer already has an agent request waiting.'
+const OPEN_CONFLICT = 'This customer already has an upgrade waiting.'
 
 /** Where a new agent stands with the documents they must upload: none sent, some waiting, all approved. */
 export function documentsState(required: string[], docs: { docType: string; docApprovalStatus: string }[]): 'missing' | 'review' | 'rejected' | 'approved' {
@@ -174,7 +174,7 @@ export async function resubmitUpgradeRequest(client: PrismaClient, input: { agen
         data: { status: 'Pending', pendingCustomerId: r.customer.id, submittedAt: now, ...input.fields },
       })
       if (claimed.count !== 1) throw new Stop(409, 'Only a request that wasn’t approved can be sent again.')
-      await tx.auditLog.create({ data: { action: 'agent_upgrade_resubmitted', entity: 'AgentUpgradeRequest', entityId: r.id, actorType: 'agent', actorId: input.agent.id, actorName: input.agent.name, details: `Sent the agent request for ${nameOf(r.customer)} again` } })
+      await tx.auditLog.create({ data: { action: 'agent_upgrade_resubmitted', entity: 'AgentUpgradeRequest', entityId: r.id, actorType: 'agent', actorId: input.agent.id, actorName: input.agent.name, details: `Sent the upgrade for ${nameOf(r.customer)} again` } })
     })
     return { ok: true, customerName: nameOf(r.customer) }
   } catch (e) {

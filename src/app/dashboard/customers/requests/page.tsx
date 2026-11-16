@@ -48,7 +48,7 @@ function RequestsTabs() {
       </section>
       <div className="ui-segment ag-seg ag-tabs" role="group" aria-label="Request type">
         <button type="button" aria-pressed={tab === 'customers'} onClick={() => router.replace('/dashboard/customers/requests')}>Cash savers</button>
-        <button type="button" aria-pressed={tab === 'agents'} onClick={() => router.replace('/dashboard/customers/requests?tab=agents')}>Agents</button>
+        <button type="button" aria-pressed={tab === 'agents'} onClick={() => router.replace('/dashboard/customers/requests?tab=agents')}>Upgrades</button>
       </div>
       {tab === 'agents' ? <AgentRequests /> : <CustomerRequests />}
     </div>
@@ -162,7 +162,7 @@ function AgentRequests() {
   if (requests === null) return <section className="ui-card ag-flow-block"><span className="ui-spinner" role="status" aria-label="Loading your requests" /></section>
   if (requests.length === 0) return (
     <section className="ui-card ag-flow-block">
-      <EmptyState icon="customers" title="No agent requests" text="Open an online customer and tap Make agent." />
+      <EmptyState icon="customers" title="No upgrades yet" text="Open an online customer and tap Make agent." />
     </section>
   )
   return (

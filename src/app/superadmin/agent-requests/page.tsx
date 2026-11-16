@@ -78,7 +78,7 @@ export default function AgentRequestsPage() {
   }, [filter])
   useEffect(() => { load() }, [load])
 
-  if (failed === 'forbidden') return <NoAccess area="agent requests" />
+  if (failed === 'forbidden') return <NoAccess area="customer upgrades" />
   const c = data?.counts
   const options: { value: Status; label: string; count?: number }[] = [
     { value: 'Pending', label: 'Waiting', count: c?.Pending ?? 0 },
@@ -88,14 +88,14 @@ export default function AgentRequestsPage() {
 
   return (
     <>
-      <PageHeader title="Agent requests" sub="Online customers an agent wants to make agents. Approving closes their customer account and opens an agent account with the same phone, email and password. They then upload their own documents, which you review on their agent page." />
+      <PageHeader title="Customer upgrades" sub="Online customers an agent wants upgraded to agents. Approving closes their customer account and opens an agent account with the same phone, email and password. They then upload their own documents, which you review on their agent page." />
       <div className="toolbar bt-toolbar">
         <Segmented label="Status" value={filter} options={options} onChange={setFilter} />
       </div>
-      <section className="card" aria-label="Agent requests" aria-busy={loading}>
+      <section className="card" aria-label="Customer upgrades" aria-busy={loading}>
         {loading && !data ? <TableSkeleton rows={6} cols={4} />
-          : failed || !data ? <LoadError what="agent requests" onRetry={load} />
-          : data.requests.length === 0 ? <Empty icon="customers" title={filter === 'Pending' ? 'Nothing waiting' : 'No requests here'} text="Requests show here when an agent sends one." />
+          : failed || !data ? <LoadError what="customer upgrades" onRetry={load} />
+          : data.requests.length === 0 ? <Empty icon="customers" title={filter === 'Pending' ? 'Nothing waiting' : 'No requests here'} text="Upgrades show here when an agent asks for one." />
           : (
             <div className="tbl-wrap tbl-stack">
               <table>
@@ -161,7 +161,7 @@ function RequestDialog({ id, onClose, onDone }: { id: string; onClose: () => voi
     }
   }
 
-  if (!d) return <Modal title="Agent request" onClose={onClose}>{loadFailed ? <LoadError what="this request" onRetry={load} /> : <TableSkeleton rows={4} cols={2} />}</Modal>
+  if (!d) return <Modal title="Customer upgrade" onClose={onClose}>{loadFailed ? <LoadError what="this request" onRetry={load} /> : <TableSkeleton rows={4} cols={2} />}</Modal>
 
   const { request: r, summary: s } = d
   const c = r.customer

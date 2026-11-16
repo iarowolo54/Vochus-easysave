@@ -20,7 +20,7 @@ const V = ['view'] as const
 
 export const SCREENS = [
   { key: 'agents', label: 'Agents', group: 'Agents', actions: VM, manageNote: 'Activate, block, lock profile, reset device, invite, approve documents' },
-  { key: 'agent-requests', label: 'Agent requests', group: 'Agents', actions: VM, manageNote: 'Approve or turn down customers becoming agents; approving closes their customer account' },
+  { key: 'agent-requests', label: 'Customer upgrades', group: 'Agents', actions: VM, manageNote: 'Approve or turn down customers being upgraded to agents; approving closes their customer account' },
   { key: 'agent-wallets', label: 'Agent wallets', group: 'Agents', actions: V },
   { key: 'withdrawals', label: 'Agent withdrawals', group: 'Agents', actions: VM, handlesMoney: true, manageNote: 'Approve, decline and finalize agent withdrawals' },
   { key: 'commission', label: 'Commission', group: 'Agents', actions: VM, manageNote: 'Set commission rates' },

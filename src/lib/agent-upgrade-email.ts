@@ -24,14 +24,14 @@ export async function emailAdminsWaiting(client: Pick<PrismaClient, 'superAdmin'
     const name = displayName(input.customerName)
     const action = emailAction('Review request', '/superadmin/agent-requests')
     await Promise.all(admins.map(a => send(a.email, {
-      subject: `Agent request: ${name}`,
+      subject: `Customer upgrade: ${name}`,
       preheader: `${input.agentName} ${input.resubmitted ? 'sent this request again' : 'wants this customer to become an agent'}.`,
       tone: 'warning', audience: 'staff', statusLabel: 'Waiting for you',
-      heading: input.resubmitted ? 'An agent request was sent again' : 'New agent request',
+      heading: input.resubmitted ? 'A customer upgrade was sent again' : 'New customer upgrade',
       intro: `${input.agentName} ${input.resubmitted ? `has fixed and resent the request for ${name}.` : `wants ${name} to become an agent.`} Check their details and savings history, then approve or turn it down.`,
       rows: [['Customer', name], ['Agent', `${input.agentName} (${input.agentCode})`]],
       action,
-      note: action ? undefined : 'Review it under Agent requests in the admin area.',
+      note: action ? undefined : 'Review it under Customer upgrades in the admin area.',
     })))
   } catch (err) {
     console.error('[agent-upgrade-email] admin list failed:', err instanceof Error ? err.message : 'unknown error')
@@ -54,7 +54,7 @@ export async function emailApproved(input: { email: string | null; customerName:
     subject: `Approved: ${name} is now an agent`,
     preheader: `Agent ID ${input.newAgentCode}.`,
     tone: 'success', audience: 'agent', statusLabel: '',
-    heading: 'Agent request approved',
+    heading: 'Upgrade approved',
     intro: `${name} is now an agent and is no longer your customer. They’ll upload their own documents before they can start.`,
     rows: [['New agent', name], ['Agent ID', input.newAgentCode]],
   })
@@ -67,10 +67,10 @@ export async function emailDenied(input: { customerName: string; requester: { em
     subject: `Not approved: ${name}`,
     preheader: 'See what to work on, then send it again.',
     tone: 'danger', audience: 'agent', statusLabel: '',
-    heading: 'Agent request not approved',
-    intro: `The request for ${name} to become an agent wasn’t approved.`,
+    heading: 'Upgrade not approved',
+    intro: `The upgrade for ${name} to become an agent wasn’t approved.`,
     reason: { label: 'Reason', text: input.reason },
-    nextStep: 'Open Requests in the app, fix it and send it again.',
+    nextStep: 'Open Requests, then Upgrades, in the app. Fix it and send it again.',
     action: emailAction('Open Vochus Easy Save', '/login'),
     rows: [['Customer', name], ['What to work on', input.fix]],
   })

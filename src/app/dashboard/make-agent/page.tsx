@@ -41,7 +41,7 @@ function MakeAgent() {
     try {
       if (requestId) {
         const res = await fetch(`/api/agent-upgrade-requests/${encodeURIComponent(requestId)}`)
-        if (res.status === 404) { setBlocked({ title: 'Request not found', text: 'Open it from your agent requests.' }); return }
+        if (res.status === 404) { setBlocked({ title: 'Request not found', text: 'Open it from Requests, then Upgrades.' }); return }
         if (!res.ok) throw new Error()
         const d = await res.json() as { request: { status: string; nin: string; bvn: string | null; state: string; lga: string; address: string; nokName: string; nokPhone: string; denyReason: string | null; denyFix: string | null; customer: { firstName: string; lastName: string } }; blockers: string[] }
         const r = d.request
@@ -58,7 +58,7 @@ function MakeAgent() {
         const c = d.customer
         setName(displayName(`${c.firstName} ${c.lastName}`))
         if (d.notEligible) setBlocked({ title: 'They can’t become an agent', text: d.notEligible })
-        else if (d.open) setBlocked({ title: 'A request is already waiting', text: 'The office is reviewing it.' })
+        else if (d.open) setBlocked({ title: 'An upgrade is already waiting', text: 'The office is reviewing it.' })
         else if (d.blockers.length) setBlocked({ title: 'Finish these first', text: 'They stop being a customer when they become an agent, so nothing can be left open on their account.', list: d.blockers })
         setForm({ ...EMPTY, address: c.address ?? '', state: c.state ?? '', lga: c.lga ?? '', nokName: c.nokName ?? '', nokPhone: c.nokPhone ?? '' })
       } else {
@@ -144,7 +144,7 @@ function MakeAgent() {
         <span className="ui-status ui-status--success ui-status--lg"><Icons.check size={28} aria-hidden="true" /></span>
         <h1 className="ag-q">{requestId ? 'Sent again' : 'Request sent'}</h1>
         <p className="ui-row-sub ui-block">The office will review it. If they approve, {name} uploads their own documents before they can start.</p>
-        <Link href="/dashboard/customers/requests?tab=agents" className="ui-btn ui-btn--primary ui-btn--block">See agent requests</Link>
+        <Link href="/dashboard/customers/requests?tab=agents" className="ui-btn ui-btn--primary ui-btn--block">See upgrades</Link>
       </section>
     </div>
   )

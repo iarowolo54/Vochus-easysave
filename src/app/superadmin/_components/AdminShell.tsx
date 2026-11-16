@@ -31,7 +31,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
     label: 'Agents',
     items: [
       { label: 'All agents', screen: 'agents', icon: 'customers', href: '/superadmin/agents' },
-      { label: 'Agent requests', screen: 'agent-requests', icon: 'enrol', href: '/superadmin/agent-requests', badge: 'pendingAgentRequests' },
+      { label: 'Customer upgrades', screen: 'agent-requests', icon: 'enrol', href: '/superadmin/agent-requests', badge: 'pendingAgentRequests' },
       { label: 'Agent wallets', screen: 'agent-wallets', icon: 'wallet', href: '/superadmin/agent-wallets' },
       { label: 'Withdrawals', screen: 'withdrawals', icon: 'withdraw', href: '/superadmin/agent-withdrawals' },
       { label: 'Commission', screen: 'commission', icon: 'commission', href: '/superadmin/commission' },
