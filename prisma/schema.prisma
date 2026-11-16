@@ -8,13 +8,13 @@ datasource db {
 }
 
 model Agent {
-  id                  String           @id @default(cuid())
-  agentId             String           @unique
-  phone               String           @unique
-  email               String?          @unique
-  emailVerified       Boolean          @default(false)
-  emailAlertsOn       Boolean          @default(true) // the agent's switch for sign-in and payment emails; acts only on a verified email
-  emailVerifyToken    String?          @unique
+  id                  String                 @id @default(cuid())
+  agentId             String                 @unique
+  phone               String                 @unique
+  email               String?                @unique
+  emailVerified       Boolean                @default(false)
+  emailAlertsOn       Boolean                @default(true) // the agent's switch for sign-in and payment emails; acts only on a verified email
+  emailVerifyToken    String?                @unique
   name                String
   location            String
   address             String?
@@ -28,14 +28,14 @@ model Agent {
   nfcCard             String?
   floatLimit          Float?
   password            String
-  walletBalance       Float            @default(0)
-  commissionBalance   Float            @default(0)
-  requiredDocs        String           @default("[]")
-  status              String           @default("Active")
-  loginAttempts       Int              @default(0)
+  walletBalance       Float                  @default(0)
+  commissionBalance   Float                  @default(0)
+  requiredDocs        String                 @default("[]")
+  status              String                 @default("Active")
+  loginAttempts       Int                    @default(0)
   lockedAt            DateTime?
-  tokenVersion        Int              @default(0)
-  profileUnlocked     Boolean          @default(false)
+  tokenVersion        Int                    @default(0)
+  profileUnlocked     Boolean                @default(false)
   transactionPin      String?
   unlockToken         String?
   unlockTokenExpiry   DateTime?
@@ -46,7 +46,7 @@ model Agent {
   accountName         String?
   /// When the agent last opened their notifications; newer ones count as new on the bell.
   notificationsSeenAt DateTime?
-  createdAt           DateTime         @default(now())
+  createdAt           DateTime               @default(now())
   customers           Customer[]
   customerRequests    CustomerRequest[]
   photoRequests       CustomerPhotoRequest[]
@@ -62,6 +62,9 @@ model Agent {
   agentRewards        AgentReward[]
   ajoGroups           AjoGroup[]
   supportThread       SupportThread?
+  /// Set when this agent was converted from a customer (AgentUpgradeRequest). That customer record is closed and kept as history.
+  fromCustomerId      String?                @unique
+  upgradeRequests     AgentUpgradeRequest[]
 }
 
 model AgentDocument {
@@ -98,23 +101,23 @@ model AgentDocumentVersion {
 }
 
 model Customer {
-  id                  String                @id @default(cuid())
-  customerId          String                @unique
+  id                  String                 @id @default(cuid())
+  customerId          String                 @unique
   agentId             String
-  agent               Agent                 @relation(fields: [agentId], references: [id])
+  agent               Agent                  @relation(fields: [agentId], references: [id])
   referredBy          String?
-  referrer            Customer?             @relation("Referrals", fields: [referredBy], references: [id])
-  referrals           Customer[]            @relation("Referrals")
-  kind                String                @default("Savings")
+  referrer            Customer?              @relation("Referrals", fields: [referredBy], references: [id])
+  referrals           Customer[]             @relation("Referrals")
+  kind                String                 @default("Savings")
   firstName           String
   lastName            String
   phone               String
   email               String?
   emailVerifiedAt     DateTime? // set only when the customer proved the address; agent-entered emails stay null
-  emailAlertsOn       Boolean               @default(true) // the customer's switch for sign-in and payment emails; only acts once the email is verified
+  emailAlertsOn       Boolean                @default(true) // the customer's switch for sign-in and payment emails; only acts once the email is verified
   dob                 DateTime?
   address             String
-  language            String                @default("English")
+  language            String                 @default("English")
   gender              String?
   state               String?
   lga                 String?
@@ -123,17 +126,17 @@ model Customer {
   nokRelation         String
   nokPhone            String
   photoUrl            String?
-  status              String                @default("Active")
-  walletBalance       Float                 @default(0)
+  status              String                 @default("Active")
+  walletBalance       Float                  @default(0)
   password            String?
-  inviteToken         String?               @unique
-  tokenVersion        Int                   @default(0)
+  inviteToken         String?                @unique
+  tokenVersion        Int                    @default(0)
   /// When the customer last opened their notifications; newer ones count as new on the bell.
   notificationsSeenAt DateTime?
   boundDeviceId       String?
-  createdAt           DateTime              @default(now())
+  createdAt           DateTime               @default(now())
   /// online = registered themselves (customer/enroll); offline = registered by an agent (approved CustomerRequest). Set once at creation.
-  type                String                @default("offline")
+  type                String                 @default("offline")
   savingsPlans        SavingsPlan[]
   transactions        Transaction[]
   loans               Loan[]
@@ -141,11 +144,46 @@ model Customer {
   chatMessages        CustomerChatMessage[]
   customerPayments    CustomerPayment[]
   giftCardOrders      GiftCardOrder[]
-  redeemedGiftCards   GiftCard[]            @relation("RedeemedBy")
+  redeemedGiftCards   GiftCard[]             @relation("RedeemedBy")
   agentReward         AgentReward?
   ajoMemberships      AjoMember[]
   photoRequests       CustomerPhotoRequest[]
   supportThread       SupportThread?
+  /// Set when this customer became an agent: status is then 'Converted', the account is closed and only kept as history.
+  convertedToAgentId  String?                @unique
+  convertedAt         DateTime?
+  upgradeRequests     AgentUpgradeRequest[]
+}
+
+/// An agent's request to turn one of their online customers into an agent (src/lib/agent-upgrade.ts).
+/// Pending → Approved | Denied. Documents are not part of it: the new agent uploads their own after approval.
+model AgentUpgradeRequest {
+  id                String    @id @default(cuid())
+  customerId        String
+  customer          Customer  @relation(fields: [customerId], references: [id])
+  agentId           String
+  agent             Agent     @relation(fields: [agentId], references: [id])
+  status            String    @default("Pending")
+  nin               String
+  bvn               String?
+  state             String
+  lga               String
+  address           String
+  nokName           String
+  nokPhone          String
+  /// Set to customerId while Pending, so a customer can never have two open requests, even in a race.
+  pendingCustomerId String?   @unique
+  denyReason        String?
+  denyFix           String?
+  decidedAt         DateTime?
+  decidedBy         String?
+  decidedById       String?
+  createdAgentId    String?   @unique
+  submittedAt       DateTime  @default(now())
+
+  @@index([status, submittedAt])
+  @@index([agentId, status])
+  @@index([customerId])
 }
 
 /// A photo an agent took of an existing customer, waiting for the super admin (src/lib/customer-photo-request.ts).
@@ -250,23 +288,23 @@ model PlanDayCoverage {
 }
 
 model Transaction {
-  id          String       @id @default(cuid())
-  ref         String       @unique
-  agentId     String
-  agent       Agent        @relation(fields: [agentId], references: [id])
-  customerId  String?
-  customer    Customer?    @relation(fields: [customerId], references: [id])
-  planId      String?
-  plan        SavingsPlan? @relation(fields: [planId], references: [id])
-  type        String
-  amount      Float
-  method      String?      @default("Cash")
-  status      String       @default("Done")
-  note        String?
-  walletAfter Float?
+  id            String       @id @default(cuid())
+  ref           String       @unique
+  agentId       String
+  agent         Agent        @relation(fields: [agentId], references: [id])
+  customerId    String?
+  customer      Customer?    @relation(fields: [customerId], references: [id])
+  planId        String?
+  plan          SavingsPlan? @relation(fields: [planId], references: [id])
+  type          String
+  amount        Float
+  method        String?      @default("Cash")
+  status        String       @default("Done")
+  note          String?
+  walletAfter   Float?
   /// New model: platform fee taken out of this deposit before it reached the plan balance.
-  feeTaken    Float        @default(0)
-  createdAt   DateTime     @default(now())
+  feeTaken      Float        @default(0)
+  createdAt     DateTime     @default(now())
   /// Set when an agent paid this into an ONLINE customer's plan from the agent wallet (offline deposits are the agent's by nature).
   paidByAgentId String?
 }

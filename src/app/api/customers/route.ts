@@ -44,7 +44,8 @@ export async function GET(req: NextRequest) {
   const where: Prisma.CustomerWhereInput = {
     agentId: agent.id,
     ...(matchedIds ? { id: { in: matchedIds } } : {}),
-    ...(status ? { status } : {}),
+    // A customer who became an agent is no longer anyone's customer; their record stays for the office only.
+    ...(status ? { status: status === 'Converted' ? '__none__' : status } : { status: { not: 'Converted' } }),
     ...(typeFilter === 'online' || typeFilter === 'offline' ? { type: typeFilter } : {}),
   }
   // Plan-length filter lives in the where (before paging) so pages and total are right.

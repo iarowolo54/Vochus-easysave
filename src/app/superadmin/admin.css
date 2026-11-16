@@ -1713,3 +1713,8 @@
   .admin-root .sc-bubble { max-width: 85%; }
   .admin-root .sc-messages { padding: 12px; }
 }
+
+/* Agent requests (customer → agent) */
+.admin-root .ar-list { margin: 0; padding-left: 18px; display: grid; gap: 4px; }
+.admin-root .ar-h { margin: 20px 0 8px; font-size: 15px; }
+.admin-root .ar-more { margin-top: 8px; }

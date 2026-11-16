@@ -28,7 +28,7 @@ export async function POST(req: NextRequest) {
   // Unknown accounts and accounts in their cooldown get a random resetId, so every answer looks the same.
   let resetId = newResetId()
   try {
-    const customer = await prisma.customer.findFirst({ where: { phone } })
+    const customer = await prisma.customer.findFirst({ where: { phone, status: { not: 'Converted' } } })
     const issued = customer ? await issueResetCode('customer', customer.id, Date.now(), 'reset', clientIp(req)) : null
     if (customer && issued) {
       resetId = issued.resetId

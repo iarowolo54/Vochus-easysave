@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Password must be at least 6 characters' }, { status: 400 })
   }
 
-  const customer = await prisma.customer.findFirst({ where: { phone } })
+  const customer = await prisma.customer.findFirst({ where: { phone, status: { not: 'Converted' } } })
   const redeemed = customer ? await redeemResetCode('customer', customer.id, text(body.resetId), code) : null
   if (!customer || !redeemed) {
     return NextResponse.json({ error: INVALID_CODE_MESSAGE }, { status: 400 })

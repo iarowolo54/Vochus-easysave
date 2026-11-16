@@ -131,6 +131,9 @@ export async function POST(req: NextRequest) {
   // so clear the account counter even if a later gate (status/device) blocks.
   await swallow(clearLoginThrottle({ phone }))
 
+  if (customer.status === 'Converted') {
+    return NextResponse.json({ error: 'You’re now an agent. Sign in to the agent app with the same phone number and password.', converted: true }, { status: 403 })
+  }
   if (customer.status && customer.status.toLowerCase() !== 'active') {
     return NextResponse.json({ error: 'Your account has been locked by the administrator. Please contact support.' }, { status: 403 })
   }

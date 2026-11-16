@@ -25,6 +25,7 @@ export type NotificationKind =
   | 'new_phone'
   | 'customer_request_approved' | 'customer_request_denied' | 'customer_request_needs_funds'
   | 'customer_photo_approved' | 'customer_photo_rejected'
+  | 'agent_upgrade_approved' | 'became_agent' | 'agent_upgrade_denied'
   | 'fee_refunded' | 'commission_returned'
   | 'support_reply'
 
@@ -86,6 +87,26 @@ export const notifications = {
     return [{
       recipient: agent(f.agentId), kind: 'customer_request_needs_funds', title: `Top up to get ${name(f.customerName)} approved`,
       body: `Your wallet needs ${naira(f.fee)} for the registration fee.`, href: '/dashboard/wallet', dedupeKey: `customer-request-funds:${f.id}:${f.dayKey}`,
+    }]
+  },
+
+  /** Approved: the requesting agent hears, and the person hears on their NEW agent account (their customer account is closed). */
+  agentUpgradeApproved(f: { id: string; agentId: string; newAgentId: string; customerName: string; newAgentCode: string }): NotificationEvent[] {
+    return [{
+      recipient: agent(f.agentId), kind: 'agent_upgrade_approved', title: `${name(f.customerName)} is now an agent`,
+      body: `Agent ID ${f.newAgentCode}.`, href: '/dashboard/customers/requests?tab=agents', dedupeKey: `agent-upgrade-approved:${f.id}`,
+    }, {
+      recipient: agent(f.newAgentId), kind: 'became_agent', title: 'Welcome, you’re now an agent',
+      body: `Your agent ID is ${f.newAgentCode}. Upload your documents to start working.`, href: '/dashboard/documents', dedupeKey: `became-agent:${f.id}`,
+    }]
+  },
+
+  /** Turned down. The reason stays on the request; it can be resent and turned down again, hence the time in the key.
+   *  Only the agent hears: the customer wasn't part of the request. */
+  agentUpgradeDenied(f: { id: string; agentId: string; customerName: string; decidedAt: Date }): NotificationEvent[] {
+    return [{
+      recipient: agent(f.agentId), kind: 'agent_upgrade_denied', title: `${name(f.customerName)} wasn’t approved as an agent`,
+      body: 'See what to work on, then send it again.', href: '/dashboard/customers/requests?tab=agents', dedupeKey: `agent-upgrade-denied:${f.id}:${f.decidedAt.getTime()}`,
     }]
   },
 

@@ -676,6 +676,11 @@ function CustomerDetail({ c, txns, txnsLoading, expandedPlan, setExpandedPlan, g
       <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={onRetakePhoto}>
         <Icons.image size={18} aria-hidden="true" /> {c.photoUrl ? 'Retake photo' : 'Add photo'}
       </button>
+      {c.type === 'online' && c.status === 'Active' && (
+        <Link href={`/dashboard/make-agent?id=${encodeURIComponent(c.id)}`} className="ui-btn ui-btn--secondary ui-btn--block">
+          <Icons.customers size={18} aria-hidden="true" /> Make agent
+        </Link>
+      )}
       {c.deviceBound && (
         <button type="button" className="ui-btn ui-btn--secondary ui-btn--block" onClick={onResetDevice}>
           <Icons.device size={18} aria-hidden="true" /> Reset their phone

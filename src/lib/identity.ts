@@ -10,9 +10,12 @@ export type IdentityConflict = 'phone' | 'email' | null
  * normalised in JS so stored legacy formats (raw-cased email, +234 phones)
  * still match. Phone is checked first. Blank/null inputs never match.
  * `excludeCustomerId` omits one Customer row (for edit flows).
+ * A customer who became an agent (status 'Converted') holds nothing: their phone and email belong to the agent account.
  */
+type IdentityClient = Pick<PrismaClient, 'customer' | 'agent' | 'subAgent' | 'superAdmin' | 'staffUser'>
+
 export async function findIdentityConflict(
-  client: PrismaClient,
+  client: IdentityClient,
   input: { phone?: string | null; email?: string | null },
   opts: { excludeCustomerId?: string; excludeAgentId?: string } = {},
 ): Promise<IdentityConflict> {
@@ -23,7 +26,7 @@ export async function findIdentityConflict(
 
   if (phone) {
     const [customers, agents, subAgents] = await Promise.all([
-      client.customer.findMany({ select: { id: true, phone: true } }),
+      client.customer.findMany({ where: { status: { not: 'Converted' } }, select: { id: true, phone: true } }),
       client.agent.findMany({ select: { id: true, phone: true } }),
       client.subAgent.findMany({ select: { phone: true } }),
     ])
@@ -36,7 +39,7 @@ export async function findIdentityConflict(
 
   if (email) {
     const [customers, agents, admins, staff] = await Promise.all([
-      client.customer.findMany({ where: { email: { not: null } }, select: { id: true, email: true } }),
+      client.customer.findMany({ where: { email: { not: null }, status: { not: 'Converted' } }, select: { id: true, email: true } }),
       client.agent.findMany({ where: { email: { not: null } }, select: { id: true, email: true } }),
       client.superAdmin.findMany({ select: { email: true } }),
       client.staffUser.findMany({ select: { email: true } }),

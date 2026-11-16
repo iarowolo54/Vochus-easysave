@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { requirePermission, isNotFound } from '@/lib/admin-guard'
+import { requirePermission } from '@/lib/admin-guard'
 import { prisma } from '@/lib/prisma'
 import { logAudit } from '@/lib/audit'
 
@@ -15,13 +15,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ error: 'status must be Active or Locked' }, { status: 400 })
   }
 
-  const customer = await prisma.customer.update({
-    where: { id },
+  // A customer who became an agent stays closed: one person, one role. The condition is in the write, so it can't race the conversion.
+  const changed = await prisma.customer.updateMany({
+    where: { id, status: { not: 'Converted' } },
     // Locking also ends every session the customer already has open.
     data: { status, ...(status === 'Locked' ? { tokenVersion: { increment: 1 } } : {}) },
-    select: { id: true, customerId: true, firstName: true, lastName: true, status: true },
-  }).catch((e: unknown) => { if (isNotFound(e)) return null; throw e })
+  })
+  const customer = await prisma.customer.findUnique({ where: { id }, select: { id: true, customerId: true, firstName: true, lastName: true, status: true } })
   if (!customer) return NextResponse.json({ error: 'Customer not found' }, { status: 404 })
+  if (changed.count !== 1) return NextResponse.json({ error: 'This customer became an agent. Their customer account stays closed.' }, { status: 409 })
 
   logAudit({
     action: status === 'Locked' ? 'customer_lock' : 'customer_unlock',

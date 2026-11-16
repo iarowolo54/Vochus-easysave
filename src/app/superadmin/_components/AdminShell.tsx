@@ -17,7 +17,7 @@ import { useToast } from './admin-ui'
 
 // `screen` gates an item for staff on that screen's View (cosmetic; the API guards enforce). `staffAccess` is the
 // Staff & access entry: the owner and any department lead. No screen = always shown.
-type NavItem = { label: string; icon: IconName; href: string; badge?: 'pendingLoans' | 'pendingCustomerRequests' | 'supportUnread'; screen?: ScreenKey; staffAccess?: boolean }
+type NavItem = { label: string; icon: IconName; href: string; badge?: 'pendingLoans' | 'pendingCustomerRequests' | 'pendingAgentRequests' | 'supportUnread'; screen?: ScreenKey; staffAccess?: boolean }
 
 const navGroups: { label: string; items: NavItem[] }[] = [
   {
@@ -31,6 +31,7 @@ const navGroups: { label: string; items: NavItem[] }[] = [
     label: 'Agents',
     items: [
       { label: 'All agents', screen: 'agents', icon: 'customers', href: '/superadmin/agents' },
+      { label: 'Agent requests', screen: 'agent-requests', icon: 'enrol', href: '/superadmin/agent-requests', badge: 'pendingAgentRequests' },
       { label: 'Agent wallets', screen: 'agent-wallets', icon: 'wallet', href: '/superadmin/agent-wallets' },
       { label: 'Withdrawals', screen: 'withdrawals', icon: 'withdraw', href: '/superadmin/agent-withdrawals' },
       { label: 'Commission', screen: 'commission', icon: 'commission', href: '/superadmin/commission' },
@@ -110,6 +111,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
   const router = useRouter()
   const [pendingLoans, setPendingLoans] = useState(0)
   const [pendingCustomerRequests, setPendingCustomerRequests] = useState(0)
+  const [pendingAgentRequests, setPendingAgentRequests] = useState(0)
   const [supportUnread, setSupportUnread] = useState(0)
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
@@ -129,7 +131,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
     if (status !== 'authenticated') return
     fetch('/api/admin/stats')
       .then(r => r.ok ? r.json() : null)
-      .then(d => { if (d) { setPendingLoans(d.pendingLoans ?? 0); setPendingCustomerRequests((d.pendingCustomerRequests ?? 0) + (d.pendingCustomerPhotos ?? 0)) } })
+      .then(d => { if (d) { setPendingLoans(d.pendingLoans ?? 0); setPendingCustomerRequests((d.pendingCustomerRequests ?? 0) + (d.pendingCustomerPhotos ?? 0)); setPendingAgentRequests(d.pendingAgentRequests ?? 0) } })
       .catch(() => {})
   }, [status, pathname])
 
@@ -219,7 +221,7 @@ export default function AdminShell({ children }: { children: React.ReactNode }) 
               {group.label && <div className="a-nav-grp">{group.label}</div>}
               {group.items.map(item => {
                 const Icon = Icons[item.icon]
-                const badge = item.badge === 'pendingLoans' ? pendingLoans : item.badge === 'pendingCustomerRequests' ? pendingCustomerRequests : item.badge === 'supportUnread' ? supportUnread : 0
+                const badge = item.badge === 'pendingLoans' ? pendingLoans : item.badge === 'pendingCustomerRequests' ? pendingCustomerRequests : item.badge === 'pendingAgentRequests' ? pendingAgentRequests : item.badge === 'supportUnread' ? supportUnread : 0
                 const active = current === item.href
                 return (
                   <Link
