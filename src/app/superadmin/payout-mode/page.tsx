@@ -60,7 +60,7 @@ export default function PayoutModePage() {
   return (
     <>
       <PageHeader
-        title="Payouts & top-ups"
+        title="Payouts & funding"
         sub="How money comes in (top-ups and online savings) and how it goes out (payouts)."
       />
 

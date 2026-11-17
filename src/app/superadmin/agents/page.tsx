@@ -466,7 +466,7 @@ export default function AgentsPage() {
               </label>
             ))}
           </fieldset>
-          <p className="a-hint">Commission uses the platform rates set under <Link href="/superadmin/commission">Commission</Link>. The agent is emailed and can sign in straight away.</p>
+          <p className="a-hint">Commission uses the platform rates set under <Link href="/superadmin/settings/fees">Settings → Fees &amp; commission</Link>. The agent is emailed and can sign in straight away.</p>
         </Modal>
       )}
 

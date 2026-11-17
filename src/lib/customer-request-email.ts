@@ -30,7 +30,7 @@ export async function emailRequestSubmitted(client: Pick<PrismaClient, 'superAdm
       intro: `${input.agentName} ${input.resubmitted ? 'has fixed and resent the request for' : 'wants to register'} ${name}. Check the passport photograph and details, then approve or deny it.`,
       rows: [['Customer', name], ['Agent', `${input.agentName} (${input.agentCode})`]],
       action,
-      note: action ? undefined : 'Review it under Customer requests in the admin area.',
+      note: action ? undefined : 'Review it under Sign-ups & photos in the admin area.',
     })))
   } catch (err) {
     console.error('[customer-request-email] admin list failed:', err instanceof Error ? err.message : 'unknown error')

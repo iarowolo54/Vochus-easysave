@@ -41,11 +41,11 @@ export default function CustomerRequestsPage() {
   const [tab, setTab] = useState<'registrations' | 'photos'>('registrations')
   return (
     <>
-      <PageHeader title="Customer requests" sub={tab === 'photos'
+      <PageHeader title="Sign-ups & photos" sub={tab === 'photos'
         ? 'Photos agents took of existing customers. Approve only a clear photo of the customer’s face.'
         : 'Cash savers agents want to register. Check that each photo is a real passport photograph before approving.'} />
       <div className="toolbar bt-toolbar">
-        <Segmented label="Requests" value={tab} options={[{ value: 'registrations', label: 'Registrations' }, { value: 'photos', label: 'Photos' }]} onChange={setTab} />
+        <Segmented label="Show" value={tab} options={[{ value: 'registrations', label: 'Sign-ups' }, { value: 'photos', label: 'Photos' }]} onChange={setTab} />
       </div>
       {tab === 'photos' ? <PhotoRequests /> : <RegistrationRequests />}
     </>
@@ -87,7 +87,7 @@ function RegistrationRequests() {
 
   useEffect(() => { load() }, [load])
 
-  if (failed === 'forbidden') return <NoAccess area="customer requests" />
+  if (failed === 'forbidden') return <NoAccess area="sign-ups and photos" />
 
   const counts = data?.counts
   const options: { value: Filter; label: string; count?: number }[] = [
@@ -100,13 +100,13 @@ function RegistrationRequests() {
   return (
     <>
       <div className="toolbar bt-toolbar">
-        <SearchField value={search} onChange={setSearch} placeholder="Customer, phone or agent" label="Search customer requests" />
+        <SearchField value={search} onChange={setSearch} placeholder="Customer, phone or agent" label="Search sign-ups" />
         <Segmented label="Status" value={filter} options={options} onChange={setFilter} />
       </div>
 
-      <section className="card" aria-label="Customer requests" aria-busy={loading}>
+      <section className="card" aria-label="Sign-ups" aria-busy={loading}>
         {loading && !data ? <TableSkeleton rows={6} cols={4} />
-          : failed || !data ? <LoadError what="customer requests" onRetry={load} />
+          : failed || !data ? <LoadError what="sign-ups" onRetry={load} />
           : data.total === 0 ? (
             q
               ? <Empty icon="search" title="Nothing matches" text="Try another name, or clear the search."
@@ -312,7 +312,7 @@ function PhotoRequests() {
   }, [])
   useEffect(() => { load() }, [load])
 
-  if (failed === 'forbidden') return <NoAccess area="customer requests" />
+  if (failed === 'forbidden') return <NoAccess area="sign-ups and photos" />
   return (
     <>
       <section className="card" aria-label="Customer photos" aria-busy={!data && !failed}>

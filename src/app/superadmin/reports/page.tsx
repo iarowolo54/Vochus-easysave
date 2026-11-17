@@ -116,7 +116,7 @@ export default function ReportsPage() {
 
   return (
     <>
-      <PageHeader title="Issue reports" sub="Problems agents have reported from their app. Pick them up, then mark them resolved." />
+      <PageHeader title="Problems reported" sub="Problems agents have reported from their app. Pick them up, then mark them resolved." />
 
       {!loaded && failed ? null : (
         <div className="stats-grid lo-stats3" aria-busy={!loaded}>

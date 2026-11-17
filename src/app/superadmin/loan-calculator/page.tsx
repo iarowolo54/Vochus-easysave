@@ -104,7 +104,7 @@ export default function LoanCalculatorPage() {
                 <button type="button" className="btn btn-outline btn-sm" onClick={load}><Icons.retry size={16} aria-hidden="true" /> Try again</button>
               </div>
             ) : rates.length === 0 ? (
-              <Empty icon="rate" title="No loan terms set up" text={<>Set the interest rate for each term under <Link href="/superadmin/commission">Commission</Link>, or enter a rate below.</>} />
+              <Empty icon="rate" title="No loan terms set up" text={<>Set the interest rate for each term under <Link href="/superadmin/settings/interest">Settings → Interest rates</Link>, or enter a rate below.</>} />
             ) : (
               <div className="lo-terms">
                 {rates.map(r => (

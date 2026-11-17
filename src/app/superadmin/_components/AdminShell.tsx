@@ -30,10 +30,10 @@ const navGroups: { label: string; items: NavItem[] }[] = [
   {
     label: 'Agents',
     items: [
-      { label: 'All agents', screen: 'agents', icon: 'customers', href: '/superadmin/agents' },
+      { label: 'Agents', screen: 'agents', icon: 'customers', href: '/superadmin/agents' },
       { label: 'Customer upgrades', screen: 'agent-requests', icon: 'enrol', href: '/superadmin/agent-requests', badge: 'pendingAgentRequests' },
       { label: 'Agent wallets', screen: 'agent-wallets', icon: 'wallet', href: '/superadmin/agent-wallets' },
-      { label: 'Withdrawals', screen: 'withdrawals', icon: 'withdraw', href: '/superadmin/agent-withdrawals' },
+      { label: 'Agent withdrawals', screen: 'withdrawals', icon: 'withdraw', href: '/superadmin/agent-withdrawals' },
       { label: 'Commission', screen: 'commission', icon: 'commission', href: '/superadmin/commission' },
       { label: 'Rewards', screen: 'rewards', icon: 'gift', href: '/superadmin/rewards' },
     ],
@@ -41,10 +41,10 @@ const navGroups: { label: string; items: NavItem[] }[] = [
   {
     label: 'Customers',
     items: [
-      { label: 'All customers', screen: 'customers', icon: 'plan', href: '/superadmin/customers' },
-      { label: 'Customer requests', screen: 'customer-requests', icon: 'customers', href: '/superadmin/customer-requests', badge: 'pendingCustomerRequests' },
+      { label: 'Customers', screen: 'customers', icon: 'plan', href: '/superadmin/customers' },
+      { label: 'Sign-ups & photos', screen: 'customer-requests', icon: 'customers', href: '/superadmin/customer-requests', badge: 'pendingCustomerRequests' },
       { label: 'Savings monitor', screen: 'savings', icon: 'monitor', href: '/superadmin/savings-monitor' },
-      { label: 'Ajo groups', screen: 'ajo', icon: 'staff', href: '/superadmin/ajo' },
+      { label: 'Ajo groups', screen: 'ajo', icon: 'team', href: '/superadmin/ajo' },
       { label: 'Redemptions', screen: 'redemptions', icon: 'redeem', href: '/superadmin/early-redemption' },
     ],
   },
@@ -64,25 +64,38 @@ const navGroups: { label: string; items: NavItem[] }[] = [
       { label: 'Wallet accounts', screen: 'treasury', icon: 'deposit', href: '/superadmin/wallet-accounts' },
       { label: 'Bank transfers', screen: 'bank-transfers', icon: 'deposit', href: '/superadmin/bank-transfers' },
       { label: 'Transactions', screen: 'transactions', icon: 'history', href: '/superadmin/transactions' },
-      { label: 'Payouts & top-ups', screen: 'payout-mode', icon: 'settings', href: '/superadmin/payout-mode' },
     ],
   },
   {
     label: 'Cards',
     items: [
-      { label: 'Card management', screen: 'cards', icon: 'card', href: '/superadmin/cards' },
-      { label: 'Generate cards', screen: 'cards', icon: 'qr', href: '/superadmin/cards/generate' },
+      // Generate cards is a button on this page; /cards/generate falls under it.
+      { label: 'Cards', screen: 'cards', icon: 'card', href: '/superadmin/cards' },
     ],
   },
   {
-    label: 'Oversight',
+    label: 'Messages',
+    items: [
+      { label: 'Support chat', screen: 'support', icon: 'chat', href: '/superadmin/support', badge: 'supportUnread' },
+      { label: 'Pop-up messages', screen: 'messages', icon: 'bell', href: '/superadmin/messages' },
+      { label: 'Problems reported', screen: 'reports', icon: 'report', href: '/superadmin/reports' },
+    ],
+  },
+  {
+    // Each page keeps the permission its data already needed before it moved here.
+    label: 'Settings',
+    items: [
+      { label: 'Fees & commission', screen: 'commission', icon: 'rate', href: '/superadmin/settings/fees' },
+      { label: 'Interest rates', screen: 'savings', icon: 'rate', href: '/superadmin/settings/interest' },
+      { label: 'Payouts & funding', screen: 'payout-mode', icon: 'settings', href: '/superadmin/payout-mode' },
+    ],
+  },
+  {
+    label: 'Staff & security',
     items: [
       { label: 'Staff & access', icon: 'staff', href: '/superadmin/staff', staffAccess: true },
       { label: 'Devices', screen: 'devices', icon: 'device', href: '/superadmin/devices' },
       { label: 'Audit log', screen: 'audit', icon: 'audit', href: '/superadmin/audit' },
-      { label: 'Pop-up messages', screen: 'messages', icon: 'bell', href: '/superadmin/messages' },
-      { label: 'Support chat', screen: 'support', icon: 'chat', href: '/superadmin/support', badge: 'supportUnread' },
-      { label: 'Reports', screen: 'reports', icon: 'reports', href: '/superadmin/reports' },
     ],
   },
 ]
