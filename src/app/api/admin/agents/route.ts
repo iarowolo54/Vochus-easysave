@@ -85,6 +85,13 @@ export async function POST(req: NextRequest) {
   if (!name || !phone || !email || !location || !password || !nokName || !nokPhone) {
     return NextResponse.json({ error: 'Name, phone, email, next of kin name/phone and password are required' }, { status: 400 })
   }
+  if (gender !== 'Male' && gender !== 'Female') {
+    return NextResponse.json({ error: 'Gender is required' }, { status: 400 })
+  }
+  const dobDate = typeof dob === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dob) ? new Date(`${dob}T00:00:00Z`) : null
+  if (!dobDate || Number.isNaN(dobDate.getTime()) || dobDate.getTime() > Date.now()) {
+    return NextResponse.json({ error: 'Date of birth is required' }, { status: 400 })
+  }
   const photoCheck = validatePhoto(photoUrl)
   if (!photoCheck.ok) return NextResponse.json({ error: photoCheck.error }, { status: 400 })
   if (floatLimit !== undefined && floatLimit !== null && floatLimit !== '') {

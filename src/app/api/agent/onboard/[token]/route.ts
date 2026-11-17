@@ -28,6 +28,13 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ tok
   if (!firstName || !lastName || !phone || !state || !address || !nokName || !nokPhone || !password) {
     return NextResponse.json({ error: 'Missing required fields' }, { status: 400 })
   }
+  if (gender !== 'Male' && gender !== 'Female') {
+    return NextResponse.json({ error: 'Please select your gender' }, { status: 400 })
+  }
+  const dobDate = typeof dob === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(dob) ? new Date(`${dob}T00:00:00Z`) : null
+  if (!dobDate || Number.isNaN(dobDate.getTime()) || dobDate.getTime() > Date.now()) {
+    return NextResponse.json({ error: 'Please pick your date of birth' }, { status: 400 })
+  }
   const photoCheck = validatePhoto(photoUrl)
   if (!photoCheck.ok) return NextResponse.json({ error: photoCheck.error }, { status: 400 })
 

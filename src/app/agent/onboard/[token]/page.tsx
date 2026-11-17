@@ -89,6 +89,8 @@ export default function AgentOnboardPage() {
       if (!form.firstName || !form.lastName || !form.phone || !form.state || !form.address || !form.nokName || !form.nokPhone) {
         setError('Please fill all required fields'); return false
       }
+      if (!form.dob) { setError('Please pick your date of birth'); return false }
+      if (!form.gender) { setError('Please select your gender'); return false }
     }
     if (step === 3 && !emailVerified) {
       setError('Please verify your email before continuing'); return false
@@ -375,10 +377,10 @@ export default function AgentOnboardPage() {
               <div><label style={lbl}>First Name *</label><input style={inp} placeholder="e.g. Adebayo" value={form.firstName} onChange={e => set('firstName', e.target.value)} /></div>
               <div><label style={lbl}>Last Name *</label><input style={inp} placeholder="e.g. Okafor" value={form.lastName} onChange={e => set('lastName', e.target.value)} /></div>
               <div><label style={lbl}>Phone Number *</label><input style={inp} type="tel" inputMode="numeric" maxLength={11} placeholder="0809 123 4567" value={form.phone} onKeyDown={blockNonDigit} onChange={e => set('phone', digitsOnly(e.target.value).slice(0, 11))} /></div>
-              <div><label style={lbl}>Date of Birth</label><DatePicker ariaLabel="Date of birth" sheetTitle="Pick your date of birth" allowEmpty yearPicker
+              <div><label style={lbl}>Date of Birth *</label><DatePicker ariaLabel="Date of birth" sheetTitle="Pick your date of birth" allowEmpty yearPicker
                 emptyViewIso={`${new Date().getFullYear() - 30}-01-01`} maxIso={new Date().toLocaleDateString('en-CA')} value={form.dob} onChange={iso => set('dob', iso)} /></div>
               <div>
-                <label style={lbl}>Gender</label>
+                <label style={lbl}>Gender *</label>
                 <select style={inp} value={form.gender} onChange={e => set('gender', e.target.value)}>
                   <option value="">Select</option><option>Male</option><option>Female</option>
                 </select>
