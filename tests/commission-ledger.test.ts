@@ -7,8 +7,9 @@ import { DEFAULT_COMMISSION_RATES } from '../src/lib/commission-rates'
 
 type Row = Record<string, unknown>
 type Plan = { cadence: string; dailyAmount: number; source: string; feeCollected: number }
-function stubTx(opts: { goLive?: string; rates?: Record<string, number>; existing?: boolean; plan?: Plan; preDeposits?: number } = {}) {
-  const calls = { ledger: [] as Row[], agentUpdates: [] as Row[], wallet: [] as Row[], planUpdates: [] as Row[] }
+type Saving = { createdAt: Date; feeTaken: number }
+function stubTx(opts: { goLive?: string; rates?: Record<string, number>; existing?: boolean; plan?: Plan; preDeposits?: number; savings?: Saving[]; redeemedAt?: Date } = {}) {
+  const calls = { ledger: [] as Row[], agentUpdates: [] as Row[], wallet: [] as Row[], planUpdates: [] as Row[], savingWhere: [] as Row[] }
   let collected = opts.plan?.feeCollected ?? 0
   const tx = {
     platformSetting: {
@@ -28,16 +29,24 @@ function stubTx(opts: { goLive?: string; rates?: Record<string, number>; existin
       findUnique: async () => (opts.plan ? { ...opts.plan, feeCollected: collected } : null),
       updateMany: async (a: { data: { feeCollected: { increment: number } } }) => { collected += a.data.feeCollected.increment; calls.planUpdates.push(a as unknown as Row); return { count: 1 } },
     },
-    transaction: { aggregate: async () => ({ _sum: { amount: opts.preDeposits ?? 0 } }) },
+    // The plan's savings: those given, plus one row per fee this stub has taken (each dated 17 Nov 2026).
+    transaction: {
+      aggregate: async () => ({ _sum: { amount: opts.preDeposits ?? 0 } }),
+      findMany: async (a: { where: Row }) => {
+        calls.savingWhere.push(a.where)
+        return [...(opts.savings ?? []), ...calls.planUpdates.map(u => ({ createdAt: new Date('2026-11-17T12:00:00Z'), feeTaken: (u as { data: { feeCollected: { increment: number } } }).data.feeCollected.increment }))]
+      },
+    },
+    earlyRedemption: { findFirst: async () => (opts.redeemedAt ? { requestedAt: opts.redeemedAt, decidedAt: opts.redeemedAt } : null) },
   }
-  return { tx: tx as unknown as Prisma.TransactionClient, calls, client: tx as unknown as Pick<PrismaClient, 'platformSetting' | 'transaction' | 'ajoPayout'> }
+  return { tx: tx as unknown as Prisma.TransactionClient, calls, client: tx as unknown as Pick<PrismaClient, 'platformSetting' | 'transaction' | 'ajoPayout' | 'earlyRedemption'> }
 }
 
 const LIVE = '2026-01-01T00:00:00.000Z' // already past, so "now" is after go-live
 const NOT_YET = '2099-01-01T00:00:00.000Z'
 const DAILY: Plan = { cadence: 'daily', dailyAmount: 500, source: 'agent', feeCollected: 0 }
 const dep = (over: Partial<Parameters<typeof depositFeeOps>[1]> = {}) => ({
-  planId: 'p1', agentId: 'ag1', customerId: 'c1', amount: 500, ref: 'TXN-1', ...over,
+  planId: 'p1', agentId: 'ag1', customerId: 'c1', amount: 500, ref: 'TXN-1', day: new Date('2026-11-17T12:00:00Z'), ...over,
 })
 const rows = (calls: { ledger: Row[] }) => calls.ledger.map(r => [r.party, r.source, r.amount])
 
@@ -50,11 +59,21 @@ test('the first deposit on a live offline daily plan takes one day as the fee an
   assert.equal(calls.planUpdates.length, 1)
 })
 
-test('the day is taken once: three deposits of 300 take 300, then 200, then nothing', async () => {
+test('the month\'s day is taken once: three deposits of 300 in one month take 300, then 200, then nothing', async () => {
   const { tx } = stubTx({ goLive: LIVE, plan: DAILY })
   const taken = []
   for (let i = 1; i <= 3; i++) taken.push(await depositFeeOps(tx, dep({ amount: 300, ref: `T-${i}` })))
   assert.deepEqual(taken, [300, 200, 0])
+})
+
+test('a daily deposit also takes an earlier month left unpaid, counting only savings since the last redemption', async () => {
+  const at = (iso: string, feeTaken: number) => ({ createdAt: new Date(iso), feeTaken })
+  // October saved, never charged; November paid. The first December saving of 1,500 pays October and December.
+  const savings = [at('2026-10-20T12:00:00Z', 0), at('2026-11-03T12:00:00Z', 500)]
+  const redeemed = new Date('2026-09-30T12:00:00Z')
+  const { tx, calls } = stubTx({ goLive: LIVE, plan: DAILY, savings, redeemedAt: redeemed })
+  assert.equal(await depositFeeOps(tx, dep({ amount: 1500, day: new Date('2026-12-01T12:00:00Z') })), 1000)
+  assert.deepEqual(calls.savingWhere[0], { planId: 'p1', type: 'saving', status: 'Done', createdAt: { gte: redeemed } })
 })
 
 test('a weekly deposit of 1,000 takes 7.5% split 60/40', async () => {
@@ -108,14 +127,21 @@ test('collectionFee is v1 when not live', async () => {
 })
 
 test('a live daily plan with nothing collected owes one day, split 60/40', async () => {
-  const { client } = stubTx({ goLive: LIVE })
+  const { client } = stubTx({ goLive: LIVE, savings: [{ createdAt: new Date('2026-11-17T12:00:00Z'), feeTaken: 0 }] })
   assert.deepEqual(await collectionFee(client, { id: 'p1', ...DAILY }, 5000, new Date()), { feeRule: 'v2', penalty: 500, feeAgent: 300 })
+})
+
+test('a live daily plan owes the months its savings did not pay: Oct unpaid, Nov paid, Dec part-paid', async () => {
+  const at = (iso: string, feeTaken: number) => ({ createdAt: new Date(iso), feeTaken })
+  const savings = [at('2026-10-20T12:00:00Z', 0), at('2026-10-21T12:00:00Z', 0), at('2026-11-03T12:00:00Z', 500), at('2026-12-01T12:00:00Z', 200)]
+  const { client } = stubTx({ goLive: LIVE, savings })
+  assert.deepEqual(await collectionFee(client, { id: 'p1', ...DAILY }, 20000, new Date()), { feeRule: 'v2', penalty: 800, feeAgent: 480 })
 })
 
 test('a live weekly plan owes the percentage on its older deposits', async () => {
   const { client } = stubTx({ goLive: LIVE, preDeposits: 40000 })
   assert.deepEqual(
-    await collectionFee(client, { id: 'p1', cadence: 'weekly', dailyAmount: 1000, source: 'agent', feeCollected: 0 }, 30000, new Date()),
+    await collectionFee(client, { id: 'p1', cadence: 'weekly', dailyAmount: 1000, source: 'agent' }, 30000, new Date()),
     { feeRule: 'v2', penalty: 2250, feeAgent: 1350 },
   )
 })

@@ -266,7 +266,7 @@ model SavingsPlan {
   status           String            @default("Active")
   maturityNotified Boolean           @default(false)
   interestAccrued  Float             @default(0)
-  /// New model: fee already taken from this plan (a daily plan stops at one day's amount).
+  /// New model: fee already taken from this plan (a daily plan pays one day's amount per calendar month).
   feeCollected     Float             @default(0)
   /// Set when a redeemed plan is reopened: interest counts only deposits made from this moment on. Null = whole life of the plan.
   cycleStartedAt   DateTime?

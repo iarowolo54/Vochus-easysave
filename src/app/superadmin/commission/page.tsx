@@ -43,7 +43,7 @@ type CommKey = keyof CommRates
 type CommGroup = 'daily' | 'periodic' | 'loan' | 'unused'
 
 const COMM_GROUPS: { key: CommGroup; title: string; sub: string; icon: 'customers' | 'treasury' | 'rate' }[] = [
-  { key: 'daily', title: 'Daily plans', sub: 'The first day’s amount of each offline daily plan is the platform fee. Set how it splits.', icon: 'customers' },
+  { key: 'daily', title: 'Daily plans', sub: 'One day’s amount each month of every offline daily plan is the platform fee. Set how it splits.', icon: 'customers' },
   { key: 'periodic', title: 'Weekly and monthly plans', sub: 'A fee is taken from every deposit on offline plans. Set the fee and how it splits.', icon: 'treasury' },
   { key: 'loan', title: 'Loans', sub: 'Paid on loans and repayments.', icon: 'rate' },
   { key: 'unused', title: 'Not in use yet', sub: 'Saved, but nothing charges it today.', icon: 'rate' },
@@ -53,7 +53,7 @@ const FIRST_DAY = 500
 const SAMPLE_DEPOSIT = 10000
 
 const COMM_FIELDS: { key: CommKey; group: CommGroup; label: string; example: (v: number, all: Record<CommKey, number>) => string }[] = [
-  { key: 'dailyFirstAgentPct', group: 'daily', label: 'Agent’s share of the first day’s amount', example: v => `On a ${nairaKobo(FIRST_DAY)} a day plan, the first ${nairaKobo(FIRST_DAY)} is the fee: the agent gets ${nairaKobo(FIRST_DAY * v / 100)} and the platform ${nairaKobo(FIRST_DAY * (100 - v) / 100)}.` },
+  { key: 'dailyFirstAgentPct', group: 'daily', label: 'Agent’s share of each month’s first day', example: v => `On a ${nairaKobo(FIRST_DAY)} a day plan, the first ${nairaKobo(FIRST_DAY)} saved each month is the fee: the agent gets ${nairaKobo(FIRST_DAY * v / 100)} and the platform ${nairaKobo(FIRST_DAY * (100 - v) / 100)}.` },
   { key: 'periodicFeePct', group: 'periodic', label: 'Platform fee on each deposit', example: v => `On a ${nairaKobo(SAMPLE_DEPOSIT)} deposit the fee is ${nairaKobo(SAMPLE_DEPOSIT * v / 100)}. At most 25%.` },
   { key: 'periodicAgentPct', group: 'periodic', label: 'Agent’s share of that fee', example: (v, all) => `Of a ${nairaKobo(SAMPLE_DEPOSIT * all.periodicFeePct / 100)} fee the agent gets ${nairaKobo(SAMPLE_DEPOSIT * all.periodicFeePct / 100 * v / 100)} and the platform keeps the rest.` },
   { key: 'agentLoan', group: 'loan', label: 'Loan commission', example: v => `Per loan paid out. On a ₦50,000 loan the agent earns ${nairaKobo(500 * v)}.` },

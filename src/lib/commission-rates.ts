@@ -4,7 +4,7 @@ import type { FeeRules } from '@/lib/savings-fee'
 
 /** Every rate is a percent. */
 export interface CommissionRates {
-  /** Daily plans: the agent's share of the first day's amount; the rest is the platform's. */
+  /** Daily plans: the agent's share of each month's one-day fee; the rest is the platform's. */
   dailyFirstAgentPct: number
   /** Weekly and monthly plans: the fee taken from each deposit. */
   periodicFeePct: number

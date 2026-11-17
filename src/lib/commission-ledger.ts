@@ -3,7 +3,7 @@ import { getOnlineRedeemFee, isEarlyRedemption, onlineFeeOn } from '@/lib/online
 import { ajoPlanFee } from '@/lib/ajo-fee'
 import { money } from '@/lib/money'
 import { feeRulesOf, getCommissionRates, pct, type CommissionRates } from '@/lib/commission-rates'
-import { depositFee, settleUpFee } from '@/lib/savings-fee'
+import { depositFee, monthsSavedIn, settleUpFee } from '@/lib/savings-fee'
 import { flexibleDeduction, getFlexibleSettings, isFlexible } from '@/lib/flexible-savings'
 
 export const GO_LIVE_KEY = 'commissionGoLive'
@@ -59,6 +59,30 @@ export async function recordReversal(tx: LedgerClient, e: LedgerEntry & { create
   return true
 }
 
+/**
+ * When this plan was last redeemed (paid out), or null. Savings before it were settled at that redemption, so a reopened
+ * plan's monthly fee counts only savings after it.
+ */
+async function lastRedeemedAt(client: Pick<PrismaClient, 'earlyRedemption'>, planId: string): Promise<Date | null> {
+  const r = await client.earlyRedemption.findFirst({
+    where: { savingsPlanId: planId, status: 'Approved' },
+    orderBy: { requestedAt: 'desc' },
+    select: { requestedAt: true, decidedAt: true },
+  })
+  return r ? (r.decidedAt ?? r.requestedAt) : null
+}
+
+/** A daily plan's savings since its last redemption: the days they are for and the fee each already paid. */
+async function dailySavingsSinceRedeemed(client: Pick<PrismaClient, 'earlyRedemption' | 'transaction'>, planId: string): Promise<{ createdAt: Date; feeTaken: number }[]> {
+  const since = await lastRedeemedAt(client, planId)
+  return client.transaction.findMany({
+    where: { planId, type: 'saving', status: 'Done', ...(since ? { createdAt: { gte: since } } : {}) },
+    select: { createdAt: true, feeTaken: true },
+  })
+}
+
+const sumFees = (rows: { feeTaken: number }[]) => rows.reduce((t, r) => t + r.feeTaken, 0)
+
 async function creditRevenue(tx: LedgerClient, amount: number): Promise<void> {
   await tx.platformWallet.upsert({ where: { type: 'Revenue' }, update: { balance: { increment: amount } }, create: { type: 'Revenue', balance: amount } })
 }
@@ -67,19 +91,30 @@ async function creditRevenue(tx: LedgerClient, amount: number): Promise<void> {
  * Takes the platform fee out of one deposit to an offline plan, inside the deposit's own transaction, and pays the agent
  * their share at once. Returns the fee taken; the caller credits the plan balance with the deposit minus that fee.
  * Nothing happens before go-live, on online (self) plans, or for a deposit already processed.
+ * `day` is the day the saving is for (the date it is stamped with): a daily plan's fee is one day per calendar month saved in.
+ * Call it before creating the deposit's own transaction row.
  */
 export async function depositFeeOps(
   tx: LedgerClient,
-  i: { planId: string; agentId: string | null; customerId: string; amount: number; ref: string },
+  i: { planId: string; agentId: string | null; customerId: string; amount: number; ref: string; day: Date },
 ): Promise<number> {
   // Judged by when the deposit is recorded, not the date the agent chose: a catch-up for an earlier day still pays its fee now.
   if (!(await isNewModelLive(tx, new Date()))) return 0
   const plan = await tx.savingsPlan.findUnique({ where: { id: i.planId }, select: { cadence: true, dailyAmount: true, source: true, feeCollected: true } })
   if (!plan || plan.source === 'self') return 0
   const rates = await getCommissionRates(tx)
-  const split = depositFee({ cadence: plan.cadence, dailyAmount: plan.dailyAmount, feeCollected: plan.feeCollected, deposit: i.amount }, feeRulesOf(rates))
-  if (split.fee <= 0) return 0
   const daily = !plan.cadence || plan.cadence === 'daily'
+  // A daily plan pays one day's amount for every calendar month it has a saving in (this one included), since any
+  // redemption; any month still unpaid is taken from this saving.
+  let monthsSaved = 0
+  let feePaid = 0
+  if (daily) {
+    const savings = await dailySavingsSinceRedeemed(tx, i.planId)
+    monthsSaved = monthsSavedIn([...savings.map(s => s.createdAt), i.day])
+    feePaid = sumFees(savings)
+  }
+  const split = depositFee({ cadence: plan.cadence, dailyAmount: plan.dailyAmount, monthsSaved, feePaid, deposit: i.amount }, feeRulesOf(rates))
+  if (split.fee <= 0) return 0
   const source: LedgerSource = daily ? 'daily_first' : 'periodic_fee'
   const agentPct = daily ? rates.dailyFirstAgentPct : rates.periodicAgentPct
   const agentShare = i.agentId ? split.agent : 0
@@ -106,8 +141,8 @@ export async function depositFeeOps(
  * After: only what the deposits did not already pay (v2), split with the agent's part stored so a later rate edit cannot change it.
  */
 export async function collectionFee(
-  client: Pick<PrismaClient, 'platformSetting' | 'transaction' | 'ajoPayout'>,
-  plan: { id: string; cadence: string | null; dailyAmount: number; source: string | null; feeCollected: number; maturityDate?: Date },
+  client: Pick<PrismaClient, 'platformSetting' | 'transaction' | 'ajoPayout' | 'earlyRedemption'>,
+  plan: { id: string; cadence: string | null; dailyAmount: number; source: string | null; maturityDate?: Date },
   balance: number,
   at: Date,
 ): Promise<{ feeRule: 'v1' } | { feeRule: 'v2'; penalty: number; feeAgent: number }> {
@@ -131,8 +166,16 @@ export async function collectionFee(
   const goLive = await getGoLive(client)
   if (!goLive || at.getTime() < goLive.getTime()) return { feeRule: 'v1' }
   const sum = await client.transaction.aggregate({ where: { planId: plan.id, type: 'saving', feeTaken: 0, createdAt: { lt: goLive } }, _sum: { amount: true } })
+  // Daily plans owe one day for every calendar month they saved in since the last redemption, less what was already paid.
+  let monthsSaved = 0
+  let feePaid = 0
+  if (!plan.cadence || plan.cadence === 'daily') {
+    const savings = await dailySavingsSinceRedeemed(client, plan.id)
+    monthsSaved = monthsSavedIn(savings.map(s => s.createdAt))
+    feePaid = sumFees(savings)
+  }
   const rates = await getCommissionRates(client)
-  const out = settleUpFee({ cadence: plan.cadence, dailyAmount: plan.dailyAmount, feeCollected: plan.feeCollected, balance, preGoLiveDeposits: sum._sum.amount ?? 0 }, feeRulesOf(rates))
+  const out = settleUpFee({ cadence: plan.cadence, dailyAmount: plan.dailyAmount, monthsSaved, feePaid, balance, preGoLiveDeposits: sum._sum.amount ?? 0 }, feeRulesOf(rates))
   return { feeRule: 'v2', penalty: out.fee, feeAgent: out.agent }
 }
 

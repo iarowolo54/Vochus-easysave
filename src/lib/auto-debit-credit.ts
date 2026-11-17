@@ -55,7 +55,7 @@ export async function creditAutoDebitAttempt(
         data: { status: 'success', settledAmount: money(settledAmountNaira) },
       })
       if (claimed.count === 0) throw new Error('ALREADY_PROCESSED')
-      const fee = await depositFeeOps(tx, { planId: plan.id, agentId: customer.agentId, customerId: customer.id, amount, ref: reference })
+      const fee = await depositFeeOps(tx, { planId: plan.id, agentId: customer.agentId, customerId: customer.id, amount, ref: reference, day: new Date() })
       await tx.transaction.create({
         data: {
           ref: reference,

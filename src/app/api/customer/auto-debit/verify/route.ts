@@ -118,7 +118,7 @@ export async function POST(req: NextRequest) {
         }
       }
 
-      const fee = await depositFeeOps(tx, { planId: plan.id, agentId: customer.agentId, customerId: customer.id, amount, ref: reference })
+      const fee = await depositFeeOps(tx, { planId: plan.id, agentId: customer.agentId, customerId: customer.id, amount, ref: reference, day: new Date() })
       await tx.transaction.create({
         data: {
           ref: reference,

@@ -88,7 +88,7 @@ export async function settleIntentPayment(client: PrismaClient, input: Input): P
       if (!consumed) throw new Error('ALREADY_PROCESSED')
       if (input.manual) await recordManualCredit(tx, { ref: reference, amount, who: `customer ${customer.customerId}`, manual: input.manual })
       await input.inTx?.(tx)
-      const fee = await depositFeeOps(tx, { planId: plan.id, agentId: customer.agentId, customerId: customerId, amount, ref: reference })
+      const fee = await depositFeeOps(tx, { planId: plan.id, agentId: customer.agentId, customerId: customerId, amount, ref: reference, day: new Date() })
       await tx.transaction.create({
         data: {
           ref: reference,
