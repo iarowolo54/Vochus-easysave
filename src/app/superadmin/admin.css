@@ -1471,6 +1471,8 @@
 .admin-root .bt-note { white-space: normal; overflow-wrap: anywhere; }
 .admin-root .a-alert-a.bt-kobo { align-items: center; flex-wrap: wrap; justify-content: space-between; }
 .admin-root .bt-kobo > span { flex: 1 1 260px; }
+/* Banners above the search box get a gap (the general .a-alert + * rule removes it). */
+.admin-root .a-alert + .bt-toolbar { margin-top: 14px; }
 .admin-root .bt-kobo .btn { flex: none; min-height: 40px; }
 @media (max-width: 640px) {
   .admin-root .toolbar.bt-toolbar .seg { flex-wrap: wrap; overflow: visible; border-radius: 18px; width: 100%; }

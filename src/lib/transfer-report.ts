@@ -6,6 +6,36 @@ import { INTENT_PENDING } from '@/lib/payment-intent'
 import { TRANSFER_METHOD, type TransferActor } from '@/lib/transfer-intent'
 
 export const KOBO_LEFT_OUT = 'transfer_kobo_left_out'
+/** Staff looked into a kobo report and dealt with it, so it stops asking for attention. */
+export const KOBO_CHECKED = 'transfer_kobo_checked'
+
+export type KoboCheck = { by: string; at: string; note: string }
+
+/** Reads a check entry's note back out of its audit details (written by markKoboChecked). */
+export const koboCheckFrom = (e: { actorName: string | null; createdAt: Date; details: string | null }): KoboCheck =>
+  ({ by: e.actorName ?? 'Staff', at: e.createdAt.toISOString(), note: (e.details ?? '').replace(/^.*?Note: /, '') })
+
+/**
+ * Staff mark a kobo report as checked (for example the money never came, or it was sorted out another way). Only an open
+ * request with a report counts, and only once. The report and the check both stay in the audit log.
+ */
+export async function markKoboChecked(intentId: string, admin: { id?: string; name: string }, note: string):
+  Promise<{ ok: true } | { ok: false; status: number; error: string }> {
+  const intent = await prisma.paymentIntent.findFirst({ where: { id: intentId, method: TRANSFER_METHOD, status: INTENT_PENDING }, select: { id: true, ref: true } })
+  if (!intent) return { ok: false, status: 404, error: 'That request is no longer open. Refresh the page.' }
+  const [reported, checked] = await Promise.all([
+    prisma.auditLog.findFirst({ where: { action: KOBO_LEFT_OUT, entityId: intent.id }, select: { id: true } }),
+    prisma.auditLog.findFirst({ where: { action: KOBO_CHECKED, entityId: intent.id }, select: { id: true } }),
+  ])
+  if (!reported) return { ok: false, status: 404, error: 'Nobody reported this request. Refresh the page.' }
+  if (checked) return { ok: false, status: 409, error: 'Someone has already marked this as checked. Refresh the page.' }
+  await logAudit({
+    action: KOBO_CHECKED, entity: 'PaymentIntent', entityId: intent.id,
+    details: `Marked the kobo report on request ${intent.ref} as checked. Note: ${note}`,
+    actorType: 'admin', actorId: admin.id, actorName: admin.name,
+  })
+  return { ok: true }
+}
 
 /**
  * Records that the owner of this open request says they sent a rounded amount. Only the owner's own Pending request counts,

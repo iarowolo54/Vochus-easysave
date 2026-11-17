@@ -5,7 +5,7 @@ import { TRANSFER_METHOD } from '@/lib/transfer-intent'
 import { HELD_LABEL, STATUS_LABEL, alertStatus, intentStatus, type TransferStatus } from '@/lib/transfer-status'
 import { LATE_ALLOWANCE_MS, handCreditSince, sameFigure } from '@/lib/transfer-figure'
 import { INTENT_SUPERSEDED } from '@/lib/payment-intent'
-import { KOBO_LEFT_OUT } from '@/lib/transfer-report'
+import { KOBO_CHECKED, KOBO_LEFT_OUT, koboCheckFrom, type KoboCheck } from '@/lib/transfer-report'
 
 export const dynamic = 'force-dynamic'
 
@@ -48,8 +48,10 @@ type Row = {
   possibleMore: number
   /** Held money with the same amount as a payment staff credited by hand recently. */
   lookalike: boolean
-  /** The person told us they sent the amount without the extra kobo. */
+  /** The person told us they sent the amount without the extra kobo, and staff haven't marked it as checked yet. */
   leftOutKobo: boolean
+  /** Staff marked the person's kobo report as checked. */
+  koboCheck: KoboCheck | null
 }
 
 const summaryFor = (status: TransferStatus, manualBy: string | null): string => {
@@ -94,10 +96,15 @@ export async function GET(req: NextRequest) {
   const manualRefs = alerts.map((a) => a.intentRef).filter((r): r is string => !!r)
   const manualIntents = manualRefs.length ? await prisma.paymentIntent.findMany({ where: { ref: { in: manualRefs } } }) : []
 
+  // Kobo reports, and staff checks of them. A checked report no longer asks for attention.
   const reports = intents.length
-    ? await prisma.auditLog.findMany({ where: { action: KOBO_LEFT_OUT, entityId: { in: intents.map((i) => i.id) } }, select: { entityId: true } })
+    ? await prisma.auditLog.findMany({
+        where: { action: { in: [KOBO_LEFT_OUT, KOBO_CHECKED] }, entityId: { in: intents.map((i) => i.id) } },
+        select: { action: true, entityId: true, actorName: true, createdAt: true, details: true },
+      })
     : []
-  const leftOut = new Set(reports.map((r) => r.entityId))
+  const checks = new Map(reports.filter((r) => r.action === KOBO_CHECKED && r.entityId).map((r) => [r.entityId as string, koboCheckFrom(r)]))
+  const leftOut = new Set(reports.filter((r) => r.action === KOBO_LEFT_OUT && r.entityId && !checks.has(r.entityId)).map((r) => r.entityId))
 
   const customerIds = [...new Set([...intents, ...manualIntents].map((i) => i.customerId).filter((x): x is string => !!x))]
   const agentIds = [...new Set([...intents, ...manualIntents].map((i) => i.agentId).filter((x): x is string => !!x))]
@@ -135,6 +142,7 @@ export async function GET(req: NextRequest) {
       bank: null, possible: [], possibleMore: 0,
       lookalike: i.status === 'Pending' && lookalikeNear(i.amount, i.createdAt),
       leftOutKobo: i.status === 'Pending' && leftOut.has(i.id),
+      koboCheck: checks.get(i.id) ?? null,
     })
   }
   const manualByRef = new Map(manualIntents.map((i) => [i.ref, i]))
@@ -168,7 +176,7 @@ export async function GET(req: NextRequest) {
       startedAt: null, expiresAt: null, creditedAt: null,
       by: a.resolvedBy, doneAt: iso(a.resolvedAt), note: a.resolvedNote,
       bank: { sender: a.senderName, narration: a.narration, txnId: a.txnId, bankTime: a.alertAt.toISOString(), seenAt: a.createdAt.toISOString() },
-      possible, possibleMore: Math.max(0, candidates.length - possible.length), lookalike, leftOutKobo: false,
+      possible, possibleMore: Math.max(0, candidates.length - possible.length), lookalike, leftOutKobo: false, koboCheck: null,
     })
   }
   rows.sort((x, y) => (x.at < y.at ? 1 : -1))

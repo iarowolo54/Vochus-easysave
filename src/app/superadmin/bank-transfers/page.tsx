@@ -36,6 +36,7 @@ interface Row {
   possibleMore: number
   lookalike: boolean
   leftOutKobo: boolean
+  koboCheck: { by: string; at: string; note: string } | null
 }
 interface Page {
   rows: Row[]
@@ -66,6 +67,7 @@ type Dialog =
   | { type: 'request'; row: Row }
   | { type: 'alert'; row: Row }
   | { type: 'dismiss'; row: Row }
+  | { type: 'checked'; row: Row }
 
 /** Long text that must wrap, not run past the edge or get cut off. */
 const wrap = { whiteSpace: 'normal', overflowWrap: 'anywhere', textAlign: 'right' } as const
@@ -185,6 +187,9 @@ export default function BankTransfersPage() {
                                   <button type="button" className="btn btn-outline btn-sm" onClick={() => setDialog({ type: 'alert', row: r })}>Credit to someone</button>
                                   <button type="button" className="btn btn-outline btn-sm" onClick={() => setDialog({ type: 'dismiss', row: r })}>Dismiss</button>
                                 </>)}
+                            {data.canManage && r.leftOutKobo && (
+                              <button type="button" className="btn btn-outline btn-sm" onClick={() => setDialog({ type: 'checked', row: r })}>Mark as checked</button>
+                            )}
                             <button type="button" className="ui-link" onClick={() => setDialog({ type: 'detail', row: r })}>View details</button>
                           </div>
                         </td>
@@ -225,7 +230,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 /** Everything the system knows about one transfer, in plain words, with the actions it allows. */
 function DetailDialog({ row, canManage, onClose, onAction }: {
-  row: Row; canManage: boolean; onClose: () => void; onAction: (type: 'request' | 'alert' | 'dismiss') => void
+  row: Row; canManage: boolean; onClose: () => void; onAction: (type: 'request' | 'alert' | 'dismiss' | 'checked') => void
 }) {
   const r = row
   const explain: Record<Status, string> = {
@@ -243,6 +248,7 @@ function DetailDialog({ row, canManage, onClose, onAction }: {
       sub={<span className={`bdg ${BADGE[r.status]}`}>{r.statusLabel}</span>}
       footer={<>
         <button type="button" className="btn btn-outline" onClick={onClose}>Close</button>
+        {canManage && r.leftOutKobo && <button type="button" className="btn btn-outline" onClick={() => onAction('checked')}>Mark as checked</button>}
         {canManage && r.actionable && (r.kind === 'request'
           ? <button type="button" className="btn btn-green" onClick={() => onAction('request')}>Credit this payment by hand</button>
           : <>
@@ -259,7 +265,16 @@ function DetailDialog({ row, canManage, onClose, onAction }: {
         </p>
       )}
       {r.leftOutKobo && (
-        <div className="a-alert a-alert-a" role="status">The person told us on their screen that they sent this without the extra kobo. Their money should be in “Needs review” as a payment that matched nothing. Check the Moniepoint account, then credit it to them by hand.</div>
+        <div className="a-alert a-alert-a" role="status">The person told us on their screen that they sent this without the extra kobo. Check the Moniepoint account for money of about this amount. If it’s there, credit this payment by hand. If it isn’t, or it was sorted out another way, mark it as checked.</div>
+      )}
+      {r.koboCheck && (
+        <Section title="Kobo report checked">
+          <Ledger>
+            <LedgerRow label="By"><span style={wrap}>{r.koboCheck.by}</span></LedgerRow>
+            <LedgerRow label="When"><span style={wrap}>{dateTime(r.koboCheck.at)}</span></LedgerRow>
+            <LedgerRow label="Note"><span style={wrap}>{r.koboCheck.note}</span></LedgerRow>
+          </Ledger>
+        </Section>
       )}
       {r.lookalike && (
         <div className="a-alert a-alert-a" role="status">This is within ₦1 of a payment staff credited by hand around the same time. It may be the same money, so check before crediting it again.</div>
@@ -357,16 +372,21 @@ function ActionDialog({ dialog, onClose, onDone }: { dialog: Exclude<Dialog, { t
   }, [dialog.type, kind, q])
 
   const title = dialog.type === 'request' ? 'Credit this payment by hand?'
-    : dialog.type === 'alert' ? 'Credit this money to someone' : 'Dismiss this payment?'
-  const sub = dialog.type === 'request'
+    : dialog.type === 'alert' ? 'Credit this money to someone'
+    : dialog.type === 'checked' ? 'Mark as checked?' : 'Dismiss this payment?'
+  const sub = dialog.type === 'checked'
+    ? 'Use this when you’ve looked in the Moniepoint account and the money isn’t there, or it was sorted out another way. Nothing is credited, and the request stays as it is. It just stops showing in the banner.'
+    : dialog.type === 'request'
     ? 'Only do this after you have seen the money in the Moniepoint account. It is credited at the amount shown.'
     : dialog.type === 'alert'
       ? 'Choose who the money belongs to. It is credited at the amount that arrived.'
       : 'Use this when the money is not from a customer or agent, or was already credited by hand. Nothing is credited.'
 
   const needsTarget = dialog.type === 'alert'
+  // Marking a kobo report as checked moves no money, so it needs a note but not the approval PIN.
+  const checking = dialog.type === 'checked'
   const targetOk = !needsTarget || (kind === 'agent' ? !!person : !!person && !!planId)
-  const ready = targetOk && note.trim().length >= 3 && pin.length > 0 && (!needsAck || ack)
+  const ready = targetOk && note.trim().length >= 3 && (checking || pin.length > 0) && (!needsAck || ack)
 
   async function submit() {
     if (!ready) return
@@ -374,15 +394,16 @@ function ActionDialog({ dialog, onClose, onDone }: { dialog: Exclude<Dialog, { t
     const [url, body] =
       dialog.type === 'request' ? ['credit-request', { ref: row.ref }] as const
       : dialog.type === 'dismiss' ? ['dismiss-alert', { alertId: row.id }] as const
+      : dialog.type === 'checked' ? ['kobo-checked', { intentId: row.id }] as const
       : ['credit-alert', { alertId: row.id, target: kind === 'agent' ? { kind, agentId: person?.id } : { kind, customerId: person?.id, planId, ...(days.length > 0 ? { days } : {}) } }] as const
     try {
       const res = await fetch(`/api/admin/bank-transfers/${url}`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...body, note: note.trim(), pin, ...(needsAck ? { ackLookalike: ack } : {}) }),
+        body: JSON.stringify({ ...body, note: note.trim(), ...(checking ? {} : { pin }), ...(needsAck ? { ackLookalike: ack } : {}) }),
       })
       const d = await res.json().catch(() => ({})) as { ok?: boolean; error?: string }
       if (!res.ok || !d.ok) { setError(d.error ?? 'That didn’t go through. Nothing was changed.'); return }
-      onDone(dialog.type === 'dismiss' ? 'Dismissed.' : `${nairaKobo(row.amount)} credited.`)
+      onDone(dialog.type === 'dismiss' ? 'Dismissed.' : checking ? 'Marked as checked.' : `${nairaKobo(row.amount)} credited.`)
     } catch {
       setError('No connection. Check your internet and try again. Nothing was changed.')
     } finally {
@@ -391,15 +412,15 @@ function ActionDialog({ dialog, onClose, onDone }: { dialog: Exclude<Dialog, { t
   }
 
   return (
-    <Modal title={title} sub={sub} icon="deposit" tone={dialog.type === 'dismiss' ? 'neutral' : 'money'} onClose={onClose} busy={busy} error={error || undefined}
+    <Modal title={title} sub={sub} icon="deposit" tone={dialog.type === 'dismiss' || checking ? 'neutral' : 'money'} onClose={onClose} busy={busy} error={error || undefined}
       footnote="Recorded in the audit log"
       footer={<>
         <button type="button" className="btn btn-outline" onClick={onClose} disabled={busy}>Cancel</button>
         <button type="button" className="btn btn-green" disabled={busy || !ready} aria-busy={busy} onClick={submit}>
-          {busy ? 'Working…' : dialog.type === 'dismiss' ? 'Dismiss' : `Credit ${nairaKobo(row.amount)}`}
+          {busy ? 'Working…' : dialog.type === 'dismiss' ? 'Dismiss' : checking ? 'Mark as checked' : `Credit ${nairaKobo(row.amount)}`}
         </button>
       </>}>
-      <AmountHero label={dialog.type === 'dismiss' ? 'Held payment' : 'You’re crediting'} amount={nairaKobo(row.amount)}
+      <AmountHero label={dialog.type === 'dismiss' ? 'Held payment' : checking ? 'Amount they were shown' : 'You’re crediting'} amount={nairaKobo(row.amount)}
         sub={row.who ? <>for <strong>{row.who.name}</strong> · {row.who.code}</> : row.bank ? <>sent by <strong>{row.bank.sender || 'an unknown sender'}</strong></> : null} />
 
       {row.bank && dialog.type !== 'request' && (
@@ -459,13 +480,16 @@ function ActionDialog({ dialog, onClose, onDone }: { dialog: Exclude<Dialog, { t
       )}
 
       <form onSubmit={e => { e.preventDefault(); submit() }} noValidate>
-        <Field id="bt-note" label="Why? (required)" hint="For example the bank reference, or what the sender told you.">
+        <Field id="bt-note" label={checking ? 'What did you find? (required)' : 'Why? (required)'}
+          hint={checking ? 'For example: not in the Moniepoint account on 17 Nov, or the person said they hadn’t sent it.' : 'For example the bank reference, or what the sender told you.'}>
           <input id="bt-note" className="a-input" type="text" maxLength={300} autoComplete="off" value={note} onChange={e => { setNote(e.target.value); setError('') }} />
         </Field>
-        <Field id="bt-pin" label="Approval PIN">
-          <input id="bt-pin" className="a-input am-pin" type="password" inputMode="numeric" maxLength={6} autoComplete="off" placeholder="••••"
-            value={pin} onChange={e => { setPin(e.target.value); setError('') }} />
-        </Field>
+        {!checking && (
+          <Field id="bt-pin" label="Approval PIN">
+            <input id="bt-pin" className="a-input am-pin" type="password" inputMode="numeric" maxLength={6} autoComplete="off" placeholder="••••"
+              value={pin} onChange={e => { setPin(e.target.value); setError('') }} />
+          </Field>
+        )}
         {/* Enter in a field submits: the Credit button lives in the dialog footer, outside this form. */}
         <button type="submit" className="sr-only" tabIndex={-1} aria-hidden="true" disabled={busy || !ready}>Submit</button>
       </form>
