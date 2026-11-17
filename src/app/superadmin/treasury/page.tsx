@@ -3,7 +3,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { blockMinus, nonNegativeString } from '@/lib/numeric'
 import { Icons, type IconName } from '@/components/ui/icons'
-import { AmountHero, DialogNote, ResultModal, type Result, Field, Ledger, LedgerRow, LoadError, Modal, PageHeader, naira, useToast } from '../_components/admin-ui'
+import { AmountHero, DialogNote, ResultModal, type Result, Field, Ledger, LedgerRow, LoadError, Modal, PageHeader, Segmented, naira, useToast } from '../_components/admin-ui'
+import { AgentBalances } from '../_components/agent-balances'
 
 interface PlatformWallet {
   id: string
@@ -59,7 +60,10 @@ async function errorOf(res: Response, fallback: string) {
   return d.error ?? fallback
 }
 
+type View = 'wallets' | 'agents'
+
 export default function TreasuryPage() {
+  const [view, setView] = useState<View>('wallets')
   const [data, setData] = useState<TreasuryData | null>(null)
   const [loading, setLoading] = useState(true)
   const [failed, setFailed] = useState(false)
@@ -225,19 +229,30 @@ export default function TreasuryPage() {
 
   const amt = parseFloat(injectAmount) || 0
   const capitalNow = w('Capital')
+  // Solvency (moved here from the old Wallet accounts page).
+  const platformTotal = (data?.wallets ?? []).reduce((sum, x) => sum + x.balance, 0)
+  const totalAll = data ? platformTotal + data.totalAgentFloat + data.totalAgentCommission : 0
+  const net = data ? data.totalAgentFloat - data.totalCustomerSavings : 0
 
   return (
     <>
       <PageHeader
         title="Treasury"
         sub="Agent-funded model: agent float (W-3) backs customer savings, revenue and commission."
-        actions={<>
+        actions={view === 'wallets' ? <>
           <button type="button" className="btn btn-outline" onClick={load} disabled={loading}><Icons.retry size={16} aria-hidden="true" /> {loading ? 'Refreshing…' : 'Refresh'}</button>
           <button type="button" className="btn btn-green" onClick={openInject} disabled={!data}><Icons.add size={18} aria-hidden="true" /> Inject capital</button>
-        </>}
+        </> : undefined}
       />
 
-      {loading && !data ? (
+      <div className="toolbar">
+        <Segmented<View> label="Show" value={view} onChange={setView} options={[
+          { value: 'wallets', label: 'Wallets' },
+          { value: 'agents', label: 'Agent balances' },
+        ]} />
+      </div>
+
+      {view === 'agents' ? <AgentBalances /> : loading && !data ? (
         <div className="cm-wallets" aria-busy="true" aria-label="Loading wallets">
           {Array.from({ length: 8 }, (_, i) => <span key={i} className="skel cm-wallet-skel" />)}
         </div>
@@ -270,6 +285,30 @@ export default function TreasuryPage() {
             })}
           </div>
           <p className="cm-foot">Figures marked estimate use the default 0.4% agent and 1.6% platform rates on today’s savings. Actual amounts depend on each plan.</p>
+
+          {data && (
+            <section className="card cm-solv-card" aria-labelledby="solv-hd">
+              <div className="card-hd"><h3 id="solv-hd">Solvency</h3></div>
+              <div className="cm-solv">
+                <div className="cm-solv-item">
+                  <div className="cm-solv-lbl">Owed to customers</div>
+                  <div className="cm-solv-val is-red">{naira(data.totalCustomerSavings)}</div>
+                  <div className="cm-solv-sub">Customer savings in active plans</div>
+                </div>
+                <div className="cm-solv-item">
+                  <div className="cm-solv-lbl">Agent float backing it</div>
+                  <div className={`cm-solv-val${data.totalAgentFloat >= data.totalCustomerSavings ? '' : ' is-amber'}`}>{naira(data.totalAgentFloat)}</div>
+                  <div className="cm-solv-sub">Total in agent wallets</div>
+                </div>
+                <div className="cm-solv-item">
+                  <div className="cm-solv-lbl">Net position</div>
+                  <div className={`cm-solv-val${net >= 0 ? '' : ' is-red'}`}>{net >= 0 ? '' : '−'}{naira(Math.abs(net))}</div>
+                  <div className="cm-solv-sub">{net >= 0 ? 'Surplus: float covers what’s owed' : 'Deficit: float is short of what’s owed'}</div>
+                </div>
+              </div>
+              <p className="cm-foot">Total system funds: <strong>{naira(totalAll)}</strong> (platform wallets, agent wallets and commission).</p>
+            </section>
+          )}
         </>
       )}
 

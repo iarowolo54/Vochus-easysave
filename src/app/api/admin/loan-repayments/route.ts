@@ -57,8 +57,9 @@ export async function GET(req: NextRequest) {
       loanRef: r.loan.ref,
       amount: r.amount,
       method: r.method,
-      customerName: `${r.loan.customer.firstName} ${r.loan.customer.lastName}`,
-      customerId: r.loan.customer.customerId,
+      // A loan outlives a deleted customer (the link is cleared), so a missing one shows as deleted instead of failing the list.
+      customerName: r.loan.customer ? `${r.loan.customer.firstName} ${r.loan.customer.lastName}` : 'Deleted customer',
+      customerId: r.loan.customer?.customerId ?? '—',
       agentName: r.loan.agent.name,
       agentId: r.loan.agent.agentId,
       createdAt: r.createdAt,

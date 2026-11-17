@@ -44,12 +44,10 @@ export async function GET(req: NextRequest) {
       status: l.status,
       createdAt: l.createdAt,
       repaid: l.repayments.reduce((s, r) => s + r.amount, 0),
-      customer: {
-        id: l.customer.id,
-        name: `${l.customer.firstName} ${l.customer.lastName}`,
-        customerId: l.customer.customerId,
-        phone: l.customer.phone,
-      },
+      // A loan outlives a deleted customer (the link is cleared), so a missing one shows as deleted instead of failing the list.
+      customer: l.customer
+        ? { id: l.customer.id, name: `${l.customer.firstName} ${l.customer.lastName}`, customerId: l.customer.customerId, phone: l.customer.phone }
+        : { id: null, name: 'Deleted customer', customerId: '—', phone: '' },
     })),
   })
 }
@@ -123,7 +121,7 @@ export async function POST(req: NextRequest) {
     action: 'loan_request',
     entity: 'Loan',
     entityId: loan.id,
-    details: `Loan request ${ref} ₦${p} for ${loan.customer.firstName} ${loan.customer.lastName} (${loan.customer.customerId}) — ${days} days @ ${rate}%`,
+    details: `Loan request ${ref} ₦${p} for ${loan.customer ? `${loan.customer.firstName} ${loan.customer.lastName} (${loan.customer.customerId})` : 'a deleted customer'} — ${days} days @ ${rate}%`,
     actorId: agent.id,
     actorName: agent.name,
   })

@@ -61,7 +61,6 @@ const navGroups: { label: string; items: NavItem[] }[] = [
     label: 'Money',
     items: [
       { label: 'Treasury', screen: 'treasury', icon: 'treasury', href: '/superadmin/treasury' },
-      { label: 'Wallet accounts', screen: 'treasury', icon: 'deposit', href: '/superadmin/wallet-accounts' },
       { label: 'Bank transfers', screen: 'bank-transfers', icon: 'deposit', href: '/superadmin/bank-transfers' },
       { label: 'Transactions', screen: 'transactions', icon: 'history', href: '/superadmin/transactions' },
     ],
@@ -105,6 +104,7 @@ const allItems = navGroups.flatMap(g => g.items)
 /** The nav item a path belongs to: the longest href it starts with (so /cards/generate isn't also /cards). */
 function activeHref(pathname: string) {
   if (pathname === '/superadmin/redemptions') return '/superadmin/early-redemption'
+  if (pathname === '/superadmin/wallet-accounts') return '/superadmin/treasury'
   let best = '/superadmin'
   for (const { href } of allItems) {
     if ((pathname === href || pathname.startsWith(`${href}/`)) && href.length > best.length) best = href

@@ -31,7 +31,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     action: 'loan_approve',
     entity: 'Loan',
     entityId: loan.id,
-    details: `Loan ${loan.ref} ₦${loan.principal} approved for ${loan.customer.firstName} ${loan.customer.lastName} (${loan.customer.customerId})`,
+    details: `Loan ${loan.ref} ₦${loan.principal} approved for ${loan.customer ? `${loan.customer.firstName} ${loan.customer.lastName} (${loan.customer.customerId})` : 'a deleted customer'}`,
     actorType: guard.actor.type,
     actorId: guard.actor.id,
     actorName: guard.actor.name,

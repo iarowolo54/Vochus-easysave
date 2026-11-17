@@ -874,6 +874,7 @@
 .admin-root .cm-solv-val.is-red { color: var(--red); }
 .admin-root .cm-solv-val.is-amber { color: var(--amber); }
 .admin-root .cm-solv-sub { font-size: 13px; color: var(--text3); margin-top: 4px; }
+.admin-root .cm-solv-card { margin-top: 20px; }
 .admin-root .cm-foot { font-size: 13px; color: var(--text2); margin-top: 14px; }
 .admin-root .stat-val.cm-stat-skel { display: block; width: 60%; height: 28px; }
 
