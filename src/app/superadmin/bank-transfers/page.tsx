@@ -9,7 +9,8 @@ import NoAccess from '../_components/NoAccess'
 import DayChoice from './DayChoice'
 
 type Status = 'paid' | 'waiting' | 'not-paid' | 'cancelled' | 'needs-review' | 'by-hand'
-type Filter = 'all' | Status
+/** 'left-out-kobo' isn't a status: it is the banner's list of people who say they left the kobo out. */
+type Filter = 'all' | Status | 'left-out-kobo'
 type Who = { type: 'customer' | 'agent'; name: string; code: string }
 
 interface Row {
@@ -41,7 +42,7 @@ interface Page {
   total: number
   page: number
   pageSize: number
-  counts: Record<Filter, number> & { leftOutKobo: number }
+  counts: Record<'all' | Status, number> & { leftOutKobo: number }
   truncated: boolean
   canManage: boolean
 }
@@ -109,7 +110,8 @@ export default function BankTransfersPage() {
   if (failed === 'forbidden') return <NoAccess area="bank transfers" />
 
   const counts = data?.counts
-  const options = FILTERS.map(f => ({ ...f, count: f.value === 'all' || !counts ? undefined : counts[f.value] }))
+  const options = FILTERS.map(f => ({ ...f, count: f.value === 'all' || f.value === 'left-out-kobo' || !counts ? undefined : counts[f.value] }))
+  const showingLeftOut = filter === 'left-out-kobo'
   const filtered = filter !== 'all' || !!q
 
   return (
@@ -122,9 +124,15 @@ export default function BankTransfersPage() {
         </div>
       )}
 
-      {counts && counts.leftOutKobo > 0 && (
-        <div className="a-alert a-alert-a" role="status">
-          {counts.leftOutKobo} {counts.leftOutKobo === 1 ? 'person says' : 'people say'} they sent money without the extra kobo. Look for it under “Needs review”, then credit it to them by hand.
+      {counts && (counts.leftOutKobo > 0 || showingLeftOut) && (
+        <div className="a-alert a-alert-a bt-kobo" role="status">
+          <span>
+            {counts.leftOutKobo === 0 ? 'Nobody is waiting on money sent without the extra kobo now.'
+              : <>{counts.leftOutKobo} {counts.leftOutKobo === 1 ? 'person says' : 'people say'} they sent money without the extra kobo. Check the Moniepoint account for it. If it’s there, open their request and credit it by hand.</>}
+          </span>
+          <button type="button" className="btn btn-outline btn-sm" onClick={() => { setSearch(''); setFilter(showingLeftOut ? 'all' : 'left-out-kobo') }}>
+            {showingLeftOut ? 'Show all' : counts.leftOutKobo === 1 ? 'Show request' : 'Show requests'}
+          </button>
         </div>
       )}
 

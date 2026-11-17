@@ -1468,9 +1468,13 @@
 .admin-root .bt-row { cursor: pointer; }
 .admin-root .bt-actions { display: grid; gap: 6px; justify-items: start; }
 .admin-root .bt-note { white-space: normal; overflow-wrap: anywhere; }
+.admin-root .a-alert-a.bt-kobo { align-items: center; flex-wrap: wrap; justify-content: space-between; }
+.admin-root .bt-kobo > span { flex: 1 1 260px; }
+.admin-root .bt-kobo .btn { flex: none; min-height: 40px; }
 @media (max-width: 640px) {
   .admin-root .toolbar.bt-toolbar .seg { flex-wrap: wrap; overflow: visible; border-radius: 18px; width: 100%; }
   .admin-root .tbl-stack tbody td .bt-actions { grid-column: 1 / -1; justify-self: stretch; justify-items: stretch; width: 100%; }
+  .admin-root .bt-kobo .btn { width: 100%; min-height: 44px; }
   .admin-root .bt-actions .btn, .admin-root .bt-actions .ui-link { width: 100%; min-height: 44px; display: inline-flex; align-items: center; justify-content: center; }
 }
 

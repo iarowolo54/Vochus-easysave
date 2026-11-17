@@ -11,7 +11,8 @@ export const dynamic = 'force-dynamic'
 
 const FETCH_LIMIT = 300
 const PAGE_SIZE = 25
-const FILTERS: readonly string[] = ['all', 'paid', 'waiting', 'not-paid', 'cancelled', 'needs-review', 'by-hand']
+// 'left-out-kobo' is not a status: it lists the open requests whose person says they sent money without the extra kobo.
+const FILTERS: readonly string[] = ['all', 'paid', 'waiting', 'not-paid', 'cancelled', 'needs-review', 'by-hand', 'left-out-kobo']
 const DAY_MS = 86_400_000
 
 type Who = { type: 'customer' | 'agent'; name: string; code: string }
@@ -178,7 +179,8 @@ export async function GET(req: NextRequest) {
   counts.leftOutKobo = rows.filter((r) => r.leftOutKobo).length
 
   const shown = rows.filter((r) => {
-    if (filter !== 'all' && r.status !== filter) return false
+    if (filter === 'left-out-kobo') { if (!r.leftOutKobo) return false }
+    else if (filter !== 'all' && r.status !== filter) return false
     if (!q) return true
     const hay = `${r.who?.name ?? ''} ${r.who?.code ?? ''} ${r.plan ?? ''} ${r.amount.toFixed(2)} ${r.summary} ${r.note ?? ''} ${r.bank?.sender ?? ''}`.toLowerCase()
     return hay.includes(q)
