@@ -13,7 +13,7 @@ export async function GET() {
   if (!guard.ok) return guard.response
   // No photo here: a list of base64 images would run to several MB.
   const requests = await prisma.customerRequest.findMany({
-    where: { agentId: guard.agent.id },
+    where: { agentId: guard.agent.id, status: { not: 'Cancelled' } },
     orderBy: { submittedAt: 'desc' },
     take: 100,
     select: { id: true, status: true, firstName: true, lastName: true, phone: true, submittedAt: true, decidedAt: true, denyReason: true, denyFix: true, customerCode: true },

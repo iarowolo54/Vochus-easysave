@@ -352,7 +352,7 @@ export default function EnrolPage() {
       setLoading(false)
       window.scrollTo({ top: 0, behavior: 'smooth' })
     } catch {
-      setError('We lost the connection. Check your customer requests before trying again.')
+      setError('We lost the connection. Check Sign-ups & upgrades before trying again.')
       submittingRef.current = false
       setLoading(false)
     }

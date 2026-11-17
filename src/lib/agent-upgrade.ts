@@ -19,7 +19,7 @@ export const CONVERTED = 'Converted'
 /** A plan of a converted customer. Not 'Active', so no deposit path can credit it. */
 export const PLAN_CLOSED_ON_CONVERSION = 'Closed'
 
-export type UpgradeStatus = 'Pending' | 'Approved' | 'Denied'
+export type UpgradeStatus = 'Pending' | 'Approved' | 'Denied' | 'Cancelled'
 
 export interface UpgradeFields { nin: string; bvn: string | null; state: string; lga: string; address: string; nokName: string; nokPhone: string }
 
@@ -180,6 +180,32 @@ export async function resubmitUpgradeRequest(client: PrismaClient, input: { agen
   } catch (e) {
     return stopResult(e)
   }
+}
+
+/**
+ * The agent drops a request: one still waiting (withdrawn before the office decides) or one that wasn't approved
+ * (abandoned instead of fixed). Kept as 'Cancelled' for history; it leaves the agent's list and the office's queue,
+ * and the customer is free for a new request later. Nothing about the customer changes.
+ */
+export async function cancelUpgradeRequest(client: PrismaClient, input: { agent: { id: string; name: string }; id: string }): Promise<Result> {
+  const r = await client.agentUpgradeRequest.findFirst({
+    where: { id: input.id, agentId: input.agent.id },
+    select: { id: true, status: true, customer: { select: { firstName: true, lastName: true } } },
+  })
+  if (!r) return { ok: false, status: 404, error: 'Request not found.' }
+  const wasStatus = r.status
+  const done = await client.$transaction(async tx => {
+    // notify: none — the agent cancels it themselves on the screen that confirms it
+    const claimed = await tx.agentUpgradeRequest.updateMany({
+      where: { id: r.id, agentId: input.agent.id, status: { in: ['Pending', 'Denied'] } },
+      data: { status: 'Cancelled', pendingCustomerId: null },
+    })
+    if (claimed.count !== 1) return false
+    await tx.auditLog.create({ data: { action: 'agent_upgrade_cancelled', entity: 'AgentUpgradeRequest', entityId: r.id, actorType: 'agent', actorId: input.agent.id, actorName: input.agent.name, details: `Cancelled the upgrade for ${nameOf(r.customer)} (was ${wasStatus === 'Pending' ? 'under review' : 'not approved'})` } })
+    return true
+  })
+  if (!done) return { ok: false, status: 409, error: 'This request can’t be cancelled now. It may already have been decided.' }
+  return { ok: true }
 }
 
 export type ApprovedInfo = { newAgentCode: string; customerName: string; email: string | null; requester: { name: string; email: string | null } }

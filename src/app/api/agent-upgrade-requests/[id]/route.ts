@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireAgent } from '@/app/api/customers/requests/_agent'
-import { findBlockers, parseUpgradeBody, resubmitUpgradeRequest } from '@/lib/agent-upgrade'
+import { cancelUpgradeRequest, findBlockers, parseUpgradeBody, resubmitUpgradeRequest } from '@/lib/agent-upgrade'
 import { emailAdminsWaiting } from '@/lib/agent-upgrade-email'
 
 type Ctx = { params: Promise<{ id: string }> }
@@ -32,5 +32,15 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
   const r = await resubmitUpgradeRequest(prisma, { agent: guard.agent, id, fields: parsed.value })
   if (!r.ok) return NextResponse.json({ error: r.error, blockers: r.blockers }, { status: r.status })
   void emailAdminsWaiting(prisma, { customerName: r.customerName, agentName: guard.agent.name, agentCode: guard.agent.agentId, resubmitted: true })
+  return NextResponse.json({ ok: true })
+}
+
+/** Cancel one of the agent's own requests, waiting or not approved. */
+export async function DELETE(_req: NextRequest, { params }: Ctx) {
+  const guard = await requireAgent()
+  if (!guard.ok) return guard.response
+  const { id } = await params
+  const r = await cancelUpgradeRequest(prisma, { agent: guard.agent, id })
+  if (!r.ok) return NextResponse.json({ error: r.error }, { status: r.status })
   return NextResponse.json({ ok: true })
 }

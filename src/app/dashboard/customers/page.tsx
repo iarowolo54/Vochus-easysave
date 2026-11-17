@@ -160,10 +160,10 @@ export default function CustomersPage() {
   const [requestCounts, setRequestCounts] = useState<{ total: number; waiting: number; denied: number } | null>(null)
 
   useEffect(() => {
-    fetch('/api/customers/requests')
+    fetch('/api/agent/request-counts', { cache: 'no-store' })
       .then(r => (r.ok ? r.json() : null))
-      .then((d: { requests: { status: string }[] } | null) => {
-        if (d) setRequestCounts({ total: d.requests.length, waiting: d.requests.filter(x => x.status === 'Pending').length, denied: d.requests.filter(x => x.status === 'Denied').length })
+      .then((d: { waiting: number; toFix: number } | null) => {
+        if (d) setRequestCounts({ total: d.waiting + d.toFix, waiting: d.waiting, denied: d.toFix })
       })
       .catch(() => {})
   }, [])
@@ -368,7 +368,7 @@ export default function CustomersPage() {
       {requestCounts && requestCounts.total > 0 && (
         <Link href="/dashboard/customers/requests" className="ui-card ag-creq-link">
           <span>
-            <span className="ui-row-title ui-block">Customer requests</span>
+            <span className="ui-row-title ui-block">Sign-ups &amp; upgrades</span>
             <span className="ui-row-sub ui-block">
               {[requestCounts.waiting > 0 && `${requestCounts.waiting} waiting`, requestCounts.denied > 0 && `${requestCounts.denied} to fix`].filter(Boolean).join(' · ') || 'All decided'}
             </span>

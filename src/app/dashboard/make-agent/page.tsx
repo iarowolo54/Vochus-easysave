@@ -41,7 +41,7 @@ function MakeAgent() {
     try {
       if (requestId) {
         const res = await fetch(`/api/agent-upgrade-requests/${encodeURIComponent(requestId)}`)
-        if (res.status === 404) { setBlocked({ title: 'Request not found', text: 'Open it from Requests, then Upgrades.' }); return }
+        if (res.status === 404) { setBlocked({ title: 'Request not found', text: 'Open it from Sign-ups & upgrades, then Upgrades.' }); return }
         if (!res.ok) throw new Error()
         const d = await res.json() as { request: { status: string; nin: string; bvn: string | null; state: string; lga: string; address: string; nokName: string; nokPhone: string; denyReason: string | null; denyFix: string | null; customer: { firstName: string; lastName: string } }; blockers: string[] }
         const r = d.request

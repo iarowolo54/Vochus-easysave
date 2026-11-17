@@ -9,7 +9,7 @@ export async function GET() {
   const guard = await requireAgent()
   if (!guard.ok) return guard.response
   const requests = await prisma.agentUpgradeRequest.findMany({
-    where: { agentId: guard.agent.id },
+    where: { agentId: guard.agent.id, status: { not: 'Cancelled' } },
     orderBy: { submittedAt: 'desc' },
     take: 100,
     select: {

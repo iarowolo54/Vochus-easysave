@@ -21,13 +21,14 @@ const navItems: { section: string; items: { label: string; icon: IconName; href:
   { section: 'Main', items: [
     { label: 'Home', icon: 'home', href: '/dashboard' },
     { label: 'Customers', icon: 'customers', href: '/dashboard/customers' },
+    { label: 'Sign-ups & upgrades', icon: 'pending', href: '/dashboard/customers/requests' },
     { label: 'Transactions', icon: 'history', href: '/dashboard/transactions' },
   ]},
   { section: 'Daily work', items: [
     { label: 'Record saving', icon: 'plan', href: '/dashboard/savings' },
     { label: 'Enrol customer', icon: 'enrol', href: '/dashboard/enrol' },
-    { label: 'Savings calendar', icon: 'calendar', href: '/dashboard/calendar' },
     { label: 'Redemptions', icon: 'collect', href: '/dashboard/redeem' },
+    { label: 'Savings calendar', icon: 'calendar', href: '/dashboard/calendar' },
     { label: 'Ajo groups', icon: 'team', href: '/dashboard/ajo' },
     { label: 'Cards', icon: 'card', href: '/dashboard/cards' },
   ]},
@@ -35,25 +36,31 @@ const navItems: { section: string; items: { label: string; icon: IconName; href:
     { label: 'Loan request', icon: 'loan', href: '/dashboard/loan-request' },
     { label: 'Disburse loan', icon: 'withdraw', href: '/dashboard/loan-disburse' },
     { label: 'Loan repayment', icon: 'repay', href: '/dashboard/loan-repay' },
-    { label: 'Interest rates', icon: 'rate', href: '/dashboard/interest-rates' },
+    { label: 'Loan rates', icon: 'rate', href: '/dashboard/interest-rates' },
   ]},
   { section: 'Money', items: [
-    { label: 'Add money to wallet', icon: 'wallet', href: '/dashboard/wallet' },
+    { label: 'Wallet', icon: 'wallet', href: '/dashboard/wallet' },
     { label: 'Commission', icon: 'commission', href: '/dashboard/commission' },
-    { label: 'Withdraw', icon: 'withdraw', href: '/dashboard/withdraw' },
+    { label: 'Withdraw commission', icon: 'withdraw', href: '/dashboard/withdraw' },
+  ]},
+  { section: 'Team', items: [
     { label: 'Sub-agents', icon: 'team', href: '/dashboard/subagents' },
   ]},
+  { section: 'Messages', items: [
+    { label: 'Chat with customers', icon: 'chat', href: '/dashboard/chat' },
+    { label: 'Chat with Vochus', icon: 'support', href: '/dashboard/support' },
+    { label: 'Report a problem', icon: 'report', href: '/dashboard/report' },
+  ]},
   { section: 'Account', items: [
-    { label: 'Customer chat', icon: 'chat', href: '/dashboard/chat' },
-    { label: 'Vochus Support', icon: 'support', href: '/dashboard/support' },
     { label: 'Settings', icon: 'settings', href: '/dashboard/settings' },
-    { label: 'Report an issue', icon: 'report', href: '/dashboard/report' },
   ]},
 ]
 
 const pageTitles: Record<string, string> = {
   '/dashboard': 'Home',
   '/dashboard/customers': 'Customers',
+  '/dashboard/customers/requests': 'Sign-ups & upgrades',
+  '/dashboard/make-agent': 'Make agent',
   '/dashboard/transactions': 'Transactions',
   '/dashboard/enrol': 'Enrol customer',
   '/dashboard/savings': 'Record saving',
@@ -64,16 +71,16 @@ const pageTitles: Record<string, string> = {
   '/dashboard/loan-request': 'Loan request',
   '/dashboard/loan-disburse': 'Disburse loan',
   '/dashboard/loan-repay': 'Loan repayment',
-  '/dashboard/interest-rates': 'Interest rates',
-  '/dashboard/wallet': 'Add money to wallet',
+  '/dashboard/interest-rates': 'Loan rates',
+  '/dashboard/wallet': 'Wallet',
   '/dashboard/commission': 'Commission',
   '/dashboard/withdraw': 'Withdraw commission',
   '/dashboard/subagents': 'Sub-agents',
-  '/dashboard/chat': 'Customer chat',
-  '/dashboard/support': 'Vochus Support',
+  '/dashboard/chat': 'Chat with customers',
+  '/dashboard/support': 'Chat with Vochus',
   '/dashboard/settings': 'Settings',
   '/dashboard/notifications': 'Notifications',
-  '/dashboard/report': 'Report an issue',
+  '/dashboard/report': 'Report a problem',
   '/dashboard/documents': 'Documents',
   '/dashboard/cards': 'Cards',
   '/dashboard/add-plan': 'Add a plan',
@@ -86,6 +93,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [chatUnread, setChatUnread] = useState(0)
   const [supportUnread, setSupportUnread] = useState(0)
+  const [requestsToFix, setRequestsToFix] = useState(0)
   const [canOpenAppSettings, setCanOpenAppSettings] = useState(false)
   const [ended, setEnded] = useState(false)
   const leaving = useRef(false)
@@ -145,6 +153,15 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
     return () => clearInterval(iv)
   }, [sessionEnded])
 
+  // Sign-ups and upgrades sent back by the office to fix. Checked on each page change: they only change when the office decides.
+  useEffect(() => {
+    if (!session?.user) return
+    fetch('/api/agent/request-counts', { cache: 'no-store' })
+      .then(r => (r.ok ? r.json() : null))
+      .then((d: { toFix?: unknown } | null) => { if (d && typeof d.toFix === 'number') setRequestsToFix(d.toFix) })
+      .catch(() => {})
+  }, [session?.user, pathname])
+
   useEffect(() => {
     const agent = session?.user as any
     const needsDocReview = agent?.docStatus && ['pending_approval', 'rejected'].includes(agent.docStatus)
@@ -186,7 +203,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
   const initials = name.split(' ').map((w: string) => w[0]).join('').slice(0, 2).toUpperCase()
   const allHrefs = navItems.flatMap(g => g.items.map(i => i.href))
   // Pages reached from another one (not in the menu) highlight where they belong.
-  const navPath = pathname.startsWith('/dashboard/add-plan') ? '/dashboard/customers' : pathname
+  const navPath = pathname.startsWith('/dashboard/add-plan') ? '/dashboard/customers' : pathname.startsWith('/dashboard/make-agent') ? '/dashboard/customers/requests' : pathname
   const activeHref = allHrefs
     .filter(h => navPath === h || navPath.startsWith(h + '/'))
     .sort((a, b) => b.length - a.length)[0]
@@ -250,7 +267,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
               <p className="ag-nav-section">{group.section}</p>
               {group.items.map(item => {
                 const Icon = Icons[item.icon]
-                const badge = item.href === '/dashboard/chat' && chatUnread > 0 ? chatUnread : item.href === '/dashboard/support' && supportUnread > 0 ? supportUnread : 0
+                const badge = item.href === '/dashboard/chat' ? chatUnread : item.href === '/dashboard/support' ? supportUnread : item.href === '/dashboard/customers/requests' ? requestsToFix : 0
                 return (
                   <Link
                     key={item.href}
@@ -260,7 +277,7 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
                   >
                     <Icon size={20} aria-hidden="true" />
                     <span>{item.label}</span>
-                    {badge > 0 && <span className="ag-badge" aria-label={`${badge} unread`}>{badge}</span>}
+                    {badge > 0 && <span className="ag-badge" aria-label={item.href === '/dashboard/customers/requests' ? `${badge} to fix` : `${badge} unread`}>{badge}</span>}
                   </Link>
                 )
               })}

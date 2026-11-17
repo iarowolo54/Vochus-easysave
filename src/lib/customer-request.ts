@@ -319,3 +319,28 @@ export async function denyCustomerRequest(client: PrismaClient, input: { id: str
   if (!done) return { ok: false, status: 409, error: 'This request has already been decided.' }
   return { ok: true, customerName, agent: { email: r.agent.email } }
 }
+
+/**
+ * The agent drops one of their own requests: still waiting, or denied and not worth fixing. Kept as 'Cancelled' for
+ * history; it leaves the agent's list and the office's queue, and frees the phone and email. Nothing was charged yet
+ * (the fee is taken only at approval), so no money moves.
+ */
+export async function cancelCustomerRequest(client: PrismaClient, input: { agent: { id: string; name: string }; id: string }): Promise<DecisionResult> {
+  const r = await client.customerRequest.findFirst({
+    where: { id: input.id, agentId: input.agent.id },
+    select: { id: true, status: true, firstName: true, lastName: true },
+  })
+  if (!r) return { ok: false, status: 404, error: 'Request not found.' }
+  const done = await client.$transaction(async tx => {
+    // notify: none — the agent cancels it themselves on the screen that confirms it
+    const claimed = await tx.customerRequest.updateMany({
+      where: { id: r.id, agentId: input.agent.id, status: { in: ['Pending', 'Denied'] } },
+      data: { status: 'Cancelled', pendingPhone: null, pendingEmail: null },
+    })
+    if (claimed.count !== 1) return false
+    await tx.auditLog.create({ data: { action: 'customer_request_cancelled', entity: 'CustomerRequest', entityId: r.id, actorType: 'agent', actorId: input.agent.id, actorName: input.agent.name, details: `Cancelled the request for ${fullName(r)} (was ${r.status === 'Pending' ? 'waiting for approval' : 'denied'})` } })
+    return true
+  })
+  if (!done) return { ok: false, status: 409, error: 'This request can’t be cancelled now. It may already have been decided.' }
+  return { ok: true }
+}

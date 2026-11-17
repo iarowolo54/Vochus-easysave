@@ -3,7 +3,7 @@
 import { test, before, after } from 'node:test'
 import assert from 'node:assert/strict'
 import { prisma } from '../src/lib/prisma'
-import { approveUpgradeRequest, denyUpgradeRequest, findBlockers, resubmitUpgradeRequest, submitUpgradeRequest, type UpgradeFields } from '../src/lib/agent-upgrade'
+import { approveUpgradeRequest, cancelUpgradeRequest, denyUpgradeRequest, findBlockers, resubmitUpgradeRequest, submitUpgradeRequest, type UpgradeFields } from '../src/lib/agent-upgrade'
 import { findIdentityConflict } from '../src/lib/identity'
 
 const admin = { id: 'admin-1', name: 'Boss', type: 'superadmin' as const }
@@ -121,4 +121,26 @@ test('turned down, then fixed and sent straight back to the office', async () =>
   const r = await prisma.agentUpgradeRequest.findUniqueOrThrow({ where: { id: s.id } })
   assert.equal(r.status, 'Pending')
   assert.equal(r.pendingCustomerId, c.id)
+})
+
+test('the agent can cancel a waiting or turned-down request, and send a new one later', async () => {
+  const c = await onlineCustomer()
+  const s = await submitUpgradeRequest(prisma, { agent: requester, customerId: c.id, fields })
+  assert.ok(s.ok)
+  if (!s.ok) return
+  assert.equal((await cancelUpgradeRequest(prisma, { agent: other, id: s.id })).ok, false) // not theirs
+  assert.ok((await cancelUpgradeRequest(prisma, { agent: requester, id: s.id })).ok) // withdrawn while waiting
+  const r = await prisma.agentUpgradeRequest.findUniqueOrThrow({ where: { id: s.id } })
+  assert.equal(r.status, 'Cancelled')
+  assert.equal(r.pendingCustomerId, null)
+  assert.equal((await approveUpgradeRequest(prisma, { id: s.id, admin })).ok, false) // the office can't act on it now
+  assert.equal((await cancelUpgradeRequest(prisma, { agent: requester, id: s.id })).ok, false) // only once
+
+  const again = await submitUpgradeRequest(prisma, { agent: requester, customerId: c.id, fields })
+  assert.ok(again.ok)
+  if (!again.ok) return
+  assert.ok((await denyUpgradeRequest(prisma, { id: again.id, admin, reason: 'Not eligible', fix: 'Nothing' })).ok)
+  assert.ok((await cancelUpgradeRequest(prisma, { agent: requester, id: again.id })).ok) // abandoned instead of fixed
+  assert.equal((await resubmitUpgradeRequest(prisma, { agent: requester, id: again.id, fields })).ok, false)
+  assert.equal((await prisma.customer.findUniqueOrThrow({ where: { id: c.id } })).status, 'Active')
 })

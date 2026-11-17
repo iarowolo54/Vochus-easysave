@@ -2,7 +2,7 @@
 import { test, before } from 'node:test'
 import assert from 'node:assert/strict'
 import { prisma } from '../src/lib/prisma'
-import { approveCustomerRequest, denyCustomerRequest, nextCustomerCode, parseRequestBody, rollForward, type RequestPlan } from '../src/lib/customer-request'
+import { approveCustomerRequest, cancelCustomerRequest, denyCustomerRequest, nextCustomerCode, parseRequestBody, rollForward, type RequestPlan } from '../src/lib/customer-request'
 import { DEFAULT_FLEXIBLE_SETTINGS as flex } from '../src/lib/flexible-savings'
 import { REGISTRATION_FEE } from '../src/lib/wallet-rates'
 import { backfillEvents } from '../src/lib/notification-sweep'
@@ -143,4 +143,22 @@ test('the nightly net rebuilds decisions with the live keys', () => {
     ],
   }, { since: new Date(decidedAt.getTime() - 1000) })
   assert.deepEqual(events.map(e => e.dedupeKey), ['customer-request-approved:a', `customer-request-denied:d:${decidedAt.getTime()}`])
+})
+
+test('the agent can cancel a waiting or denied request; it frees the phone and charges nothing', async () => {
+  await setWallet(2000)
+  const first = await pending()
+  const stranger = { id: 'not-the-agent', name: 'Someone' }
+  assert.equal((await cancelCustomerRequest(prisma, { agent: stranger, id: first.id })).ok, false)
+  assert.ok((await cancelCustomerRequest(prisma, { agent: { id: agentId, name: 'Agent' }, id: first.id })).ok)
+  const row = await prisma.customerRequest.findUniqueOrThrow({ where: { id: first.id } })
+  assert.equal(row.status, 'Cancelled')
+  assert.equal(row.pendingPhone, null)
+  assert.equal((await approveCustomerRequest(prisma, { id: first.id, admin }, NOW)).ok, false)
+  assert.equal(await wallet(), 2000)
+
+  const second = await pending()
+  assert.ok((await denyCustomerRequest(prisma, { id: second.id, admin, reason: 'Blurry', fix: 'Retake' }, NOW)).ok)
+  assert.ok((await cancelCustomerRequest(prisma, { agent: { id: agentId, name: 'Agent' }, id: second.id })).ok)
+  assert.equal((await cancelCustomerRequest(prisma, { agent: { id: agentId, name: 'Agent' }, id: second.id })).ok, false)
 })

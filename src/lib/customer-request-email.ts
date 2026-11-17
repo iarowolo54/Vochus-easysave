@@ -60,7 +60,7 @@ export async function emailRequestDenied(agent: { email: string | null }, input:
     heading: 'Customer request denied',
     intro: `The request for ${name} wasn’t approved. Nothing was taken from your wallet.`,
     reason: { label: 'Reason', text: input.reason },
-    nextStep: 'Open Customer requests in the app, fix it and send it again.',
+    nextStep: 'Open Sign-ups & upgrades in the app, fix it and send it again.',
     action: emailAction('Open Vochus Easy Save', '/login'),
     rows: [['Customer', name], ['What to work on', input.fix]],
   })

@@ -1172,6 +1172,9 @@ body:has(.ui-auth) { background: var(--ui-canvas) !important; }
   padding: 0 max(var(--ui-s6), calc(100% - 1280px + var(--ui-s6))) 0 var(--ui-s6);
 }
 .ag-title { flex: 1; font-family: var(--ui-font-display); font-size: var(--ui-fs-lg); font-weight: 700; }
+/* Phones: a long title (Withdraw commission, Sign-ups & upgrades) has ~160px beside the menu, bell and avatar, so it
+   wraps to two tidy lines rather than being cut off. */
+@media (max-width: 400px) { .ag-title { min-width: 0; font-size: 17px; line-height: 1.2; } }
 .ag-menu-btn { display: none; background: var(--ui-canvas); }
 .ag-topbar-av { width: 36px; height: 36px; font-size: var(--ui-fs-sm); text-decoration: none; overflow: hidden; }
 /* Anchored to the sidebar (not centred), so wide screens don't open a gap between menu and content. */

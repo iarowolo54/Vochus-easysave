@@ -70,7 +70,7 @@ export async function emailDenied(input: { customerName: string; requester: { em
     heading: 'Upgrade not approved',
     intro: `The upgrade for ${name} to become an agent wasn’t approved.`,
     reason: { label: 'Reason', text: input.reason },
-    nextStep: 'Open Requests, then Upgrades, in the app. Fix it and send it again.',
+    nextStep: 'Open Sign-ups & upgrades, then Upgrades, in the app. Fix it and send it again.',
     action: emailAction('Open Vochus Easy Save', '/login'),
     rows: [['Customer', name], ['What to work on', input.fix]],
   })

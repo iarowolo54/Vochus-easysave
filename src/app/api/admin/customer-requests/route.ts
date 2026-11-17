@@ -16,7 +16,8 @@ export async function GET(req: NextRequest) {
   const q = (sp.get('q') ?? '').trim().slice(0, 60)
   const page = Math.max(1, parseInt(sp.get('page') ?? '1', 10) || 1)
   const where: Prisma.CustomerRequestWhereInput = {
-    ...(status && { status }),
+    // Requests the agent cancelled stay as history but leave the office's lists.
+    status: status ?? { not: 'Cancelled' },
     ...(q && { OR: [{ firstName: { contains: q } }, { lastName: { contains: q } }, { phone: { contains: q } }, { agent: { name: { contains: q } } }] }),
   }
 

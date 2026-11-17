@@ -4,7 +4,7 @@ import { logAudit } from '@/lib/audit'
 import { getFlexibleSettings } from '@/lib/flexible-savings'
 import { findIdentityConflict } from '@/lib/identity'
 import { identityConflictResponse } from '@/lib/identity-response'
-import { parseRequestBody, parseStoredPlans, pendingConflictMessage } from '@/lib/customer-request'
+import { cancelCustomerRequest, parseRequestBody, parseStoredPlans, pendingConflictMessage } from '@/lib/customer-request'
 import { emailRequestSubmitted } from '@/lib/customer-request-email'
 import { requireAgent } from '../_agent'
 
@@ -56,4 +56,14 @@ export async function PUT(req: NextRequest, { params }: Ctx) {
   logAudit({ action: 'customer_request_resubmitted', entity: 'CustomerRequest', entityId: id, details: `Customer request sent again for ${customerName}`, actorId: agent.id, actorName: agent.name })
   void emailRequestSubmitted(prisma, { customerName, agentName: agent.name, agentCode: agent.agentId, resubmitted: true })
   return NextResponse.json({ id })
+}
+
+/** Cancel one of the agent's own requests, waiting or denied. */
+export async function DELETE(_req: NextRequest, { params }: Ctx) {
+  const guard = await requireAgent()
+  if (!guard.ok) return guard.response
+  const { id } = await params
+  const r = await cancelCustomerRequest(prisma, { agent: guard.agent, id })
+  if (!r.ok) return NextResponse.json({ error: r.error }, { status: r.status })
+  return NextResponse.json({ ok: true })
 }
